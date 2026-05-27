@@ -39,11 +39,6 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(oqChecker)
 	l.ruleSet["oq-not-empty"] = oqChecker
 	l.registerChecker(newIndexEntriesChecker())
-	l.registerChecker(newHeadingLevelsChecker())
-	l.registerChecker(newFeatureRefSyntaxChecker())
-	l.registerChecker(newInternalLinksChecker())
-	l.registerChecker(newForwardRefsChecker())
-	l.registerChecker(newCodeAnnotationsChecker())
 	l.registerChecker(newConfigScopeChecker())
 	l.registerChecker(newPlanHierarchyChecker())
 	l.registerChecker(newPlanROIChecker())
