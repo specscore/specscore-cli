@@ -161,7 +161,11 @@ func selfUpdateCommand() *cobra.Command {
 					}
 
 					if err := doSelfReplace(cmd.Context(), pinnedTag); err != nil {
-						return classifySelfReplaceError(cmd, err)
+						// Annotate with the pinned tag so an unknown-tag failure
+						// (no matching published release or asset) names the tag
+						// the user requested. The download/verify step runs before
+						// any swap, so a failure here leaves the binary untouched.
+						return classifySelfReplaceError(cmd, fmt.Errorf("release %s not found: %w", pinnedTag, err))
 					}
 					_, _ = fmt.Fprintf(out, "specscore updated to %s.\n", pinnedTag)
 					return nil
@@ -258,7 +262,10 @@ func classifySelfReplaceError(cmd *cobra.Command, err error) error {
 	var ec *exitcode.Error
 	if errors.As(err, &ec) {
 		_, _ = fmt.Fprintf(errOut, "self-update: %v\n", err)
-		return err
+		// Return the unwrapped *exitcode.Error so the top-level runner's
+		// ExitCode() convention sees a non-zero code even when err is a wrapper
+		// (e.g. the pinned branch annotates with the requested tag via %w).
+		return ec
 	}
 	_, _ = fmt.Fprintf(errOut, "self-update: failed to download the release: %v\n", err)
 	return exitcode.NotFoundErrorf("self-update: failed to download the release: %v", err)

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/internal/selfupdate"
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
 // exitCoder is the convention the top-level CLI runner uses to translate an
@@ -638,6 +639,46 @@ func TestSelfUpdate_DowngradeRequiresFlag(t *testing.T) {
 			t.Error("doSelfReplace was not called; the guard must not trigger for a dev build")
 		}
 	})
+}
+
+// AC: cli/self-update#ac:pinned-unknown-tag-errors — a manual install run with
+// `--version v9.9.9 --yes` where the pinned tag has no matching published
+// release or asset MUST print a clear error, exit non-zero, and leave the
+// existing binary untouched. We override doSelfReplace to simulate the
+// download/verify "release not found" failure that occurs before any swap, then
+// assert a non-zero *exitcode.Error, a clear error mentioning the tag or "not
+// found", and the absence of the happy-path "updated to" line. The
+// binary-untouched guarantee follows from download/verify running before the
+// swap: a verify failure returns before ReplaceExecutable is reached.
+func TestSelfUpdate_PinnedUnknownTagErrors(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "1.0.0")
+	withInteractive(t, false) // --yes must work regardless of TTY
+	// Simulate the download/verify step failing because the pinned release/asset
+	// does not exist. Return a NotFound *exitcode.Error WITHOUT the tag in its
+	// message, so the assertion proves the CLI layer itself surfaces the pinned
+	// tag (rather than relying on the downstream message wording).
+	_ = withSelfReplace(t, exitcode.NotFoundErrorf("no matching release or asset"))
+
+	out, errOut, err := runSelfUpdate(t, "--version", "v9.9.9", "--yes")
+	if err == nil {
+		t.Fatal("expected non-nil error for an unknown pinned tag")
+	}
+	ec, ok := err.(exitCoder)
+	if !ok {
+		t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+	}
+	if code := ec.ExitCode(); code == 0 {
+		t.Errorf("exit code = %d; want non-zero", code)
+	}
+	combined := strings.ToLower(out + errOut + err.Error())
+	if !strings.Contains(combined, "v9.9.9") && !strings.Contains(combined, "not found") {
+		t.Errorf("output/error %q does not clearly reference the unknown tag or 'not found'", combined)
+	}
+	// Nothing was replaced: the happy-path "updated to" line must not appear.
+	if strings.Contains(strings.ToLower(out), "updated to") {
+		t.Errorf("stdout %q claims an update succeeded for an unknown tag", out)
+	}
 }
 
 // The --allow-downgrade flag exists and defaults to false.

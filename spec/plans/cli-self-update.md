@@ -125,7 +125,7 @@ When the pinned target is strictly lower than the running version, refuse unless
 
 ### Task 14: Pinned unknown-tag error handling
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 12
 **Verifies:** cli/self-update#ac:pinned-unknown-tag-errors
 
