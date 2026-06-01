@@ -150,6 +150,20 @@ Several flags appear across multiple commands with identical semantics:
 
 When `--project` is not supplied, commands MUST autodetect the project root by searching upward from the current working directory for `specscore.yaml`. If no project is found, commands MUST exit `3` (NotFound) with a clear message.
 
+### Documentation
+
+User-facing surfaces must not silently drift from the implemented interface.
+
+#### REQ: docs-track-interface-changes
+
+Any change to a user-facing CLI interface — a new or renamed command or subcommand, an added / removed / renamed flag, a changed exit code, or a changed default output shape — MUST update the relevant documentation in the same change set:
+
+- the command's child Feature spec under `cli/` — the canonical contract, surfaced on the website at `specscore.md/<command-path>`;
+- this repository's `README.md`, when the command is part of its documented surface (the `## Usage` / `## Updating` sections); and
+- any narrative install / usage pages on the website (authored in the [`specscore/specscore`](https://github.com/specscore/specscore) repo).
+
+The Feature spec is the source of truth the website renders from; the `README.md` and website prose are hand-maintained and do NOT update themselves. A change that alters the interface without updating these surfaces is incomplete.
+
 ## Consumers
 
 The [`ai-plugin-specscore`](https://github.com/specscore/ai-plugin-specscore) Claude Code plugin wraps every command group below as an agent skill. Each skill loads per-verb references on demand and treats the feature spec in this tree as the authoritative contract — when a flag, exit code, or output shape changes here, the corresponding skill follows. The wrapper-skill catalogue lives at [`skills/README.md`](https://github.com/specscore/ai-plugin-specscore/blob/main/skills/README.md#planned-cli-wrapper-catalogue).
