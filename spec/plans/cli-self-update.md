@@ -45,7 +45,7 @@ Add a pure-function detector that resolves the running executable's path and cla
 
 ### Task 4: Package-managed redirect path
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 3
 **Verifies:** cli/self-update#ac:managed-is-redirected
 
@@ -69,7 +69,7 @@ Implement `--check`: run detection (Task 3) and release resolution (Task 2), rep
 
 ### Task 7: Download matching asset and verify sha256 against `checksums.txt`
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 2
 **Verifies:** cli/self-update#ac:checksum-mismatch-aborts
 

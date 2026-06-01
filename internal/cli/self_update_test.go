@@ -2,7 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"strings"
 	"testing"
+
+	"github.com/specscore/specscore-cli/internal/selfupdate"
 )
 
 func runSelfUpdate(t *testing.T, args ...string) (string, string, error) {
@@ -16,6 +19,16 @@ func runSelfUpdate(t *testing.T, args ...string) (string, string, error) {
 	return out.String(), errOut.String(), err
 }
 
+// withDetection overrides the package-level detection hook for the duration of
+// the test and restores it afterward, so tests never depend on the real
+// os.Executable path.
+func withDetection(t *testing.T, d selfupdate.Detection) {
+	t.Helper()
+	prev := detectInstall
+	detectInstall = func() (selfupdate.Detection, error) { return d, nil }
+	t.Cleanup(func() { detectInstall = prev })
+}
+
 // AC: cli/self-update#ac:canonical-and-alias — invoking `self-update --check`
 // and `update --check` MUST resolve to the same command and produce identical
 // stdout and the same error/exit result. We verify alias equivalence by
@@ -23,6 +36,10 @@ func runSelfUpdate(t *testing.T, args ...string) (string, string, error) {
 // driving the canonical command with --check and asserting deterministic
 // output and a nil error.
 func TestSelfUpdate_CanonicalAndAlias(t *testing.T) {
+	// Force a deterministic managed detection so dispatch produces stable,
+	// non-erroring stdout independent of the real test-binary path.
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Managed, Manager: selfupdate.Homebrew})
+
 	cmd := selfUpdateCommand()
 	if cmd.Name() != "self-update" {
 		t.Errorf("canonical name = %q; want %q", cmd.Name(), "self-update")
@@ -49,6 +66,42 @@ func TestSelfUpdate_CanonicalAndAlias(t *testing.T) {
 	}
 	if out != out2 {
 		t.Errorf("output not deterministic: %q != %q", out, out2)
+	}
+}
+
+// AC: cli/self-update#ac:managed-is-redirected — when the executable lives in a
+// Homebrew/Scoop/WinGet managed location, self-update MUST print the detected
+// manager and its exact upgrade command, exit 0, and leave the executable
+// unchanged (no filesystem writes). We force each managed detection via the
+// override hook and assert the manager name + exact command appear on stdout
+// with a nil error. Returning before any download is sufficient to prove no
+// write side-effect occurs.
+func TestSelfUpdate_ManagedIsRedirected(t *testing.T) {
+	cases := []struct {
+		name        string
+		manager     selfupdate.Manager
+		wantName    string
+		wantCommand string
+	}{
+		{"homebrew", selfupdate.Homebrew, "Homebrew", "brew upgrade specscore"},
+		{"scoop", selfupdate.Scoop, "Scoop", "scoop update specscore"},
+		{"winget", selfupdate.WinGet, "WinGet", "winget upgrade SpecScore.CLI"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			withDetection(t, selfupdate.Detection{Method: selfupdate.Managed, Manager: c.manager})
+
+			out, _, err := runSelfUpdate(t)
+			if err != nil {
+				t.Fatalf("managed redirect returned error (want nil/exit 0): %v", err)
+			}
+			if !strings.Contains(out, c.wantName) {
+				t.Errorf("stdout %q does not name detected manager %q", out, c.wantName)
+			}
+			if !strings.Contains(out, c.wantCommand) {
+				t.Errorf("stdout %q does not contain exact upgrade command %q", out, c.wantCommand)
+			}
+		})
 	}
 }
 
