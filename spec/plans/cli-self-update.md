@@ -1,6 +1,6 @@
 # Plan: CLI Self-Update
 
-**Status:** Implementing
+**Status:** Completed
 **Mode:** full
 **Source Feature:** cli/self-update
 **Date:** 2026-06-01
@@ -133,7 +133,7 @@ When the pinned tag has no published release or no asset matching the host OS/ar
 
 ### Task 15: Pinned-version managed redirect
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 4, 12
 **Verifies:** cli/self-update#ac:pinned-managed-still-redirects
 

@@ -681,6 +681,47 @@ func TestSelfUpdate_PinnedUnknownTagErrors(t *testing.T) {
 	}
 }
 
+// AC: cli/self-update#ac:pinned-managed-still-redirects — a managed install
+// (Homebrew/Scoop/WinGet) run with `--version v0.0.3` MUST still follow the
+// managed redirect path: print the detected manager and its exact upgrade
+// command, exit 0, and never self-replace. The managed branch returns before
+// any pinned-download logic (which lives only on the manual path), so the
+// --version flag is ignored. We force each managed detection, pass --version,
+// override doSelfReplace with a spy, and assert exit 0, the manager + command
+// on stdout, and that the spy was NOT called.
+func TestSelfUpdate_PinnedManagedStillRedirects(t *testing.T) {
+	cases := []struct {
+		name        string
+		manager     selfupdate.Manager
+		wantName    string
+		wantCommand string
+	}{
+		{"homebrew", selfupdate.Homebrew, "Homebrew", "brew upgrade specscore"},
+		{"scoop", selfupdate.Scoop, "Scoop", "scoop update specscore"},
+		{"winget", selfupdate.WinGet, "WinGet", "winget upgrade SpecScore.CLI"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			withDetection(t, selfupdate.Detection{Method: selfupdate.Managed, Manager: c.manager})
+			called := withSelfReplace(t, nil)
+
+			out, _, err := runSelfUpdate(t, "--version", "v0.0.3")
+			if err != nil {
+				t.Fatalf("pinned managed redirect returned error (want nil/exit 0): %v", err)
+			}
+			if *called {
+				t.Error("doSelfReplace was called; a managed install must redirect, never self-replace")
+			}
+			if !strings.Contains(out, c.wantName) {
+				t.Errorf("stdout %q does not name detected manager %q", out, c.wantName)
+			}
+			if !strings.Contains(out, c.wantCommand) {
+				t.Errorf("stdout %q does not contain exact upgrade command %q", out, c.wantCommand)
+			}
+		})
+	}
+}
+
 // The --allow-downgrade flag exists and defaults to false.
 func TestSelfUpdate_AllowDowngradeFlag(t *testing.T) {
 	cmd := selfUpdateCommand()
