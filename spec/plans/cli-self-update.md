@@ -29,7 +29,7 @@ Add `internal/cli/self_update.go` registering the `self-update` cobra command wi
 
 ### Task 2: Resolve latest stable release and compare against build version
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/self-update#ac:latest-stable-only, cli/self-update#ac:dev-build-is-undetermined
 
@@ -37,7 +37,7 @@ Implement latest-version resolution from the GitHub releases of `specscore/specs
 
 ### Task 3: Install-method detection from the resolved executable path
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/self-update#ac:manual-is-eligible
 
