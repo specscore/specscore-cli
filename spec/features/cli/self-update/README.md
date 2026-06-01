@@ -7,15 +7,17 @@
 
 ## Summary
 
-`specscore self-update` (alias `specscore update`) brings a running `specscore` binary to the latest released version. It first detects how the binary was installed: package-managed installs (Homebrew, Scoop, WinGet) are never overwritten — the command prints the exact manager upgrade command instead — while manual installs (release-archive downloads, `go install`) are updated in place by downloading the matching release asset, verifying its sha256 against the release `checksums.txt`, and atomically replacing the executable. A `--check` mode reports update availability for any install method without modifying anything.
+`specscore self-update` (alias `specscore update`) brings a running `specscore` binary to the latest released version. It first detects how the binary was installed: package-managed installs (Homebrew, Scoop, WinGet) are never overwritten — the command prints the exact manager upgrade command instead — while manual installs (release-archive downloads, `go install`) are updated in place by downloading the matching release asset, verifying its sha256 against the release `checksums.txt`, and atomically replacing the executable. A `--check` mode reports update availability for any install method without modifying anything, and a `--version <tag>` flag installs a specific pinned release instead of the latest.
 
 ## Synopsis
 
 ```
-specscore self-update            # detect, then self-replace (manual) or redirect (managed)
-specscore self-update --check    # report availability only; never modifies
-specscore self-update --yes      # skip the confirmation prompt (non-interactive)
-specscore update                 # alias for `self-update`
+specscore self-update                         # detect, then self-replace (manual) or redirect (managed)
+specscore self-update --check                 # report availability only; never modifies
+specscore self-update --yes                   # skip the confirmation prompt (non-interactive)
+specscore self-update --version v0.0.3        # install a specific release (manual installs)
+specscore self-update --version 0.3.0 --allow-downgrade   # roll back to an older release
+specscore update                              # alias for `self-update`
 ```
 
 ## Problem
@@ -76,11 +78,35 @@ Both the action and `--check` compare the running version against the latest rel
 
 #### REQ: latest-release-source
 
-The command MUST determine the latest version from the published GitHub releases of `specscore/specscore-cli`, considering only the latest non-prerelease (stable) release.
+The command MUST determine the latest version from the published GitHub releases of `specscore/specscore-cli`, considering only the latest stable release — excluding both prereleases and drafts. (This stable-only filter governs the *unpinned* "latest" path only; an explicit `--version` pin per [REQ: pinned-exact-tag](#req-pinned-exact-tag) bypasses it.)
 
 #### REQ: dev-build-undetermined
 
 When the running binary reports the `dev` version placeholder (a build without `-ldflags`, e.g. `go install` of an untagged tree), the command MUST treat the current version as undetermined: `--check` reports it as undetermined (not "up to date"), and the self-replace path MAY offer to install the latest stable release subject to the normal confirmation in [REQ: confirm-before-replace](#req-confirm-before-replace).
+
+### Pinned-version install
+
+By default the command targets the latest stable release; `--version` lets the user install an exact release instead. This is a manual-install capability that reuses the self-replace machinery with a different target.
+
+#### REQ: version-flag
+
+The command MUST accept a `--version <tag>` flag that selects an exact release to install instead of the latest stable. The leading `v` is optional: `--version v0.0.3` and `--version 0.0.3` MUST resolve to the same release (the value is normalized to match the project's `v`-prefixed git tags). A pinned install reuses the same confirmation (`--yes`), checksum-verification, and atomic-replace machinery as the unpinned self-replace path; only the target release differs. (`--version` here is a `self-update`-local flag, distinct from the root `specscore --version` that prints build identity.)
+
+#### REQ: pinned-exact-tag
+
+A `--version` pin MUST resolve to exactly the named release regardless of its prerelease or draft status. The stable-only selection in [REQ: latest-release-source](#req-latest-release-source) governs only the unpinned "latest" path; an explicit pin opts the user into precisely the requested tag.
+
+#### REQ: pinned-downgrade-guard
+
+When the pinned target version is strictly lower than the running version, the command MUST refuse unless `--allow-downgrade` is passed, printing a clear message that names both versions and the required flag, exiting non-zero without modifying the binary. With `--allow-downgrade` the command proceeds (still subject to confirmation / `--yes`), and the transition output indicates a downgrade. When the running version is undetermined (the `dev` placeholder), the downgrade guard does not trigger because direction cannot be determined.
+
+#### REQ: pinned-unknown-tag
+
+When the pinned tag does not correspond to a published release (or the release has no asset matching the host OS/architecture), the command MUST print a clear error, exit non-zero, and MUST NOT modify the existing binary.
+
+#### REQ: pinned-managed-still-redirects
+
+On a package-managed install, `--version` MUST NOT cause a self-replace; the command still follows the managed redirect path ([REQ: managed-no-overwrite](#req-managed-no-overwrite)). Pinning a version through `self-update` is a manual-install capability only.
 
 ### Self-replace (manual installs)
 
@@ -132,7 +158,7 @@ When the command lacks permission to replace the executable in its install locat
 |---|---|
 | `0` | Success: self-replace completed, redirect printed, or already up to date |
 | `10` | `--check` only — an update is available, or the current version is undetermined |
-| non-zero (other) | Operational error: detection-ambiguous refusal, network/download failure, checksum mismatch, permission denied, or non-interactive without `--yes` |
+| non-zero (other) | Operational error: detection-ambiguous refusal, network/download failure, checksum mismatch, permission denied, non-interactive without `--yes`, unknown `--version` tag, or a refused downgrade (target older than current without `--allow-downgrade`) |
 
 ## Interaction with Other Features
 
@@ -207,9 +233,9 @@ Every acceptance criterion below is testable through the CLI surface or as a pur
 
 **Requirements:** cli/self-update#req:latest-release-source
 
-**Given** the project's GitHub releases where the newest tagged release is a prerelease and the newest stable release is older
+**Given** the project's GitHub releases where the newest tagged release is a prerelease or a draft and the newest stable release is older
 **When** the user runs `specscore self-update --check`
-**Then** the "latest" the command compares against is the newest stable (non-prerelease) release, ignoring the prerelease.
+**Then** the "latest" the command compares against is the newest stable release, ignoring both prereleases and drafts.
 
 ### AC: dev-build-is-undetermined
 
@@ -267,11 +293,55 @@ Every acceptance criterion below is testable through the CLI surface or as a pur
 **When** the user runs `specscore self-update --yes`
 **Then** the command reports the permission failure with the path and a suggested remedy, exits non-zero, and leaves the original binary intact.
 
+### AC: version-flag-selects-tag
+
+**Requirements:** cli/self-update#req:version-flag
+
+**Given** a manual install and a published release tagged `v0.0.3`
+**When** the user runs `specscore self-update --version 0.0.3 --yes`
+**Then** the command installs exactly the `v0.0.3` release (accepting the tag with or without the leading `v`), using the same checksum-verify and atomic-replace path as an unpinned update.
+
+### AC: pinned-tag-allows-prerelease
+
+**Requirements:** cli/self-update#req:pinned-exact-tag
+
+**Given** a manual install and a published prerelease tagged `v0.1.0-rc.1`
+**When** the user runs `specscore self-update --version v0.1.0-rc.1 --yes`
+**Then** the command installs that prerelease exactly, even though the unpinned "latest" path would have skipped it.
+
+### AC: downgrade-requires-flag
+
+**Requirements:** cli/self-update#req:pinned-downgrade-guard
+
+**Given** a manual install currently on `v0.5.0` and a pinned target of `v0.3.0`
+**When** the user runs `specscore self-update --version v0.3.0` without `--allow-downgrade`
+**Then** the command refuses, names both versions and the `--allow-downgrade` flag, exits non-zero, and leaves the binary unchanged; re-running with `--allow-downgrade --yes` performs the downgrade.
+
+### AC: pinned-unknown-tag-errors
+
+**Requirements:** cli/self-update#req:pinned-unknown-tag
+
+**Given** a manual install and a `--version` tag that has no matching published release or asset
+**When** the user runs `specscore self-update --version v9.9.9 --yes`
+**Then** the command prints a clear error, exits non-zero, and does not modify the existing binary.
+
+### AC: pinned-managed-still-redirects
+
+**Requirements:** cli/self-update#req:pinned-managed-still-redirects
+
+**Given** a `specscore` whose executable path is a Homebrew, Scoop, or WinGet managed location
+**When** the user runs `specscore self-update --version v0.0.3`
+**Then** the command does not self-replace; it prints the detected manager and its upgrade command and exits `0` (the same redirect as an unpinned managed run).
+
 ## Open Questions
 
 - Which release-aware updater library backs the atomic-replace path (e.g. `minio/selfupdate`, `creativeprojects/go-selfupdate`), and does it consume GoReleaser's archive + `checksums.txt` layout without custom glue? (Implementation choice; does not change this contract.)
 - Should install-method detection be extracted into a shared package for reuse by future commands, or stay internal to `self-update` until a second consumer appears? (Inherited from the source Idea.)
 - Should a later iteration add cryptographic signature verification (cosign/sigstore) on top of the sha256 check? (Idea marks this follow-on.)
+
+## Sidekick Seeds Generated
+
+- [deferred-ac-coverage-regex-truncates-hyphenated-ac-slugs](../../../ideas/seeds/deferred-ac-coverage-regex-truncates-hyphenated-ac-slugs.md) — captured 2026-06-01 by specstudio:specify
 
 ---
 *This document follows the https://specscore.md/feature-specification*

@@ -1,6 +1,6 @@
 # Plan: CLI Self-Update
 
-**Status:** Completed
+**Status:** Implementing
 **Mode:** full
 **Source Feature:** cli/self-update
 **Date:** 2026-06-01
@@ -9,13 +9,13 @@
 
 ## Summary
 
-Implementation plan for the `cli/self-update` Feature — the `specscore self-update` cobra command (alias `update`) with a read-only `--check` mode. Lands install-method detection, package-manager redirect, latest-stable release resolution, checksum-verified atomic self-replace for manual installs, confirmation/`--yes` handling, and explicit failure modes. Eleven tasks covering all 15 ACs in the source Feature, zero deferred.
+Implementation plan for the `cli/self-update` Feature — the `specscore self-update` cobra command (alias `update`) with a read-only `--check` mode. Lands install-method detection, package-manager redirect, latest-stable release resolution, checksum-verified atomic self-replace for manual installs, confirmation/`--yes` handling, and explicit failure modes. Tasks 1–11 (done) cover the original 15 ACs; tasks 12–15 (pending) cover the 5 ACs added by the pinned-version + draft-filter revision. Fifteen tasks covering all 20 ACs in the source Feature, zero deferred.
 
 ## Approach
 
 Foundation-first linear decomposition. The cobra surface (Task 1) is registered before any path logic so every later task wires into a live command. The two independent foundations — release resolution (Task 2) and install-method detection (Task 3) — precede the behaviors that compose them. Decision paths come next: managed redirect (Task 4) and ambiguous fallback (Task 5) depend only on detection; `--check` (Task 6) composes detection + release resolution and is fully read-only, so it lands before any code that writes to disk. The write path is built bottom-up: download+verify (Task 7) produces the artifact that atomic-replace (Task 8) consumes, which the confirmation guard (Task 9) wraps. No-op short-circuit (Task 10) and the failure modes (Task 11) close out the safety contract. `**Depends-On:**` lines encode the order so `specstudio:implement` can batch correctly.
 
-No ACs are deferred. All 15 ACs in `cli/self-update` are covered.
+No ACs are deferred. All 20 ACs in `cli/self-update` are covered (tasks 1–11 done; tasks 12–15 pending for the pinned-version revision).
 
 ## Tasks
 
@@ -106,6 +106,38 @@ When the resolved comparison (Task 2) reports the running version already equals
 **Verifies:** cli/self-update#ac:network-failure-is-safe, cli/self-update#ac:permission-denied-is-safe
 
 Handle the two write-path failure modes explicitly: a release lookup / asset download that fails (network error, rate limit, missing asset) prints a clear error, exits non-zero, and modifies nothing; a permission-denied replacement reports the failure with the executable path and a suggested remedy (elevated permissions or the package manager), exits non-zero, and leaves the original binary intact.
+
+### Task 12: `--version <tag>` flag with exact-tag resolution
+
+**Status:** pending
+**Depends-On:** 1, 2, 7, 9
+**Verifies:** cli/self-update#ac:version-flag-selects-tag, cli/self-update#ac:pinned-tag-allows-prerelease
+
+Add a `--version <tag>` flag to the command and a resolver path that fetches a specific release by tag (leading `v` optional/normalized), bypassing the stable-only filter so an explicitly pinned prerelease/draft installs exactly. Route the pinned target through the existing download→verify→confirm→swap machinery (Tasks 7/9). The flag is `self-update`-local, distinct from the root `--version`.
+
+### Task 13: `--allow-downgrade` guard
+
+**Status:** pending
+**Depends-On:** 12
+**Verifies:** cli/self-update#ac:downgrade-requires-flag
+
+When the pinned target is strictly lower than the running version, refuse unless `--allow-downgrade` is passed — printing a message naming both versions and the flag, exiting non-zero without modifying the binary. With the flag, proceed (subject to confirm/`--yes`) and mark the transition as a downgrade. When the current version is undetermined (`dev`), the guard does not trigger.
+
+### Task 14: Pinned unknown-tag error handling
+
+**Status:** pending
+**Depends-On:** 12
+**Verifies:** cli/self-update#ac:pinned-unknown-tag-errors
+
+When the pinned tag has no published release or no asset matching the host OS/arch, print a clear error, exit non-zero, and leave the binary untouched (reuse the failure-mode classification from Task 11).
+
+### Task 15: Pinned-version managed redirect
+
+**Status:** pending
+**Depends-On:** 4, 12
+**Verifies:** cli/self-update#ac:pinned-managed-still-redirects
+
+Ensure `--version` on a managed install still follows the managed redirect path (no self-replace): the managed branch is reached before any pinned-download logic, printing the manager + upgrade command and exiting 0.
 
 ## Open Questions
 
