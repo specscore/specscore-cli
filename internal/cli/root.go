@@ -52,6 +52,7 @@ func Run(args []string) error {
 		publicationCommand(),
 		telemetryCommand(),
 		debugCommand(),
+		selfUpdateCommand(),
 	)
 
 	// Attach telemetry persistent-flag + PersistentPreRun. Emission happens

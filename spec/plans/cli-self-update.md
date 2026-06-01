@@ -1,6 +1,6 @@
 # Plan: CLI Self-Update
 
-**Status:** Approved
+**Status:** Implementing
 **Mode:** full
 **Source Feature:** cli/self-update
 **Date:** 2026-06-01
@@ -21,7 +21,7 @@ No ACs are deferred. All 15 ACs in `cli/self-update` are covered.
 
 ### Task 1: Register `self-update` command with `update` alias and flags
 
-**Status:** pending
+**Status:** done
 **Depends-On:** —
 **Verifies:** cli/self-update#ac:canonical-and-alias
 
