@@ -567,6 +567,91 @@ func TestSelfUpdate_PinnedTagAllowsPrerelease(t *testing.T) {
 	}
 }
 
+// AC: cli/self-update#ac:downgrade-requires-flag — a manual install on v0.5.0
+// asked to install a lower pinned target v0.3.0 without --allow-downgrade MUST
+// refuse, name both versions and the --allow-downgrade flag, exit non-zero, and
+// leave the binary unchanged. Re-running with --allow-downgrade --yes performs
+// the downgrade. A dev current version cannot determine direction, so the guard
+// must not trigger.
+func TestSelfUpdate_DowngradeRequiresFlag(t *testing.T) {
+	t.Run("refuses without flag", func(t *testing.T) {
+		withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+		withVersion(t, "v0.5.0")
+		withInteractive(t, false)
+		called := withSelfReplace(t, nil)
+
+		out, errOut, err := runSelfUpdate(t, "--version", "v0.3.0")
+		if err == nil {
+			t.Fatal("expected non-nil error refusing the downgrade")
+		}
+		if *called {
+			t.Error("doSelfReplace was called; binary must be left unchanged on a refused downgrade")
+		}
+		ec, ok := err.(exitCoder)
+		if !ok {
+			t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+		}
+		if code := ec.ExitCode(); code == 0 {
+			t.Errorf("exit code = %d; want non-zero", code)
+		}
+		combined := out + errOut + err.Error()
+		if !strings.Contains(combined, "0.5.0") {
+			t.Errorf("output/error %q does not name the current version 0.5.0", combined)
+		}
+		if !strings.Contains(combined, "0.3.0") {
+			t.Errorf("output/error %q does not name the target version 0.3.0", combined)
+		}
+		if !strings.Contains(combined, "--allow-downgrade") {
+			t.Errorf("output/error %q does not mention the --allow-downgrade flag", combined)
+		}
+	})
+
+	t.Run("proceeds with --allow-downgrade --yes", func(t *testing.T) {
+		withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+		withVersion(t, "v0.5.0")
+		withInteractive(t, false)
+		gotTag := withSelfReplaceTag(t, nil)
+
+		out, _, err := runSelfUpdate(t, "--version", "v0.3.0", "--allow-downgrade", "--yes")
+		if err != nil {
+			t.Fatalf("downgrade with --allow-downgrade --yes returned error (want nil): %v", err)
+		}
+		if *gotTag != "v0.3.0" {
+			t.Errorf("doSelfReplace tag = %q; want downgrade target %q", *gotTag, "v0.3.0")
+		}
+		if !strings.Contains(strings.ToLower(out), "downgrade") {
+			t.Errorf("stdout %q does not indicate a downgrade transition", out)
+		}
+	})
+
+	t.Run("dev current does not trigger guard", func(t *testing.T) {
+		withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+		withVersion(t, "dev")
+		withInteractive(t, false)
+		called := withSelfReplace(t, nil)
+
+		_, _, err := runSelfUpdate(t, "--version", "v0.3.0", "--yes")
+		if err != nil {
+			t.Fatalf("dev current pinned install returned error (want nil): %v", err)
+		}
+		if !*called {
+			t.Error("doSelfReplace was not called; the guard must not trigger for a dev build")
+		}
+	})
+}
+
+// The --allow-downgrade flag exists and defaults to false.
+func TestSelfUpdate_AllowDowngradeFlag(t *testing.T) {
+	cmd := selfUpdateCommand()
+	f := cmd.Flags().Lookup("allow-downgrade")
+	if f == nil {
+		t.Fatal("missing --allow-downgrade flag")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--allow-downgrade default = %q; want false", f.DefValue)
+	}
+}
+
 // The --version flag exists as a self-update-local string flag and defaults to
 // empty (distinct from the root --version).
 func TestSelfUpdate_VersionFlag(t *testing.T) {

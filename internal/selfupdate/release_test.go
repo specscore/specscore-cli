@@ -90,6 +90,27 @@ func TestCompare_UpToDate(t *testing.T) {
 	}
 }
 
+func TestCompareVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"v0.5.0", "v0.3.0", 1},
+		{"v0.3.0", "v0.5.0", -1},
+		{"0.5.0", "v0.5.0", 0},
+		{"v1.2.0", "v1.10.0", -1},
+		{"v2.0.0", "v1.9.9", 1},
+		{"v1.0.0-rc.1", "v1.0.0", -1},
+		{"v1.0.0", "v1.0.0-rc.1", 1},
+		{"v1.0.0-rc.1", "v1.0.0-rc.2", -1},
+	}
+	for _, c := range cases {
+		if got := CompareVersions(c.a, c.b); got != c.want {
+			t.Errorf("CompareVersions(%q, %q) = %d; want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestCompare_Available(t *testing.T) {
 	got := Compare("0.5.0", "v0.6.0")
 	if got.Verdict != Available {

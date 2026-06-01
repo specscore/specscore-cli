@@ -121,8 +121,28 @@ func selfUpdateCommand() *cobra.Command {
 					// "v" via AssetName); we only trim surrounding whitespace.
 					pinnedTag := strings.TrimSpace(pinned)
 					out := cmd.OutOrStdout()
-					// TODO(task 13): downgrade guard
-					_, _ = fmt.Fprintf(out, "%s → %s\n", version, pinnedTag)
+
+					// Downgrade guard: when the running version is known (not the
+					// "dev" placeholder) and the pinned target is strictly lower,
+					// refuse unless --allow-downgrade is set. Direction can't be
+					// determined for a dev build, so the guard does not trigger there.
+					allowDowngrade, _ := cmd.Flags().GetBool("allow-downgrade")
+					isDowngrade := version != selfupdate.DevVersion &&
+						selfupdate.CompareVersions(pinnedTag, version) < 0
+					if isDowngrade && !allowDowngrade {
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+							"self-update: refusing to downgrade from %s to %s; pass --allow-downgrade to proceed\n",
+							version, pinnedTag)
+						return exitcode.InvalidStateErrorf(
+							"self-update: refusing to downgrade from %s to %s; pass --allow-downgrade to proceed",
+							version, pinnedTag)
+					}
+
+					if isDowngrade {
+						_, _ = fmt.Fprintf(out, "downgrade: %s → %s\n", version, pinnedTag)
+					} else {
+						_, _ = fmt.Fprintf(out, "%s → %s\n", version, pinnedTag)
+					}
 
 					yes, _ := cmd.Flags().GetBool("yes")
 					if !yes {
@@ -201,6 +221,7 @@ func selfUpdateCommand() *cobra.Command {
 	// (leading "v" optional). It is distinct from the root `specscore --version`
 	// flag, which prints the CLI's own build version.
 	cmd.Flags().String("version", "", "install a specific release tag (leading \"v\" optional) instead of the latest")
+	cmd.Flags().Bool("allow-downgrade", false, "permit installing a --version older than the running build")
 	return cmd
 }
 

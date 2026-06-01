@@ -117,7 +117,7 @@ Add a `--version <tag>` flag to the command and a resolver path that fetches a s
 
 ### Task 13: `--allow-downgrade` guard
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 12
 **Verifies:** cli/self-update#ac:downgrade-requires-flag
 

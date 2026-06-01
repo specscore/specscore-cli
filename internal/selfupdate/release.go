@@ -11,8 +11,11 @@ import (
 	"strings"
 )
 
-// devVersion is the placeholder reported by binaries built without -ldflags.
-const devVersion = "dev"
+// DevVersion is the placeholder reported by binaries built without -ldflags.
+const DevVersion = "dev"
+
+// devVersion is the unexported alias retained for existing internal references.
+const devVersion = DevVersion
 
 // defaultReleasesURL is the GitHub REST endpoint listing releases, newest first.
 const defaultReleasesURL = "https://api.github.com/repos/specscore/specscore-cli/releases"
@@ -128,4 +131,62 @@ func Compare(current, latestTag string) CheckResult {
 // normalize strips a single leading "v" from a version string.
 func normalize(v string) string {
 	return strings.TrimPrefix(v, "v")
+}
+
+// CompareVersions orders two semver-ish version strings, returning -1 if a < b,
+// 0 if they are equal, and +1 if a > b. A leading "v" is ignored. Comparison is
+// by numeric major/minor/patch; a prerelease suffix (after "-") sorts lower than
+// the same release without it, per semver. This is a minimal comparison
+// sufficient for the self-update downgrade guard, not a full semver implementation.
+func CompareVersions(a, b string) int {
+	ac, apre := splitVersion(a)
+	bc, bpre := splitVersion(b)
+
+	for i := 0; i < 3; i++ {
+		if ac[i] != bc[i] {
+			if ac[i] < bc[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	// Core versions equal: a prerelease is lower than its release.
+	switch {
+	case apre == "" && bpre == "":
+		return 0
+	case apre == "" && bpre != "":
+		return 1
+	case apre != "" && bpre == "":
+		return -1
+	default:
+		return strings.Compare(apre, bpre)
+	}
+}
+
+// splitVersion parses a version string into its numeric [major, minor, patch]
+// and any prerelease suffix (the portion after the first "-"). Missing or
+// non-numeric components are treated as 0.
+func splitVersion(v string) ([3]int, string) {
+	v = normalize(strings.TrimSpace(v))
+	var pre string
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		pre = v[i+1:]
+		v = v[:i]
+	}
+	var core [3]int
+	for i, part := range strings.SplitN(v, ".", 3) {
+		if i >= 3 {
+			break
+		}
+		n := 0
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				n = 0
+				break
+			}
+			n = n*10 + int(r-'0')
+		}
+		core[i] = n
+	}
+	return core, pre
 }
