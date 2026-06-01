@@ -109,7 +109,7 @@ Handle the two write-path failure modes explicitly: a release lookup / asset dow
 
 ### Task 12: `--version <tag>` flag with exact-tag resolution
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1, 2, 7, 9
 **Verifies:** cli/self-update#ac:version-flag-selects-tag, cli/self-update#ac:pinned-tag-allows-prerelease
 

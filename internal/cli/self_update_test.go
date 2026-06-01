@@ -501,6 +501,85 @@ func TestSelfUpdate_PermissionDeniedIsSafe(t *testing.T) {
 	}
 }
 
+// withSelfReplaceTag overrides the package-level self-replace hook with a spy
+// that captures the tag it was called with, so pinned-version tests can assert
+// the exact target routed to the swap machinery without any download/replace.
+func withSelfReplaceTag(t *testing.T, err error) *string {
+	t.Helper()
+	var gotTag string
+	prev := doSelfReplace
+	doSelfReplace = func(_ context.Context, tag string) error {
+		gotTag = tag
+		return err
+	}
+	t.Cleanup(func() { doSelfReplace = prev })
+	return &gotTag
+}
+
+// AC: cli/self-update#ac:version-flag-selects-tag — a manual install run with
+// `--version 0.0.3 --yes` MUST install exactly the v0.0.3 release (tag accepted
+// with or without the leading v), routed through the same swap machinery as an
+// unpinned update, and MUST NOT consult the stable-only latest resolver for the
+// target. We stub a different "latest" tag as a sentinel: if resolveLatest were
+// used for the target, the spy would capture the sentinel instead of the pin.
+func TestSelfUpdate_VersionFlagSelectsTag(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "0.0.1")
+	withLatest(t, "v9.9.9", nil) // sentinel: must NOT become the install target
+	withInteractive(t, false)    // --yes must work regardless of TTY
+	gotTag := withSelfReplaceTag(t, nil)
+
+	out, _, err := runSelfUpdate(t, "--version", "0.0.3", "--yes")
+	if err != nil {
+		t.Fatalf("pinned self-update returned error (want nil): %v", err)
+	}
+	if *gotTag != "0.0.3" {
+		t.Errorf("doSelfReplace tag = %q; want pinned %q (not the sentinel latest)", *gotTag, "0.0.3")
+	}
+	if !strings.Contains(out, "→") || !strings.Contains(out, "0.0.1") || !strings.Contains(out, "0.0.3") {
+		t.Errorf("stdout %q does not contain the current → pinned transition", out)
+	}
+	if strings.Contains(out, "9.9.9") {
+		t.Errorf("stdout %q references the sentinel latest; pinned path must bypass resolveLatest", out)
+	}
+}
+
+// AC: cli/self-update#ac:pinned-tag-allows-prerelease — a manual install run
+// with `--version v0.1.0-rc.1 --yes` MUST install that prerelease exactly, even
+// though the unpinned latest path filters prereleases out. We assert the spy
+// captured the prerelease tag verbatim and the sentinel "latest" was not used.
+func TestSelfUpdate_PinnedTagAllowsPrerelease(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "0.0.1")
+	withLatest(t, "v0.0.2", nil) // sentinel stable latest; prerelease would be skipped here
+	withInteractive(t, false)
+	gotTag := withSelfReplaceTag(t, nil)
+
+	out, _, err := runSelfUpdate(t, "--version", "v0.1.0-rc.1", "--yes")
+	if err != nil {
+		t.Fatalf("pinned prerelease self-update returned error (want nil): %v", err)
+	}
+	if *gotTag != "v0.1.0-rc.1" {
+		t.Errorf("doSelfReplace tag = %q; want pinned prerelease %q", *gotTag, "v0.1.0-rc.1")
+	}
+	if !strings.Contains(out, "→") || !strings.Contains(out, "v0.1.0-rc.1") {
+		t.Errorf("stdout %q does not contain the current → pinned-prerelease transition", out)
+	}
+}
+
+// The --version flag exists as a self-update-local string flag and defaults to
+// empty (distinct from the root --version).
+func TestSelfUpdate_VersionFlag(t *testing.T) {
+	cmd := selfUpdateCommand()
+	v := cmd.Flags().Lookup("version")
+	if v == nil {
+		t.Fatal("missing --version flag")
+	}
+	if v.DefValue != "" {
+		t.Errorf("--version default = %q; want empty", v.DefValue)
+	}
+}
+
 // The --yes flag has a -y shorthand and both --check and --yes default false.
 func TestSelfUpdate_Flags(t *testing.T) {
 	cmd := selfUpdateCommand()

@@ -113,6 +113,39 @@ func selfUpdateCommand() *cobra.Command {
 					selfupdate.ManagerName(detection.Manager), upgrade)
 				return nil
 			case selfupdate.Manual:
+				if pinned, _ := cmd.Flags().GetString("version"); strings.TrimSpace(pinned) != "" {
+					// Pinned target: install exactly this tag. Bypass the
+					// stable-only resolveLatest/Compare path entirely so an
+					// explicitly requested prerelease/draft installs as-is. The
+					// tag is passed through (DownloadAndVerify strips a leading
+					// "v" via AssetName); we only trim surrounding whitespace.
+					pinnedTag := strings.TrimSpace(pinned)
+					out := cmd.OutOrStdout()
+					// TODO(task 13): downgrade guard
+					_, _ = fmt.Fprintf(out, "%s → %s\n", version, pinnedTag)
+
+					yes, _ := cmd.Flags().GetBool("yes")
+					if !yes {
+						if !isInteractive() {
+							_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
+								"self-update: --yes is required for non-interactive use; refusing to replace the binary")
+							return exitcode.InvalidStateError("self-update: --yes is required for non-interactive use")
+						}
+						_, _ = fmt.Fprint(out, "Proceed? [y/N] ")
+						reader := bufio.NewReader(cmd.InOrStdin())
+						line, _ := reader.ReadString('\n')
+						if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
+							_, _ = fmt.Fprintln(out, "self-update: aborted; binary left unchanged.")
+							return nil
+						}
+					}
+
+					if err := doSelfReplace(cmd.Context(), pinnedTag); err != nil {
+						return classifySelfReplaceError(cmd, err)
+					}
+					_, _ = fmt.Fprintf(out, "specscore updated to %s.\n", pinnedTag)
+					return nil
+				}
 				latest, err := resolveLatest(cmd.Context())
 				if err != nil {
 					return exitcode.NotFoundErrorf("self-update: could not resolve the latest release: %v", err)
@@ -164,6 +197,10 @@ func selfUpdateCommand() *cobra.Command {
 	}
 	cmd.Flags().Bool("check", false, "report whether a newer release is available without applying it")
 	cmd.Flags().BoolP("yes", "y", false, "skip the interactive confirmation prompt")
+	// --version here is self-update-local: it pins the release tag to install
+	// (leading "v" optional). It is distinct from the root `specscore --version`
+	// flag, which prints the CLI's own build version.
+	cmd.Flags().String("version", "", "install a specific release tag (leading \"v\" optional) instead of the latest")
 	return cmd
 }
 
