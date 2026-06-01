@@ -256,6 +256,27 @@ func TestSelfUpdate_CheckExitCodeContract(t *testing.T) {
 	})
 }
 
+// AC: cli/self-update#ac:already-current-noop — a manual install already on the
+// latest stable release that runs `specscore self-update` (without --check) MUST
+// report it is up to date and exit 0 without downloading or replacing anything.
+// We force a manual detection plus a latest tag equal to the running version,
+// then assert a nil error (exit 0) and an up-to-date message on stdout. Returning
+// before the self-replace placeholder is sufficient proof that no download or
+// replacement was attempted.
+func TestSelfUpdate_AlreadyCurrentNoop(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "1.2.3")
+	withLatest(t, "v1.2.3", nil)
+
+	out, _, err := runSelfUpdate(t)
+	if err != nil {
+		t.Fatalf("already-current self-update returned error (want nil/exit 0): %v", err)
+	}
+	if !strings.Contains(strings.ToLower(out), "up to date") {
+		t.Errorf("stdout %q does not report the binary is up to date", out)
+	}
+}
+
 // The --yes flag has a -y shorthand and both --check and --yes default false.
 func TestSelfUpdate_Flags(t *testing.T) {
 	cmd := selfUpdateCommand()

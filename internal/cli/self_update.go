@@ -73,8 +73,19 @@ func selfUpdateCommand() *cobra.Command {
 					selfupdate.ManagerName(detection.Manager), upgrade)
 				return nil
 			case selfupdate.Manual:
-				// TODO(task 6/7/8/9/10): manual self-replace path
-				return errors.New("self-update: manual install path not yet implemented")
+				latest, err := resolveLatest(cmd.Context())
+				if err != nil {
+					return exitcode.NotFoundErrorf("self-update: could not resolve the latest release: %v", err)
+				}
+				result := selfupdate.Compare(version, latest)
+				if result.Verdict == selfupdate.UpToDate {
+					// Already on the latest stable release. Report and exit 0
+					// without downloading or replacing anything.
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "specscore is already up to date (%s).\n", result.Current)
+					return nil
+				}
+				// TODO(task 9): confirm + download + verify + swap
+				return errors.New("self-update: self-replace not yet implemented")
 			default:
 				// Ambiguous: the install method cannot be confidently
 				// classified. Refuse to self-replace, print manual-update

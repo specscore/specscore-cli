@@ -93,7 +93,7 @@ Before invoking the swap (Task 8) on a manual install, print the `<current> → 
 
 ### Task 10: Already-current no-op short-circuit
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 2
 **Verifies:** cli/self-update#ac:already-current-noop
 
