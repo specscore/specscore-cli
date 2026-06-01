@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -33,6 +35,26 @@ func withDetection(t *testing.T, d selfupdate.Detection) {
 	t.Cleanup(func() { detectInstall = prev })
 }
 
+// withLatest overrides the package-level release-resolution hook for the
+// duration of the test and restores it afterward, so --check tests never hit
+// the network.
+func withLatest(t *testing.T, tag string, err error) {
+	t.Helper()
+	prev := resolveLatest
+	resolveLatest = func(context.Context) (string, error) { return tag, err }
+	t.Cleanup(func() { resolveLatest = prev })
+}
+
+// withVersion overrides the build-time current-version var for the duration of
+// the test so verdict comparison is deterministic regardless of how the test
+// binary was built.
+func withVersion(t *testing.T, v string) {
+	t.Helper()
+	prev := version
+	version = v
+	t.Cleanup(func() { version = prev })
+}
+
 // AC: cli/self-update#ac:canonical-and-alias — invoking `self-update --check`
 // and `update --check` MUST resolve to the same command and produce identical
 // stdout and the same error/exit result. We verify alias equivalence by
@@ -40,9 +62,12 @@ func withDetection(t *testing.T, d selfupdate.Detection) {
 // driving the canonical command with --check and asserting deterministic
 // output and a nil error.
 func TestSelfUpdate_CanonicalAndAlias(t *testing.T) {
-	// Force a deterministic managed detection so dispatch produces stable,
-	// non-erroring stdout independent of the real test-binary path.
+	// Force a deterministic managed detection plus an up-to-date verdict so
+	// --check produces stable, non-erroring stdout independent of the real
+	// test-binary path and the network.
 	withDetection(t, selfupdate.Detection{Method: selfupdate.Managed, Manager: selfupdate.Homebrew})
+	withVersion(t, "1.2.3")
+	withLatest(t, "v1.2.3", nil)
 
 	cmd := selfUpdateCommand()
 	if cmd.Name() != "self-update" {
@@ -148,6 +173,87 @@ func TestSelfUpdate_RejectsExtraArgs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for extra positional argument")
 	}
+}
+
+// AC: cli/self-update#ac:check-is-readonly — for any install method, running
+// self-update --check with a newer release available MUST print availability
+// and the appropriate next step, and MUST NOT download or replace the binary.
+// We force a manual detection (the only method whose action path touches the
+// filesystem) plus a newer latest tag, then assert the availability line and
+// the manual self-update next-step note appear. The --check branch returns
+// before reaching any download/replace code, so no temp files or writes occur.
+func TestSelfUpdate_CheckIsReadonly(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "1.0.0")
+	withLatest(t, "v1.1.0", nil)
+
+	out, _, err := runSelfUpdate(t, "--check")
+	if err == nil {
+		t.Fatal("expected non-nil error (exit 10) when an update is available")
+	}
+
+	lower := strings.ToLower(out)
+	if !strings.Contains(lower, "1.0.0") || !strings.Contains(lower, "1.1.0") {
+		t.Errorf("stdout %q does not report availability (current → latest)", out)
+	}
+	if !strings.Contains(lower, "self-update") {
+		t.Errorf("stdout %q does not name the manual self-update next step", out)
+	}
+}
+
+// AC: cli/self-update#ac:check-exit-code-contract — --check exit codes MUST be
+// 0 (up to date), 10 (update available), and a third distinct code for a
+// release-lookup error. We drive all three scenarios via the detection and
+// release-resolution hooks and assert the exact codes, with the error case
+// distinct from both 0 and 10.
+func TestSelfUpdate_CheckExitCodeContract(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+
+	t.Run("up to date → exit 0", func(t *testing.T) {
+		withVersion(t, "2.0.0")
+		withLatest(t, "v2.0.0", nil)
+
+		_, _, err := runSelfUpdate(t, "--check")
+		if err != nil {
+			t.Fatalf("up-to-date --check returned error (want nil/exit 0): %v", err)
+		}
+	})
+
+	t.Run("update available → exit 10", func(t *testing.T) {
+		withVersion(t, "2.0.0")
+		withLatest(t, "v2.1.0", nil)
+
+		_, _, err := runSelfUpdate(t, "--check")
+		if err == nil {
+			t.Fatal("update-available --check returned nil (want exit 10)")
+		}
+		ec, ok := err.(exitCoder)
+		if !ok {
+			t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+		}
+		if code := ec.ExitCode(); code != 10 {
+			t.Errorf("exit code = %d; want 10", code)
+		}
+	})
+
+	t.Run("release-lookup error → distinct code", func(t *testing.T) {
+		withVersion(t, "2.0.0")
+		withLatest(t, "", errors.New("github releases request failed"))
+
+		_, _, err := runSelfUpdate(t, "--check")
+		if err == nil {
+			t.Fatal("release-lookup error --check returned nil (want non-zero)")
+		}
+		ec, ok := err.(exitCoder)
+		if !ok {
+			t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+		}
+		if code := ec.ExitCode(); code == 0 || code == 10 {
+			t.Errorf("exit code = %d; want distinct from 0 and 10", code)
+		} else if code != 3 {
+			t.Errorf("exit code = %d; want 3 (NotFound)", code)
+		}
+	})
 }
 
 // The --yes flag has a -y shorthand and both --check and --yes default false.

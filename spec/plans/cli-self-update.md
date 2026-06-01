@@ -61,7 +61,7 @@ When detection returns `ambiguous`, refuse to self-replace, print that the insta
 
 ### Task 6: `--check` read-only mode and exit-code contract
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 2, 3, 4, 5
 **Verifies:** cli/self-update#ac:check-is-readonly, cli/self-update#ac:check-exit-code-contract
 
