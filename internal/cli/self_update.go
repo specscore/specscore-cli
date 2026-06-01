@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/specscore/specscore-cli/internal/selfupdate"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -30,6 +33,42 @@ var detectInstall = selfupdate.DetectSelf
 // access, mirroring the detectInstall hook.
 var resolveLatest = func(ctx context.Context) (string, error) {
 	return selfupdate.Resolver{}.LatestStableTag(ctx)
+}
+
+// isInteractive reports whether the process is attached to an interactive
+// terminal. It is a package-level variable so tests can force a deterministic
+// answer without depending on the test runner's stdin. The default inspects
+// stdin's mode: a character device indicates a TTY rather than a pipe/file.
+var isInteractive = func() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// doSelfReplace performs the actual download → verify → swap for a manual
+// install, replacing the running executable with the release identified by
+// latestTag. It is a package-level variable so tests can substitute a spy and
+// never touch the network or filesystem. The default resolves the running
+// executable's path, downloads and sha256-verifies the matching release asset,
+// atomically swaps it in, then best-effort verifies the new binary's version.
+var doSelfReplace = func(ctx context.Context, latestTag string) error {
+	target, err := os.Executable()
+	if err != nil {
+		return exitcode.InvalidStateErrorf("self-update: could not resolve the running executable: %v", err)
+	}
+	tmp, err := selfupdate.Downloader{}.DownloadAndVerify(ctx, strings.TrimPrefix(latestTag, "v"), "", "")
+	if err != nil {
+		return err
+	}
+	if err := selfupdate.ReplaceExecutable(target, tmp); err != nil {
+		return err
+	}
+	// Best-effort post-swap sanity check; a mismatch is surfaced but the swap
+	// has already succeeded.
+	_ = selfupdate.VerifyBinaryVersion(target, strings.TrimPrefix(latestTag, "v"))
+	return nil
 }
 
 // selfUpdateCommand returns the "self-update" command (aliased "update"),
@@ -84,8 +123,33 @@ func selfUpdateCommand() *cobra.Command {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "specscore is already up to date (%s).\n", result.Current)
 					return nil
 				}
-				// TODO(task 9): confirm + download + verify + swap
-				return errors.New("self-update: self-replace not yet implemented")
+				// Available/Undetermined: confirm (unless --yes), then swap.
+				out := cmd.OutOrStdout()
+				_, _ = fmt.Fprintf(out, "%s → %s\n", result.Current, result.Latest)
+
+				yes, _ := cmd.Flags().GetBool("yes")
+				if !yes {
+					if !isInteractive() {
+						// Refuse to block on input when there's no terminal and
+						// no explicit consent. Leave the binary unchanged.
+						_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
+							"self-update: --yes is required for non-interactive use; refusing to replace the binary")
+						return exitcode.InvalidStateError("self-update: --yes is required for non-interactive use")
+					}
+					_, _ = fmt.Fprint(out, "Proceed? [y/N] ")
+					reader := bufio.NewReader(cmd.InOrStdin())
+					line, _ := reader.ReadString('\n')
+					if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
+						_, _ = fmt.Fprintln(out, "self-update: aborted; binary left unchanged.")
+						return nil
+					}
+				}
+
+				if err := doSelfReplace(cmd.Context(), latest); err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintf(out, "specscore updated to %s.\n", result.Latest)
+				return nil
 			default:
 				// Ambiguous: the install method cannot be confidently
 				// classified. Refuse to self-replace, print manual-update

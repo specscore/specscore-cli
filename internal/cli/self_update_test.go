@@ -277,6 +277,122 @@ func TestSelfUpdate_AlreadyCurrentNoop(t *testing.T) {
 	}
 }
 
+// withInteractive overrides the package-level TTY-detection hook for the
+// duration of the test and restores it afterward, so confirmation tests never
+// depend on whether the test process is attached to a real terminal.
+func withInteractive(t *testing.T, interactive bool) {
+	t.Helper()
+	prev := isInteractive
+	isInteractive = func() bool { return interactive }
+	t.Cleanup(func() { isInteractive = prev })
+}
+
+// withSelfReplace overrides the package-level self-replace hook with a spy so
+// confirmation tests never download or replace anything. It returns a pointer
+// to a bool that records whether the hook was invoked.
+func withSelfReplace(t *testing.T, err error) *bool {
+	t.Helper()
+	called := false
+	prev := doSelfReplace
+	doSelfReplace = func(context.Context, string) error {
+		called = true
+		return err
+	}
+	t.Cleanup(func() { doSelfReplace = prev })
+	return &called
+}
+
+// AC: cli/self-update#ac:confirm-prompt-and-yes — a manual install with a newer
+// release available, run with --yes, MUST perform the replacement without
+// prompting, after printing the current → latest transition. We stub a manual
+// detection plus a newer latest and override the self-replace hook with a spy
+// so no real download/replace happens.
+func TestSelfUpdate_ConfirmPromptAndYes_WithYes(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "1.0.0")
+	withLatest(t, "v1.1.0", nil)
+	withInteractive(t, false) // --yes must work regardless of TTY state
+	called := withSelfReplace(t, nil)
+
+	out, _, err := runSelfUpdate(t, "--yes")
+	if err != nil {
+		t.Fatalf("self-update --yes returned error (want nil): %v", err)
+	}
+	if !*called {
+		t.Error("doSelfReplace was not called with --yes")
+	}
+	if !strings.Contains(out, "→") || !strings.Contains(out, "1.0.0") || !strings.Contains(out, "1.1.0") {
+		t.Errorf("stdout %q does not contain the current → latest transition", out)
+	}
+}
+
+// AC: cli/self-update#ac:confirm-prompt-and-yes — without --yes but attached to
+// an interactive terminal, the command MUST print the transition, prompt for
+// confirmation, and (on "y") proceed with the replacement. We drive stdin with
+// "y\n" and assert the prompt text appears and the self-replace spy ran.
+func TestSelfUpdate_ConfirmPromptAndYes_InteractiveConfirms(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "1.0.0")
+	withLatest(t, "v1.1.0", nil)
+	withInteractive(t, true)
+	called := withSelfReplace(t, nil)
+
+	cmd := selfUpdateCommand()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetIn(strings.NewReader("y\n"))
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("interactive confirm returned error (want nil): %v", err)
+	}
+	if !*called {
+		t.Error("doSelfReplace was not called after interactive confirmation")
+	}
+	lower := strings.ToLower(out.String())
+	if !strings.Contains(lower, "proceed") {
+		t.Errorf("stdout %q does not contain a confirmation prompt", out.String())
+	}
+	if !strings.Contains(out.String(), "→") {
+		t.Errorf("stdout %q does not contain the current → latest transition", out.String())
+	}
+}
+
+// AC: cli/self-update#ac:noninteractive-without-yes-refuses — a manual install
+// with a newer release, run without --yes and without an interactive terminal,
+// MUST refuse to replace, state that --yes is required for non-interactive use,
+// and exit non-zero, leaving the binary unchanged. We force isInteractive→false
+// and assert the self-replace spy was NOT called plus a non-zero *exitcode.Error.
+func TestSelfUpdate_NonInteractiveWithoutYesRefuses(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "1.0.0")
+	withLatest(t, "v1.1.0", nil)
+	withInteractive(t, false)
+	called := withSelfReplace(t, nil)
+
+	out, errOut, err := runSelfUpdate(t)
+	if err == nil {
+		t.Fatal("expected non-nil error for non-interactive run without --yes")
+	}
+	if *called {
+		t.Error("doSelfReplace was called; binary must be left unchanged")
+	}
+	ec, ok := err.(exitCoder)
+	if !ok {
+		t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+	}
+	if code := ec.ExitCode(); code == 0 {
+		t.Errorf("exit code = %d; want non-zero", code)
+	}
+	combined := strings.ToLower(out + errOut + err.Error())
+	if !strings.Contains(combined, "--yes") {
+		t.Errorf("output/error %q does not mention that --yes is required", combined)
+	}
+	if !strings.Contains(combined, "non-interactive") && !strings.Contains(combined, "noninteractive") {
+		t.Errorf("output/error %q does not mention non-interactive use", combined)
+	}
+}
+
 // The --yes flag has a -y shorthand and both --check and --yes default false.
 func TestSelfUpdate_Flags(t *testing.T) {
 	cmd := selfUpdateCommand()

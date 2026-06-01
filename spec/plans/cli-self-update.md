@@ -85,7 +85,7 @@ Swap the verified binary into the executable's location atomically (stage + rena
 
 ### Task 9: Confirmation prompt with `--yes` and non-interactive guard
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 8
 **Verifies:** cli/self-update#ac:confirm-prompt-and-yes, cli/self-update#ac:noninteractive-without-yes-refuses
 
