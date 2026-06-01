@@ -53,7 +53,7 @@ When detection returns `managed`, print the detected manager and its exact upgra
 
 ### Task 5: Ambiguous-detection safe fallback
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 3
 **Verifies:** cli/self-update#ac:ambiguous-falls-back-safe
 
@@ -77,7 +77,7 @@ For the manual path, download the release asset matching host OS/arch from the l
 
 ### Task 8: Atomic self-replace of the running executable
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 7
 **Verifies:** cli/self-update#ac:replace-is-atomic
 

@@ -5,8 +5,19 @@ import (
 	"fmt"
 
 	"github.com/specscore/specscore-cli/internal/selfupdate"
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/spf13/cobra"
 )
+
+// ambiguousGuidance is shown when the install method cannot be confidently
+// classified. It tells the user the situation is ambiguous and how to update
+// manually instead of letting self-update guess.
+const ambiguousGuidance = `specscore could not determine how this binary was installed, so the install method is ambiguous.
+To avoid replacing a binary that may be managed by a package manager, self-update will not modify it.
+
+To update manually, either:
+  - re-download the latest release from https://github.com/specscore/specscore-cli/releases, or
+  - upgrade via the package manager you used to install specscore.`
 
 // detectInstall resolves how the running binary was installed. It is a
 // package-level variable so tests can override it to force a specific
@@ -53,9 +64,13 @@ func selfUpdateCommand() *cobra.Command {
 				// TODO(task 6/7/8/9/10): manual self-replace path
 				return errors.New("self-update: manual install path not yet implemented")
 			default:
-				// Ambiguous.
-				// TODO(task 6/7/8/9/10): ambiguous install path
-				return errors.New("self-update: ambiguous install path not yet implemented")
+				// Ambiguous: the install method cannot be confidently
+				// classified. Refuse to self-replace, print manual-update
+				// guidance, and exit non-zero. Ambiguity must never resolve
+				// to the self-replace path, so we return before any
+				// download/write.
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), ambiguousGuidance)
+				return exitcode.InvalidStateError("self-update: install method is ambiguous; refusing to self-replace")
 			}
 		},
 	}

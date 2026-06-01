@@ -8,6 +8,10 @@ import (
 	"github.com/specscore/specscore-cli/internal/selfupdate"
 )
 
+// exitCoder is the convention the top-level CLI runner uses to translate an
+// error into a process exit code.
+type exitCoder interface{ ExitCode() int }
+
 func runSelfUpdate(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	cmd := selfUpdateCommand()
@@ -102,6 +106,39 @@ func TestSelfUpdate_ManagedIsRedirected(t *testing.T) {
 				t.Errorf("stdout %q does not contain exact upgrade command %q", out, c.wantCommand)
 			}
 		})
+	}
+}
+
+// AC: cli/self-update#ac:ambiguous-falls-back-safe — when the install method
+// cannot be confidently classified, self-update MUST NOT replace the binary. It
+// states the install method is ambiguous, prints manual-update guidance, and
+// exits non-zero. We force an ambiguous detection via the override hook and
+// assert a non-zero, non-10 *exitcode.Error plus the required messaging.
+// Returning before any download/replace is sufficient to prove no replacement
+// occurred (the only filesystem-touching code lives on the manual path, which
+// this branch never reaches).
+func TestSelfUpdate_AmbiguousFallsBackSafe(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Ambiguous, Manager: selfupdate.ManagerNone})
+
+	out, errOut, err := runSelfUpdate(t)
+	if err == nil {
+		t.Fatal("expected non-nil error for ambiguous detection (must exit non-zero)")
+	}
+
+	ec, ok := err.(exitCoder)
+	if !ok {
+		t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+	}
+	if code := ec.ExitCode(); code == 0 || code == 10 {
+		t.Errorf("exit code = %d; want non-zero and not 10", code)
+	}
+
+	combined := strings.ToLower(out + errOut + err.Error())
+	if !strings.Contains(combined, "ambiguous") {
+		t.Errorf("output/error %q does not state the install method is ambiguous", combined)
+	}
+	if !strings.Contains(combined, "github.com") {
+		t.Errorf("output/error %q does not contain manual-update guidance", combined)
 	}
 }
 
