@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -146,7 +147,7 @@ func selfUpdateCommand() *cobra.Command {
 				}
 
 				if err := doSelfReplace(cmd.Context(), latest); err != nil {
-					return err
+					return classifySelfReplaceError(cmd, err)
 				}
 				_, _ = fmt.Fprintf(out, "specscore updated to %s.\n", result.Latest)
 				return nil
@@ -164,6 +165,45 @@ func selfUpdateCommand() *cobra.Command {
 	cmd.Flags().Bool("check", false, "report whether a newer release is available without applying it")
 	cmd.Flags().BoolP("yes", "y", false, "skip the interactive confirmation prompt")
 	return cmd
+}
+
+// classifySelfReplaceError converts a non-nil error from doSelfReplace into a
+// clear, actionable message and a non-zero *exitcode.Error, distinguishing the
+// two write-path failure modes. The atomic swap is gated behind download +
+// verification, so on any of these errors the original binary is untouched.
+//
+// Permission-denied: the executable's directory is not writable. We report the
+// failure with the executable path (best-effort via os.Executable) and a
+// suggested remedy. Network/lookup/download: anything else (connection refused,
+// rate limit, missing asset, checksum mismatch). An *exitcode.Error is passed
+// through (its code/message are already meaningful); a bare error is wrapped.
+func classifySelfReplaceError(cmd *cobra.Command, err error) error {
+	errOut := cmd.ErrOrStderr()
+
+	if errors.Is(err, fs.ErrPermission) {
+		target, _ := os.Executable()
+		if target == "" {
+			target = "the specscore executable"
+		}
+		_, _ = fmt.Fprintf(errOut,
+			"self-update: permission denied writing %s: %v\n"+
+				"Re-run with elevated permissions (sudo), or update via your package manager.\n",
+			target, err)
+		return exitcode.InvalidStateErrorf(
+			"self-update: permission denied writing %s; re-run with elevated permissions (sudo) or update via your package manager",
+			target)
+	}
+
+	// Network / lookup / download failure (or any other non-permission error).
+	// Pass through a meaningful exitcode error; otherwise wrap as a release/
+	// download failure.
+	var ec *exitcode.Error
+	if errors.As(err, &ec) {
+		_, _ = fmt.Fprintf(errOut, "self-update: %v\n", err)
+		return err
+	}
+	_, _ = fmt.Fprintf(errOut, "self-update: failed to download the release: %v\n", err)
+	return exitcode.NotFoundErrorf("self-update: failed to download the release: %v", err)
 }
 
 // runCheck implements the read-only --check mode for any install method. It

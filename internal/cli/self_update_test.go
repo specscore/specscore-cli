@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 
@@ -390,6 +392,112 @@ func TestSelfUpdate_NonInteractiveWithoutYesRefuses(t *testing.T) {
 	}
 	if !strings.Contains(combined, "non-interactive") && !strings.Contains(combined, "noninteractive") {
 		t.Errorf("output/error %q does not mention non-interactive use", combined)
+	}
+}
+
+// AC: cli/self-update#ac:network-failure-is-safe — a manual install with a
+// newer release available, run with --yes, where the release source is
+// unreachable MUST print a clear error, exit non-zero, and NOT modify the
+// binary. We model the unreachable source two ways: (1) resolveLatest failing
+// the lookup, and (2) doSelfReplace failing mid-download with a non-permission
+// error. Both must surface a clear, actionable error and a non-zero
+// *exitcode.Error.
+func TestSelfUpdate_NetworkFailureIsSafe(t *testing.T) {
+	t.Run("release lookup fails", func(t *testing.T) {
+		withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+		withVersion(t, "1.0.0")
+		withLatest(t, "", errors.New("dial tcp: connection refused"))
+		called := withSelfReplace(t, nil)
+
+		out, errOut, err := runSelfUpdate(t, "--yes")
+		if err == nil {
+			t.Fatal("expected non-nil error when the release source is unreachable")
+		}
+		if *called {
+			t.Error("doSelfReplace was called; the binary must be left unchanged on a lookup failure")
+		}
+		ec, ok := err.(exitCoder)
+		if !ok {
+			t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+		}
+		if code := ec.ExitCode(); code == 0 {
+			t.Errorf("exit code = %d; want non-zero", code)
+		}
+		combined := strings.ToLower(out + errOut + err.Error())
+		if !strings.Contains(combined, "release") {
+			t.Errorf("output/error %q does not mention the release-lookup failure", combined)
+		}
+	})
+
+	t.Run("download fails", func(t *testing.T) {
+		withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+		withVersion(t, "1.0.0")
+		withLatest(t, "v1.1.0", nil)
+		withInteractive(t, false)
+		// A network-ish, non-permission error from the download/verify step.
+		_ = withSelfReplace(t, errors.New("dial tcp: connection refused"))
+
+		out, errOut, err := runSelfUpdate(t, "--yes")
+		if err == nil {
+			t.Fatal("expected non-nil error when the asset download fails")
+		}
+		ec, ok := err.(exitCoder)
+		if !ok {
+			t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+		}
+		if code := ec.ExitCode(); code == 0 {
+			t.Errorf("exit code = %d; want non-zero", code)
+		}
+		combined := strings.ToLower(out + errOut + err.Error())
+		if !strings.Contains(combined, "download") && !strings.Contains(combined, "release") {
+			t.Errorf("output/error %q does not mention the download/release failure", combined)
+		}
+		// The happy-path "updated to" line must NOT appear: nothing was replaced.
+		if strings.Contains(strings.ToLower(out), "updated to") {
+			t.Errorf("stdout %q claims an update succeeded after a download failure", out)
+		}
+	})
+}
+
+// AC: cli/self-update#ac:permission-denied-is-safe — a manual install whose
+// executable directory is not writable, run with --yes, MUST report the
+// permission failure with the executable path and a suggested remedy, exit
+// non-zero, and leave the original binary intact. We override doSelfReplace to
+// return an fs.ErrPermission-wrapped error and assert the message includes a
+// path and a remedy hint.
+func TestSelfUpdate_PermissionDeniedIsSafe(t *testing.T) {
+	withDetection(t, selfupdate.Detection{Method: selfupdate.Manual, Manager: selfupdate.ManagerNone})
+	withVersion(t, "1.0.0")
+	withLatest(t, "v1.1.0", nil)
+	withInteractive(t, false)
+	_ = withSelfReplace(t, fmt.Errorf("rename: %w", fs.ErrPermission))
+
+	out, errOut, err := runSelfUpdate(t, "--yes")
+	if err == nil {
+		t.Fatal("expected non-nil error on a permission-denied replacement")
+	}
+	ec, ok := err.(exitCoder)
+	if !ok {
+		t.Fatalf("error %T does not expose ExitCode(); want *exitcode.Error", err)
+	}
+	if code := ec.ExitCode(); code == 0 {
+		t.Errorf("exit code = %d; want non-zero", code)
+	}
+	combined := strings.ToLower(out + errOut + err.Error())
+	if !strings.Contains(combined, "permission") {
+		t.Errorf("output/error %q does not report a permission failure", combined)
+	}
+	// A remedy hint: elevated permissions (sudo) or the package manager.
+	if !strings.Contains(combined, "sudo") && !strings.Contains(combined, "package manager") {
+		t.Errorf("output/error %q does not suggest a remedy (sudo / package manager)", combined)
+	}
+	// The error must reference a path. os.Executable() should resolve in the
+	// test process; assert a path separator is present as a proxy.
+	if !strings.Contains(combined, "/") && !strings.Contains(combined, `\`) {
+		t.Errorf("output/error %q does not include the executable path", combined)
+	}
+	if strings.Contains(strings.ToLower(out), "updated to") {
+		t.Errorf("stdout %q claims an update succeeded after a permission failure", out)
 	}
 }
 

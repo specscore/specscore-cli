@@ -1,6 +1,6 @@
 # Plan: CLI Self-Update
 
-**Status:** Implementing
+**Status:** Completed
 **Mode:** full
 **Source Feature:** cli/self-update
 **Date:** 2026-06-01
@@ -101,7 +101,7 @@ When the resolved comparison (Task 2) reports the running version already equals
 
 ### Task 11: Network and permission failure modes
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 7, 8
 **Verifies:** cli/self-update#ac:network-failure-is-safe, cli/self-update#ac:permission-denied-is-safe
 
