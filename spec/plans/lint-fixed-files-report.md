@@ -1,6 +1,6 @@
 # Plan: Lint fixed-files report
 
-**Status:** Approved
+**Status:** Implementing
 **Mode:** full
 **Source Feature:** cli/spec/lint
 **Date:** 2026-06-02
@@ -21,7 +21,7 @@ The fifteen pre-existing ACs (`clean-tree-exits-0` … `consumer-path-multi-glob
 
 ### Task 1: Capture the fix-modified file set in `pkg/lint`
 
-**Status:** pending
+**Status:** done
 **Depends-On:** —
 **Verifies:** cli/spec/lint#ac:fix-reports-only-changed-files
 
