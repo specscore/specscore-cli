@@ -139,20 +139,69 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		CLIVersion: version,
 	}
 
-	violations, err := lint.Lint(opts)
+	res, err := lint.LintWithResult(opts)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("linting error: %v", err)
 	}
+	violations := res.Violations
 
 	w := cmd.OutOrStdout()
-	if err := outputLintViolations(w, violations, format); err != nil {
-		return exitcode.UnexpectedErrorf("output error: %v", err)
+	// Under --fix with a structured format, emit a single envelope carrying
+	// both the fixed-files report and the violations. Without --fix the
+	// pre-existing bare-array contract is preserved.
+	if fix && (format == "json" || format == "yaml") {
+		if err := outputLintFixEnvelope(w, res.Fixed, violations, format); err != nil {
+			return exitcode.UnexpectedErrorf("output error: %v", err)
+		}
+	} else {
+		// In default text format under --fix, write the "Fixed N file(s):"
+		// summary naming each modified path to stderr (only when files
+		// changed), leaving stdout as the remaining-violations report.
+		if fix && format == "text" && len(res.Fixed) > 0 {
+			ew := cmd.ErrOrStderr()
+			_, _ = fmt.Fprintf(ew, "Fixed %d file(s):\n", len(res.Fixed))
+			for _, f := range res.Fixed {
+				_, _ = fmt.Fprintf(ew, "  %s\n", f)
+			}
+		}
+		if err := outputLintViolations(w, violations, format); err != nil {
+			return exitcode.UnexpectedErrorf("output error: %v", err)
+		}
 	}
 
 	if len(violations) > 0 {
 		return exitcode.ConflictErrorf("%d violation(s) found", len(violations))
 	}
 	return nil
+}
+
+// lintFixEnvelope is the stdout shape under `--fix --format json|yaml`: a
+// single object carrying both the fixed-files report and the violations.
+type lintFixEnvelope struct {
+	Fixed      []string         `json:"fixed" yaml:"fixed"`
+	Violations []lint.Violation `json:"violations" yaml:"violations"`
+}
+
+// outputLintFixEnvelope marshals the {fixed, violations} envelope. Both arrays
+// serialize as `[]` (never `null`) when empty, matching the non-fix contract.
+func outputLintFixEnvelope(w io.Writer, fixed []string, violations []lint.Violation, format string) error {
+	if fixed == nil {
+		fixed = []string{}
+	}
+	if violations == nil {
+		violations = []lint.Violation{}
+	}
+	env := lintFixEnvelope{Fixed: fixed, Violations: violations}
+	switch format {
+	case "yaml":
+		enc := newYAMLEnc(w)
+		if err := enc.Encode(env); err != nil {
+			return err
+		}
+		return enc.Close()
+	default:
+		return newJSONEnc(w).Encode(env)
+	}
 }
 
 func outputLintViolations(w io.Writer, violations []lint.Violation, format string) error {

@@ -1,6 +1,6 @@
 # Plan: Lint fixed-files report
 
-**Status:** Implementing
+**Status:** Completed
 **Mode:** full
 **Source Feature:** cli/spec/lint
 **Date:** 2026-06-02
@@ -31,7 +31,7 @@ In `pkg/lint`, when `Lint()` runs with `Fix:true`, snapshot a content hash of ev
 
 ### Task 2: Emit the `{fixed, violations}` envelope under `--fix --format json|yaml`
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/spec/lint#ac:fix-json-envelope-only-under-fix, cli/spec/lint#ac:fix-report-needs-no-flag, cli/spec/lint#ac:fix-reports-only-changed-files
 
@@ -39,7 +39,7 @@ In `internal/cli/spec.go`, when `--fix` is set and the format is `json` or `yaml
 
 ### Task 3: Print the text-mode "Fixed N file(s)" summary to stderr under `--fix`
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/spec/lint#ac:fix-text-summary-on-stderr
 
