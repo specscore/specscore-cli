@@ -44,6 +44,7 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(newInternalLinksChecker())
 	l.registerChecker(newForwardRefsChecker())
 	l.registerChecker(newCodeAnnotationsChecker())
+	l.registerChecker(newConfigScopeChecker())
 	l.registerChecker(newPlanHierarchyChecker())
 	l.registerChecker(newPlanROIChecker())
 	l.registerChecker(newAdherenceFooterChecker())
