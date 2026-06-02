@@ -4,12 +4,12 @@
 >
 > **AI skill:** [GitHub](https://github.com/specscore/ai-plugin-specscore/blob/main/skills/spec/references/lint.md) · [local](../../../../../../ai-plugin-specscore/skills/spec/references/lint.md) — if this command's CLI signature or behavior changes, update the linked skill to keep agents in sync.
 
-**Status:** Stable
-**Source Ideas:** index-entries-autofix
+**Status:** Approved
+**Source Ideas:** index-entries-autofix, lint-fix-reports-modified-files
 
 ## Summary
 
-`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories).
+`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit.
 
 ## Contents
 
@@ -175,6 +175,26 @@ When the `adherence-footer` rule runs with `--fix`:
 
 Running `spec lint --fix` twice in a row MUST yield no changes on the second run. The second run exits `0` with no output beyond the standard violation report.
 
+### Fixed-files reporting
+
+`--fix` mutates files in place. Before this behavior the command was silent about which files it changed: a clean `--fix` produced empty stdout and exit `0`, so a caller (human, CI, or agent) had no authoritative signal and could only guess from a `git diff` — a guess that has dropped legitimate autofix changes from commits. `spec lint` now reports exactly what `--fix` modified, on every `--fix` run, by default.
+
+#### REQ: fix-reports-modified-files
+
+When run with `--fix`, `spec lint` MUST determine the exact set of files the fix pass modified and make that set available to the caller. The set MUST be derived from actual content change (a file whose bytes are identical before and after the fix pass MUST NOT appear), MUST list each modified file at most once, and MUST report paths relative to the project root in a deterministic (sorted) order.
+
+#### REQ: fix-report-json-envelope
+
+With `--fix` and `--format json` (or `--format yaml`), stdout MUST be a single object carrying two keys: `fixed` (the array of modified project-relative paths, possibly empty) and `violations` (the remaining-violations array). The structured fixed/violations result MUST NOT be split across stdout and stderr. Without `--fix`, structured output MUST remain the bare violations array it is today — the envelope shape applies only when `--fix` is set, preserving the existing non-fix contract.
+
+#### REQ: fix-report-text-summary
+
+With `--fix` in the default text format, when the fix pass modifies one or more files the command MUST print a human-readable summary to **stderr** naming each modified path. stdout MUST continue to carry only the remaining-violations report (unchanged from a non-`--fix` run). When the fix pass modifies zero files, no summary is printed.
+
+#### REQ: fix-report-default-on
+
+The fixed-files report MUST be emitted whenever `--fix` is used, with no opt-in flag required to enable it. Silence-by-default is the failure mode this Feature exists to remove, so the report is never gated behind a flag.
+
 ### Exit codes
 
 `spec lint` signals violations through the exit code so CI can gate on it.
@@ -337,12 +357,38 @@ Given a tree containing entity files with stale `## Properties` tables and prope
 
 Given a registry row whose `Consumer Path` cell is `spec/features/**/*.entity.md, spec/features/**/*.property.md`, the CLI's parser produces a glob list of length two containing both globs. Whitespace around the comma is tolerated. A cell value of `—` (or the empty string) produces an empty glob list. Cell values with leading, trailing, or doubled commas (e.g. `,a,b`, `a,b,`, `a,,b`) MUST produce a glob list with the empty entries silently discarded, never an error.
 
+### AC: fix-reports-only-changed-files
+
+**Requirements:** cli/spec/lint#req:fix-reports-modified-files
+
+Given a spec tree with exactly one file needing an autofix (e.g. a single missing adherence footer), running `specscore spec lint --fix --format json` reports that one file's project-relative path in the `fixed` array and no other paths. Running the same command a second time (now a clean tree, per `fix-is-idempotent`) reports an empty `fixed` array.
+
+### AC: fix-json-envelope-only-under-fix
+
+**Requirements:** cli/spec/lint#req:fix-report-json-envelope
+
+Given a spec tree with one autofixable violation, `specscore spec lint --fix --format json` emits a single JSON object on stdout containing both a `fixed` array and a `violations` array. The same tree linted with `specscore spec lint --format json` (no `--fix`) emits a bare JSON array of violations with no `fixed` key — the pre-existing non-fix contract is preserved.
+
+### AC: fix-text-summary-on-stderr
+
+**Requirements:** cli/spec/lint#req:fix-report-text-summary
+
+Given a spec tree with one autofixable violation, running `specscore spec lint --fix` in default text format writes a summary naming the modified path to stderr while stdout carries only the remaining-violations report. Running `specscore spec lint --fix` again on the now-clean tree writes no stderr summary (zero files modified).
+
+### AC: fix-report-needs-no-flag
+
+**Requirements:** cli/spec/lint#req:fix-report-default-on
+
+Given a spec tree with one autofixable violation, running `specscore spec lint --fix` with no flags beyond `--fix` (and an optional `--format`) produces the fixed-files report — the stderr summary in text format, the `fixed` key in `--format json|yaml` — without any additional enabling flag.
+
 ## Open Questions
 
 - Should `spec lint` accept a path argument (`spec lint spec/features/cli/`) to lint a subtree, for faster feedback during development? Today the full tree is always scanned.
 - Should `--fix` have a paired `--dry-run` that prints the intended edits without applying them, so authors can preview fixes before accepting?
 - **Should a `lint-rule-table-completeness` rule fire when a Doc-Kind's CLI Feature's rule table drifts from `pkg/lint`'s `allRuleNames` map** (e.g., a rule is in `allRuleNames` but missing from the table, or vice versa)? Lean: yes, as a follow-on to the entity/property work — keeps the Feature spec and the code in lockstep.
 - **Should the multi-glob `Consumer Path` parser be exposed as a public helper in `pkg/projectdef`** (so consumers outside `pkg/lint` can use the same parser) or stay package-private to `pkg/lint`? Lean: package-private until a second caller emerges, per the meta-spec convention of deferring extraction.
+- **How should `pkg/lint`'s `Lint()` surface the fixed-files set** — a new `Result{ Violations, Fixed }` struct, a second return value, or a sibling `LintWithResult`? This affects the public `pkg/lint` Go API; settle at plan time. (Carried from the `lint-fix-reports-modified-files` Idea.)
+- **Is a terse `--format paths` (one fixed path per line on stdout) worth adding** for `lint --fix | git add`-style pipelines, or does the JSON `.fixed[]` field suffice? Deferred from MVP. (Carried from the `lint-fix-reports-modified-files` Idea.)
 
 ---
 *This document follows the https://specscore.md/feature-specification*

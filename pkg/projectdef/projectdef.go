@@ -43,6 +43,7 @@ type SpecConfig struct {
 	DocsDirName  string         `yaml:"docs_dir_name,omitempty"`
 	Studio       *StudioConfig  `yaml:"studio,omitempty"`
 	Modules      []ModuleConfig `yaml:"modules,omitempty"`
+	Grade        *GradeConfig   `yaml:"grade,omitempty"`
 	Extras       map[string]any `yaml:",inline"`
 
 	// studioExplicitNull is set to true when YAML contains
@@ -132,6 +133,111 @@ func (r *RepositoryConfig) UnmarshalYAML(node *yaml.Node) error {
 type StudioConfig struct {
 	Name string `yaml:"name"`
 	URL  string `yaml:"url"`
+}
+
+// DefaultGradeValues is the built-in grade value set applied when no
+// `grade.values` is configured (canonical-grade-metadata-field#req:grade-values-default).
+var DefaultGradeValues = []string{"A", "B", "C", "D", "F"}
+
+// GradeConfig is the optional `grade:` block. It carries the repository's
+// allowed `**Grade:**` value set (canonical-grade-metadata-field#req:grade-values-config).
+//
+// Shape problems (a scalar `values`, an empty list, a non-scalar or empty
+// entry, or a non-mapping `grade`) are recorded in shapeErr rather than
+// returned as an unmarshal error, so a malformed block surfaces as a single
+// `grade-values-shape` lint violation instead of breaking every config read.
+type GradeConfig struct {
+	Values        []string
+	valuesPresent bool
+	shapeErr      string
+}
+
+// UnmarshalYAML parses the `grade:` mapping, validating the shape of
+// `values` per canonical-grade-metadata-field#req:grade-values-shape.
+// It never returns an error for shape problems; it records shapeErr.
+func (g *GradeConfig) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		g.shapeErr = "`grade` must be a mapping with a `values` list (canonical-grade-metadata-field#req:grade-values-shape)"
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i]
+		val := node.Content[i+1]
+		if key.Value != "values" {
+			continue
+		}
+		g.valuesPresent = true
+		if val.Kind != yaml.SequenceNode {
+			g.shapeErr = "`grade.values` must be a non-empty list of scalar tokens, not a scalar (canonical-grade-metadata-field#req:grade-values-shape)"
+			return nil
+		}
+		if len(val.Content) == 0 {
+			g.shapeErr = "`grade.values` must be a non-empty list (canonical-grade-metadata-field#req:grade-values-shape)"
+			return nil
+		}
+		for _, item := range val.Content {
+			if item.Kind != yaml.ScalarNode {
+				g.shapeErr = "`grade.values` entries must be scalar tokens (canonical-grade-metadata-field#req:grade-values-shape)"
+				return nil
+			}
+			tok := strings.TrimSpace(item.Value)
+			if tok == "" {
+				g.shapeErr = "`grade.values` entries must be non-empty (canonical-grade-metadata-field#req:grade-values-shape)"
+				return nil
+			}
+			g.Values = append(g.Values, tok)
+		}
+	}
+	return nil
+}
+
+// EffectiveGradeValues returns the repository's allowed grade value set:
+// the configured `grade.values` (de-duplicated) when present and non-empty,
+// otherwise DefaultGradeValues (canonical-grade-metadata-field#req:grade-values-default).
+func (c SpecConfig) EffectiveGradeValues() []string {
+	if c.Grade != nil && c.Grade.valuesPresent && len(c.Grade.Values) > 0 {
+		return dedupeStrings(c.Grade.Values)
+	}
+	return append([]string(nil), DefaultGradeValues...)
+}
+
+// GradeShapeError returns the recorded `grade.values` shape error, or "" when
+// the block is absent or well-formed.
+func (c SpecConfig) GradeShapeError() string {
+	if c.Grade != nil {
+		return c.Grade.shapeErr
+	}
+	return ""
+}
+
+// GradeValuesHasDuplicates reports whether the configured `grade.values`
+// list contains duplicate tokens (a lint advisory, not a hard error).
+func (c SpecConfig) GradeValuesHasDuplicates() bool {
+	if c.Grade == nil || !c.Grade.valuesPresent {
+		return false
+	}
+	seen := make(map[string]bool, len(c.Grade.Values))
+	for _, v := range c.Grade.Values {
+		if seen[v] {
+			return true
+		}
+		seen[v] = true
+	}
+	return false
+}
+
+// dedupeStrings returns s with duplicate values removed, preserving first-seen order.
+func dedupeStrings(s []string) []string {
+	seen := make(map[string]bool, len(s))
+	out := make([]string, 0, len(s))
+	for _, v := range s {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 // ModuleConfig is one entry in the `modules:` list — a code area inside

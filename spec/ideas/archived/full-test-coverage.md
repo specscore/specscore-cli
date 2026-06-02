@@ -1,11 +1,12 @@
 # Idea: Full Test Coverage — Path to 100%
 
-**Status:** Draft
+**Status:** Archived
 **Date:** 2026-05-25
 **Owner:** alexander.trakhimenok
 **Promotes To:** —
 **Supersedes:** —
 **Related Ideas:** —
+**Archive Reason:** Achieved — 100% statement coverage enforced by CI across all packages.
 
 ## Problem Statement
 

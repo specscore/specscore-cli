@@ -599,8 +599,28 @@ None at this time.
 	if err := os.WriteFile(archivedTarget, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	archivedIndexPath := filepath.Join(root, "spec", "decisions", "archived", "README.md")
+	archivedIndex, err := os.ReadFile(archivedIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedRow := "- 2026-05-20 — [0001-old](0001-old.md) — Superseded — superseded by 0002-new"
+	updatedArchivedIndex := string(archivedIndex)
+	switch {
+	case strings.Contains(updatedArchivedIndex, "_No archived decisions yet._"):
+		updatedArchivedIndex = strings.Replace(updatedArchivedIndex, "_No archived decisions yet._", archivedRow, 1)
+	case strings.Contains(updatedArchivedIndex, archivedRow):
+		// already present
+	case strings.Contains(updatedArchivedIndex, "## Open Questions"):
+		updatedArchivedIndex = strings.Replace(updatedArchivedIndex, "## Open Questions", archivedRow+"\n\n## Open Questions", 1)
+	default:
+		updatedArchivedIndex = strings.TrimRight(updatedArchivedIndex, "\n") + "\n\n" + archivedRow + "\n"
+	}
+	if err := os.WriteFile(archivedIndexPath, []byte(updatedArchivedIndex), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	_, _, err := runDecision(t, "new", "new", "--supersedes", "0001-old")
+	_, _, err = runDecision(t, "new", "new", "--supersedes", "0001-old")
 	if err != nil {
 		t.Fatalf("decision new --supersedes failed: %v", err)
 	}

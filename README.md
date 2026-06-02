@@ -50,6 +50,27 @@ specscore --version              # bare semver
 
 Full command reference: see [`spec/features/cli/`](spec/features/cli/).
 
+## Updating
+
+Bring an existing install to the latest release:
+
+```bash
+specscore self-update            # or: specscore update
+specscore self-update --check    # report whether a newer release is available; change nothing
+specscore self-update --yes      # skip the confirmation prompt (non-interactive / CI)
+```
+
+`self-update` detects how `specscore` was installed. **Package-managed installs** (Homebrew, Scoop, WinGet) are never overwritten — it prints the right manager command to run instead (e.g. `brew upgrade specscore`). **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified.
+
+Install a specific release instead of the latest:
+
+```bash
+specscore self-update --version v0.6.0                    # leading "v" optional
+specscore self-update --version 0.4.0 --allow-downgrade   # an older target requires --allow-downgrade
+```
+
+`--check` exit codes: `0` up to date, `10` update available, other non-zero on error — convenient for CI staleness gates. Full contract: [`spec/features/cli/self-update/`](spec/features/cli/self-update/).
+
 ## AI skills
 
 If you drive `specscore` from inside Claude Code (or any agent host that loads Claude Code plugins), install the [`ai-plugin-specscore`](https://github.com/specscore/ai-plugin-specscore) plugin. It ships agent skills that wrap each CLI resource group — they teach the agent *when* to call which command, *which* flags to pass, and *how* to interpret exit codes, all grounded in the feature specs in this repo.

@@ -1,0 +1,604 @@
+{
+  "schema": "survey-output-schema-v1",
+  "slug": "specscore-cli",
+  "scope": null,
+  "scan_method": "git-ls-files",
+  "repo_state": {
+    "git_available": true,
+    "head_sha": "322945d4b641e59a32057bebdf7da260d61be55c",
+    "dirty_tree": false,
+    "status_short": []
+  },
+  "file_inventory_summary": {
+    "total_files": 408,
+    "by_extension": {
+      ".gitignore": 1,
+      ".go": 231,
+      ".md": 163,
+      ".mod": 1,
+      ".ps1": 1,
+      ".sh": 1,
+      ".sum": 1,
+      ".yaml": 1,
+      ".yml": 5,
+      "[none]": 3
+    },
+    "top_level_dirs": [
+      {
+        "path": ".git-hooks",
+        "file_count": 2
+      },
+      {
+        "path": ".github",
+        "file_count": 4
+      },
+      {
+        "path": ".gitignore",
+        "file_count": 1
+      },
+      {
+        "path": ".goreleaser.yml",
+        "file_count": 1
+      },
+      {
+        "path": "AGENTS.md",
+        "file_count": 1
+      },
+      {
+        "path": "cmd",
+        "file_count": 4
+      },
+      {
+        "path": "docs",
+        "file_count": 10
+      },
+      {
+        "path": "go.mod",
+        "file_count": 1
+      },
+      {
+        "path": "go.sum",
+        "file_count": 1
+      },
+      {
+        "path": "internal",
+        "file_count": 67
+      },
+      {
+        "path": "LICENSE",
+        "file_count": 1
+      },
+      {
+        "path": "pkg",
+        "file_count": 241
+      },
+      {
+        "path": "README.md",
+        "file_count": 1
+      },
+      {
+        "path": "scripts",
+        "file_count": 2
+      },
+      {
+        "path": "spec",
+        "file_count": 70
+      },
+      {
+        "path": "specscore.yaml",
+        "file_count": 1
+      }
+    ],
+    "test_or_testdata_paths": 184,
+    "docs_or_readme_paths": 89,
+    "fixture_hint_paths": 70
+  },
+  "manifest_inventory": [
+    {
+      "path": "go.mod",
+      "status": "read",
+      "bytes": 1685
+    },
+    {
+      "path": "go.sum",
+      "status": "read",
+      "bytes": 7577
+    },
+    {
+      "path": "README.md",
+      "status": "read",
+      "bytes": 2877
+    },
+    {
+      "path": "specscore.yaml",
+      "status": "read",
+      "bytes": 157
+    },
+    {
+      "path": ".github/workflows/dogfood.yml",
+      "status": "read",
+      "bytes": 859
+    },
+    {
+      "path": ".github/workflows/go-ci.yml",
+      "status": "read",
+      "bytes": 1597
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "status": "read",
+      "bytes": 1947
+    },
+    {
+      "path": ".goreleaser.yml",
+      "status": "listed-not-read",
+      "bytes": 5063,
+      "note": "not in survey v1 content-read allowlist; filename signals release tooling only"
+    }
+  ],
+  "detected_frameworks": [
+    {
+      "name": "Go module",
+      "evidence": [
+        "go.mod"
+      ],
+      "confidence": "high",
+      "details": {
+        "module": "github.com/specscore/specscore-cli",
+        "go_version": "1.26.1"
+      }
+    },
+    {
+      "name": "Cobra CLI",
+      "evidence": [
+        "go.mod dependency github.com/spf13/cobra",
+        "cmd/specscore/main.go path listed"
+      ],
+      "confidence": "high"
+    },
+    {
+      "name": "GitHub Actions CI",
+      "evidence": [
+        ".github/workflows/dogfood.yml",
+        ".github/workflows/go-ci.yml",
+        ".github/workflows/release.yml"
+      ],
+      "confidence": "high"
+    },
+    {
+      "name": "SpecScore dogfood repository",
+      "evidence": [
+        "specscore.yaml",
+        "spec/features/ tree listed"
+      ],
+      "confidence": "high"
+    },
+    {
+      "name": "GoReleaser release packaging",
+      "evidence": [
+        ".goreleaser.yml filename listed",
+        ".github/workflows/release.yml"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "architecture_summary": "Topology and manifests indicate a Go CLI module for SpecScore. The entrypoint lives under cmd/specscore, command wiring and CLI-facing behavior are concentrated under internal/cli, reusable domain packages live under pkg, and the repository dogfoods SpecScore through its own spec/features, spec/ideas, and spec/plans trees. GitHub Actions run Go CI, dogfood lint, and release workflows. This summary is inferred from file paths and structural manifests only; source implementation files were not read.",
+  "directory_clusters": [
+    {
+      "path": "cmd/",
+      "file_count": 4,
+      "description": "CLI entrypoint surface and command README files."
+    },
+    {
+      "path": "internal/cli/",
+      "file_count": 48,
+      "description": "Command-layer implementation and tests, inferred from filenames."
+    },
+    {
+      "path": "internal/telemetry/",
+      "file_count": 18,
+      "description": "Internal telemetry implementation and tests, inferred from filenames."
+    },
+    {
+      "path": "pkg/",
+      "file_count": 241,
+      "description": "Reusable packages for SpecScore artifact parsing, linting, lifecycle, events, source refs, tasks, and related domains."
+    },
+    {
+      "path": "spec/features/cli/",
+      "file_count": 39,
+      "description": "Canonical Feature specs for CLI commands and lint behavior."
+    },
+    {
+      "path": "spec/ideas/",
+      "file_count": 16,
+      "description": "Idea backlog and archived Ideas for CLI evolution."
+    },
+    {
+      "path": "spec/plans/",
+      "file_count": 13,
+      "description": "Implementation plans for prior and in-flight CLI work."
+    },
+    {
+      "path": ".github/workflows/",
+      "file_count": 3,
+      "description": "CI, dogfood lint, and release automation."
+    }
+  ],
+  "research_zones": [
+    {
+      "slug": "cli-entry-and-command-layer",
+      "roots": [
+        "cmd/",
+        "internal/cli/"
+      ],
+      "file_count": 52,
+      "purpose": "Retrofit command invocation, argument handling, and user-facing CLI behavior."
+    },
+    {
+      "slug": "lint-and-artifact-parsing",
+      "roots": [
+        "pkg/lint/",
+        "pkg/feature/",
+        "pkg/idea/",
+        "pkg/plan/",
+        "pkg/issue/",
+        "pkg/property/",
+        "pkg/entity/"
+      ],
+      "file_count": 176,
+      "purpose": "Retrofit SpecScore artifact parsers and lint rules."
+    },
+    {
+      "slug": "events-tasks-and-telemetry",
+      "roots": [
+        "pkg/event/",
+        "pkg/task/",
+        "internal/telemetry/",
+        "internal/cli/telemetry*"
+      ],
+      "file_count": 45,
+      "purpose": "Retrofit event transport, task management, and telemetry behavior."
+    },
+    {
+      "slug": "source-and-git-utilities",
+      "roots": [
+        "pkg/sourceref/",
+        "pkg/gitremote/",
+        "pkg/slug/",
+        "pkg/lifecycle/",
+        "pkg/idearelocate/"
+      ],
+      "file_count": 29,
+      "purpose": "Retrofit supporting repository, source reference, slug, lifecycle, and relocation behavior."
+    },
+    {
+      "slug": "dogfood-spec-tree",
+      "roots": [
+        "spec/features/cli/",
+        "spec/ideas/",
+        "spec/plans/"
+      ],
+      "file_count": 68,
+      "purpose": "Use existing SpecScore specs as ground truth and cross-check survey-to-retrofit flow."
+    },
+    {
+      "slug": "release-and-install-surface",
+      "roots": [
+        ".github/workflows/",
+        "scripts/",
+        "README.md"
+      ],
+      "file_count": 6,
+      "purpose": "Retrofit install, CI, and release process behavior from manifests and docs."
+    }
+  ],
+  "sensitive_path_inventory": [
+    {
+      "path": "pkg/entity/_testdata/duplicate-property-name.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/email.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/frontmatter-missing-required-fields.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/frontmatter-not-first-block.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/id-mismatch-slug.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/malformed-yaml.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/missing-frontmatter.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/title-mismatch-singular.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/valid-minimal.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/valid-with-inherits.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/entity/_testdata/valid-with-ref-property.entity.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/frontmatter-missing-required-fields.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/hand-edited-referenced-by.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/id-mismatch-slug.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/inapplicable-check.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/invalid-data-type.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/missing-frontmatter.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/missing-sections.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/title-mismatch.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/unknown-check.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/_testdata/property/valid-clean.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/affected-component-ref-resolves/spec/features/example/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/affected-component-ref-resolves/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/affected-component-ref-resolves/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/affected-component-ref/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/affected-component-ref/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/body-section-order/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/body-section-order/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/bugs-non-string/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/bugs-non-string/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/default-suite/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/default-suite/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/dual-location/spec/random-dir/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/feature-index-required/spec/features/example/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/feature-index-required/spec/features/example/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/h1-prefix/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/h1-prefix/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/index-columns/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/index-columns/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/invalid-severity/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/invalid-severity/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/invalid-status/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/invalid-status/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/missing-field/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/missing-field/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/rejection-reason-enum/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/rejection-reason-enum/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/root-index-required/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/severity-required-transition/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/severity-required-transition/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/slug-globally-unique/spec/features/example/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/slug-globally-unique/spec/features/example/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/slug-globally-unique/spec/features/example/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/slug-globally-unique/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/slug-globally-unique/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/slug-mismatch/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/slug-mismatch/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/unknown-key/spec/issues/README.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/lint/rules/issue/testdata/unknown-key/spec/issues/foo.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/frontmatter-not-first.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/id-mismatch-slug.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/invalid-data-type.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/missing-frontmatter.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/unknown-check-key.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/valid-minimal.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/valid-with-checks.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/walktree/features/.hidden/secret.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/walktree/features/_tests/fixture.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/walktree/features/shared/email.property.md",
+      "reason": "fixture-or-testdata-path"
+    },
+    {
+      "path": "pkg/property/_testdata/walktree/features/shared/money.property.md",
+      "reason": "fixture-or-testdata-path"
+    }
+  ],
+  "warnings": [
+    "Sensitive path inventory is filename-pattern hints only; no content secret scan was performed.",
+    "Source implementation files were counted by path only and were not opened.",
+    ".goreleaser.yml was listed but not read because it is not in the v1 content-read allowlist."
+  ],
+  "observed_workflows": [
+    {
+      "path": ".github/workflows/dogfood.yml",
+      "name": "Dogfood lint"
+    },
+    {
+      "path": ".github/workflows/go-ci.yml",
+      "name": "Go CI"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "name": "Release"
+    }
+  ],
+  "dependency_summary": {
+    "direct_or_primary_dependencies_detected_from_go_mod": [
+      "charm.land/fang/v2",
+      "github.com/spf13/cobra",
+      "gopkg.in/yaml.v3"
+    ]
+  }
+}

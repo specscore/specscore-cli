@@ -1,8 +1,11 @@
 package lint
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 )
 
 // Violation represents a single linting violation.
@@ -28,26 +31,58 @@ type Options struct {
 	CLIVersion string
 }
 
+// Result is the full outcome of a lint pass. Fixed is populated only when
+// opts.Fix is true and lists the specRoot-relative paths of files whose bytes
+// changed during the fix pass (de-duplicated, sorted). It matches how
+// Violation.File paths are rendered (relative to opts.SpecRoot).
+type Result struct {
+	Violations []Violation
+	Fixed      []string
+}
+
 // Lint runs all enabled lint rules against the spec tree.
 func Lint(opts Options) ([]Violation, error) {
+	res, err := LintWithResult(opts)
+	if err != nil {
+		return nil, err
+	}
+	return res.Violations, nil
+}
+
+// LintWithResult runs all enabled lint rules against the spec tree and returns
+// both the violations and, when opts.Fix is true, the set of files the fix pass
+// modified.
+func LintWithResult(opts Options) (Result, error) {
 	// Check spec root exists.
 	info, err := os.Stat(opts.SpecRoot)
 	if err != nil {
-		return nil, fmt.Errorf("spec root not found: %s", opts.SpecRoot)
+		return Result{}, fmt.Errorf("spec root not found: %s", opts.SpecRoot)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("spec root is not a directory: %s", opts.SpecRoot)
+		return Result{}, fmt.Errorf("spec root is not a directory: %s", opts.SpecRoot)
 	}
 
 	l := newLinter(opts)
+
+	var fixed []string
 	if opts.Fix {
-		if err := l.fix(); err != nil {
-			return nil, fmt.Errorf("fix error: %w", err)
+		before, err := snapshotSpecTreeFn(opts.SpecRoot)
+		if err != nil {
+			return Result{}, fmt.Errorf("fix snapshot error: %w", err)
 		}
+		if err := l.fix(); err != nil {
+			return Result{}, fmt.Errorf("fix error: %w", err)
+		}
+		after, err := snapshotSpecTreeFn(opts.SpecRoot)
+		if err != nil {
+			return Result{}, fmt.Errorf("fix snapshot error: %w", err)
+		}
+		fixed = diffSnapshots(before, after)
 	}
+
 	violations, err := l.lint()
 	if err != nil {
-		return nil, fmt.Errorf("linting error: %w", err)
+		return Result{}, fmt.Errorf("linting error: %w", err)
 	}
 
 	// Filter by severity if specified.
@@ -55,7 +90,59 @@ func Lint(opts Options) ([]Violation, error) {
 		violations = FilterBySeverity(violations, opts.Severity)
 	}
 
-	return violations, nil
+	return Result{Violations: violations, Fixed: fixed}, nil
+}
+
+// snapshotSpecTreeFn is the snapshot implementation, injectable for testing the
+// before/after fix-snapshot error paths in LintWithResult.
+var snapshotSpecTreeFn = snapshotSpecTree
+
+// filepathRelFn is injectable for testing the filepath.Rel error branch in
+// snapshotSpecTree (otherwise unreachable, since Walk always yields paths under
+// specRoot).
+var filepathRelFn = filepath.Rel
+
+// snapshotSpecTree walks every regular file under specRoot and records a
+// content hash keyed by the specRoot-relative path.
+func snapshotSpecTree(specRoot string) (map[string][32]byte, error) {
+	snap := make(map[string][32]byte)
+	err := filepath.Walk(specRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepathRelFn(specRoot, path)
+		if err != nil {
+			return err
+		}
+		snap[rel] = sha256.Sum256(content)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return snap, nil
+}
+
+// diffSnapshots returns the sorted, de-duplicated set of specRoot-relative
+// paths whose content hash changed (or which appeared) between before and after.
+// A file with identical bytes in both snapshots is never reported.
+func diffSnapshots(before, after map[string][32]byte) []string {
+	var changed []string
+	for rel, h := range after {
+		prev, existed := before[rel]
+		if !existed || prev != h {
+			changed = append(changed, rel)
+		}
+	}
+	sort.Strings(changed)
+	return changed
 }
 
 // FilterBySeverity filters violations to those at or above the minimum severity.
@@ -115,6 +202,7 @@ var allRuleNames = map[string]bool{
 	"adherence-footer":     true,
 	"studio-toolbar":       true,
 	"dogfood-version-bump": true,
+	"config-user-scoped-key": true,
 	// Idea lint rules.
 	"idea-location":                     true,
 	"idea-slug-format":                  true,
@@ -148,6 +236,12 @@ var allRuleNames = map[string]bool{
 	"feature-index-row-sync": true,
 	// Sidekick-seed lint rule.
 	"sidekick-seed": true,
+	// Grade body-metadata-field lint rules (canonical-grade-metadata-field
+	// Feature). Implemented by gradeChecker.
+	"grade-values-shape": true,
+	"grade-single-value": true,
+	"grade-placement":    true,
+	"grade-value":        true,
 	// Plan lint rules (single-file Plans at spec/plans/<slug>.md, per the
 	// SpecStudio plan-Feature contract). Implemented by planRulesChecker.
 	"P-001": true,

@@ -376,9 +376,11 @@ func splitCommaList(val string) []string {
 }
 
 // deferredEntryRe matches `- <feature-slug>#ac:<ac-slug> — <reason>` lines.
-// The dash separator may be em-dash, en-dash, or ASCII hyphen with surrounding
-// spaces. Reason text is opaque to the parser.
-var deferredEntryRe = regexp.MustCompile(`^[-*]\s+(\S+?#ac:\S+?)\s*(?:[—–-]\s*(.*))?$`)
+// The dash separator may be em-dash, en-dash, or ASCII hyphen and MUST be
+// preceded by whitespace, so a hyphen inside the AC slug is never mistaken for
+// the separator. The AC id is captured greedily as a single whitespace-free
+// token. Reason text is opaque to the parser.
+var deferredEntryRe = regexp.MustCompile(`^[-*]\s+(\S+#ac:\S+)(?:\s+[—–-]\s*(.*))?\s*$`)
 
 func parseDeferredACs(lines []string, start, end int) []DeferredAC {
 	var out []DeferredAC

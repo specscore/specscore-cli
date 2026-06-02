@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/config"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/gitremote"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
@@ -116,6 +117,12 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		if err := writeMissingIndex(root, w.path, w.content); err != nil {
 			return exitcode.UnexpectedErrorf("writing %s: %v", w.path, err)
 		}
+	}
+
+	// Ensure specscore.local.yaml (the uncommitted per-user config layer) is
+	// git-ignored, and warn if it is already tracked.
+	if msg := config.EnsureLocalGitignoredMsg(root); msg != "" {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "warning: "+msg)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized SpecScore project at %s\n", root)

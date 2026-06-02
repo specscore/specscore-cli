@@ -1,11 +1,12 @@
 # Idea: Audit lint rules for parallel bugs
 
-**Status:** Draft
+**Status:** Archived
 **Date:** 2026-05-18
 **Owner:** alexander.trakhimenok
 **Promotes To:** —
 **Supersedes:** —
 **Related Ideas:** —
+**Archive Reason:** Audit completed — 106 rules audited, findings table committed to this document.
 
 ## Problem Statement
 
@@ -49,6 +50,88 @@ Each cell with a "yes" promotes to a new follow-up Idea (or, if the fix is small
 ## MVP Scope
 
 Hand-walk every rule in `pkg/lint/lint.go` `allRuleNames`, fill in the 4-column checklist for each, write the output table back into this Idea's body, and file one follow-up Idea per "yes" cell. Single deliverable: the populated table. Timeboxed: two focused sessions of ~90 minutes each.
+
+## Audit Results
+
+Audit completed 2026-05-27. 106 rules across 7 categories. Below is the consolidated findings table — only rules with at least one "yes" cell are listed. Rules with all "no" cells are clean and omitted for brevity.
+
+### Findings
+
+| Rule | Direction gap? | Fix gap? | Idempotency risk? | Coverage gap? | Notes |
+|------|---------------|----------|-------------------|---------------|-------|
+| **readme-exists** | no | yes — could scaffold blank README | no | no | |
+| **oq-not-empty** | no | yes — could insert placeholder bullet | no | no | |
+| **heading-levels** | n/a | n/a | n/a | n/a | Stub (`TODO: Phase 2`) — dead code |
+| **feature-ref-syntax** | n/a | n/a | n/a | n/a | Stub — dead code |
+| **internal-links** | n/a | n/a | n/a | n/a | Stub — dead code |
+| **forward-refs** | n/a | n/a | n/a | n/a | Stub — dead code |
+| **code-annotations** | n/a | n/a | n/a | n/a | Stub — dead code |
+| **plan-hierarchy** | no | yes — no fixer | no | no | |
+| **plan-roi-metadata** | no | yes — no fixer | no | no | |
+| **dogfood-version-bump** | no | yes — intentionally no autofix | no | no | By design: bumping is a human action |
+| **sidekick-seed** | no | yes — no fixer | no | no | |
+| **feature-index-row-sync** | no | no | no | yes — orphaned row path untested | |
+| **idea-location** | no | yes — could auto-move | no | no | |
+| **idea-slug-format** | no | yes — rename cascades | no | no | |
+| **idea-single-file** | no | yes — could flatten | no | no | |
+| **idea-title-format** | no | yes — could rewrite | no | no | |
+| **idea-header-fields** | no | yes — could reorder | no | no | |
+| **idea-id-is-slug** | no | yes — could strip `Id:` line | no | no | |
+| **idea-supersedes-target-archived** | yes — no reverse check for orphaned archived ideas | no | no | yes — "target not found" path untested | |
+| **idea-related-ideas-target-exists** | yes — no symmetry check (A→B doesn't verify B→A) | no | no | no | May be by design |
+| **idea-feature-cross-reference** | yes — only checks feature→idea; not idea→feature `Promotes To` | no | no | no | Partially covered by sync-lint-strict |
+| **entity-title-format** | no | no (has autofix) | no | yes — autofix path untested | |
+| **entity-properties-list-shape** | no | no | no | yes — only 1 of 3 sub-checks tested | |
+| **entity-required-sections** | no | yes — could scaffold stubs | no | no | Unlike property analog, no order check |
+| **entity-location** | no | yes — could auto-move | no | no | |
+| **entity-slug-format** | no | yes — rename cascades | no | no | |
+| **property-location** | no | yes — could auto-move | no | no | |
+| **property-slug-format** | no | yes — rename cascades | no | no | |
+| **property-required-sections** | no | yes — could scaffold stubs | no | no | |
+| **D-title-format** | no | yes — could insert prefix | no | no | |
+| **D-header-fields** | no | yes — could reorder/insert | no | no | |
+| **D-required-sections** | no | yes — could scaffold | no | no | |
+| **D-observed-consequences-placeholder** | no | yes — could insert placeholder | no | no | |
+| **D-number-assignment** | no | no | no | yes — backfill branch unreachable (dead code) | `isBackfill` is always false because `allNumbers` always contains every discovered decision |
+| **D-supersedes-bidirectional** | **yes — only fires from superseding side** | no | no | yes — no test for orphan `Superseded By` | Stale `Superseded By` with no matching `Supersedes` goes undetected |
+| **D-immutability-once-accepted** | **partial — skips check when status changes from Accepted** | no | no | yes — no test for simultaneous status change + frozen section edit | Transitioning away from Accepted allows editing frozen sections |
+| **DI-completeness** | **yes — active index only** | yes — no fix for archived index | no | no | No completeness check for archived decisions index |
+| **DI-status-excludes-archived** | **partial — one direction only** | no | no | yes — no test for Proposed/Accepted in archived index | |
+| **I-015** | no | yes — intentionally no autofix | no | no | By design: rewriting would destroy authorial intent |
+
+### Additional Structural Findings
+
+1. **Six idea rules missing from `allRuleNames`**: `idea-type-values`, `idea-type-title-consistency`, `idea-targets-required`, `idea-targets-exists`, `idea-change-request-location`, `idea-phase-non-empty` are registered in `ideaRuleNames` but absent from `allRuleNames` in `lint.go`. They fire correctly but cannot be targeted with `--rules` or `--ignore`.
+
+2. **`idea-index-row-sync` is an unregistered violation name**: emitted by `idea_index.go` but not in any rule registry. Same targeting issue as above.
+
+3. **Five stub rules are dead code**: `heading-levels`, `feature-ref-syntax`, `internal-links`, `forward-refs`, `code-annotations` are registered but always return empty violations.
+
+### Summary by Category
+
+| Category | Rules | Direction gaps | Fix gaps | Idempotency risks | Coverage gaps |
+|----------|-------|---------------|----------|-------------------|---------------|
+| General/Feature | 16 | 0 | 7 (2 intentional) | 0 | 1 |
+| Idea | 21 | 3 (partial) | 7 | 0 | 1 |
+| Entity | 15 | 0 | 4 | 0 | 2 |
+| Property | 10 | 0 | 3 | 0 | 0 |
+| Decision | 17 | 2 | 4 | 0 | 3 |
+| Decision Index | 6 | 2 | 1 | 0 | 1 |
+| Issue | 15 | 0 | 1 (intentional) | 0 | 0 |
+| **Total** | **106** | **7** | **27 (3 intentional)** | **0** | **8** |
+
+### Priority Follow-ups
+
+**Direction gaps (bugs):**
+- `D-supersedes-bidirectional` — real gap: orphan `Superseded By` undetected
+- `D-immutability-once-accepted` — frozen sections editable during status transitions
+- `DI-completeness` — archived index not checked
+- `DI-status-excludes-archived` — one-direction only
+
+**Dead code:**
+- 5 stub rules should be removed or implemented
+- `D-number-assignment` backfill branch is unreachable
+- 7 rule names missing from `allRuleNames` registration
 
 ## Not Doing (and Why)
 

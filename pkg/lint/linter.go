@@ -39,6 +39,7 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(oqChecker)
 	l.ruleSet["oq-not-empty"] = oqChecker
 	l.registerChecker(newIndexEntriesChecker())
+	l.registerChecker(newConfigScopeChecker())
 	l.registerChecker(newPlanHierarchyChecker())
 	l.registerChecker(newPlanROIChecker())
 	l.registerChecker(newAdherenceFooterChecker())
@@ -57,6 +58,13 @@ func newLinter(opts Options) *linter {
 
 	// Register sidekick-seed checker.
 	l.registerChecker(newSidekickSeedChecker())
+
+	// Register grade checker under all four grade-* rule IDs (one checker,
+	// many rule names; per-rule filtering via Violation.Rule in lint()).
+	grc := newGradeChecker()
+	for _, n := range gradeRuleNames {
+		l.ruleSet[n] = grc
+	}
 
 	// Register plan-rules checker under all four rule IDs (P-001..P-004).
 	// The single checker emits violations for all four rules; deduping by

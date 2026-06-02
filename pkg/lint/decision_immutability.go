@@ -3,6 +3,7 @@ package lint
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -56,8 +57,17 @@ func checkDecisionImmutability(specRoot string) ([]Violation, error) {
 	repoRoot := strings.TrimSpace(string(topOut))
 
 	for _, d := range decisions {
-		// Get the committed version from HEAD
-		relToRepo, err := filepathRelDecisionImmutability(repoRoot, d.path)
+		// Evaluate every decision file; subsequent enforcement only applies
+		// when the committed version was already Accepted.
+		// Get the committed version from HEAD. repoRoot comes from
+		// `git rev-parse --show-toplevel`, which resolves symlinks, so the
+		// decision path must be canonicalized too — otherwise on a symlinked
+		// working tree (e.g. macOS /tmp → /private/tmp) the relative path is
+		// computed against mismatched prefixes, git show fails, and the rule
+		// silently no-ops. EvalSymlinks errors are tolerated: an unresolvable
+		// path falls through to the err check below.
+		canonPath, _ := filepath.EvalSymlinks(d.path)
+		relToRepo, err := filepathRelDecisionImmutability(repoRoot, canonPath)
 		if err != nil {
 			continue
 		}
@@ -71,7 +81,7 @@ func checkDecisionImmutability(specRoot string) ([]Violation, error) {
 		}
 
 		// Parse the committed version
-		committedDecision, err := parseDecisionFromContent(committedContent, d.relPath, d.archived)
+		committedDecision, err := parseDecisionFromContentFn(committedContent, d.relPath, d.archived)
 		if err != nil {
 			continue
 		}
@@ -94,6 +104,10 @@ func checkDecisionImmutability(specRoot string) ([]Violation, error) {
 
 	return vs, nil
 }
+
+// parseDecisionFromContentFn is injectable for testing the parse-error branch
+// in checkDecisionImmutability (parseDecisionFromContent itself never errors).
+var parseDecisionFromContentFn = parseDecisionFromContent
 
 func parseDecisionFromContent(content, relPath string, archived bool) (*parsedDecision, error) {
 	lines := strings.Split(content, "\n")
