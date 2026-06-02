@@ -599,8 +599,21 @@ None at this time.
 	if err := os.WriteFile(archivedTarget, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	archivedIndexPath := filepath.Join(root, "spec", "decisions", "archived", "README.md")
+	archivedIndex, err := os.ReadFile(archivedIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedRow := "- 2026-05-20 — [0001-old](0001-old.md) — Superseded — superseded by 0002-new"
+	updatedArchivedIndex := strings.Replace(string(archivedIndex), "_No archived decisions yet._", archivedRow, 1)
+	if updatedArchivedIndex == string(archivedIndex) {
+		updatedArchivedIndex += "\n" + archivedRow + "\n"
+	}
+	if err := os.WriteFile(archivedIndexPath, []byte(updatedArchivedIndex), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	_, _, err := runDecision(t, "new", "new", "--supersedes", "0001-old")
+	_, _, err = runDecision(t, "new", "new", "--supersedes", "0001-old")
 	if err != nil {
 		t.Fatalf("decision new --supersedes failed: %v", err)
 	}
