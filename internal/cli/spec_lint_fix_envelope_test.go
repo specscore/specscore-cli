@@ -40,7 +40,7 @@ func TestSpecLint_FixJSONEnvelope(t *testing.T) {
 	out, _, _ := runSpec(t, "lint", "--project", root, "--rules=adherence-footer", "--fix", "--format=json")
 
 	var env struct {
-		Fixed      *[]string        `json:"fixed"`
+		Fixed      *[]string         `json:"fixed"`
 		Violations *[]lint.Violation `json:"violations"`
 	}
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
