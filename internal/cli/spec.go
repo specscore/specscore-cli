@@ -145,22 +145,33 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	}
 	violations := res.Violations
 
+	// lint.Result.Fixed is relative to the spec tree; render it relative to
+	// the project root (where specscore.yaml lives) so consumers can `git add`
+	// the reported paths directly. cli/spec/lint#req:fix-reports-modified-files.
+	fixedRel := res.Fixed
+	if prefix, perr := filepath.Rel(root, specRoot); perr == nil && prefix != "." {
+		fixedRel = make([]string, len(res.Fixed))
+		for i, f := range res.Fixed {
+			fixedRel[i] = filepath.ToSlash(filepath.Join(prefix, f))
+		}
+	}
+
 	w := cmd.OutOrStdout()
 	// Under --fix with a structured format, emit a single envelope carrying
 	// both the fixed-files report and the violations. Without --fix the
 	// pre-existing bare-array contract is preserved.
 	if fix && (format == "json" || format == "yaml") {
-		if err := outputLintFixEnvelope(w, res.Fixed, violations, format); err != nil {
+		if err := outputLintFixEnvelope(w, fixedRel, violations, format); err != nil {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
 	} else {
 		// In default text format under --fix, write the "Fixed N file(s):"
 		// summary naming each modified path to stderr (only when files
 		// changed), leaving stdout as the remaining-violations report.
-		if fix && format == "text" && len(res.Fixed) > 0 {
+		if fix && format == "text" && len(fixedRel) > 0 {
 			ew := cmd.ErrOrStderr()
-			_, _ = fmt.Fprintf(ew, "Fixed %d file(s):\n", len(res.Fixed))
-			for _, f := range res.Fixed {
+			_, _ = fmt.Fprintf(ew, "Fixed %d file(s):\n", len(fixedRel))
+			for _, f := range fixedRel {
 				_, _ = fmt.Fprintf(ew, "  %s\n", f)
 			}
 		}

@@ -13,7 +13,7 @@ func TestSpecLint_FixTextSummaryOnStderr(t *testing.T) {
 	root := setupAutofixProject(t)
 	stdout, stderr, _ := runSpec(t, "lint", "--project", root, "--rules=adherence-footer", "--fix")
 
-	want := filepath.Join("features", "needsfix", "README.md")
+	want := filepath.ToSlash(filepath.Join("spec", "features", "needsfix", "README.md"))
 
 	if !strings.Contains(stderr, "Fixed") {
 		t.Fatalf("stderr should contain a Fixed summary, got: %q", stderr)

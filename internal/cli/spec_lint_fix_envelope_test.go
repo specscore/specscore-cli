@@ -52,7 +52,7 @@ func TestSpecLint_FixJSONEnvelope(t *testing.T) {
 	if env.Violations == nil {
 		t.Fatalf("expected `violations` key in envelope, got: %s", out)
 	}
-	want := filepath.Join("features", "needsfix", "README.md")
+	want := filepath.ToSlash(filepath.Join("spec", "features", "needsfix", "README.md"))
 	found := false
 	for _, f := range *env.Fixed {
 		if f == want {
