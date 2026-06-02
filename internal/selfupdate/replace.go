@@ -11,6 +11,16 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
+// Test seams: overridable indirections so the Windows rename path and the
+// staging error branches are exercisable on any host.
+var (
+	goosName       = runtime.GOOS
+	renameFunc     = os.Rename
+	stageCreateTmp = func(dir, pattern string) (tempFile, error) {
+		return os.CreateTemp(dir, pattern)
+	}
+)
+
 // ReplaceExecutable atomically swaps the binary at newBinaryPath into
 // targetPath. The new binary is first staged to a temp file in the same
 // directory as targetPath (same filesystem, so os.Rename is atomic), with
@@ -34,20 +44,20 @@ func ReplaceExecutable(targetPath, newBinaryPath string) error {
 		return err
 	}
 
-	if runtime.GOOS == "windows" {
+	if goosName == "windows" {
 		// A running .exe cannot be overwritten, but it can be renamed. Move the
 		// current target aside, then move the new binary into place. The .old
 		// copy may stay locked while the old process runs; removing it is
 		// best-effort.
 		old := targetPath + ".old"
 		_ = os.Remove(old)
-		if err := os.Rename(targetPath, old); err != nil {
+		if err := renameFunc(targetPath, old); err != nil {
 			os.Remove(staged)
 			return exitcode.UnexpectedErrorf("move aside current executable: %v", err)
 		}
-		if err := os.Rename(staged, targetPath); err != nil {
+		if err := renameFunc(staged, targetPath); err != nil {
 			// Best effort: restore the original so the install stays runnable.
-			os.Rename(old, targetPath)
+			renameFunc(old, targetPath)
 			os.Remove(staged)
 			return exitcode.UnexpectedErrorf("install new executable: %v", err)
 		}
@@ -56,7 +66,7 @@ func ReplaceExecutable(targetPath, newBinaryPath string) error {
 	}
 
 	// POSIX: a single rename atomically replaces the target.
-	if err := os.Rename(staged, targetPath); err != nil {
+	if err := renameFunc(staged, targetPath); err != nil {
 		os.Remove(staged)
 		return exitcode.UnexpectedErrorf("install new executable: %v", err)
 	}
@@ -73,7 +83,7 @@ func stage(dir, src string) (string, error) {
 	}
 	defer in.Close()
 
-	tmp, err := os.CreateTemp(dir, ".specscore-stage-*")
+	tmp, err := stageCreateTmp(dir, ".specscore-stage-*")
 	if err != nil {
 		return "", exitcode.UnexpectedErrorf("create staging file: %v", err)
 	}

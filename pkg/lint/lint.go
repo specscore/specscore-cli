@@ -66,14 +66,14 @@ func LintWithResult(opts Options) (Result, error) {
 
 	var fixed []string
 	if opts.Fix {
-		before, err := snapshotSpecTree(opts.SpecRoot)
+		before, err := snapshotSpecTreeFn(opts.SpecRoot)
 		if err != nil {
 			return Result{}, fmt.Errorf("fix snapshot error: %w", err)
 		}
 		if err := l.fix(); err != nil {
 			return Result{}, fmt.Errorf("fix error: %w", err)
 		}
-		after, err := snapshotSpecTree(opts.SpecRoot)
+		after, err := snapshotSpecTreeFn(opts.SpecRoot)
 		if err != nil {
 			return Result{}, fmt.Errorf("fix snapshot error: %w", err)
 		}
@@ -93,6 +93,15 @@ func LintWithResult(opts Options) (Result, error) {
 	return Result{Violations: violations, Fixed: fixed}, nil
 }
 
+// snapshotSpecTreeFn is the snapshot implementation, injectable for testing the
+// before/after fix-snapshot error paths in LintWithResult.
+var snapshotSpecTreeFn = snapshotSpecTree
+
+// filepathRelFn is injectable for testing the filepath.Rel error branch in
+// snapshotSpecTree (otherwise unreachable, since Walk always yields paths under
+// specRoot).
+var filepathRelFn = filepath.Rel
+
 // snapshotSpecTree walks every regular file under specRoot and records a
 // content hash keyed by the specRoot-relative path.
 func snapshotSpecTree(specRoot string) (map[string][32]byte, error) {
@@ -108,7 +117,7 @@ func snapshotSpecTree(specRoot string) (map[string][32]byte, error) {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(specRoot, path)
+		rel, err := filepathRelFn(specRoot, path)
 		if err != nil {
 			return err
 		}

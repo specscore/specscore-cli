@@ -208,9 +208,23 @@ func extractFromZip(archive []byte, want string) (string, error) {
 	return "", exitcode.NotFoundErrorf("binary %s not found in archive", want)
 }
 
+// tempFile is the subset of *os.File used when writing a temp file. It is an
+// interface so tests can inject a file whose Close fails after a successful
+// copy.
+type tempFile interface {
+	io.WriteCloser
+	Name() string
+}
+
+// createTempFunc is a test seam over os.CreateTemp so the temp-file creation
+// and close error branches are exercisable.
+var createTempFunc = func(dir, pattern string) (tempFile, error) {
+	return os.CreateTemp(dir, pattern)
+}
+
 // writeTempBinary copies r into a new temp file and returns its path.
 func writeTempBinary(r io.Reader) (string, error) {
-	f, err := os.CreateTemp("", "specscore-update-*")
+	f, err := createTempFunc("", "specscore-update-*")
 	if err != nil {
 		return "", exitcode.UnexpectedErrorf("create temp file: %v", err)
 	}
