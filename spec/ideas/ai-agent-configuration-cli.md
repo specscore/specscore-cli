@@ -1,6 +1,6 @@
 # Idea: AI Agent Configuration CLI
 
-**Status:** Specified
+**Status:** Implemented
 **Date:** 2026-05-27
 **Owner:** alexander.trakhimenok
 **Promotes To:** cli/agent, cli/agent/setup

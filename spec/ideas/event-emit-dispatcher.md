@@ -1,6 +1,6 @@
 # Idea: Event Emit Dispatcher
 
-**Status:** Specified
+**Status:** Implemented
 **Date:** 2026-05-22
 **Owner:** alexandertrakhimenok
 **Promotes To:** cli/event, cli/event/emit

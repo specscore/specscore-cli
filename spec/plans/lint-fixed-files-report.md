@@ -63,7 +63,7 @@ In default text format, when the fix pass modified one or more files, write a "F
 - cli/spec/lint#ac:managed-section-fix-idempotent — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:consumer-path-multi-glob-parsed — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 
-## Outstanding Questions
+## Open Questions
 
 - The exact `Lint()` return shape (a new `Result{ Violations, Fixed }` struct vs. a second return value vs. a sibling `LintWithResult`) is settled during Task 1 implementation; it is tracked as an Open Question on the source Feature.
 - A terse `--format paths` (one fixed path per line on stdout) is explicitly out of scope for this plan, deferred on the source Feature.

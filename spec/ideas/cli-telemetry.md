@@ -1,6 +1,6 @@
 # Idea: CLI Telemetry
 
-**Status:** Specified
+**Status:** Implemented
 **Date:** 2026-05-21
 **Owner:** alexandertrakhimenok
 **Promotes To:** cli/telemetry, cli/telemetry/usage-telemetry

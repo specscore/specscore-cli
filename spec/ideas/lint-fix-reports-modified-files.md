@@ -1,6 +1,6 @@
 # Idea: lint --fix reports modified files
 
-**Status:** Implementing
+**Status:** Specified
 **Date:** 2026-06-02
 **Owner:** alexander.trakhimenok
 **Promotes To:** cli/spec/lint
