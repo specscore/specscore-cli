@@ -280,6 +280,49 @@ func TestParse_DeferredACsParsed(t *testing.T) {
 	}
 }
 
+// TestParse_DeferredACsHyphenatedSlug guards against the separator regex
+// truncating an AC slug at the first internal hyphen (e.g. parsing
+// `cli/spec/lint#ac:oq-section-missing-flagged` as id `cli/spec/lint#ac:oq`).
+func TestParse_DeferredACsHyphenatedSlug(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: D
+
+**Source Feature:** cli/spec/lint
+
+## Tasks
+
+### Task 1: One
+
+**Verifies:** cli/spec/lint#ac:fix-reports-only-changed-files
+
+## Deferred AC Coverage
+
+- cli/spec/lint#ac:oq-section-missing-flagged — Already implemented and Stable.
+- cli/spec/lint#ac:consumer-path-multi-glob-parsed — Already implemented and Stable.
+- cli/spec/lint#ac:fix-idempotent
+`
+	p, err := Parse(writePlan(t, dir, "d", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.DeferredACs) != 3 {
+		t.Fatalf("got %d deferred", len(p.DeferredACs))
+	}
+	want := []string{
+		"cli/spec/lint#ac:oq-section-missing-flagged",
+		"cli/spec/lint#ac:consumer-path-multi-glob-parsed",
+		"cli/spec/lint#ac:fix-idempotent",
+	}
+	for i, w := range want {
+		if p.DeferredACs[i].ACID != w {
+			t.Errorf("deferred[%d] ACID = %q, want %q", i, p.DeferredACs[i].ACID, w)
+		}
+	}
+	if p.DeferredACs[0].Reason != "Already implemented and Stable." {
+		t.Errorf("deferred[0] reason = %q", p.DeferredACs[0].Reason)
+	}
+}
+
 func TestParse_NotAPlanReturnsHasPlanTitleFalse(t *testing.T) {
 	dir := t.TempDir()
 	body := `# Random notes
