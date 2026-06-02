@@ -1,6 +1,6 @@
 # Idea: CLI Self-Update
 
-**Status:** Implementing
+**Status:** Specified
 **Date:** 2026-06-01
 **Owner:** alex
 **Promotes To:** cli/self-update

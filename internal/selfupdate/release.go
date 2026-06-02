@@ -175,9 +175,6 @@ func splitVersion(v string) ([3]int, string) {
 	}
 	var core [3]int
 	for i, part := range strings.SplitN(v, ".", 3) {
-		if i >= 3 {
-			break
-		}
 		n := 0
 		for _, r := range part {
 			if r < '0' || r > '9' {

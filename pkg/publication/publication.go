@@ -19,6 +19,8 @@ const UserConfigFile = "config.yaml"
 
 var userConfigDir = os.UserConfigDir
 
+var yamlMarshal = yaml.Marshal
+
 var defaultDenyBranches = []string{"main", "master", "release/*"}
 
 type Policy struct {
@@ -325,7 +327,7 @@ func setUserPolicy(key []string, actions []string) (SetResult, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return SetResult{}, err
 	}
-	body, err := yaml.Marshal(cfg)
+	body, err := yamlMarshal(cfg)
 	if err != nil {
 		return SetResult{}, err
 	}

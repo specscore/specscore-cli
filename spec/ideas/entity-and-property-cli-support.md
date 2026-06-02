@@ -1,6 +1,6 @@
 # Idea: Entity and Property CLI Support
 
-**Status:** Specified
+**Status:** Implemented
 **Date:** 2026-05-18
 **Owner:** alexander.trakhimenok
 **Promotes To:** cli/entity, cli/property

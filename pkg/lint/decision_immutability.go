@@ -88,7 +88,7 @@ func checkDecisionImmutability(specRoot string) ([]Violation, error) {
 		}
 
 		// Parse the committed version
-		committedDecision, err := parseDecisionFromContent(committedContent, d.relPath, d.archived)
+		committedDecision, err := parseDecisionFromContentFn(committedContent, d.relPath, d.archived)
 		if err != nil {
 			continue
 		}
@@ -111,6 +111,10 @@ func checkDecisionImmutability(specRoot string) ([]Violation, error) {
 
 	return vs, nil
 }
+
+// parseDecisionFromContentFn is injectable for testing the parse-error branch
+// in checkDecisionImmutability (parseDecisionFromContent itself never errors).
+var parseDecisionFromContentFn = parseDecisionFromContent
 
 func parseDecisionFromContent(content, relPath string, archived bool) (*parsedDecision, error) {
 	lines := strings.Split(content, "\n")

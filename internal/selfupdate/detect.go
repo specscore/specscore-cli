@@ -82,14 +82,21 @@ func Classify(execPath string) Detection {
 	return Detection{Method: Ambiguous, Manager: ManagerNone}
 }
 
+// Test seams: overridable indirections for os/filepath calls so DetectSelf's
+// error and symlink-fallback branches are exercisable without real symlinks.
+var (
+	osExecutable     = os.Executable
+	evalSymlinksFunc = filepath.EvalSymlinks
+)
+
 // DetectSelf resolves the running executable's path (following symlinks when
 // possible) and classifies it.
 func DetectSelf() (Detection, error) {
-	exe, err := os.Executable()
+	exe, err := osExecutable()
 	if err != nil {
 		return Detection{}, err
 	}
-	resolved, err := filepath.EvalSymlinks(exe)
+	resolved, err := evalSymlinksFunc(exe)
 	if err != nil {
 		resolved = exe
 	}

@@ -54,21 +54,34 @@ var isInteractive = func() bool {
 // never touch the network or filesystem. The default resolves the running
 // executable's path, downloads and sha256-verifies the matching release asset,
 // atomically swaps it in, then best-effort verifies the new binary's version.
+// The download/replace/verify steps of the default doSelfReplace are wrapped in
+// package-level function variables (matching the seam idiom used elsewhere in
+// this package, e.g. osGetwdFn) so tests can drive the post-download swap and
+// post-swap verify branches without touching the network or the running binary.
+var (
+	osExecutableFn       = os.Executable
+	selfupdateDownloadFn = func(ctx context.Context, version string) (string, error) {
+		return selfupdate.Downloader{}.DownloadAndVerify(ctx, version, "", "")
+	}
+	selfupdateReplaceFn   = selfupdate.ReplaceExecutable
+	selfupdateVerifyVerFn = selfupdate.VerifyBinaryVersion
+)
+
 var doSelfReplace = func(ctx context.Context, latestTag string) error {
-	target, err := os.Executable()
+	target, err := osExecutableFn()
 	if err != nil {
 		return exitcode.InvalidStateErrorf("self-update: could not resolve the running executable: %v", err)
 	}
-	tmp, err := selfupdate.Downloader{}.DownloadAndVerify(ctx, strings.TrimPrefix(latestTag, "v"), "", "")
+	tmp, err := selfupdateDownloadFn(ctx, strings.TrimPrefix(latestTag, "v"))
 	if err != nil {
 		return err
 	}
-	if err := selfupdate.ReplaceExecutable(target, tmp); err != nil {
+	if err := selfupdateReplaceFn(target, tmp); err != nil {
 		return err
 	}
 	// Best-effort post-swap sanity check; a mismatch is surfaced but the swap
 	// has already succeeded.
-	_ = selfupdate.VerifyBinaryVersion(target, strings.TrimPrefix(latestTag, "v"))
+	_ = selfupdateVerifyVerFn(target, strings.TrimPrefix(latestTag, "v"))
 	return nil
 }
 
@@ -243,7 +256,7 @@ func classifySelfReplaceError(cmd *cobra.Command, err error) error {
 	errOut := cmd.ErrOrStderr()
 
 	if errors.Is(err, fs.ErrPermission) {
-		target, _ := os.Executable()
+		target, _ := osExecutableFn()
 		if target == "" {
 			target = "the specscore executable"
 		}
