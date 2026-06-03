@@ -2,12 +2,13 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 114
+Total rules: 115
 
 ## capability
 
 | Rule | Severity | Description |
 | --- | --- | --- |
+| implementation-matrix | error | Validates the shape of a Capability's Implementation Matrix table. |
 | implements-reference | error | Validates the Implements reference on an Implementation Feature. |
 
 ## core
