@@ -5,7 +5,7 @@ captured_at: 2026-05-22T00:00:00Z
 captured_by: user
 captured_during: null
 trigger: explicit
-status: queued
+status: resolved
 synchestra_task: null
 ---
 
@@ -25,4 +25,4 @@ synchestra_task: null
 
 **Triage 2026-06-03:** Reported scenario does NOT reproduce at HEAD — a single `Stable` ref derives the Idea to `Implemented` (forward), not `Specified`. Cascade is in the `lint --fix` follow-up (`ideaSyncRules`, `pkg/lint/idea.go:662`).
 
-**Latent bug still OPEN:** the "all Approved → Specified" else-branch (`idea.go:782-784`) also fires for `Deprecated` refs, so `{Stable, Deprecated}` refs derive an `Implementing` Idea **backward to `Specified`**. Test `TestCheckIdeas_DeprecatedFeatureGivesSpecified` bakes this in. Needs a spec decision on `Deprecated`-ref handling (likely: treat `Deprecated` like `Stable`).
+**Resolved 2026-06-03:** the latent bug (mixed `{Stable, Deprecated}` refs derived an `Implementing` Idea backward to `Specified`) is fixed by treating `Deprecated` like `Stable` in the derivation — a post-Stable "done" state contributes to the `Implemented` level. Spec (`idea-sync-lint-strict`) and tests updated.

@@ -758,13 +758,16 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 				expectedStatus = "" // no change expected
 			}
 		} else {
-			allStable := true
+			// "Done" = Stable or Deprecated. Deprecated is a post-Stable
+			// terminal state, so it must derive like Stable (Implemented) —
+			// never drag the Idea backward to Specified.
+			allDone := true
 			anyImplementing := false
 			anyDraftOrUnderReview := false
 			for _, fs := range refs {
 				fst := getFeatureStatus(fs)
-				if fst != "Stable" {
-					allStable = false
+				if fst != "Stable" && fst != "Deprecated" {
+					allDone = false
 				}
 				if fst == "Implementing" {
 					anyImplementing = true
@@ -773,14 +776,14 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 					anyDraftOrUnderReview = true
 				}
 			}
-			if allStable {
+			if allDone {
 				expectedStatus = "Implemented"
 			} else if anyImplementing {
 				expectedStatus = "Implementing"
 			} else if anyDraftOrUnderReview {
 				expectedStatus = "Specifying"
 			} else {
-				// All features at Approved (none Draft/UnderReview/Implementing/Stable).
+				// All features at Approved (none Draft/UnderReview/Implementing/Stable/Deprecated).
 				expectedStatus = "Specified"
 			}
 		}
