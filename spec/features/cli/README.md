@@ -114,9 +114,13 @@ Every `specscore` command MUST observe the following exit-code contract. These c
 | `2` | Invalid arguments (missing required flag, bad flag value, malformed input) |
 | `3` | Resource not found |
 | `4` | Invalid state transition |
+| `5` | Ambiguous slug (auto-resolution found multiple candidates) |
+| `6` | Target directory is not a SpecScore-managed repo |
+| `7` | Working tree has uncommitted changes in paths to be modified |
+| `8` | Unsupported subcommand (outdated `specscore` that predates a required subcommand) — distinct from the shell's `127` (binary absent) |
 | `10` | Unexpected / catch-all runtime error |
 
-Exit codes `5–9` and `11–19` are reserved for future standard codes and MUST NOT be used by individual commands.
+Exit codes `9` and `11–19` are reserved for future standard codes and MUST NOT be used by individual commands.
 
 #### REQ: standard-exit-codes
 
