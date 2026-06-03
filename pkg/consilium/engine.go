@@ -15,6 +15,8 @@ const (
 // Rule names recorded in a Result.RuleTrace, one per gate-algorithm step that
 // fired. The names are stable so snapshot tests can string-match on them.
 const (
+	ruleLowAbstainVeto     = "low-abstain-veto"
+	ruleAdversaryVeto      = "adversary-veto"
 	ruleBuilderGate        = "builder-gate"
 	ruleCustomerGate       = "customer-gate"
 	ruleConfidenceGate     = "confidence-gate"
@@ -26,8 +28,7 @@ const (
 )
 
 // Denominators holds the per-group counts used as the consensus denominators,
-// after abstain exclusion. Steps 2–4 (which would shrink these) land in a later
-// task; for now they mirror the roster's per-group counts.
+// after high-confidence abstain exclusion (step 2).
 type Denominators struct {
 	Builders    int
 	Customers   int
@@ -36,9 +37,8 @@ type Denominators struct {
 
 // Result is the deterministic output of the gate engine. RuleTrace lists the
 // rule names of the steps that fired, in evaluation order, ending in the
-// terminal-verdict rule. ExcludedVotes lists the role slugs excluded in step 2
-// (empty until that step lands). Denominators are the per-group counts after
-// exclusion.
+// terminal-verdict rule. ExcludedVotes lists the role slugs excluded in step 2.
+// Denominators are the per-group counts after exclusion.
 type Result struct {
 	Verdict       Verdict
 	RuleTrace     []string
@@ -70,11 +70,11 @@ func ceilingValue(knob string) int {
 // against the roster and knobs, producing a deterministic Result. It is a pure
 // function: no clock, no randomness, no I/O.
 //
-// This task implements steps 1 and 5–13. Steps 2–4 (abstain exclusion,
-// low-abstain-veto, adversary-veto) are inserted before step 5 by a later task;
-// the structure leaves that seam open (ExcludedVotes is built empty, the
-// denominators are computed once up front, and the per-group approval tallies
-// run on the non-abstain votes).
+// Steps run in order: step 1 computes denominators; step 2 excludes
+// high-confidence abstain votes (decrementing denominators and recording
+// ExcludedVotes); step 3 caps the verdict at needs-human-review on any
+// low/medium-confidence abstain (low-abstain-veto); step 4 fires adversary-veto;
+// steps 5–13 run the approval-count and median gates.
 func Evaluate(votes []Vote, roster []RosterEntry, knobs GateKnobs) Result {
 	// Map each role slug to its group via the roster.
 	groupOf := make(map[string]Group, len(roster))
@@ -82,8 +82,8 @@ func Evaluate(votes []Vote, roster []RosterEntry, knobs GateKnobs) Result {
 		groupOf[e.Name] = e.Group
 	}
 
-	// Step 1 (denominators): per-group roster counts. Step 2 exclusion (later)
-	// would subtract from these.
+	// Step 1 (denominators): per-group roster counts. Step 2 exclusion subtracts
+	// high-confidence abstains from these.
 	den := Denominators{}
 	for _, e := range roster {
 		switch e.Group {
@@ -96,8 +96,58 @@ func Evaluate(votes []Vote, roster []RosterEntry, knobs GateKnobs) Result {
 		}
 	}
 
-	// Steps 2–4 land here in a later task. ExcludedVotes is empty for now.
 	excluded := []string{}
+	trace := []string{}
+
+	// Step 2: exclude high-confidence abstain votes from their group's
+	// denominator and list their role slugs in ExcludedVotes. They count toward
+	// neither approval nor rejection. Iterating votes in order keeps
+	// ExcludedVotes deterministic.
+	for _, v := range votes {
+		if v.Verdict != "abstain" || confidenceRank[v.Confidence] != confidenceRank["high"] {
+			continue
+		}
+		excluded = append(excluded, v.Role)
+		switch groupOf[v.Role] {
+		case GroupBuilders:
+			den.Builders--
+		case GroupCustomers:
+			den.Customers--
+		case GroupAdversaries:
+			den.Adversaries--
+		}
+	}
+
+	// Step 3: any low-confidence abstain (medium treated as low) caps the
+	// verdict at needs-human-review via low-abstain-veto. STOP before the
+	// strict-gate path. ExcludedVotes/Denominators already reflect step 2.
+	for _, v := range votes {
+		if v.Verdict == "abstain" && confidenceRank[v.Confidence] < confidenceRank["high"] {
+			trace = append(trace, ruleLowAbstainVeto)
+			return Result{
+				Verdict:       VerdictNeedsHumanReview,
+				RuleTrace:     trace,
+				ExcludedVotes: excluded,
+				Denominators:  den,
+			}
+		}
+	}
+
+	// Step 4: any adversary should-not-implement at confidence ≥
+	// adversary_veto_confidence fires adversary-veto → needs-human-review. STOP
+	// before the approval-count steps.
+	for _, v := range votes {
+		if groupOf[v.Role] == GroupAdversaries && v.Verdict == "should-not-implement" &&
+			confidenceRank[v.Confidence] >= confidenceRank[knobs.AdversaryVetoConfidence] {
+			trace = append(trace, ruleAdversaryVeto)
+			return Result{
+				Verdict:       VerdictNeedsHumanReview,
+				RuleTrace:     trace,
+				ExcludedVotes: excluded,
+				Denominators:  den,
+			}
+		}
+	}
 
 	// Step 5: count non-abstain approvals per group, and gather the non-abstain
 	// votes' ordinal scales for the median gates (steps 8–10).
@@ -132,8 +182,6 @@ func Evaluate(votes []Vote, roster []RosterEntry, knobs GateKnobs) Result {
 			}
 		}
 	}
-
-	trace := []string{}
 
 	// Step 6: builder gate.
 	builderPass := approvalGate(builderApprove, builderNonAbstain, knobs.RequireAllBuilders)

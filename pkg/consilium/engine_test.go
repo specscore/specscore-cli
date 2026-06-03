@@ -167,6 +167,110 @@ func TestEvaluate_CostCeilingBlocks(t *testing.T) {
 	}
 }
 
+// abstainVote is a helper for an abstain vote at the given confidence for a role.
+func abstainVote(role, confidence string) Vote {
+	return Vote{
+		Verdict:    "abstain",
+		Confidence: confidence,
+		Cost:       "🟢",
+		Complexity: "🟢",
+		Argument:   "n/a",
+		Role:       role,
+	}
+}
+
+// AC: high-confidence-abstain-excluded-from-denominator — a high-confidence
+// abstain is removed from its group's denominator and listed in ExcludedVotes,
+// while evaluation proceeds normally to a verdict.
+func TestEvaluate_HighConfidenceAbstainExcludedFromDenominator(t *testing.T) {
+	roster := defaultRosterSnapshot()
+	votes := []Vote{
+		approveVote("engineer", "high", "🟢", "🟢"),
+		approveVote("architect", "high", "🟢", "🟢"),
+		approveVote("qa", "high", "🟢", "🟢"),
+		// One customer abstains at high confidence; the other two approve.
+		abstainVote("pm", "high"),
+		approveVote("ux", "high", "🟢", "🟢"),
+		approveVote("marketing", "high", "🟢", "🟢"),
+	}
+
+	got := Evaluate(votes, roster, StrictBaseline())
+
+	if got.Denominators.Customers != 2 {
+		t.Errorf("Denominators.Customers = %d, want 2", got.Denominators.Customers)
+	}
+	if !contains(got.ExcludedVotes, "pm") {
+		t.Errorf("ExcludedVotes = %v, want it to contain %q", got.ExcludedVotes, "pm")
+	}
+	// Both remaining customers approve, so the customer gate passes and the
+	// panel reaches should-implement (high-conf abstain does not stop eval).
+	if got.Verdict != VerdictShouldImplement {
+		t.Errorf("Verdict = %q, want %q", got.Verdict, VerdictShouldImplement)
+	}
+}
+
+// AC: low-confidence-abstain-caps-verdict — a low-confidence abstain caps the
+// verdict at needs-human-review via low-abstain-veto, before the strict-gate
+// path (steps 5–11) is evaluated.
+func TestEvaluate_LowConfidenceAbstainCapsVerdict(t *testing.T) {
+	roster := defaultRosterSnapshot()
+	votes := []Vote{
+		abstainVote("engineer", "low"),
+		approveVote("architect", "high", "🟢", "🟢"),
+		approveVote("qa", "high", "🟢", "🟢"),
+		approveVote("pm", "high", "🟢", "🟢"),
+		approveVote("ux", "high", "🟢", "🟢"),
+		approveVote("marketing", "high", "🟢", "🟢"),
+	}
+
+	got := Evaluate(votes, roster, StrictBaseline())
+
+	if got.Verdict != VerdictNeedsHumanReview {
+		t.Fatalf("Verdict = %q, want %q", got.Verdict, VerdictNeedsHumanReview)
+	}
+	if !contains(got.RuleTrace, ruleLowAbstainVeto) {
+		t.Errorf("RuleTrace = %v, want it to contain %q", got.RuleTrace, ruleLowAbstainVeto)
+	}
+	// The strict-gate path must not have been evaluated.
+	for _, r := range []string{ruleBuilderGate, ruleCustomerGate, ruleConfidenceGate, ruleCostGate, ruleComplexityGate, ruleShouldImplement} {
+		if contains(got.RuleTrace, r) {
+			t.Errorf("RuleTrace = %v, want it NOT to contain strict-gate rule %q", got.RuleTrace, r)
+		}
+	}
+}
+
+// AC: adversary-veto-blocks — with strict-baseline knobs an adversary's
+// high-confidence should-not-implement fires adversary-veto and stops before
+// the approval-count steps.
+func TestEvaluate_AdversaryVetoBlocks(t *testing.T) {
+	roster := defaultRosterSnapshot()
+	votes := []Vote{
+		approveVote("engineer", "high", "🟢", "🟢"),
+		approveVote("architect", "high", "🟢", "🟢"),
+		approveVote("qa", "high", "🟢", "🟢"),
+		approveVote("pm", "high", "🟢", "🟢"),
+		approveVote("ux", "high", "🟢", "🟢"),
+		approveVote("marketing", "high", "🟢", "🟢"),
+		// One adversary vetoes at high confidence.
+		{Verdict: "should-not-implement", Confidence: "high", Cost: "🟢", Complexity: "🟢", Argument: "no", Role: "skeptic"},
+	}
+
+	got := Evaluate(votes, roster, StrictBaseline())
+
+	if got.Verdict != VerdictNeedsHumanReview {
+		t.Fatalf("Verdict = %q, want %q", got.Verdict, VerdictNeedsHumanReview)
+	}
+	if !contains(got.RuleTrace, ruleAdversaryVeto) {
+		t.Errorf("RuleTrace = %v, want it to contain %q", got.RuleTrace, ruleAdversaryVeto)
+	}
+	// Evaluation must stop before the approval-count steps.
+	for _, r := range []string{ruleBuilderGate, ruleCustomerGate, ruleShouldImplement} {
+		if contains(got.RuleTrace, r) {
+			t.Errorf("RuleTrace = %v, want it NOT to contain approval-count rule %q", got.RuleTrace, r)
+		}
+	}
+}
+
 func TestMedianOrdinal_LowerMiddleForEven(t *testing.T) {
 	// Even count -> lower-middle element. [0,1,2,3] -> index 1 -> 1.
 	if got := medianOrdinal([]int{0, 1, 2, 3}); got != 1 {
