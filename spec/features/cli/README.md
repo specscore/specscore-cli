@@ -83,6 +83,7 @@ Reports the CLI's build identity. `specscore version` prints the full human-read
 | [publication-policy](publication-policy/README.md) | Adds specscore CLI commands and helpers to mutate publication policy config, resolve effective policy, validate branch guards, and support manifest-based publication operations. |
 | [self-update](self-update/README.md) | specscore self-update detects the install method, redirects package-managed installs to their manager, and performs verified in-place binary replacement for manual installs. |
 | [rules](rules/README.md) | `specscore rules` — discover lint rules (id, family, description) from the code registry, generate the `docs/lint-rules.md` catalog, and drift-check it in CI. |
+| [consilium](consilium/README.md) | The deterministic consilium engine for the specscore CLI: the pkg/consilium package owning the gate-rule arbiter, vote-schema validation, roster resolution and validation, gate-knob config, the consilium: block in specscore.yaml, and the parent consilium cobra command. |
 
 ## Behavior
 
