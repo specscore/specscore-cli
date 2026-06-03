@@ -17,8 +17,7 @@ gates:
     # Batches commit autonomously; the single human checkpoint is the push gate.
     pre_commit:
       reviewers:
-        - name: auto-approve
-          type: noop   # noop is the schema's auto-approve type: dispatches nothing, always Approved
+        - type: auto-approve   # dispatches nothing, always Approved (name defaults to type)
           description: Auto-approve batch commits without review; the push gate is the human checkpoint.
     pre_push:
       reviewers:
