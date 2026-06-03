@@ -35,7 +35,7 @@ Add a reusable parity check that asserts every rule ID a checker can emit has a 
 
 ### Task 3: `specscore rules` command — deterministic listing
 
-**Status:** in-progress
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:rules-lists-all
 
