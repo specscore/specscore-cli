@@ -75,7 +75,7 @@ Add `specscore rules --check`: render the catalog in-memory and compare it to th
 
 ### Task 8: Wire `specscore rules --check` into CI
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 7
 **Verifies:** cli/rules#ac:ci-fails-on-stale-catalog
 
