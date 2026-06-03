@@ -23,6 +23,6 @@ synchestra_task: null
 
 ---
 
-**Triage 2026-06-03:** The *literally reported* scenario does NOT reproduce at HEAD — a single `Stable` ref derives the Idea to `Implemented` (forward), not `Specified`. The cascade lives in the `lint --fix` follow-up step (b): `runFeatureChangeStatus` (`internal/cli/feature.go:893`) runs `lint --fix` → `ideaSyncRules` (`pkg/lint/idea.go:662`).
+**Triage 2026-06-03:** Reported scenario does NOT reproduce at HEAD — a single `Stable` ref derives the Idea to `Implemented` (forward), not `Specified`. Cascade is in the `lint --fix` follow-up (`ideaSyncRules`, `pkg/lint/idea.go:662`).
 
-**However, a real latent bug remains OPEN:** the "all Approved → Specified" else-branch (`idea.go:782-784`) silently also fires for `Deprecated` refs. So mixed refs `{Stable, Deprecated}` with an Idea at `Implementing` derive it **backward to `Specified`**. The existing test `TestCheckIdeas_DeprecatedFeatureGivesSpecified` bakes in this behavior — its assertion may itself be the bug. **Needs a spec/REQ decision on intended `Deprecated`-ref handling in the derivation matrix before coding a fix** (likely: treat `Deprecated` like `Stable` — "past Implementing").
+**Latent bug still OPEN:** the "all Approved → Specified" else-branch (`idea.go:782-784`) also fires for `Deprecated` refs, so `{Stable, Deprecated}` refs derive an `Implementing` Idea **backward to `Specified`**. Test `TestCheckIdeas_DeprecatedFeatureGivesSpecified` bakes this in. Needs a spec decision on `Deprecated`-ref handling (likely: treat `Deprecated` like `Stable`).

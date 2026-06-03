@@ -6,10 +6,11 @@ captured_by: specstudio:specify
 captured_during: spec/features/cli/self-update
 trigger: heuristic
 status: resolved
-resolved_by: ec1cbea
 synchestra_task: null
 ---
 # Deferred AC Coverage regex truncates hyphenated AC slugs
+
+**Resolved 2026-06-03** by commit `ec1cbea` (greedy id capture + whitespace-required separator, plus hyphenated-slug regression tests).
 
 `pkg/plan/parse.go` `deferredEntryRe` = `^[-*]\s+(\S+?#ac:\S+?)\s*(?:[—–-]\s*(.*))?$`.
 
