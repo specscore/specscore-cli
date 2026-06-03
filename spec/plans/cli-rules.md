@@ -51,7 +51,7 @@ Add `--family <name>` to restrict output to one family and `--format text|json` 
 
 ### Task 5: Deterministic catalog renderer at the canonical path
 
-**Status:** in-progress
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:catalog-deterministic-render, cli/rules#ac:catalog-at-canonical-path
 
