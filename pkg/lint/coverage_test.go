@@ -11,36 +11,7 @@ import (
 )
 
 // =============================================================================
-// checkers_extended.go — severity() methods at 0%
-// =============================================================================
-
-func TestExtendedCheckerSeverityMethods(t *testing.T) {
-	tests := []struct {
-		name     string
-		checker  checker
-		wantName string
-		wantSev  string
-	}{
-		{"heading-levels", newHeadingLevelsChecker(), "heading-levels", "warning"},
-		{"feature-ref-syntax", newFeatureRefSyntaxChecker(), "feature-ref-syntax", "error"},
-		{"internal-links", newInternalLinksChecker(), "internal-links", "error"},
-		{"forward-refs", newForwardRefsChecker(), "forward-refs", "warning"},
-		{"code-annotations", newCodeAnnotationsChecker(), "code-annotations", "warning"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.checker.name(); got != tt.wantName {
-				t.Errorf("name() = %q, want %q", got, tt.wantName)
-			}
-			if got := tt.checker.severity(); got != tt.wantSev {
-				t.Errorf("severity() = %q, want %q", got, tt.wantSev)
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Other checker severity() methods at 0%
+// Checker severity() methods at 0%
 // =============================================================================
 
 func TestAllCheckerSeverityMethods(t *testing.T) {

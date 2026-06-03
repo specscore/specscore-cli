@@ -50,6 +50,7 @@ var ideaRuleNames = []string{
 	"idea-sync-lint-strict",
 	"idea-feature-cross-reference",
 	"idea-index-completeness",
+	"idea-index-row-sync",
 	"idea-archived-index-chronological",
 	"idea-type-values",
 	"idea-type-title-consistency",

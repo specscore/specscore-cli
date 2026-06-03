@@ -23,7 +23,7 @@ func TestFilterBySeverity(t *testing.T) {
 func TestFilterBySeverity_ErrorOnly(t *testing.T) {
 	violations := []Violation{
 		{Severity: "error", Rule: "readme-exists"},
-		{Severity: "warning", Rule: "heading-levels"},
+		{Severity: "warning", Rule: "plan-hierarchy"},
 		{Severity: "info", Rule: "diag"},
 	}
 
@@ -696,11 +696,11 @@ func TestLinter_RulesFilter(t *testing.T) {
 func TestLinter_IgnoreFilter(t *testing.T) {
 	opts := Options{
 		SpecRoot: t.TempDir(),
-		Ignore:   []string{"code-annotations"},
+		Ignore:   []string{"plan-hierarchy"},
 	}
 	l := newLinter(opts)
-	if l.isRuleEnabled("code-annotations") {
-		t.Error("code-annotations should be disabled when Ignore=code-annotations")
+	if l.isRuleEnabled("plan-hierarchy") {
+		t.Error("plan-hierarchy should be disabled when Ignore=plan-hierarchy")
 	}
 	if !l.isRuleEnabled("readme-exists") {
 		t.Error("readme-exists should be enabled")
