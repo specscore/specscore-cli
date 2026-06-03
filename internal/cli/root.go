@@ -3,8 +3,11 @@ package cli
 import (
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
 var (
@@ -75,6 +78,27 @@ func versionCommand() *cobra.Command {
 			_, _ = cmd.OutOrStdout().Write([]byte("specscore " + version + " (" + commit + ") " + date + "\n"))
 		},
 	}
+}
+
+// mapUnsupportedCommand maps cobra's "unknown command" error to the dedicated
+// UnsupportedCommand exit code (8). This lets callers distinguish an outdated
+// specscore that predates a required subcommand from a generic failure (1),
+// while the shell still reports a wholly-absent binary as 127. Scoped to
+// unknown subcommands only — unknown flags keep their existing semantics — and
+// it never clobbers an error that already carries an exit code.
+func mapUnsupportedCommand(err error) error {
+	if err == nil {
+		return nil
+	}
+	type exitCoder interface{ ExitCode() int }
+	var ec exitCoder
+	if errors.As(err, &ec) {
+		return err
+	}
+	if strings.HasPrefix(err.Error(), `unknown command "`) {
+		return exitcode.UnsupportedCommandError(err.Error())
+	}
+	return err
 }
 
 // Fatal prints the error and exits with the appropriate code.

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -106,10 +107,61 @@ func TestRun_VersionSubcommand(t *testing.T) {
 	}
 }
 
+func TestMapUnsupportedCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       error
+		wantCode int // -1 means: expect no exit code attached
+	}{
+		{"nil", nil, -1},
+		{"unknown command", errors.New(`unknown command "verdict" for "specscore consilium"`), exitcode.UnsupportedCommand},
+		{"unknown flag stays generic", errors.New("unknown flag: --bogus"), -1},
+		{"already coded error not clobbered", exitcode.NotFoundError(`unknown command "x" for "y"`), exitcode.NotFound},
+		{"unrelated error untouched", errors.New("something else failed"), -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapUnsupportedCommand(tc.in)
+			if tc.in == nil {
+				if got != nil {
+					t.Fatalf("mapUnsupportedCommand(nil) = %v, want nil", got)
+				}
+				return
+			}
+			type exitCoder interface{ ExitCode() int }
+			var ec exitCoder
+			if tc.wantCode == -1 {
+				if errors.As(got, &ec) {
+					t.Errorf("expected no exit code, got %d", ec.ExitCode())
+				}
+				return
+			}
+			if !errors.As(got, &ec) {
+				t.Fatalf("expected exit code %d, got none (%v)", tc.wantCode, got)
+			}
+			if ec.ExitCode() != tc.wantCode {
+				t.Errorf("exit code = %d, want %d", ec.ExitCode(), tc.wantCode)
+			}
+		})
+	}
+}
+
 func TestRun_UnknownCommand(t *testing.T) {
 	err := Run([]string{"specscore", "nonexistent-command"})
 	if err == nil {
-		t.Error("Run([nonexistent-command]) = nil, want error")
+		t.Fatal("Run([nonexistent-command]) = nil, want error")
+	}
+	// An unknown/unsupported subcommand must carry the dedicated
+	// UnsupportedCommand exit code (8), so callers can distinguish an
+	// outdated specscore from the shell's 127 (binary absent) and from a
+	// generic failure (1).
+	type exitCoder interface{ ExitCode() int }
+	var ec exitCoder
+	if !errors.As(err, &ec) {
+		t.Fatalf("unknown-command error does not carry an exit code: %v", err)
+	}
+	if got := ec.ExitCode(); got != exitcode.UnsupportedCommand {
+		t.Errorf("exit code = %d, want %d (UnsupportedCommand)", got, exitcode.UnsupportedCommand)
 	}
 }
 

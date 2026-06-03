@@ -233,6 +233,7 @@ func executeWithPanicRecovery(rootCmd *cobra.Command) (returnErr error) {
 		return exitcode.UnexpectedErrorf("panic recovered: %v", panicVal)
 	}
 
+	returnErr = mapUnsupportedCommand(returnErr)
 	emitInvocationEvent(returnErr)
 	return returnErr
 }
