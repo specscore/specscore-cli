@@ -1,9 +1,9 @@
 # Idea: Canonical Lint-Rule Catalog
 
-**Status:** Approved
+**Status:** Specified
 **Date:** 2026-06-03
 **Owner:** alexander.trakhimenok
-**Promotes To:** —
+**Promotes To:** cli/rules
 **Supersedes:** —
 **Related Ideas:** —
 

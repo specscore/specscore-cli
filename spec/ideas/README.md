@@ -7,7 +7,7 @@ Pre-spec one-pagers for the `specscore` CLI. Each Idea refines a vague concept i
 | Idea | Status | Date | Owner | Promotes To |
 |------|--------|------|-------|-------------|
 | [ai-agent-configuration-cli](ai-agent-configuration-cli.md) | Implemented | 2026-05-27 | alexander.trakhimenok | cli/agent, cli/agent/setup |
-| [canonical-lint-rule-catalog](canonical-lint-rule-catalog.md) | Approved | 2026-06-03 | alexander.trakhimenok | — |
+| [canonical-lint-rule-catalog](canonical-lint-rule-catalog.md) | Specified | 2026-06-03 | alexander.trakhimenok | cli/rules |
 | [cli-error-telemetry](cli-error-telemetry.md) | Implemented | 2026-05-21 | alexandertrakhimenok | cli/telemetry/errors-telemetry |
 | [cli-self-update](cli-self-update.md) | Specified | 2026-06-01 | alex | cli/self-update |
 | [cli-telemetry](cli-telemetry.md) | Implemented | 2026-05-21 | alexandertrakhimenok | cli/telemetry, cli/telemetry/usage-telemetry |
