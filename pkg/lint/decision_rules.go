@@ -290,6 +290,41 @@ func checkDecisions(specRoot string) ([]Violation, error) {
 		vs = append(vs, checkDecisionFile(d, specRoot, bySlug, numbers)...)
 	}
 
+	// D-supersedes-bidirectional (reverse): every "Superseded By: X" must point
+	// to an existing Decision whose Supersedes points back. The forward check
+	// (driven by Supersedes) never examines decisions reached only via
+	// Superseded By, so orphan or one-sided back-references go undetected.
+	for _, d := range decisions {
+		f, ok := d.fieldByName["Superseded By"]
+		if !ok {
+			continue
+		}
+		val := strings.TrimSpace(f.Value)
+		if val == "" || val == "—" || val == "-" {
+			continue
+		}
+		successor, exists := bySlug[val]
+		if !exists {
+			vs = append(vs, Violation{
+				File: d.relPath, Line: f.Line, Severity: "error",
+				Rule:    "D-supersedes-bidirectional",
+				Message: fmt.Sprintf("Superseded By references %q but that Decision does not exist", val),
+			})
+			continue
+		}
+		successorSupersedes := ""
+		if sf, ok := successor.fieldByName["Supersedes"]; ok {
+			successorSupersedes = strings.TrimSpace(sf.Value)
+		}
+		if successorSupersedes != d.slug {
+			vs = append(vs, Violation{
+				File: d.relPath, Line: f.Line, Severity: "error",
+				Rule:    "D-supersedes-bidirectional",
+				Message: fmt.Sprintf("Superseded By references %q but that Decision's Supersedes is %q (expected %q)", val, successorSupersedes, d.slug),
+			})
+		}
+	}
+
 	return vs, nil
 }
 
