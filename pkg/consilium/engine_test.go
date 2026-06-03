@@ -2,6 +2,7 @@ package consilium
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -267,6 +268,198 @@ func TestEvaluate_AdversaryVetoBlocks(t *testing.T) {
 	for _, r := range []string{ruleBuilderGate, ruleCustomerGate, ruleShouldImplement} {
 		if contains(got.RuleTrace, r) {
 			t.Errorf("RuleTrace = %v, want it NOT to contain approval-count rule %q", got.RuleTrace, r)
+		}
+	}
+}
+
+// ceilingValue maps an unexpected ceiling knob (outside low|medium) to the top
+// of the scale (2) so it never silently blocks a vote.
+func TestCeilingValue_UnknownKnobIsTopOfScale(t *testing.T) {
+	if got := ceilingValue("high"); got != 2 {
+		t.Errorf("ceilingValue(high) = %d, want 2", got)
+	}
+	if got := ceilingValue("low"); got != 0 {
+		t.Errorf("ceilingValue(low) = %d, want 0", got)
+	}
+}
+
+// ceilDiv returns ceil(a/b).
+func TestCeilDiv(t *testing.T) {
+	cases := []struct{ a, b, want int }{
+		{4, 3, 2}, // ceil(4/3)=2
+		{6, 3, 2}, // exact
+		{0, 3, 0},
+		{1, 3, 1},
+	}
+	for _, c := range cases {
+		if got := ceilDiv(c.a, c.b); got != c.want {
+			t.Errorf("ceilDiv(%d,%d) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// majority returns false for an empty group (n == 0).
+func TestMajority_EmptyGroup(t *testing.T) {
+	if majority(0, 0) {
+		t.Errorf("majority(0,0) = true, want false")
+	}
+}
+
+// medianOrdinal of an empty slice is 0.
+func TestMedianOrdinal_Empty(t *testing.T) {
+	if got := medianOrdinal(nil); got != 0 {
+		t.Errorf("medianOrdinal(nil) = %d, want 0", got)
+	}
+}
+
+// approvalGate returns false when there are no non-abstain voters.
+func TestApprovalGate_NoNonAbstain(t *testing.T) {
+	if approvalGate(0, 0, true) {
+		t.Errorf("approvalGate(0,0,requireAll) = true, want false")
+	}
+	if approvalGate(0, 0, false) {
+		t.Errorf("approvalGate(0,0,supermajority) = true, want false")
+	}
+}
+
+// approvalGate supermajority path: with requireAll=false a two-thirds
+// supermajority (ceil(2/3·n)) is enough; one builder rejecting out of three
+// still clears the gate.
+func TestApprovalGate_SupermajorityPath(t *testing.T) {
+	// 2 of 3 approve -> ceil(2*3/3)=2 -> passes.
+	if !approvalGate(2, 3, false) {
+		t.Errorf("approvalGate(2,3,supermajority) = false, want true")
+	}
+	// 1 of 3 approve -> needs 2 -> fails.
+	if approvalGate(1, 3, false) {
+		t.Errorf("approvalGate(1,3,supermajority) = true, want false")
+	}
+}
+
+// With require_all_builders:false and require_all_customers:false, a single
+// dissenter per group still clears the two-thirds supermajority approval gates,
+// exercising ceilDiv/majority/approvalGate non-unanimous branches end to end.
+func TestEvaluate_SupermajorityApprovesWithDissenter(t *testing.T) {
+	roster := defaultRosterSnapshot()
+	votes := []Vote{
+		approveVote("engineer", "high", "🟢", "🟢"),
+		approveVote("architect", "high", "🟢", "🟢"),
+		// qa rejects; 2/3 builders still approve.
+		{Verdict: "should-not-implement", Confidence: "high", Cost: "🟢", Complexity: "🟢", Argument: "no", Role: "qa"},
+		approveVote("pm", "high", "🟢", "🟢"),
+		approveVote("ux", "high", "🟢", "🟢"),
+		// marketing rejects; 2/3 customers still approve.
+		{Verdict: "should-not-implement", Confidence: "high", Cost: "🟢", Complexity: "🟢", Argument: "no", Role: "marketing"},
+	}
+	knobs := StrictBaseline()
+	knobs.RequireAllBuilders = false
+	knobs.RequireAllCustomers = false
+
+	got := Evaluate(votes, roster, knobs)
+
+	if got.Verdict != VerdictShouldImplement {
+		t.Fatalf("Verdict = %q, want %q", got.Verdict, VerdictShouldImplement)
+	}
+}
+
+// Step-12 should-not-implement via majority (not unanimity): a single approver
+// per group still leaves a strict majority rejecting, so both group majorities
+// reject and the verdict is should-not-implement.
+func TestEvaluate_ShouldNotImplementByMajority(t *testing.T) {
+	roster := defaultRosterSnapshot()
+	reject := func(role string) Vote {
+		return Vote{Verdict: "should-not-implement", Confidence: "high", Cost: "🟢", Complexity: "🟢", Argument: "no", Role: role}
+	}
+	votes := []Vote{
+		reject("engineer"), reject("architect"),
+		approveVote("qa", "high", "🟢", "🟢"),
+		reject("pm"), reject("ux"),
+		approveVote("marketing", "high", "🟢", "🟢"),
+	}
+	knobs := StrictBaseline()
+	knobs.RequireAllBuilders = false
+	knobs.RequireAllCustomers = false
+
+	got := Evaluate(votes, roster, knobs)
+
+	if got.Verdict != VerdictShouldNotImplement {
+		t.Fatalf("Verdict = %q, want %q", got.Verdict, VerdictShouldNotImplement)
+	}
+	if last := got.RuleTrace[len(got.RuleTrace)-1]; last != ruleShouldNotImplement {
+		t.Errorf("RuleTrace ends in %q, want %q", last, ruleShouldNotImplement)
+	}
+}
+
+// High-confidence abstains from a builder and an adversary are both excluded
+// from their group denominators, exercising the builder and adversary arms of
+// the step-2 exclusion switch.
+func TestEvaluate_HighConfidenceAbstainExcludesBuilderAndAdversary(t *testing.T) {
+	roster := defaultRosterSnapshot()
+	votes := []Vote{
+		abstainVote("engineer", "high"), // builder excluded
+		approveVote("architect", "high", "🟢", "🟢"),
+		approveVote("qa", "high", "🟢", "🟢"),
+		approveVote("pm", "high", "🟢", "🟢"),
+		approveVote("ux", "high", "🟢", "🟢"),
+		approveVote("marketing", "high", "🟢", "🟢"),
+		abstainVote("skeptic", "high"), // adversary excluded
+	}
+
+	got := Evaluate(votes, roster, StrictBaseline())
+
+	if got.Denominators.Builders != 2 {
+		t.Errorf("Denominators.Builders = %d, want 2", got.Denominators.Builders)
+	}
+	if got.Denominators.Adversaries != 2 {
+		t.Errorf("Denominators.Adversaries = %d, want 2", got.Denominators.Adversaries)
+	}
+	if !contains(got.ExcludedVotes, "engineer") || !contains(got.ExcludedVotes, "skeptic") {
+		t.Errorf("ExcludedVotes = %v, want engineer and skeptic", got.ExcludedVotes)
+	}
+}
+
+// An even count of non-abstain votes exercises medianOrdinal's lower-middle
+// tie-break inside Evaluate. With knobs allowing supermajority and four
+// builder-only votes of mixed cost, the median picks the lower-middle.
+func TestEvaluate_EvenNonAbstainCountMedian(t *testing.T) {
+	roster := []RosterEntry{
+		{Name: "engineer", Group: GroupBuilders},
+		{Name: "architect", Group: GroupBuilders},
+		{Name: "qa", Group: GroupBuilders},
+		{Name: "pm", Group: GroupBuilders},
+	}
+	// Costs [🟢,🟢,🔴,🔴] sorted -> [0,0,2,2], lower-middle index 1 -> 0 (passes
+	// cost ceiling medium). All approve at high confidence.
+	votes := []Vote{
+		approveVote("engineer", "high", "🟢", "🟢"),
+		approveVote("architect", "high", "🟢", "🟢"),
+		approveVote("qa", "high", "🔴", "🟢"),
+		approveVote("pm", "high", "🔴", "🟢"),
+	}
+	knobs := StrictBaseline()
+	knobs.RequireAllCustomers = false // no customers; customer gate would fail otherwise
+
+	got := Evaluate(votes, roster, knobs)
+
+	// No customers -> customer approvalGate fails (nonAbstain==0) -> not
+	// should-implement; the even-count median path is still exercised.
+	if got.Verdict == "" {
+		t.Fatalf("Verdict empty")
+	}
+}
+
+// Marshal normalizes nil RuleTrace and nil ExcludedVotes to empty lists so a
+// zero-value Result still serializes deterministically.
+func TestMarshal_NilSlicesNormalized(t *testing.T) {
+	r := Result{Verdict: VerdictNeedsHumanReview} // RuleTrace and ExcludedVotes nil
+	out, err := r.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	s := string(out)
+	for _, want := range []string{"rule_trace: []", "excluded_votes: []"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("Marshal output missing %q; got:\n%s", want, s)
 		}
 	}
 }

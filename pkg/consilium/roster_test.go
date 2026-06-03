@@ -82,6 +82,39 @@ func TestResolveRoster_DefaultsWhenNoRosterBlock(t *testing.T) {
 	}
 }
 
+// A missing specscore.yaml yields the full default roster (absent file ==
+// defaults), exercising the ErrNotExist branch of loadRosterConfig.
+func TestResolveRoster_NoConfigFile(t *testing.T) {
+	roster, err := ResolveRoster(t.TempDir())
+	if err != nil {
+		t.Fatalf("ResolveRoster: %v", err)
+	}
+	if len(roster) != 9 {
+		t.Fatalf("expected 9 default roles, got %d", len(roster))
+	}
+}
+
+// An unreadable specscore.yaml (a directory at that path) is a non-ErrNotExist
+// read error that must propagate.
+func TestResolveRoster_UnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "specscore.yaml"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if _, err := ResolveRoster(dir); err == nil {
+		t.Fatalf("expected read error for directory-as-file, got nil")
+	}
+}
+
+// Malformed YAML in specscore.yaml is a parse error that propagates through
+// ResolveRoster.
+func TestResolveRoster_MalformedYAML(t *testing.T) {
+	root := writeConfig(t, "consilium:\n  roster: {bad: [unterminated\n")
+	if _, err := ResolveRoster(root); err == nil {
+		t.Fatalf("expected parse error for malformed YAML, got nil")
+	}
+}
+
 // An out-of-enum custom group is a config-load error naming the key path.
 func TestResolveRoster_CustomGroupOutOfEnum(t *testing.T) {
 	root := writeConfig(t, `consilium:
