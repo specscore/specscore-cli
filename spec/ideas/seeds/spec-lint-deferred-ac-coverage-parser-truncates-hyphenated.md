@@ -5,7 +5,8 @@ captured_at: 2026-06-03T09:59:29Z
 captured_by: user
 captured_during: spec/plans/approval-autonomy.md
 trigger: explicit
-status: queued
+status: archived
+superseded_by: deferred-ac-coverage-regex-truncates-hyphenated-ac-slugs
 synchestra_task: null
 ---
 

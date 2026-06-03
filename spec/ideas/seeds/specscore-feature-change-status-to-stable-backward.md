@@ -20,3 +20,9 @@ synchestra_task: null
 **Repro:** Today's specstudio-skills commit `b62457e` (sidekick-capture/destination-resolution `Implementing → Stable`). The Source Idea `spec/ideas/idea-skills-destination-resolution.md` and `spec/ideas/README.md` both transitioned alongside the Feature.
 
 **Suggested investigation:** identify whether the cascade is in (a) the verb itself, (b) the shared `spec lint --fix` engine that derives Idea status from referencing-Feature status, or (c) some other auto-sync hook. Then either document the rule (and surface it in the verb's stderr — "also transitioned Source Idea <slug>: <from> → <to>") or remove it.
+
+---
+
+**Triage 2026-06-03:** The *literally reported* scenario does NOT reproduce at HEAD — a single `Stable` ref derives the Idea to `Implemented` (forward), not `Specified`. The cascade lives in the `lint --fix` follow-up step (b): `runFeatureChangeStatus` (`internal/cli/feature.go:893`) runs `lint --fix` → `ideaSyncRules` (`pkg/lint/idea.go:662`).
+
+**However, a real latent bug remains OPEN:** the "all Approved → Specified" else-branch (`idea.go:782-784`) silently also fires for `Deprecated` refs. So mixed refs `{Stable, Deprecated}` with an Idea at `Implementing` derive it **backward to `Specified`**. The existing test `TestCheckIdeas_DeprecatedFeatureGivesSpecified` bakes in this behavior — its assertion may itself be the bug. **Needs a spec/REQ decision on intended `Deprecated`-ref handling in the derivation matrix before coding a fix** (likely: treat `Deprecated` like `Stable` — "past Implementing").
