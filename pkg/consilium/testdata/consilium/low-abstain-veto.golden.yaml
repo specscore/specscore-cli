@@ -1,0 +1,8 @@
+verdict: needs-human-review
+rule_trace:
+    - low-abstain-veto
+excluded_votes: []
+denominators:
+    builders: 3
+    customers: 3
+    adversaries: 3
