@@ -257,3 +257,65 @@ func TestRules_WriteRegeneratesStaleCatalog(t *testing.T) {
 		t.Errorf("catalog content does not match RenderCatalog() after regeneration")
 	}
 }
+
+func TestRules_CheckMatchExitsZeroNoOutput(t *testing.T) {
+	dir := newTempRepo(t)
+
+	// Bring the catalog in sync first.
+	if err := lint.WriteCatalog(dir); err != nil {
+		t.Fatalf("seeding catalog: %v", err)
+	}
+
+	out, errOut, err := runRulesCmd(t, "--check")
+	if err != nil {
+		t.Fatalf("expected exit 0 on in-sync catalog, got error: %v", err)
+	}
+	if out != "" || errOut != "" {
+		t.Errorf("expected no output on match, got stdout=%q stderr=%q", out, errOut)
+	}
+}
+
+func TestRules_CheckDriftReportsAndErrors(t *testing.T) {
+	dir := newTempRepo(t)
+
+	// Write a stale catalog that diverges from the registry rendering.
+	dest := filepath.Join(dir, lint.CatalogPath)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatalf("creating docs dir: %v", err)
+	}
+	if err := os.WriteFile(dest, []byte("old content\n"), 0o644); err != nil {
+		t.Fatalf("writing stale catalog: %v", err)
+	}
+
+	_, _, err := runRulesCmd(t, "--check")
+	if err == nil {
+		t.Fatal("expected a drift error, got nil")
+	}
+	if !strings.Contains(err.Error(), lint.CatalogPath) {
+		t.Errorf("drift error should name %q, got: %v", lint.CatalogPath, err)
+	}
+	if !strings.Contains(err.Error(), "--write") {
+		t.Errorf("drift error should advise running --write, got: %v", err)
+	}
+}
+
+func TestRules_CheckMissingFileReportsAndErrors(t *testing.T) {
+	newTempRepo(t)
+
+	_, _, err := runRulesCmd(t, "--check")
+	if err == nil {
+		t.Fatal("expected an error when docs/lint-rules.md is missing, got nil")
+	}
+	if !strings.Contains(err.Error(), lint.CatalogPath) {
+		t.Errorf("missing-file error should name %q, got: %v", lint.CatalogPath, err)
+	}
+}
+
+func TestRules_CheckAndWriteConflict(t *testing.T) {
+	newTempRepo(t)
+
+	_, _, err := runRulesCmd(t, "--check", "--write")
+	if err == nil {
+		t.Fatal("expected a conflicting-args error for --check --write, got nil")
+	}
+}

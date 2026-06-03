@@ -67,7 +67,7 @@ Wire `specscore rules --write` to render the catalog and write it to `docs/lint-
 
 ### Task 7: `--check` drift-guard
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 5, 6
 **Verifies:** cli/rules#ac:check-detects-drift
 

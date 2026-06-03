@@ -3,7 +3,11 @@ package cli
 // Features implemented: cli/rules
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
@@ -24,13 +28,52 @@ and exits 0.`,
 	cmd.Flags().String("family", "", "restrict output to a single rule family")
 	cmd.Flags().String("format", "text", "output format: text or json")
 	cmd.Flags().Bool("write", false, "regenerate docs/lint-rules.md from the rule registry")
+	cmd.Flags().Bool("check", false, "verify docs/lint-rules.md is in sync with the rule registry (no write)")
 	return cmd
 }
 
 func runRules(cmd *cobra.Command, _ []string) error {
+	write, _ := cmd.Flags().GetBool("write")
+	check, _ := cmd.Flags().GetBool("check")
+
+	if write && check {
+		return exitcode.InvalidArgsErrorf("--write and --check are mutually exclusive")
+	}
+
+	// --check is an action flag: render the catalog in-memory and compare it to
+	// the committed file, without writing or emitting the listing.
+	if check {
+		cwd, err := osGetwdFn()
+		if err != nil {
+			return exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
+		}
+		root, err := findRepoConfigRoot(cwd)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(root, lint.CatalogPath)
+		expected := lint.RenderCatalog()
+		got, readErr := os.ReadFile(path)
+		if readErr != nil {
+			if errors.Is(readErr, fs.ErrNotExist) {
+				return exitcode.Newf(exitcode.DirtyTree,
+					"%s is missing and out of sync with the rule registry; run `specscore rules --write` to regenerate it",
+					lint.CatalogPath)
+			}
+			return exitcode.UnexpectedErrorf("reading %s: %v", lint.CatalogPath, readErr)
+		}
+		if string(got) != expected {
+			return exitcode.Newf(exitcode.DirtyTree,
+				"%s is out of sync with the rule registry; run `specscore rules --write` to regenerate it",
+				lint.CatalogPath)
+		}
+		// In sync: write nothing, exit 0.
+		return nil
+	}
+
 	// --write is an action flag: when set, regenerate the canonical catalog and
 	// return without emitting the text/json listing.
-	if write, _ := cmd.Flags().GetBool("write"); write {
+	if write {
 		cwd, err := osGetwdFn()
 		if err != nil {
 			return exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
