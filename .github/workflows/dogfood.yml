@@ -1,7 +1,10 @@
 name: Dogfood lint
 
 on:
+  # push runs only on main (post-merge gate); PR branches are covered by the
+  # pull_request event below, so a branch with an open PR runs the gate once.
   push:
+    branches: [main]
     paths:
       - 'spec/**'
       - 'cmd/**'
