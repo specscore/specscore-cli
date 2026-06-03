@@ -14,6 +14,7 @@ const (
 	AmbiguousSlug      = 5  // Slug auto-resolution found multiple candidates.
 	TargetNotSpecScore = 6  // Target directory is not a SpecScore-managed repo.
 	DirtyTree          = 7  // Working tree has uncommitted changes in paths to be modified.
+	UnsupportedCommand = 8  // Subcommand not recognized — typically an outdated specscore that predates a required subcommand. Distinct from the shell's 127 (binary absent).
 	Unexpected         = 10 // Catch-all for unexpected runtime errors.
 )
 
@@ -73,6 +74,9 @@ func InvalidStateError(msg string) *Error { return &Error{code: InvalidState, ms
 func InvalidStateErrorf(format string, args ...any) *Error {
 	return Newf(InvalidState, format, args...)
 }
+
+// UnsupportedCommandError returns an exit-code-8 error.
+func UnsupportedCommandError(msg string) *Error { return &Error{code: UnsupportedCommand, msg: msg} }
 
 // UnexpectedError returns an exit-code-10 error.
 func UnexpectedError(msg string) *Error { return &Error{code: Unexpected, msg: msg} }
