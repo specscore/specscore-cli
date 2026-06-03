@@ -59,7 +59,7 @@ Implement a renderer that produces the markdown catalog from the registry determ
 
 ### Task 6: `--write` generates `docs/lint-rules.md`
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 5
 **Verifies:** cli/rules#ac:catalog-write-regenerates
 

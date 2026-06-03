@@ -23,10 +23,29 @@ and exits 0.`,
 	}
 	cmd.Flags().String("family", "", "restrict output to a single rule family")
 	cmd.Flags().String("format", "text", "output format: text or json")
+	cmd.Flags().Bool("write", false, "regenerate docs/lint-rules.md from the rule registry")
 	return cmd
 }
 
 func runRules(cmd *cobra.Command, _ []string) error {
+	// --write is an action flag: when set, regenerate the canonical catalog and
+	// return without emitting the text/json listing.
+	if write, _ := cmd.Flags().GetBool("write"); write {
+		cwd, err := osGetwdFn()
+		if err != nil {
+			return exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
+		}
+		root, err := findRepoConfigRoot(cwd)
+		if err != nil {
+			return err
+		}
+		if err := lint.WriteCatalog(root); err != nil {
+			return exitcode.UnexpectedErrorf("writing catalog: %v", err)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", lint.CatalogPath)
+		return nil
+	}
+
 	family, _ := cmd.Flags().GetString("family")
 	format, _ := cmd.Flags().GetString("format")
 

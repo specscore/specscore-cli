@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -192,5 +194,66 @@ func TestRules_FormatJSONDeterministic(t *testing.T) {
 	}
 	if out1 != out2 {
 		t.Error("JSON output is not byte-identical across runs")
+	}
+}
+
+// newTempRepo creates a temp dir holding a minimal specscore.yaml and points
+// osGetwdFn at it so findRepoConfigRoot resolves to the temp repo. The seam is
+// restored via t.Cleanup.
+func newTempRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "specscore.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("writing specscore.yaml: %v", err)
+	}
+	orig := osGetwdFn
+	osGetwdFn = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { osGetwdFn = orig })
+	return dir
+}
+
+func TestRules_WriteGeneratesCatalog(t *testing.T) {
+	dir := newTempRepo(t)
+
+	_, _, err := runRulesCmd(t, "--write")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, readErr := os.ReadFile(filepath.Join(dir, lint.CatalogPath))
+	if readErr != nil {
+		t.Fatalf("catalog file not written: %v", readErr)
+	}
+	if string(got) != lint.RenderCatalog() {
+		t.Errorf("catalog content does not match RenderCatalog()")
+	}
+}
+
+func TestRules_WriteRegeneratesStaleCatalog(t *testing.T) {
+	dir := newTempRepo(t)
+
+	// Pre-write a stale catalog so the run must overwrite it.
+	dest := filepath.Join(dir, lint.CatalogPath)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatalf("creating docs dir: %v", err)
+	}
+	if err := os.WriteFile(dest, []byte("old content\n"), 0o644); err != nil {
+		t.Fatalf("writing stale catalog: %v", err)
+	}
+
+	_, _, err := runRulesCmd(t, "--write")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, readErr := os.ReadFile(dest)
+	if readErr != nil {
+		t.Fatalf("catalog file not readable: %v", readErr)
+	}
+	if strings.Contains(string(got), "old content") {
+		t.Error("stale content still present after --write")
+	}
+	if string(got) != lint.RenderCatalog() {
+		t.Errorf("catalog content does not match RenderCatalog() after regeneration")
 	}
 }
