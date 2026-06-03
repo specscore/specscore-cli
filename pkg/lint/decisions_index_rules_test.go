@@ -284,6 +284,40 @@ None at this time.
 	})
 }
 
+func TestDecisionsIndexArchivedCompleteness(t *testing.T) {
+	// An archived decision file with no row in the archived index.
+	archivedIndex := "# Archived Decisions\n\n"
+	decision := strings.Replace(acceptedDecisionContent(), "**Status:** Accepted", "**Status:** Superseded", 1)
+	root := setupDecisionTestTree(t, map[string]string{
+		"decisions/archived/README.md":   archivedIndex,
+		"decisions/archived/0001-old.md": decision,
+	})
+	vs, err := checkDecisionsIndex(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDecisionViolation(vs, "DI-completeness", "archived decisions index missing") {
+		t.Errorf("expected archived DI-completeness violation, got: %+v", vs)
+	}
+}
+
+func TestDecisionsIndexArchivedStatusExcludesActive(t *testing.T) {
+	// An active (Accepted) decision wrongly listed in the archived index.
+	archivedIndex := "# Archived Decisions\n\n" +
+		"- 2026-05-20 — [0001-active](0001-active.md) — Accepted — listed by mistake\n"
+	root := setupDecisionTestTree(t, map[string]string{
+		"decisions/archived/README.md": archivedIndex,
+		"decisions/0001-active.md":     acceptedDecisionContent(),
+	})
+	vs, err := checkDecisionsIndex(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDecisionViolation(vs, "DI-archived-status-excludes-active", "Accepted") {
+		t.Errorf("expected DI-archived-status-excludes-active violation, got: %+v", vs)
+	}
+}
+
 func TestDecisionsIndexArchivedChronological(t *testing.T) {
 	t.Run("out of order rejected", func(t *testing.T) {
 		content := `# Archived Decisions

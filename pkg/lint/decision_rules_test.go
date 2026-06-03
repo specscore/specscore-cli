@@ -3,6 +3,7 @@ package lint
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +97,45 @@ None at this time.
 ---
 *This document follows the https://specscore.md/decision-specification*
 `
+}
+
+// TestDecisionSupersededByReverse covers the reverse direction of the
+// bidirectional supersession check: a "Superseded By: X" reference whose
+// target is missing (orphan) or does not point back (mismatch). The forward
+// check is driven by Supersedes and does not cover these.
+func TestDecisionSupersededByReverse(t *testing.T) {
+	t.Run("orphan Superseded By rejected", func(t *testing.T) {
+		content := strings.Replace(validDecisionContent(), "**Status:** Proposed", "**Status:** Superseded", 1)
+		content = strings.Replace(content, "**Superseded By:** —", "**Superseded By:** 0099-ghost", 1)
+		root := setupDecisionTestTree(t, map[string]string{
+			"decisions/archived/0001-a.md": content,
+		})
+		vs, err := checkDecisions(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasDecisionViolation(vs, "D-supersedes-bidirectional", "does not exist") {
+			t.Errorf("expected orphan D-supersedes-bidirectional violation, got: %+v", vs)
+		}
+	})
+
+	t.Run("back-reference mismatch rejected", func(t *testing.T) {
+		// A claims it was superseded by B, but B's Supersedes does not point back.
+		a := strings.Replace(validDecisionContent(), "**Status:** Proposed", "**Status:** Superseded", 1)
+		a = strings.Replace(a, "**Superseded By:** —", "**Superseded By:** 0002-b", 1)
+		b := validDecisionContent() // B.Supersedes stays "—" — does not point back to A.
+		root := setupDecisionTestTree(t, map[string]string{
+			"decisions/archived/0001-a.md": a,
+			"decisions/0002-b.md":          b,
+		})
+		vs, err := checkDecisions(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !hasDecisionViolation(vs, "D-supersedes-bidirectional", "expected \"0001-a\"") {
+			t.Errorf("expected mismatch D-supersedes-bidirectional violation, got: %+v", vs)
+		}
+	})
 }
 
 func setupDecisionTestTree(t *testing.T, files map[string]string) string {
