@@ -41,6 +41,7 @@ func Run(args []string) error {
 		entityCommand(),
 		featureCommand(),
 		propertyCommand(),
+		rulesCommand(),
 		specCommand(),
 		taskCommand(),
 		ideaCommand(),

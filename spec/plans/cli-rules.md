@@ -27,7 +27,7 @@ Replace the bare `allRuleNames map[string]bool` in `pkg/lint` with a structured 
 
 ### Task 2: Registry ↔ checker parity validation
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:registry-parity-enforced
 
@@ -35,7 +35,7 @@ Add a reusable parity check that asserts every rule ID a checker can emit has a 
 
 ### Task 3: `specscore rules` command — deterministic listing
 
-**Status:** pending
+**Status:** in-progress
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:rules-lists-all
 
@@ -51,7 +51,7 @@ Add `--family <name>` to restrict output to one family and `--format text|json` 
 
 ### Task 5: Deterministic catalog renderer at the canonical path
 
-**Status:** pending
+**Status:** in-progress
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:catalog-deterministic-render, cli/rules#ac:catalog-at-canonical-path
 
