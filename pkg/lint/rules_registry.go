@@ -174,6 +174,7 @@ var builtinRules = []Rule{
 	// Capability / platform-implementation lint rules.
 	{ID: "implements-reference", Family: "capability", Severity: "error", Description: "Validates the Implements reference on an Implementation Feature."},
 	{ID: "implementation-matrix", Family: "capability", Severity: "error", Description: "Validates the shape of a Capability's Implementation Matrix table."},
+	{ID: "other-platforms-links-only", Family: "capability", Severity: "error", Description: "Rejects a parity status restated in an Implementation's Other Platforms section."},
 
 	// Property lint rules.
 	{ID: "property-location", Family: "property", Severity: "error", Description: "Requires property files to live in the expected location."},
