@@ -687,10 +687,10 @@ func TestCheckIdeas_DerivesSpecifying_WhenMixed(t *testing.T) {
 	}
 }
 
-// TestCheckIdeas_DeprecatedFeatureGivesSpecified verifies that a
-// `Deprecated` Feature (not Draft/UnderReview/Implementing/Stable)
-// leads to the `Specified` derivation (all Features at Approved fallthrough).
-func TestCheckIdeas_DeprecatedFeatureGivesSpecified(t *testing.T) {
+// TestCheckIdeas_DeprecatedFeatureGivesImplemented verifies that a
+// `Deprecated` Feature (a post-Stable, "done" state) derives `Implemented`,
+// the same as `Stable` — never dragging the Idea backward.
+func TestCheckIdeas_DeprecatedFeatureGivesImplemented(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/README.md":                 activeIndexWith("offline-mode"),
 		"ideas/archived/README.md":        archivedIndex,
@@ -701,8 +701,28 @@ func TestCheckIdeas_DeprecatedFeatureGivesSpecified(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(specRoot, "ideas", "offline-mode.md"))
-	if !strings.Contains(string(data), "**Status:** Specified") {
-		t.Errorf("expected Specified (Deprecated falls to else branch), got: %s", string(data))
+	if !strings.Contains(string(data), "**Status:** Implemented") {
+		t.Errorf("expected Implemented (Deprecated is a done state, like Stable), got: %s", string(data))
+	}
+}
+
+// TestCheckIdeas_MixedStableDeprecated_DerivesImplemented verifies that an
+// Idea referenced by both a `Stable` and a `Deprecated` Feature derives
+// `Implemented` — not `Specified` (the backward-transition bug).
+func TestCheckIdeas_MixedStableDeprecated_DerivesImplemented(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":                  activeIndexWith("offline-mode"),
+		"ideas/archived/README.md":         archivedIndex,
+		"ideas/offline-mode.md":            validIdeaBody("Offline Mode", "Implementing", map[string]string{"Promotes To": "offline-sync, offline-cache"}),
+		"features/offline-sync/README.md":  featureBody("Offline Sync", "Stable", "offline-mode"),
+		"features/offline-cache/README.md": featureBody("Offline Cache", "Deprecated", "offline-mode"),
+	})
+	if _, err := CheckIdeas(specRoot, true); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(specRoot, "ideas", "offline-mode.md"))
+	if !strings.Contains(string(data), "**Status:** Implemented") {
+		t.Errorf("expected Implemented (must not go backward to Specified), got: %s", string(data))
 	}
 }
 

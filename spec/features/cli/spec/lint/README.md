@@ -136,7 +136,7 @@ Rules added to support the change-request idea type, the extended lifecycle stat
 | Rule | Change |
 |---|---|
 | `idea-status-values` | Now accepts 8 statuses: Draft, Under Review, Approved, Specifying, Specified, Implementing, Implemented, Archived. |
-| `idea-sync-lint-strict` | New derivation levels: `Specifying` (any referenced Feature at Draft/Under Review), `Implemented` (all referenced Features at Stable). Skips change-request ideas (author-managed). |
+| `idea-sync-lint-strict` | New derivation levels: `Specifying` (any referenced Feature at Draft/Under Review), `Implemented` (all referenced Features at Stable **or Deprecated** — `Deprecated` is a post-Stable "done" state and derives like `Stable`, never dragging the Idea backward). Skips change-request ideas (author-managed). |
 | `idea-specified-requires-promotion` | Now checks `Specifying`, `Specified`, `Implementing`, and `Implemented` for non-empty `**Promotes To:**`. Skips change-request ideas. |
 | `idea-feature-cross-reference` | Accepts `Specifying` and `Implemented` as valid statuses for cross-referenced ideas. |
 | `idea-archived-location` | Relaxed for change-request ideas — they remain at their feature-scoped `proposals/` path when archived. |
