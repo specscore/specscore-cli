@@ -2,7 +2,15 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 113
+Total rules: 116
+
+## capability
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| implementation-matrix | error | Validates the shape of a Capability's Implementation Matrix table. |
+| implements-reference | error | Validates the Implements reference on an Implementation Feature. |
+| other-platforms-links-only | error | Rejects a parity status restated in an Implementation's Other Platforms section. |
 
 ## core
 
