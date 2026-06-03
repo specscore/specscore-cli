@@ -59,7 +59,7 @@ Implement the gate algorithm steps in exact order, producing `verdict`, `rule_tr
 
 ### Task 6: Abstain semantics and adversary veto
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 5
 **Verifies:** cli/consilium#ac:high-confidence-abstain-excluded-from-denominator, cli/consilium#ac:low-confidence-abstain-caps-verdict, cli/consilium#ac:adversary-veto-blocks
 
