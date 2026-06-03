@@ -175,6 +175,54 @@ func TestCheckImplementationMatrix_HeaderOnly_NoViolation(t *testing.T) {
 	}
 }
 
+// Task 5 — the Implementation Matrix is author-declared: `lint --fix` validates
+// its shape but never mutates Status cells, even when a same-repo
+// Implementation's lifecycle differs from the declared parity
+// (capability-and-platform-implementations#ac:matrix-no-rollup).
+func TestImplementationMatrix_NoRollupUnderFix(t *testing.T) {
+	// The matrix checker must not implement the fixer interface at all — that
+	// structurally guarantees `--fix` can never rewrite a Status cell.
+	if _, ok := newImplementationMatrixChecker().(fixer); ok {
+		t.Fatal("implementation-matrix checker must not implement fixer (no rollup)")
+	}
+
+	tmp := t.TempDir()
+	capability := "# Feature: Dashboards\n\n**Status:** Approved\n\n## Implementation Matrix\n\n" +
+		"| Platform | Status | Brief | Link |\n" +
+		"| --- | --- | --- | --- |\n" +
+		"| CLI | Planned | Data-only | specscore:feature/dashboards-cli |\n"
+	writeFeatureReadme(t, tmp, "dashboards", capability)
+	// A same-repo Implementation whose lifecycle (Stable) differs from the
+	// declared parity status (Planned) — a rollup would "correct" the cell.
+	writeFeatureReadme(t, tmp, "dashboards-cli",
+		"# Feature: Dashboards (CLI)\n\n**Status:** Stable\n**Implements:** specscore:feature/dashboards\n\n## Summary\n")
+
+	capPath := filepath.Join(tmp, "features", "dashboards", "README.md")
+	before, err := os.ReadFile(capPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := LintWithResult(Options{SpecRoot: tmp, Fix: true, Rules: []string{"implementation-matrix"}})
+	if err != nil {
+		t.Fatalf("LintWithResult: %v", err)
+	}
+	if len(res.Fixed) != 0 {
+		t.Errorf("expected no files fixed, got %v", res.Fixed)
+	}
+
+	after, err := os.ReadFile(capPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("Capability matrix mutated by --fix:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if !strings.Contains(string(after), "| CLI | Planned |") {
+		t.Errorf("declared Status cell Planned was altered:\n%s", after)
+	}
+}
+
 func runImplementationMatrixCheck(t *testing.T, specRoot string) []Violation {
 	t.Helper()
 	c := newImplementationMatrixChecker()
