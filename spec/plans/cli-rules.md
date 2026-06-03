@@ -43,7 +43,7 @@ Add the `rules` cobra command that prints every registered rule with its `id`, `
 
 ### Task 4: Family filter and output format
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 3
 **Verifies:** cli/rules#ac:rules-filter-and-json
 
