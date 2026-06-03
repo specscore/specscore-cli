@@ -43,7 +43,7 @@ Embed the 9 default slug→group pairs (builders/customers/adversaries). Parse t
 
 ### Task 4: Custom-role markdown parser + roster validation
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 3
 **Verifies:** cli/consilium#ac:roster-group-floor-violation-rejected, cli/consilium#ac:custom-role-missing-field-rejected
 
@@ -51,7 +51,7 @@ Parse a custom-role markdown file (`**Name:**` matching filename, `**Group:**` i
 
 ### Task 5: Gate engine core — ordered rule evaluation and the three terminal verdicts
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1, 2, 3
 **Verifies:** cli/consilium#ac:gate-engine-applies-rules-in-order
 
