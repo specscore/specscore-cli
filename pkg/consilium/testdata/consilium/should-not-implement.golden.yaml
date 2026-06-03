@@ -1,0 +1,13 @@
+verdict: should-not-implement
+rule_trace:
+    - builder-gate
+    - customer-gate
+    - confidence-gate
+    - cost-gate
+    - complexity-gate
+    - should-not-implement
+excluded_votes: []
+denominators:
+    builders: 3
+    customers: 3
+    adversaries: 3

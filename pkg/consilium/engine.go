@@ -1,6 +1,10 @@
 package consilium
 
-import "sort"
+import (
+	"sort"
+
+	"gopkg.in/yaml.v3"
+)
 
 // Verdict is one of the three terminal consilium outcomes
 // (REQ:gate-engine-rule-order).
@@ -279,4 +283,51 @@ func medianOrdinal(vals []int) int {
 	copy(sorted, vals)
 	sort.Ints(sorted)
 	return sorted[(len(sorted)-1)/2]
+}
+
+// resultDoc is the stable on-the-wire shape of a Result. Its field order
+// (verdict, rule_trace, excluded_votes, denominators) is fixed by struct
+// declaration order, which gopkg.in/yaml.v3 honours, so the serialized bytes
+// are identical across runs and processes. Nil slices are normalized to empty
+// slices before encoding so an absent vs. empty list never changes the bytes.
+type resultDoc struct {
+	Verdict       Verdict         `yaml:"verdict"`
+	RuleTrace     []string        `yaml:"rule_trace"`
+	ExcludedVotes []string        `yaml:"excluded_votes"`
+	Denominators  denominatorsDoc `yaml:"denominators"`
+}
+
+// denominatorsDoc mirrors Denominators with explicit, fixed-order yaml keys.
+type denominatorsDoc struct {
+	Builders    int `yaml:"builders"`
+	Customers   int `yaml:"customers"`
+	Adversaries int `yaml:"adversaries"`
+}
+
+// Marshal renders the Result as a deterministic YAML document. The encoding is
+// a pure function of the Result's values: fixed key order (verdict, rule_trace,
+// excluded_votes, denominators), nil slices normalized to empty lists, and no
+// clock/random/map-iteration input. The same Result therefore yields
+// byte-identical output across repeated calls, runs, and processes — the
+// property the snapshot suite gates on (AC:gate-engine-deterministic).
+func (r Result) Marshal() ([]byte, error) {
+	trace := r.RuleTrace
+	if trace == nil {
+		trace = []string{}
+	}
+	excluded := r.ExcludedVotes
+	if excluded == nil {
+		excluded = []string{}
+	}
+	doc := resultDoc{
+		Verdict:       r.Verdict,
+		RuleTrace:     trace,
+		ExcludedVotes: excluded,
+		Denominators: denominatorsDoc{
+			Builders:    r.Denominators.Builders,
+			Customers:   r.Denominators.Customers,
+			Adversaries: r.Denominators.Adversaries,
+		},
+	}
+	return yaml.Marshal(doc)
 }

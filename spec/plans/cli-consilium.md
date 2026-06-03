@@ -1,6 +1,6 @@
 # Plan: Consilium Engine (CLI) — pkg/consilium
 
-**Status:** Implementing
+**Status:** Completed
 **Mode:** full
 **Source Feature:** cli/consilium
 **Date:** 2026-06-03
@@ -67,7 +67,7 @@ Extend the engine with the early-exit branches that precede the approval count: 
 
 ### Task 7: Determinism guarantee + snapshot-test harness
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 5, 6
 **Verifies:** cli/consilium#ac:gate-engine-deterministic
 

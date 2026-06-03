@@ -1,0 +1,13 @@
+verdict: needs-human-review
+rule_trace:
+    - builder-gate
+    - customer-gate
+    - confidence-gate
+    - cost-gate
+    - complexity-gate
+    - needs-human-review
+excluded_votes: []
+denominators:
+    builders: 3
+    customers: 3
+    adversaries: 3
