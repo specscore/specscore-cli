@@ -1,6 +1,6 @@
 # Plan: Lint Rule Catalog
 
-**Status:** Approved
+**Status:** Implementing
 **Mode:** full
 **Source Feature:** cli/rules
 **Date:** 2026-06-03
@@ -19,7 +19,7 @@ Foundation-first linear decomposition. The structured registry (Task 1) is the s
 
 ### Task 1: Structured rule registry as single source of truth
 
-**Status:** pending
+**Status:** done
 **Depends-On:** —
 **Verifies:** cli/rules#ac:registry-has-metadata
 
