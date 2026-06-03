@@ -1,6 +1,6 @@
 # Plan: Lint Rule Catalog
 
-**Status:** Implementing
+**Status:** Completed
 **Mode:** full
 **Source Feature:** cli/rules
 **Date:** 2026-06-03
