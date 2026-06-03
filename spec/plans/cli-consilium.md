@@ -1,6 +1,6 @@
 # Plan: Consilium Engine (CLI) — pkg/consilium
 
-**Status:** Approved
+**Status:** Implementing
 **Mode:** full
 **Source Feature:** cli/consilium
 **Date:** 2026-06-03
@@ -19,7 +19,7 @@ Bottom-up library decomposition, foundation → consumers. The package's pure da
 
 ### Task 1: Scaffold `pkg/consilium` and implement the Vote schema + validator
 
-**Status:** pending
+**Status:** done
 **Depends-On:** —
 **Verifies:** cli/consilium#ac:pkg-consilium-package-shape, cli/consilium#ac:vote-bundle-valid-parses, cli/consilium#ac:vote-bundle-malformed-rejected
 
