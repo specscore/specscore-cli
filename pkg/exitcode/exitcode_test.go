@@ -49,6 +49,7 @@ func TestConvenienceConstructors(t *testing.T) {
 		{"NotFound", exitcode.NotFoundError("n"), exitcode.NotFound},
 		{"NotFoundF", exitcode.NotFoundErrorf("n %d", 3), exitcode.NotFound},
 		{"InvalidState", exitcode.InvalidStateError("s"), exitcode.InvalidState},
+		{"UnsupportedCommand", exitcode.UnsupportedCommandError("s"), exitcode.UnsupportedCommand},
 		{"InvalidStateF", exitcode.InvalidStateErrorf("s %d", 4), exitcode.InvalidState},
 		{"Unexpected", exitcode.UnexpectedError("u"), exitcode.Unexpected},
 		{"UnexpectedF", exitcode.UnexpectedErrorf("u %d", 10), exitcode.Unexpected},

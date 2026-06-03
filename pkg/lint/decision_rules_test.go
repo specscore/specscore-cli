@@ -99,6 +99,24 @@ None at this time.
 `
 }
 
+// TestDecisionReverseCheckSkipsDecisionWithoutSupersededByField covers the
+// reverse-supersession loop's branch where a decision file omits the
+// "Superseded By" field entirely (the fieldByName lookup is !ok → continue),
+// so it must not trigger any D-supersedes-bidirectional violation.
+func TestDecisionReverseCheckSkipsDecisionWithoutSupersededByField(t *testing.T) {
+	content := strings.Replace(validDecisionContent(), "**Superseded By:** —\n", "", 1)
+	root := setupDecisionTestTree(t, map[string]string{
+		"decisions/0001-a.md": content,
+	})
+	vs, err := checkDecisions(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasDecisionViolation(vs, "D-supersedes-bidirectional", "") {
+		t.Errorf("a decision without a Superseded By field must be skipped by the reverse check, got: %+v", vs)
+	}
+}
+
 // TestDecisionSupersededByReverse covers the reverse direction of the
 // bidirectional supersession check: a "Superseded By: X" reference whose
 // target is missing (orphan) or does not point back (mismatch). The forward
