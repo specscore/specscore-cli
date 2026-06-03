@@ -45,6 +45,7 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(newAdherenceFooterChecker())
 	l.registerChecker(newStudioToolbarChecker())
 	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion))
+	l.registerChecker(newImplementsReferenceChecker())
 
 	// Register idea checker under every idea-* rule name.
 	ic := newIdeaChecker()

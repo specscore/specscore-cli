@@ -2,7 +2,13 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 113
+Total rules: 114
+
+## capability
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| implements-reference | error | Validates the Implements reference on an Implementation Feature. |
 
 ## core
 

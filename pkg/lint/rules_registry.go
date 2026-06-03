@@ -171,6 +171,9 @@ var builtinRules = []Rule{
 	{ID: "I-014", Family: "issue", Severity: "error", Description: "Requires the issue index to list every issue."},
 	{ID: "I-015", Family: "issue", Severity: "error", Description: "Requires the issue body to contain its mandatory sections."},
 
+	// Capability / platform-implementation lint rules.
+	{ID: "implements-reference", Family: "capability", Severity: "error", Description: "Validates the Implements reference on an Implementation Feature."},
+
 	// Property lint rules.
 	{ID: "property-location", Family: "property", Severity: "error", Description: "Requires property files to live in the expected location."},
 	{ID: "property-slug-format", Family: "property", Severity: "error", Description: "Requires property filenames to use kebab-case slugs."},
