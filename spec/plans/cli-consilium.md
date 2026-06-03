@@ -27,7 +27,7 @@ Create the `pkg/consilium` package (singular, at the repo's `pkg/` layout). Defi
 
 ### Task 2: Gate-knob config loader — strict baseline, override merge, enum validation
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/consilium#ac:gate-knobs-default-to-strict-baseline, cli/consilium#ac:gate-knob-invalid-enum-rejected
 
@@ -35,7 +35,7 @@ Implement the `consilium.gate` loader: parse the six knobs from `specscore.yaml`
 
 ### Task 3: Default roster, roster config schema, and resolution
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/consilium#ac:roster-resolves-defaults-minus-exclude-plus-custom
 
@@ -75,7 +75,7 @@ Guarantee the engine is a pure function of its inputs — no clock, no randomnes
 
 ### Task 8: Parent `consilium` cobra command
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/consilium#ac:consilium-parent-prints-help
 
