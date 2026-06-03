@@ -86,6 +86,39 @@ func TestFeatureSourceIdeas_NestedFeatures(t *testing.T) {
 	}
 }
 
+// TestFeatureSourceIdeas_FencedHeadingBeforeField verifies that a `## ` line
+// inside a fenced code block in the preamble does NOT stop the Source Ideas
+// scan early. Without fence tracking, the scanner breaks at the fenced `## `
+// and silently drops the feature -> idea reference.
+func TestFeatureSourceIdeas_FencedHeadingBeforeField(t *testing.T) {
+	root := t.TempDir()
+	specRoot := filepath.Join(root, "spec")
+
+	content := "# Feature: Fenced\n\n" +
+		"**Status:** Approved\n\n" +
+		"```yaml\n" +
+		"## not a real heading\n" +
+		"```\n\n" +
+		"**Source Ideas:** my-idea\n\n" +
+		"## Summary\n\nStuff.\n"
+
+	full := filepath.Join(specRoot, "features", "fenced", "README.md")
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got, err := FeatureSourceIdeas(specRoot)
+	if err != nil {
+		t.Fatalf("FeatureSourceIdeas: %v", err)
+	}
+	if !reflect.DeepEqual(got["fenced"], []string{"my-idea"}) {
+		t.Errorf("source ideas dropped by fenced `## `: got %v, want [my-idea]", got["fenced"])
+	}
+}
+
 // TestDiscover_Proposals exercises the proposal discovery path, which
 // scans spec/features/*/proposals/*.md and returns them with IsProposal=true.
 func TestDiscover_Proposals(t *testing.T) {

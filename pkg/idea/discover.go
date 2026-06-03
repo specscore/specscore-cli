@@ -208,8 +208,18 @@ func parseSourceIdeas(readmePath string) ([]string, error) {
 	defer func() { _ = f.Close() }()
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	inFence := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
+		// Track fenced code blocks; "## " inside a fence is literal content,
+		// not a section heading.
+		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		// Stop at first ## heading.
 		if strings.HasPrefix(line, "## ") {
 			break
