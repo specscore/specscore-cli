@@ -53,6 +53,7 @@ func Run(args []string) error {
 		proposalCommand(),
 		initCommand(),
 		configCommand(),
+		consiliumCommand(),
 		eventCommand(),
 		publicationCommand(),
 		telemetryCommand(),
