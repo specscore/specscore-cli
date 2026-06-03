@@ -196,6 +196,178 @@ func TestParseCustomRole_InvalidExampleVote(t *testing.T) {
 	}
 }
 
+// A file omitting the `**Name:**` metadata line must fail naming Name.
+func TestParseCustomRole_MissingNameField(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Accessibility
+
+**Group:** customers
+**Output Schema Version:** 1
+
+## Role Prompt
+
+Prompt.
+
+## Example Vote
+
+` + "```yaml" + `
+- verdict: should-implement
+  confidence: high
+  cost: 🟢
+  complexity: 🟡
+  argument: ok
+` + "```" + `
+`
+	path := writeRole(t, dir, "accessibility", body)
+
+	_, err := ParseCustomRole(path)
+	if err == nil {
+		t.Fatal("expected error for missing Name field, got nil")
+	}
+	for _, want := range []string{"Name", path} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// A file omitting the `**Output Schema Version:**` metadata line must fail
+// naming that field.
+func TestParseCustomRole_MissingSchemaVersionField(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Accessibility
+
+**Name:** accessibility
+**Group:** customers
+
+## Role Prompt
+
+Prompt.
+
+## Example Vote
+
+` + "```yaml" + `
+- verdict: should-implement
+  confidence: high
+  cost: 🟢
+  complexity: 🟡
+  argument: ok
+` + "```" + `
+`
+	path := writeRole(t, dir, "accessibility", body)
+
+	_, err := ParseCustomRole(path)
+	if err == nil {
+		t.Fatal("expected error for missing Output Schema Version field, got nil")
+	}
+	if !strings.Contains(err.Error(), "Output Schema Version") {
+		t.Errorf("error %q missing Output Schema Version", err.Error())
+	}
+}
+
+// parseMeta keeps the first value when a key repeats; a duplicate `**Name:**`
+// must not change resolution (and exercises the dedupe continue branch).
+func TestParseCustomRole_DuplicateMetaKeyKeepsFirst(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Accessibility
+
+**Name:** accessibility
+**Name:** other
+**Group:** customers
+**Output Schema Version:** 1
+
+## Role Prompt
+
+Prompt.
+
+## Example Vote
+
+` + "```yaml" + `
+- verdict: should-implement
+  confidence: high
+  cost: 🟢
+  complexity: 🟡
+  argument: ok
+` + "```" + `
+`
+	path := writeRole(t, dir, "accessibility", body)
+
+	entry, err := ParseCustomRole(path)
+	if err != nil {
+		t.Fatalf("ParseCustomRole: %v", err)
+	}
+	if entry.Name != "accessibility" {
+		t.Errorf("Name = %q, want accessibility (first value wins)", entry.Name)
+	}
+}
+
+// sectionBody hits its EOF-after-heading branch: when `## Example Vote` is the
+// last line with no trailing newline, the section body is empty, so the
+// example-vote check fails.
+func TestParseCustomRole_ExampleVoteHeadingAtEOF(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Accessibility
+
+**Name:** accessibility
+**Group:** customers
+**Output Schema Version:** 1
+
+## Role Prompt
+
+Prompt.
+
+## Example Vote`
+	path := writeRole(t, dir, "accessibility", body)
+
+	_, err := ParseCustomRole(path)
+	if err == nil {
+		t.Fatal("expected error for empty Example Vote section, got nil")
+	}
+	if !strings.Contains(err.Error(), "Example Vote") {
+		t.Errorf("error %q missing Example Vote", err.Error())
+	}
+}
+
+// sectionBody truncates at the next H2: a `## Example Vote` followed by another
+// H2 must only read up to that boundary. Putting the fenced vote AFTER the next
+// H2 means the section body has no vote, so parsing fails.
+func TestParseCustomRole_ExampleVoteTruncatedAtNextH2(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Accessibility
+
+**Name:** accessibility
+**Group:** customers
+**Output Schema Version:** 1
+
+## Role Prompt
+
+Prompt.
+
+## Example Vote
+
+Prose only, no vote here.
+
+## Notes
+
+` + "```yaml" + `
+- verdict: should-implement
+  confidence: high
+  cost: 🟢
+  complexity: 🟡
+  argument: ok
+` + "```" + `
+`
+	path := writeRole(t, dir, "accessibility", body)
+
+	_, err := ParseCustomRole(path)
+	if err == nil {
+		t.Fatal("expected error: vote block belongs to a later section, got nil")
+	}
+	if !strings.Contains(err.Error(), "Example Vote") {
+		t.Errorf("error %q missing Example Vote", err.Error())
+	}
+}
+
 func TestParseCustomRole_EmptyExampleVote(t *testing.T) {
 	dir := t.TempDir()
 	body := `# Accessibility
