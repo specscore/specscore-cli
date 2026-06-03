@@ -1,6 +1,11 @@
 package lint
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // Task 2 — parse the "**Implements:**" line by reusing the source-references
 // specscore: grammar, including the cross-repo "@{host}/{org}/{repo}" suffix.
@@ -31,6 +36,11 @@ func TestParseImplementsRef(t *testing.T) {
 		{
 			name:    "no recognizable reference",
 			line:    "**Implements:** dashboards",
+			wantErr: true,
+		},
+		{
+			name:    "empty short notation is malformed",
+			line:    "**Implements:** specscore:",
 			wantErr: true,
 		},
 	}
@@ -84,6 +94,105 @@ func TestImplementsReference_CrossRepoSuffix_NoViolation(t *testing.T) {
 	violations := runImplementsReferenceCheck(t, tmp)
 	if len(violations) != 0 {
 		t.Fatalf("expected 0 violations for well-formed cross-repo reference, got %d: %+v", len(violations), violations)
+	}
+}
+
+// Task 3 — a same-repo Implements reference that resolves to nothing is an
+// error (capability-and-platform-implementations#ac:implements-unresolved-same-repo).
+func TestImplementsReference_UnresolvedSameRepo_Errors(t *testing.T) {
+	tmp := t.TempDir()
+	writeFeatureReadme(t, tmp, "dashboards-cli",
+		"# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** specscore:feature/no-such-capability\n\n## Summary\n")
+
+	violations := runImplementsReferenceCheck(t, tmp)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %+v", len(violations), violations)
+	}
+	v := violations[0]
+	if v.Rule != "implements-reference" {
+		t.Errorf("Rule = %q, want implements-reference", v.Rule)
+	}
+	if !strings.Contains(v.Message, "does not resolve") {
+		t.Errorf("Message = %q, want it to mention the reference does not resolve", v.Message)
+	}
+}
+
+// Task 3 — a same-repo reference that resolves to an existing Feature lacking
+// an "## Implementation Matrix" section is an error
+// (capability-and-platform-implementations#ac:implements-non-capability).
+func TestImplementsReference_TargetNotCapability_Errors(t *testing.T) {
+	tmp := t.TempDir()
+	writeFeatureReadme(t, tmp, "source-references",
+		"# Feature: Source References\n\n**Status:** Approved\n\n## Summary\nNo Implementation Matrix here.\n")
+	writeFeatureReadme(t, tmp, "dashboards-cli",
+		"# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** specscore:feature/source-references\n\n## Summary\n")
+
+	violations := runImplementsReferenceCheck(t, tmp)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %+v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "not a Capability") {
+		t.Errorf("Message = %q, want it to mention the target is not a Capability", violations[0].Message)
+	}
+}
+
+// A same-repo reference whose resolved path is not a feature at all (e.g. a
+// plan reference) cannot point at a Capability — reported as unresolved.
+func TestImplementsReference_NonFeatureTarget_Unresolved(t *testing.T) {
+	tmp := t.TempDir()
+	writeFeatureReadme(t, tmp, "dashboards-cli",
+		"# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** specscore:plan/some-plan\n\n## Summary\n")
+
+	violations := runImplementsReferenceCheck(t, tmp)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %+v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "does not resolve") {
+		t.Errorf("Message = %q, want unresolved", violations[0].Message)
+	}
+}
+
+// An Implementation whose "**Implements:**" line carries no recognizable
+// specscore: reference is a malformed-notation error.
+func TestImplementsReference_MalformedNotation_Errors(t *testing.T) {
+	tmp := t.TempDir()
+	writeFeatureReadme(t, tmp, "dashboards-cli",
+		"# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** dashboards\n\n## Summary\n")
+
+	violations := runImplementsReferenceCheck(t, tmp)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %+v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "well-formed") {
+		t.Errorf("Message = %q, want malformed-notation message", violations[0].Message)
+	}
+}
+
+// Metadata: the checker reports under the implements-reference rule at error severity.
+func TestImplementsReference_Metadata(t *testing.T) {
+	c := newImplementsReferenceChecker()
+	if c.name() != "implements-reference" {
+		t.Errorf("name = %q", c.name())
+	}
+	if c.severity() != "error" {
+		t.Errorf("severity = %q", c.severity())
+	}
+}
+
+// The walk error from an unreadable features subtree propagates out of check.
+func TestImplementsReference_WalkError(t *testing.T) {
+	tmp := t.TempDir()
+	writeFeatureReadme(t, tmp, "dashboards-cli",
+		"# Feature: Dashboards (CLI)\n\n**Implements:** specscore:feature/dashboards\n")
+	featDir := filepath.Join(tmp, "features", "dashboards-cli")
+	if err := os.Chmod(featDir, 0o111); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(featDir, 0o755) }()
+
+	c := newImplementsReferenceChecker()
+	if _, err := c.check(tmp); err == nil {
+		t.Fatal("expected a walk error from the unreadable features subtree")
 	}
 }
 

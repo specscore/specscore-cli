@@ -2,6 +2,8 @@ package lint
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/sourceref"
@@ -57,17 +59,6 @@ func newImplementsReferenceChecker() checker { return &implementsReferenceChecke
 func (c *implementsReferenceChecker) name() string     { return "implements-reference" }
 func (c *implementsReferenceChecker) severity() string { return "error" }
 
-// findImplementsLine returns the first "**Implements:**" line in content, or ""
-// if there is none.
-func findImplementsLine(content string) string {
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), implementsPrefix) {
-			return line
-		}
-	}
-	return ""
-}
-
 func (c *implementsReferenceChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	walkErr := walkFeatureReadmes(specRoot, func(readmePath string, content []byte) {
@@ -75,13 +66,41 @@ func (c *implementsReferenceChecker) check(specRoot string) ([]Violation, error)
 		if !role.isImplementation {
 			return
 		}
-		line := findImplementsLine(string(content))
-		if _, err := parseImplementsRef(line); err != nil {
+		rel, _ := filepath.Rel(specRoot, readmePath)
+		add := func(msg string) {
+			violations = append(violations, Violation{
+				File:     rel,
+				Line:     0,
+				Severity: "error",
+				Rule:     "implements-reference",
+				Message:  msg,
+			})
+		}
+
+		ref, err := parseImplementsRef(role.implementsLine)
+		if err != nil {
+			add("Implements reference is not a well-formed specscore: reference (capability-and-platform-implementations#req:implements-resolution)")
 			return
 		}
-		// Well-formed references — same-repo (resolution validated in a later
-		// task) and cross-repo (accepted without remote fetch) — pass here.
-		_ = readmePath
+		if ref.crossRepo {
+			// Cross-repo liveness is out of scope; a well-formed cross-repo
+			// reference is accepted without fetching the remote repository.
+			return
+		}
+		slug := ref.featureSlug()
+		if slug == "" {
+			add(fmt.Sprintf("Implements reference %q does not resolve to a Capability Feature (capability-and-platform-implementations#req:implements-resolution)", ref.raw))
+			return
+		}
+		target := filepath.Join(specRoot, "features", slug, "README.md")
+		data, readErr := os.ReadFile(target)
+		if readErr != nil {
+			add(fmt.Sprintf("Implements reference %q does not resolve to an existing Capability Feature (capability-and-platform-implementations#req:implements-resolution)", ref.raw))
+			return
+		}
+		if !classifyFeatureRole(string(data)).isCapability {
+			add(fmt.Sprintf("Implements reference %q resolves to a Feature that is not a Capability — it has no \"## Implementation Matrix\" section (capability-and-platform-implementations#req:implements-resolution)", ref.raw))
+		}
 	})
 	if walkErr != nil {
 		return nil, walkErr
