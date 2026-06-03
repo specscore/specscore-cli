@@ -130,6 +130,10 @@ Commands MUST map errors to the standard code with the matching semantics. A com
 
 On any non-zero exit, a human-readable explanation MUST be written to stderr. stdout MUST remain free of error prose so that pipelines consuming structured output (YAML/JSON) are not corrupted by error messages.
 
+#### REQ: unsupported-subcommand-mapping
+
+When a subcommand is not recognized — typically because the installed `specscore` predates a subcommand the caller requires — the CLI MUST exit `8` (UnsupportedCommand) rather than a generic `1`/`2`/`10`. This lets callers, notably capability-gated agent skills, distinguish a present-but-outdated binary from a genuine command failure; a wholly-absent binary remains the shell's `127`. The mapping is scoped to unknown subcommands only: unknown flags keep their `2` (InvalidArgs) semantics, and an error that already carries an exit code MUST NOT be reclassified. A human-readable message naming the unrecognized subcommand MUST be written to stderr.
+
 ### Output format conventions
 
 Most read commands support `--format` for selecting between `text`, `yaml`, and `json`. Some also support `md` (task list).
@@ -169,6 +173,16 @@ Any change to a user-facing CLI interface — a new or renamed command or subcom
 - any narrative install / usage pages on the website (authored in the [`specscore/specscore`](https://github.com/specscore/specscore) repo).
 
 The Feature spec is the source of truth the website renders from; the `README.md` and website prose are hand-maintained and do NOT update themselves. A change that alters the interface without updating these surfaces is incomplete.
+
+## Acceptance Criteria
+
+### AC: unknown-subcommand-exits-8
+
+**Requirements:** cli#req:unsupported-subcommand-mapping
+
+**Given** an installed `specscore` whose command set does not include the requested subcommand (for example, `specscore consilium verdict` on a build that predates the `verdict` subcommand)
+**When** the user invokes that unrecognized subcommand
+**Then** the command exits `8` (UnsupportedCommand) and writes a stderr message naming the unrecognized subcommand; no output appears on stdout.
 
 ## Consumers
 
