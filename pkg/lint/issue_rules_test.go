@@ -17,8 +17,9 @@ func TestIssueRules_AllFifteenIDsRegistered(t *testing.T) {
 		}
 	}
 	// Sanity: every ID is also in allRuleNames (so ValidateRuleNames accepts it).
+	all := AllRuleNames()
 	for _, id := range issueRuleIDs {
-		if !allRuleNames[id] {
+		if !all[id] {
 			t.Errorf("rule %q missing from allRuleNames", id)
 		}
 	}

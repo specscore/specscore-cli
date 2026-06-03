@@ -1,6 +1,6 @@
 # Plan: Lint Rule Catalog
 
-**Status:** Approved
+**Status:** Completed
 **Mode:** full
 **Source Feature:** cli/rules
 **Date:** 2026-06-03
@@ -19,7 +19,7 @@ Foundation-first linear decomposition. The structured registry (Task 1) is the s
 
 ### Task 1: Structured rule registry as single source of truth
 
-**Status:** pending
+**Status:** done
 **Depends-On:** —
 **Verifies:** cli/rules#ac:registry-has-metadata
 
@@ -27,7 +27,7 @@ Replace the bare `allRuleNames map[string]bool` in `pkg/lint` with a structured 
 
 ### Task 2: Registry ↔ checker parity validation
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:registry-parity-enforced
 
@@ -35,7 +35,7 @@ Add a reusable parity check that asserts every rule ID a checker can emit has a 
 
 ### Task 3: `specscore rules` command — deterministic listing
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:rules-lists-all
 
@@ -43,7 +43,7 @@ Add the `rules` cobra command that prints every registered rule with its `id`, `
 
 ### Task 4: Family filter and output format
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 3
 **Verifies:** cli/rules#ac:rules-filter-and-json
 
@@ -51,7 +51,7 @@ Add `--family <name>` to restrict output to one family and `--format text|json` 
 
 ### Task 5: Deterministic catalog renderer at the canonical path
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/rules#ac:catalog-deterministic-render, cli/rules#ac:catalog-at-canonical-path
 
@@ -59,7 +59,7 @@ Implement a renderer that produces the markdown catalog from the registry determ
 
 ### Task 6: `--write` generates `docs/lint-rules.md`
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 5
 **Verifies:** cli/rules#ac:catalog-write-regenerates
 
@@ -67,7 +67,7 @@ Wire `specscore rules --write` to render the catalog and write it to `docs/lint-
 
 ### Task 7: `--check` drift-guard
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 5, 6
 **Verifies:** cli/rules#ac:check-detects-drift
 
@@ -75,7 +75,7 @@ Add `specscore rules --check`: render the catalog in-memory and compare it to th
 
 ### Task 8: Wire `specscore rules --check` into CI
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 7
 **Verifies:** cli/rules#ac:ci-fails-on-stale-catalog
 

@@ -504,8 +504,9 @@ func TestPropertyFixIsIdempotent(t *testing.T) {
 // ---------------------------------------------------------------------
 
 func TestAllPropertyRuleNamesRegistered(t *testing.T) {
+	all := AllRuleNames()
 	for _, n := range propertyRuleNames {
-		if !allRuleNames[n] {
+		if !all[n] {
 			t.Errorf("rule %q in propertyRuleNames is not in allRuleNames", n)
 		}
 	}
