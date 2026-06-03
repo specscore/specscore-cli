@@ -1,6 +1,6 @@
 # Idea: Consilium Command Group (Deterministic Arbiter + Roster + Gate Config)
 
-**Status:** Implementing
+**Status:** Specified
 **Date:** 2026-06-03
 **Owner:** alexander.trakhimenok
 **Promotes To:** cli/consilium, cli/consilium/config, cli/consilium/roster, cli/consilium/verdict

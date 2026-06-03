@@ -11,7 +11,7 @@ Pre-spec one-pagers for the `specscore` CLI. Each Idea refines a vague concept i
 | [cli-error-telemetry](cli-error-telemetry.md) | Implemented | 2026-05-21 | alexandertrakhimenok | cli/telemetry/errors-telemetry |
 | [cli-self-update](cli-self-update.md) | Specified | 2026-06-01 | alex | cli/self-update |
 | [cli-telemetry](cli-telemetry.md) | Implemented | 2026-05-21 | alexandertrakhimenok | cli/telemetry, cli/telemetry/usage-telemetry |
-| [consilium-command-group](consilium-command-group.md) | Implementing | 2026-06-03 | alexander.trakhimenok | cli/consilium, cli/consilium/config, cli/consilium/roster, cli/consilium/verdict |
+| [consilium-command-group](consilium-command-group.md) | Specified | 2026-06-03 | alexander.trakhimenok | cli/consilium, cli/consilium/config, cli/consilium/roster, cli/consilium/verdict |
 | [entity-and-property-cli-support](entity-and-property-cli-support.md) | Implemented | 2026-05-18 | alexander.trakhimenok | cli/entity, cli/property |
 | [event-emit-dispatcher](event-emit-dispatcher.md) | Implemented | 2026-05-22 | alexandertrakhimenok | cli/event, cli/event/emit |
 | [index-entries-autofix](index-entries-autofix.md) | Specified | 2026-05-18 | alexander.trakhimenok | cli/spec/lint |
