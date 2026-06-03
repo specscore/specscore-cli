@@ -220,8 +220,19 @@ func Parse(path string) (*Idea, error) {
 	var raws []rawSection
 
 	inHeader := true
+	inFence := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
+
+		// Track fenced code blocks. A "```" or "~~~" line toggles fence state;
+		// while inside a fence, "#"/"##" lines are literal content, not headings.
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 
 		// Title: first "# " line
 		if !idea.HasTitle && strings.HasPrefix(trimmed, "# ") {

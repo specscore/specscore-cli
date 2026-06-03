@@ -3,6 +3,7 @@ package idea
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -112,6 +113,55 @@ None at this time.
 	tab := ParseTable(p.SectionByTitle["Key Assumptions to Validate"].Body)
 	if tab == nil || len(tab.Rows) == 0 {
 		t.Errorf("assumptions table parse failed: %+v", tab)
+	}
+}
+
+func TestParse_FencedCodeBlockNotASection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fenced.md")
+	content := `# Idea: Fenced
+
+**Status:** Approved
+
+## Problem Statement
+How Might We document a section parser?
+
+` + "```" + `markdown
+## Not A Real Heading
+- not a real item
+` + "```" + `
+
+Trailing prose after the fence.
+
+## Context
+Real context section.
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The `## ` line inside the fenced code block must NOT become a section.
+	if _, ok := p.SectionByTitle["Not A Real Heading"]; ok {
+		t.Errorf("fenced `## ` line was wrongly parsed as a section")
+	}
+	// The Problem Statement body must not be truncated at the fence — it must
+	// still contain the fenced content and the trailing prose.
+	ps, ok := p.SectionByTitle["Problem Statement"]
+	if !ok {
+		t.Fatalf("Problem Statement section missing")
+	}
+	if !strings.Contains(ps.Body, "Not A Real Heading") {
+		t.Errorf("Problem Statement body truncated at fence; body = %q", ps.Body)
+	}
+	if !strings.Contains(ps.Body, "Trailing prose after the fence.") {
+		t.Errorf("Problem Statement body missing trailing prose; body = %q", ps.Body)
+	}
+	// The real following section is still detected.
+	if _, ok := p.SectionByTitle["Context"]; !ok {
+		t.Errorf("real Context section missing")
 	}
 }
 
