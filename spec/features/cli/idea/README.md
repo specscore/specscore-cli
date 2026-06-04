@@ -37,6 +37,7 @@ Creates a lint-clean Idea skeleton with every required section, HTML-comment pro
 ### relocate
 
 Moves an Idea or sidekick-seed artifact from the current project to a different SpecScore-managed repo. Auto-resolves slug to `spec/ideas/<slug>.md` first, then `spec/ideas/seeds/<slug>.md`. Pre-flight clean-tree check across source, target, and every sibling SpecScore repo whose docs reference the artifact. Copies the file (with `specscore/*` → `specscore/*` and "this repo" rewrites), updates markdown-link references to the new location across all affected repos, auto-commits per repo by default (`--no-commit` flag stages without committing). Stop-on-first-commit-failure semantics; cross-repo rollback is the user's responsibility.
+| [promote](promote/README.md) | Promote a sidekick seed into a lint-clean Idea: same-repo git mv + transform + back-link reconcile; cross-repo archive + promoted_to pointer. |
 
 ## Behavior
 
