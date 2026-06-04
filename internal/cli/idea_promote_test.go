@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/idea"
+	"github.com/specscore/specscore-cli/pkg/ideapromote"
 )
 
 // stagePromoteRepo creates a SpecScore-managed repo at <parent>/<name>
@@ -477,6 +479,69 @@ func assertValidIdeaSkeleton(t *testing.T, path string) {
 		if _, ok := p.SectionByTitle[s]; !ok {
 			t.Errorf("missing required section %q", s)
 		}
+	}
+}
+
+// AC: stdout-summary
+func TestIdeaPromoteCLI_StdoutSummary(t *testing.T) {
+	parent := t.TempDir()
+	source := stagePromoteRepo(t, parent, "src", "src")
+	writePromoteSeed(t, source, "bar", "Bar Idea", false)
+
+	featDir := filepath.Join(source, "spec", "features", "x")
+	if err := os.MkdirAll(featDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	featBody := "# Feature: X\n\n**Status:** Approved\n\n## Summary\n\nText.\n\n" +
+		"## Sidekick Seeds Generated\n\n" +
+		"- [bar](../../ideas/seeds/bar.md) — captured 2026-06-01\n\n" +
+		"## Open Questions\n\nNone at this time.\n\n" +
+		"---\n*This document follows the https://specscore.md/feature-specification*\n"
+	if err := os.WriteFile(filepath.Join(featDir, "README.md"), []byte(featBody), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	initGitRepoForTest(t, source)
+
+	resolvedSrc, _ := filepath.EvalSymlinks(source)
+	ideaPath := filepath.Join(resolvedSrc, "spec", "ideas", "bar.md")
+
+	// Text format: names created Idea path, seed moved, reconciled link.
+	stdout, _, err := runIdeaPromoteCLI(t, source, "bar")
+	if err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	if !strings.Contains(stdout, "created idea: "+ideaPath) {
+		t.Errorf("text stdout should name created Idea path; got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "seed moved:") {
+		t.Errorf("text stdout should report the seed as moved; got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "reconciled back-link:") {
+		t.Errorf("text stdout should list reconciled back-links; got:\n%s", stdout)
+	}
+
+	// JSON format: same facts as structured output. Run a fresh promotion
+	// (different slug) so the fixture is pristine.
+	source2 := stagePromoteRepo(t, parent, "src2", "src2")
+	writePromoteSeed(t, source2, "baz2", "Baz Two", false)
+	initGitRepoForTest(t, source2)
+	jsonOut, _, err := runIdeaPromoteCLI(t, source2, "baz2", "--format=json")
+	if err != nil {
+		t.Fatalf("promote json: %v", err)
+	}
+	var got ideapromote.Result
+	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
+		t.Fatalf("json output not parseable: %v\n%s", err, jsonOut)
+	}
+	if got.Slug != "baz2" {
+		t.Errorf("json slug: got %q want baz2", got.Slug)
+	}
+	if got.SeedFate != ideapromote.FateMoved {
+		t.Errorf("json seed_fate: got %q want moved", got.SeedFate)
+	}
+	resolvedSrc2, _ := filepath.EvalSymlinks(source2)
+	if got.IdeaPath != filepath.Join(resolvedSrc2, "spec", "ideas", "baz2.md") {
+		t.Errorf("json idea_path: got %q", got.IdeaPath)
 	}
 }
 
