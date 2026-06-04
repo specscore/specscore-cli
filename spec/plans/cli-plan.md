@@ -1,6 +1,6 @@
 # Plan: Plan (CLI) — command group
 
-**Status:** Approved
+**Status:** Implementing
 **Source Feature:** cli/plan
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok
@@ -19,6 +19,7 @@ Two tasks, linear. Task 1 extends `pkg/plan` with the plan-level metadata fields
 ### Task 1: Plan-level metadata parsing in pkg/plan
 
 **Verifies:** cli/plan#ac:missing-status-is-empty
+**Status:** done
 
 Extend the `pkg/plan.Plan` struct and parser to capture the plan-level `**Status:**`, `**Date:**`, and `**Owner:**` body-metadata fields (`**Mode:**` and `**Source Feature:**` already exist), each defaulting to empty when its line is absent. Cover the missing/blank plan-level status with a unit test so it reports empty rather than failing. This is the shared substrate the `list` and `info` plans build on.
 

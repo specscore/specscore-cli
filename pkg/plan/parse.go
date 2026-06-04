@@ -51,6 +51,12 @@ type Plan struct {
 
 	SourceFeature     string // value of `**Source Feature:**` (empty when missing)
 	SourceFeatureLine int    // 1-based line of the field; 0 when absent
+	Status            string // value of `**Status:**` (empty when missing)
+	StatusLine        int    // 1-based line of the field; 0 when absent
+	Date              string // value of `**Date:**` (empty when missing)
+	DateLine          int    // 1-based line of the field; 0 when absent
+	Owner             string // value of `**Owner:**` (empty when missing)
+	OwnerLine         int    // 1-based line of the field; 0 when absent
 	Mode              Mode   // `full` (default) or `stub`
 	ModeLine          int    // 1-based line of `**Mode:**`; 0 when absent
 	ModeRaw           string // raw value as written (used by P-004 to report invalid tokens)
@@ -178,6 +184,15 @@ func Parse(path string) (*Plan, error) {
 			case "Source Feature":
 				p.SourceFeature = val
 				p.SourceFeatureLine = i + 1
+			case "Status":
+				p.Status = val
+				p.StatusLine = i + 1
+			case "Date":
+				p.Date = val
+				p.DateLine = i + 1
+			case "Owner":
+				p.Owner = val
+				p.OwnerLine = i + 1
 			case "Mode":
 				p.ModeRaw = val
 				p.ModeLine = i + 1
