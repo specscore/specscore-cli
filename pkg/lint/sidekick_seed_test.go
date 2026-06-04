@@ -1,6 +1,8 @@
 package lint
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -237,5 +239,173 @@ func TestSidekickSeed_IntegratesWithLint(t *testing.T) {
 		if v.Rule == "idea-location" {
 			t.Errorf("idea-location should not flag spec/ideas/seeds/*.md; got %+v", v)
 		}
+	}
+}
+
+// promotedSeedBody returns a lint-clean promoted sidekick-seed body
+// (carries the optional promoted_to key) suitable for spec/ideas/archived/.
+func promotedSeedBody(slug, title, promotedTo string) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	b.WriteString("type: sidekick-seed\n")
+	b.WriteString("slug: " + slug + "\n")
+	b.WriteString("captured_at: 2026-05-18T00:00:00Z\n")
+	b.WriteString("captured_by: user\n")
+	b.WriteString("captured_during: null\n")
+	b.WriteString("trigger: explicit\n")
+	b.WriteString("status: promoted\n")
+	b.WriteString("promoted_to: " + promotedTo + "\n")
+	b.WriteString("synchestra_task: null\n")
+	b.WriteString("---\n\n")
+	b.WriteString("# " + title + "\n")
+	return b.String()
+}
+
+// TestSidekickSeed_PromotedToAccepted verifies the optional promoted_to key
+// does not trip the unknown-key check.
+func TestSidekickSeed_PromotedToAccepted(t *testing.T) {
+	vs := checkSidekickSeed("ideas/archived/foo.md", promotedSeedBody("foo", "Foo seed", "foo"))
+	if len(vs) != 0 {
+		t.Fatalf("expected clean promoted seed; got %+v", vs)
+	}
+}
+
+// TestSidekickSeed_NormalSeedWithoutPromotedTo confirms a regular seed (no
+// promoted_to) still lints clean — adding the optional key did not make it
+// required.
+func TestSidekickSeed_NormalSeedWithoutPromotedTo(t *testing.T) {
+	vs := checkSidekickSeed("ideas/seeds/bar.md", validSeedBody("bar", "Bar", "explicit"))
+	if len(vs) != 0 {
+		t.Fatalf("expected clean seed; got %+v", vs)
+	}
+}
+
+// TestSidekickSeed_ArchivedSeedValidated checks that an archived file
+// declaring type: sidekick-seed IS validated as a seed: a clean one passes
+// and a malformed one still produces a sidekick-seed violation.
+func TestSidekickSeed_ArchivedSeedValidated(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/archived/foo.md": promotedSeedBody("foo", "Foo seed", "foo"),
+		// Malformed seed: declares the seed type but is missing required keys.
+		"ideas/archived/bad.md": "---\ntype: sidekick-seed\nslug: bad\n---\n# Bad seed\n",
+	})
+	c := newSidekickSeedChecker()
+	vs, err := c.check(specRoot)
+	if err != nil {
+		t.Fatalf("check returned error: %v", err)
+	}
+	var badViolations, fooViolations int
+	for _, v := range vs {
+		switch {
+		case strings.HasSuffix(v.File, "bad.md"):
+			badViolations++
+		case strings.HasSuffix(v.File, "foo.md"):
+			fooViolations++
+		}
+	}
+	if badViolations == 0 {
+		t.Errorf("malformed archived seed should produce a sidekick-seed violation; got %+v", vs)
+	}
+	if fooViolations != 0 {
+		t.Errorf("clean archived seed should not be flagged; got %+v", vs)
+	}
+}
+
+// TestSidekickSeed_ArchivedIdeaNotTouched is a regression guard: a genuine
+// archived Idea (frontmatter type != sidekick-seed, or none) must not be
+// validated by the sidekick-seed rule.
+func TestSidekickSeed_ArchivedIdeaNotTouched(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/archived/plain.md": "# Idea: Plain\n",
+		"ideas/archived/typed.md": "---\ntype: idea\nslug: typed\n---\n# Idea: Typed\n",
+	})
+	c := newSidekickSeedChecker()
+	vs, err := c.check(specRoot)
+	if err != nil {
+		t.Fatalf("check returned error: %v", err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("archived Ideas must not be touched by sidekick-seed rule; got %+v", vs)
+	}
+}
+
+// TestSidekickSeed_ActiveIdeaAndArchivedSeedLintClean is the end-to-end
+// regression for the original bug: an active Idea plus a same-slug archived
+// promoted seed both lint clean (no idea mis-parse, no slug collision).
+func TestSidekickSeed_ActiveIdeaAndArchivedSeedLintClean(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":          activeIndex,
+		"ideas/archived/README.md": archivedIndex,
+		"ideas/archived/foo.md":    promotedSeedBody("foo", "Foo seed", "foo"),
+	})
+	c := newSidekickSeedChecker()
+	vs, err := c.check(specRoot)
+	if err != nil {
+		t.Fatalf("check returned error: %v", err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("active Idea + archived seed should lint clean; got %+v", vs)
+	}
+}
+
+// TestSidekickSeed_UnreadableArchivedFile exercises the read-error path on an
+// archived file. Since the type cannot be inspected, the file is treated as a
+// (read-failed) seed candidate and a violation is emitted.
+func TestSidekickSeed_UnreadableArchivedFile(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/archived/README.md": archivedIndex,
+	})
+	bad := filepath.Join(specRoot, "ideas", "archived", "wat.md")
+	if err := os.WriteFile(bad, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bad, 0o644) })
+	c := newSidekickSeedChecker()
+	vs, err := c.check(specRoot)
+	if err != nil {
+		t.Fatalf("check returned error: %v", err)
+	}
+	found := false
+	for _, v := range vs {
+		if strings.Contains(v.Message, "cannot read seed file") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a cannot-read violation; got %+v", vs)
+	}
+}
+
+// TestSidekickSeed_UnreadableArchivedDir exercises scanSeedDir's ReadDir
+// error path for the archived directory.
+func TestSidekickSeed_UnreadableArchivedDir(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/seeds/ok.md": validSeedBody("ok", "Ok", "explicit"),
+	})
+	archived := filepath.Join(specRoot, "ideas", "archived")
+	if err := os.MkdirAll(archived, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(archived, 0o755) })
+	c := newSidekickSeedChecker()
+	if _, err := c.check(specRoot); err == nil {
+		t.Skip("environment allows reading 0000 dir; cannot exercise error path")
+	}
+}
+
+// TestFrontmatterDeclaresSeed covers the helper's branches directly.
+func TestFrontmatterDeclaresSeed(t *testing.T) {
+	if frontmatterDeclaresSeed("no frontmatter here\n") {
+		t.Error("file without frontmatter is not a seed")
+	}
+	if frontmatterDeclaresSeed("---\ntype: idea\n---\n# X\n") {
+		t.Error("type idea is not a seed")
+	}
+	if frontmatterDeclaresSeed("---\n: : bad yaml\n  - x\n---\n# X\n") {
+		// invalid YAML → false; just assert no panic and false.
+		t.Error("invalid frontmatter is not a seed")
+	}
+	if !frontmatterDeclaresSeed(promotedSeedBody("a", "A", "a")) {
+		t.Error("promoted seed should be detected")
 	}
 }

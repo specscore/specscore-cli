@@ -62,9 +62,17 @@ func Discover(specRoot string) ([]Discovered, error) {
 			if name == "README.md" || !strings.HasSuffix(name, ".md") {
 				continue
 			}
+			path := filepath.Join(archivedDir, name)
+			// Skip promoted sidekick-seeds parked in archived/: they declare
+			// `type: sidekick-seed` and are validated by the sidekick-seed
+			// rule, not discovered as Ideas. (Skipping them also avoids a
+			// slug collision with the active Idea they were promoted to.)
+			if isSidekickSeedFile(path) {
+				continue
+			}
 			out = append(out, Discovered{
 				Slug:     strings.TrimSuffix(name, ".md"),
-				Path:     filepath.Join(archivedDir, name),
+				Path:     path,
 				Archived: true,
 			})
 		}
@@ -141,6 +149,36 @@ func FindIdeaDirectories(specRoot string) ([]string, error) {
 		out = append(out, filepath.Join(ideasDir, e.Name()))
 	}
 	return out, nil
+}
+
+// seedTypeRe matches a `type: sidekick-seed` line in YAML frontmatter,
+// tolerating optional surrounding whitespace and quotes.
+var seedTypeRe = regexp.MustCompile(`^type:\s*["']?sidekick-seed["']?\s*$`)
+
+// isSidekickSeedFile reports whether the file at path begins with a
+// `---`-delimited YAML frontmatter block declaring `type: sidekick-seed`.
+// Unreadable or non-frontmatter files return false (treated as Ideas).
+func isSidekickSeedFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	if !scanner.Scan() || strings.TrimRight(scanner.Text(), "\r") != "---" {
+		return false
+	}
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if line == "---" {
+			return false
+		}
+		if seedTypeRe.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // sourceIdeasRe extracts the value portion of the **Source Ideas:** line.
