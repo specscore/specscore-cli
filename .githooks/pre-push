@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-push gate: mirror the Go CI checks locally so a branch never reaches a
+# pull request below the bar (gofmt, vet, build, test, 100% coverage).
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Bypass in a pinch (CI remains the backstop):
+#   git push --no-verify
+set -euo pipefail
+
+echo "pre-push: gofmt…"
+OUT=$(gofmt -l .)
+if [ -n "$OUT" ]; then
+  echo "gofmt found unformatted files:" >&2
+  echo "$OUT" >&2
+  exit 1
+fi
+
+echo "pre-push: go vet…"
+go vet ./...
+
+echo "pre-push: go build…"
+go build ./...
+
+echo "pre-push: go test + coverage gate…"
+rm -f cover.out
+go test ./... -count=1 -coverprofile=cover.out -covermode=atomic
+./scripts/coverage-gate.sh
+rm -f cover.out
+
+echo "pre-push: all checks passed."
