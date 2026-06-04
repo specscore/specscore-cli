@@ -828,6 +828,50 @@ func TestCrossRepoPromote_StageArchivedError(t *testing.T) {
 	}
 }
 
+func TestCrossRepoPromote_EnsureStubError(t *testing.T) {
+	root := t.TempDir()
+	gitInit(t, root)
+	writeFileT(t, filepath.Join(root, "spec", "ideas", "seeds", "baz.md"), "---\n---\n# Baz\n")
+	gitCommitAll(t, root, "seed")
+
+	orig := ensureArchivedIndexStubFn
+	ensureArchivedIndexStubFn = func(string) (bool, error) { return false, errors.New("stub boom") }
+	t.Cleanup(func() { ensureArchivedIndexStubFn = orig })
+
+	if _, _, err := CrossRepoPromote(root, "baz", []byte("# Idea: Baz\n"), "body"); err == nil {
+		t.Fatal("expected EnsureArchivedIndexStub error to propagate")
+	}
+}
+
+func TestCrossRepoPromote_StageArchivedReadmeError(t *testing.T) {
+	root := t.TempDir()
+	gitInit(t, root)
+	writeFileT(t, filepath.Join(root, "spec", "ideas", "seeds", "baz.md"), "---\n---\n# Baz\n")
+	gitCommitAll(t, root, "seed")
+
+	// Force the stub to report it was created so the README-stage branch runs,
+	// and make gitStageFn fail only for the README path (the seed stage at the
+	// earlier step must succeed so we reach the README stage).
+	origEnsure := ensureArchivedIndexStubFn
+	ensureArchivedIndexStubFn = func(string) (bool, error) { return true, nil }
+	t.Cleanup(func() { ensureArchivedIndexStubFn = origEnsure })
+
+	origStage := gitStageFn
+	gitStageFn = func(repoRoot string, relPaths ...string) error {
+		for _, p := range relPaths {
+			if strings.HasSuffix(p, "archived/README.md") {
+				return errors.New("readme stage boom")
+			}
+		}
+		return gitStage(repoRoot, relPaths...)
+	}
+	t.Cleanup(func() { gitStageFn = origStage })
+
+	if _, _, err := CrossRepoPromote(root, "baz", []byte("# Idea: Baz\n"), "body"); err == nil {
+		t.Fatal("expected gitStage(README) error to propagate")
+	}
+}
+
 func TestMarkArchivedSeed_KeysAlreadyPresent(t *testing.T) {
 	// Both status and promoted_to present → in-place rewrite, no inserts.
 	seed := "---\nstatus: queued\npromoted_to: old\n---\n# Baz\n"
