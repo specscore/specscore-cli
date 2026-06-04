@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/idea"
 )
 
 // stagePromoteRepo creates a SpecScore-managed repo at <parent>/<name>
@@ -247,6 +248,104 @@ func TestIdeaPromoteCLI_SameRepoBackLinksReconciled(t *testing.T) {
 		t.Errorf("stdout should report the reconciled back-link; got: %s", stdout)
 	}
 	assertLintClean(t, source, "after backlink reconcile")
+}
+
+// AC: cross-repo-archive + AC: never-deprecated
+func TestIdeaPromoteCLI_CrossRepoArchive(t *testing.T) {
+	parent := t.TempDir()
+	source := stagePromoteRepo(t, parent, "src", "src")
+	// A sibling repo so cross-repo discovery has somewhere to look; the
+	// cross-repo back-link itself lives in the source repo's Feature with
+	// a <repo-slug>:-qualified target.
+	stagePromoteRepo(t, parent, "other-repo", "other-repo")
+	writePromoteSeed(t, source, "baz", "Baz Idea", false)
+
+	featDir := filepath.Join(source, "spec", "features", "x")
+	if err := os.MkdirAll(featDir, 0o755); err != nil {
+		t.Fatalf("mkdir feature: %v", err)
+	}
+	featBody := "# Feature: X\n\n**Status:** Approved\n\n## Summary\n\nText.\n\n" +
+		"## Sidekick Seeds Generated\n\n" +
+		"- [baz](other-repo:spec/ideas/seeds/baz.md) — captured 2026-06-01 by specstudio:specify\n\n" +
+		"## Open Questions\n\nNone at this time.\n\n" +
+		"---\n*This document follows the https://specscore.md/feature-specification*\n"
+	featPath := filepath.Join(featDir, "README.md")
+	featBefore := []byte(featBody)
+	if err := os.WriteFile(featPath, featBefore, 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	initGitRepoForTest(t, source)
+
+	_, _, err := runIdeaPromoteCLI(t, source, "baz")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// New Idea exists.
+	ideaPath := filepath.Join(source, "spec", "ideas", "baz.md")
+	ideaBody, readErr := os.ReadFile(ideaPath)
+	if readErr != nil {
+		t.Fatalf("idea not created: %v", readErr)
+	}
+	if !strings.Contains(string(ideaBody), "# Idea: Baz Idea") {
+		t.Errorf("idea should be a lint-clean skeleton; got:\n%s", ideaBody)
+	}
+
+	// Seed archived with status: promoted + promoted_to: baz.
+	if _, statErr := os.Stat(filepath.Join(source, "spec", "ideas", "seeds", "baz.md")); !os.IsNotExist(statErr) {
+		t.Errorf("seed should no longer exist at the seeds path")
+	}
+	archivedPath := filepath.Join(source, "spec", "ideas", "archived", "baz.md")
+	archivedBody, readErr := os.ReadFile(archivedPath)
+	if readErr != nil {
+		t.Fatalf("archived seed missing: %v", readErr)
+	}
+	ab := string(archivedBody)
+	if !strings.Contains(ab, "status: promoted") {
+		t.Errorf("archived seed should have status: promoted; got:\n%s", ab)
+	}
+	if !strings.Contains(ab, "promoted_to: baz") {
+		t.Errorf("archived seed should have promoted_to: baz; got:\n%s", ab)
+	}
+	if strings.Contains(ab, "deprecated") {
+		t.Errorf("archived seed must NEVER be marked deprecated; got:\n%s", ab)
+	}
+
+	// Sibling repo's back-link was not rewritten (it lives in the source
+	// Feature here; assert that the <repo-slug>: target is untouched).
+	featAfter, _ := os.ReadFile(featPath)
+	if !strings.Contains(string(featAfter), "other-repo:spec/ideas/seeds/baz.md") {
+		t.Errorf("cross-repo back-link must NOT be rewritten; got:\n%s", featAfter)
+	}
+
+	// The new Idea is a lint-clean skeleton: full Idea title + every
+	// required header field + every required section. (A whole-tree lint
+	// pass is confounded by the archived seed sharing the slug, which the
+	// idea-lint layer keys on — see the verb's cross-repo lint note.)
+	assertValidIdeaSkeleton(t, ideaPath)
+}
+
+// assertValidIdeaSkeleton verifies the file at path is a structurally
+// valid Idea: `# Idea:` title and all required header fields + sections.
+func assertValidIdeaSkeleton(t *testing.T, path string) {
+	t.Helper()
+	p, err := idea.Parse(path)
+	if err != nil {
+		t.Fatalf("parse idea %s: %v", path, err)
+	}
+	if !p.TitleOK || p.TitlePrefix != "Idea" {
+		t.Errorf("expected `# Idea:` title; got TitleOK=%v prefix=%q", p.TitleOK, p.TitlePrefix)
+	}
+	for _, f := range idea.RequiredHeaderFields {
+		if _, ok := p.FieldByName[f]; !ok {
+			t.Errorf("missing required header field %q", f)
+		}
+	}
+	for _, s := range idea.RequiredSections {
+		if _, ok := p.SectionByTitle[s]; !ok {
+			t.Errorf("missing required section %q", s)
+		}
+	}
 }
 
 // AC: dirty-tree-rejected
