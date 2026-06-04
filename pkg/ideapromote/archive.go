@@ -3,7 +3,13 @@ package ideapromote
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/idea"
 )
+
+// ensureArchivedIndexStubFn is a seam over idea.EnsureArchivedIndexStub so
+// the otherwise-defensive error branch in CrossRepoPromote is testable.
+var ensureArchivedIndexStubFn = idea.EnsureArchivedIndexStub
 
 // CrossRepoPromote performs the cross-repo path: create the new Idea at
 // spec/ideas/<slug>.md by copy+transform, then git-mv the seed to
@@ -38,6 +44,21 @@ func CrossRepoPromote(specRoot, slug string, transformed []byte, seedBody string
 	}
 	if err := gitStageFn(specRoot, paths.ArchivedSeedRel); err != nil {
 		return "", "", err
+	}
+
+	// The archived/ directory is created fresh here on a first cross-repo
+	// promote; without an index README it would trip lint's readme-exists
+	// rule, so the promote output would not be lint-clean. Materialize the
+	// stub (shared with change-status) and stage it if we created it.
+	created, err := ensureArchivedIndexStubFn(specRoot)
+	if err != nil {
+		return "", "", err
+	}
+	if created {
+		archivedReadmeRel := filepath.ToSlash(filepath.Join("spec", "ideas", "archived", "README.md"))
+		if err := gitStageFn(specRoot, archivedReadmeRel); err != nil {
+			return "", "", err
+		}
 	}
 	return ideaAbs, archivedAbs, nil
 }

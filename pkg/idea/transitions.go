@@ -50,6 +50,39 @@ _No archived ideas yet._
 None at this time.
 `
 
+// EnsureArchivedIndexStub guarantees that spec/ideas/archived/ exists and
+// contains a lint-clean README.md index. It creates the directory if absent
+// and writes archivedIndexStub to archived/README.md ONLY when that file
+// does not already exist. It returns created=true iff it wrote the stub
+// (so callers can stage exactly the file they materialized).
+//
+// `specscore init` does not create spec/ideas/archived/ — the directory
+// comes into existence on the first archive/promote, and a directory
+// without README.md fires the readme-exists rule (error severity). Writing
+// the stub keeps the archive/promote operation's output lint-clean.
+//
+// specRoot is the project root that contains the spec/ subtree (NOT the
+// spec/ directory itself).
+func EnsureArchivedIndexStub(specRoot string) (created bool, err error) {
+	archivedDir := filepath.Join(specRoot, "spec", "ideas", "archived")
+	if err := os.MkdirAll(archivedDir, 0o755); err != nil {
+		return false, exitcode.UnexpectedErrorf(
+			"creating archived directory %s: %v", archivedDir, err)
+	}
+	archivedReadme := filepath.Join(archivedDir, "README.md")
+	if _, statErr := os.Stat(archivedReadme); os.IsNotExist(statErr) {
+		if werr := os.WriteFile(archivedReadme, []byte(archivedIndexStub), 0o644); werr != nil {
+			return false, exitcode.UnexpectedErrorf(
+				"creating archived index stub %s: %v", archivedReadme, werr)
+		}
+		return true, nil
+	} else if statErr != nil {
+		return false, exitcode.UnexpectedErrorf(
+			"stat archived index %s: %v", archivedReadme, statErr)
+	}
+	return false, nil
+}
+
 // PostMutationHook is the callback ChangeStatus invokes after a successful
 // status rewrite (and, for archive transitions, file move). It is the
 // integration point for `specscore spec lint --fix` plus the verify pass.
@@ -182,32 +215,19 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 
 	// (4) Archive side effect — only for --to=archived.
 	if opts.To == lifecycle.IdeaArchived {
-		archivedDir := filepath.Dir(archivedPath)
-		if err := os.MkdirAll(archivedDir, 0o755); err != nil {
+		// Materialize a lint-clean archived-index stub on first archive
+		// (also ensures spec/ideas/archived/ exists). `specscore init`
+		// does not create that directory — it comes into existence here,
+		// and a directory without README.md fires the readme-exists rule
+		// (error severity), which would in turn fire the post-mutation
+		// rollback. Writing the stub keeps the verb's atomic-mutation
+		// contract: the verb itself does not leave the spec tree in a
+		// lint-failing state.
+		archivedReadme := filepath.Join(filepath.Dir(archivedPath), "README.md")
+		archivedReadmeCreated, err := EnsureArchivedIndexStub(opts.SpecRoot)
+		if err != nil {
 			fullRollback()
-			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
-				"creating archived directory %s: %v", archivedDir, err)
-		}
-		// Materialize a lint-clean archived-index stub on first archive.
-		// `specscore init` does not create spec/ideas/archived/ — the
-		// directory comes into existence here, and a directory without
-		// README.md fires the readme-exists rule (error severity), which
-		// would in turn fire the post-mutation rollback. Writing the stub
-		// keeps the verb's atomic-mutation contract: the verb itself does
-		// not leave the spec tree in a lint-failing state.
-		archivedReadme := filepath.Join(archivedDir, "README.md")
-		var archivedReadmeCreated bool
-		if _, err := os.Stat(archivedReadme); os.IsNotExist(err) {
-			if werr := os.WriteFile(archivedReadme, []byte(archivedIndexStub), 0o644); werr != nil {
-				fullRollback()
-				return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
-					"creating archived index stub %s: %v", archivedReadme, werr)
-			}
-			archivedReadmeCreated = true
-		} else if err != nil {
-			fullRollback()
-			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
-				"stat archived index %s: %v", archivedReadme, err)
+			return ChangeStatusResult{}, err
 		}
 		// Augment fullRollback to also remove the stub if WE created it.
 		// (If it pre-existed, leave it alone.)
