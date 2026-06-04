@@ -250,6 +250,138 @@ func TestIdeaPromoteCLI_SameRepoBackLinksReconciled(t *testing.T) {
 	assertLintClean(t, source, "after backlink reconcile")
 }
 
+// readIdeaContext returns the ## Context section body of the Idea at path.
+func readIdeaContext(t *testing.T, path string) string {
+	t.Helper()
+	p, err := idea.Parse(path)
+	if err != nil {
+		t.Fatalf("parse idea %s: %v", path, err)
+	}
+	s, ok := p.SectionByTitle["Context"]
+	if !ok {
+		t.Fatalf("no ## Context section in %s", path)
+	}
+	return s.Body
+}
+
+// AC: verdict-carry-forward-modes
+func TestIdeaPromoteCLI_VerdictCarryForwardModes(t *testing.T) {
+	verdictText := "The panel agreed this is a strong direction worth specifying."
+
+	// Default mode (no flag, no config) → single-line pointer.
+	t.Run("default-pointer", func(t *testing.T) {
+		parent := t.TempDir()
+		source := stagePromoteRepo(t, parent, "src", "src")
+		writePromoteSeed(t, source, "vp", "Verdict Pointer Idea", true)
+		initGitRepoForTest(t, source)
+		if _, _, err := runIdeaPromoteCLI(t, source, "vp"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+		ctx := readIdeaContext(t, filepath.Join(source, "spec", "ideas", "vp.md"))
+		if !strings.Contains(ctx, "Consilium verdict carried from") {
+			t.Errorf("default should write a pointer; ## Context:\n%s", ctx)
+		}
+		if strings.Contains(ctx, verdictText) {
+			t.Errorf("default pointer must NOT copy the full verdict text; ## Context:\n%s", ctx)
+		}
+	})
+
+	// --verdict=full → copies the whole section text.
+	t.Run("flag-full", func(t *testing.T) {
+		parent := t.TempDir()
+		source := stagePromoteRepo(t, parent, "src", "src")
+		writePromoteSeed(t, source, "vf", "Verdict Full Idea", true)
+		initGitRepoForTest(t, source)
+		if _, _, err := runIdeaPromoteCLI(t, source, "vf", "--verdict=full"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+		ctx := readIdeaContext(t, filepath.Join(source, "spec", "ideas", "vf.md"))
+		if !strings.Contains(ctx, verdictText) {
+			t.Errorf("--verdict=full should copy the verdict body; ## Context:\n%s", ctx)
+		}
+	})
+
+	// --verdict=drop → omits the verdict entirely.
+	t.Run("flag-drop", func(t *testing.T) {
+		parent := t.TempDir()
+		source := stagePromoteRepo(t, parent, "src", "src")
+		writePromoteSeed(t, source, "vd", "Verdict Drop Idea", true)
+		initGitRepoForTest(t, source)
+		if _, _, err := runIdeaPromoteCLI(t, source, "vd", "--verdict=drop"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+		ctx := readIdeaContext(t, filepath.Join(source, "spec", "ideas", "vd.md"))
+		if strings.Contains(ctx, verdictText) || strings.Contains(ctx, "Consilium verdict carried") {
+			t.Errorf("--verdict=drop should omit the verdict; ## Context:\n%s", ctx)
+		}
+	})
+
+	// --verdict flag overrides the promote.verdict_carry_forward config.
+	t.Run("flag-overrides-config", func(t *testing.T) {
+		parent := t.TempDir()
+		source := stagePromoteRepo(t, parent, "src", "src")
+		// Config says drop; flag says full → flag wins.
+		writePromoteConfigVerdict(t, source, "drop")
+		writePromoteSeed(t, source, "vo", "Verdict Override Idea", true)
+		initGitRepoForTest(t, source)
+		if _, _, err := runIdeaPromoteCLI(t, source, "vo", "--verdict=full"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+		ctx := readIdeaContext(t, filepath.Join(source, "spec", "ideas", "vo.md"))
+		if !strings.Contains(ctx, verdictText) {
+			t.Errorf("--verdict=full should override config drop; ## Context:\n%s", ctx)
+		}
+	})
+
+	// Config alone (no flag) drives the mode.
+	t.Run("config-default-drop", func(t *testing.T) {
+		parent := t.TempDir()
+		source := stagePromoteRepo(t, parent, "src", "src")
+		writePromoteConfigVerdict(t, source, "drop")
+		writePromoteSeed(t, source, "vc", "Verdict Config Idea", true)
+		initGitRepoForTest(t, source)
+		if _, _, err := runIdeaPromoteCLI(t, source, "vc"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+		ctx := readIdeaContext(t, filepath.Join(source, "spec", "ideas", "vc.md"))
+		if strings.Contains(ctx, "Consilium verdict carried") || strings.Contains(ctx, verdictText) {
+			t.Errorf("config drop should omit verdict; ## Context:\n%s", ctx)
+		}
+	})
+
+	// No verdict on the seed → pointer omitted regardless of mode.
+	t.Run("omit-when-no-verdict", func(t *testing.T) {
+		parent := t.TempDir()
+		source := stagePromoteRepo(t, parent, "src", "src")
+		writePromoteSeed(t, source, "nv", "No Verdict Idea", false)
+		initGitRepoForTest(t, source)
+		if _, _, err := runIdeaPromoteCLI(t, source, "nv"); err != nil {
+			t.Fatalf("promote: %v", err)
+		}
+		ctx := readIdeaContext(t, filepath.Join(source, "spec", "ideas", "nv.md"))
+		if strings.Contains(ctx, "Consilium verdict carried") {
+			t.Errorf("no-verdict seed must not get a pointer; ## Context:\n%s", ctx)
+		}
+	})
+}
+
+// writePromoteConfigVerdict rewrites specscore.yaml to add a
+// promote.verdict_carry_forward block.
+func writePromoteConfigVerdict(t *testing.T, repoRoot, mode string) {
+	t.Helper()
+	yaml := "# SpecScore Repo Config Schema: https://specscore.md/repo-config\n" +
+		"project:\n" +
+		"  title: src\n" +
+		"  host: github.com\n" +
+		"  org: src\n" +
+		"  repo: src\n" +
+		"promote:\n" +
+		"  verdict_carry_forward: " + mode + "\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, "specscore.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
 // AC: cross-repo-archive + AC: never-deprecated
 func TestIdeaPromoteCLI_CrossRepoArchive(t *testing.T) {
 	parent := t.TempDir()
