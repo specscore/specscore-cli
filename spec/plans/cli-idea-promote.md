@@ -27,7 +27,7 @@ Add the `promote` cobra subcommand under `idea` with `<slug>`, `--force`, `--ver
 
 ### Task 2: Same-repo move + seed→Idea transform
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 1
 **Verifies:** cli/idea/promote#ac:same-repo-promote-happy-path
 

@@ -1,6 +1,9 @@
 package ideapromote
 
-import "github.com/specscore/specscore-cli/pkg/exitcode"
+import (
+	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
+)
 
 // VerdictMode selects how the seed's ## Consilium Verdict is carried into
 // the created Idea.
@@ -32,5 +35,49 @@ func ValidateVerdict(raw string) (VerdictMode, error) {
 	default:
 		return "", exitcode.InvalidArgsErrorf(
 			"invalid --verdict value %q; valid values: pointer, full, drop", raw)
+	}
+}
+
+// ResolveVerdictMode picks the effective carry-forward mode: the --verdict
+// flag wins when set (non-empty), otherwise the project default from
+// specscore.yaml promote.verdict_carry_forward, otherwise the package
+// default (pointer). An unrecognized config value is ignored in favor of
+// the default — flag validation (exit 2) already guards the user-facing
+// path; a malformed config should not crash the verb.
+func ResolveVerdictMode(specRoot string, flag VerdictMode) VerdictMode {
+	if flag != "" {
+		return flag
+	}
+	if m, ok := readConfigVerdictMode(specRoot); ok {
+		return m
+	}
+	return DefaultVerdictMode
+}
+
+// readConfigVerdictMode reads promote.verdict_carry_forward from
+// specscore.yaml. The promote block is carried in SpecConfig.Extras
+// (inline) as a map. Returns (mode, true) only for a recognized value.
+func readConfigVerdictMode(specRoot string) (VerdictMode, bool) {
+	cfg, err := projectdef.ReadSpecConfig(specRoot)
+	if err != nil {
+		return "", false
+	}
+	promoteRaw, ok := cfg.Extras["promote"]
+	if !ok {
+		return "", false
+	}
+	promoteMap, ok := promoteRaw.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	v, ok := promoteMap["verdict_carry_forward"].(string)
+	if !ok {
+		return "", false
+	}
+	switch VerdictMode(v) {
+	case VerdictPointer, VerdictFull, VerdictDrop:
+		return VerdictMode(v), true
+	default:
+		return "", false
 	}
 }

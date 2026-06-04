@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +25,10 @@ func stagePromoteRepo(t *testing.T, parent, name, repoSlug string) string {
 	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
 		t.Fatalf("mkdir features: %v", err)
 	}
+	specReadme := "# Spec\n\n## Contents\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	_ = os.WriteFile(filepath.Join(root, "spec", "README.md"), []byte(specReadme), 0o644)
+	featReadme := "# Features\n\n## Contents\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	_ = os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(featReadme), 0o644)
 	yaml := "# SpecScore Repo Config Schema: https://specscore.md/repo-config\n" +
 		"project:\n" +
 		"  title: " + name + "\n" +
@@ -133,6 +138,69 @@ func TestIdeaPromoteCLI_InvalidVerdictRejected(t *testing.T) {
 	if got := exitCodeFromErr(t, err); got != exitcode.InvalidArgs {
 		t.Errorf("exit code: got %d want %d (InvalidArgs)", got, exitcode.InvalidArgs)
 	}
+}
+
+// AC: same-repo-promote-happy-path
+func TestIdeaPromoteCLI_SameRepoHappyPath(t *testing.T) {
+	parent := t.TempDir()
+	source := stagePromoteRepo(t, parent, "src", "src")
+	writePromoteSeed(t, source, "bar", "Bar Feature Idea", false)
+	initGitRepoForTest(t, source)
+
+	stdout, _, err := runIdeaPromoteCLI(t, source, "bar")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Seed gone, Idea present.
+	seedPath := filepath.Join(source, "spec", "ideas", "seeds", "bar.md")
+	if _, statErr := os.Stat(seedPath); !os.IsNotExist(statErr) {
+		t.Errorf("seed should be moved away; still at %s", seedPath)
+	}
+	ideaPath := filepath.Join(source, "spec", "ideas", "bar.md")
+	body, readErr := os.ReadFile(ideaPath)
+	if readErr != nil {
+		t.Fatalf("idea not created: %v", readErr)
+	}
+	content := string(body)
+	if !strings.Contains(content, "# Idea: Bar Feature Idea") {
+		t.Errorf("expected `# Idea: <title>` heading; got:\n%s", content)
+	}
+	if !strings.HasPrefix(content, "# Idea:") {
+		t.Errorf("frontmatter should be dropped; got prefix:\n%s", content[:min(80, len(content))])
+	}
+	for _, field := range []string{"**Status:** Draft", "**Date:**", "**Owner:**",
+		"**Promotes To:** —", "**Supersedes:** —", "**Related Ideas:** —"} {
+		if !strings.Contains(content, field) {
+			t.Errorf("missing Idea body-metadata %q; got:\n%s", field, content)
+		}
+	}
+	// Seed prose folded into ## Context.
+	ctxIdx := strings.Index(content, "## Context")
+	if ctxIdx < 0 {
+		t.Fatalf("no ## Context section; got:\n%s", content)
+	}
+	if !strings.Contains(content[ctxIdx:], "This is the seed prose") {
+		t.Errorf("seed prose should fold into ## Context; got:\n%s", content[ctxIdx:])
+	}
+	// stdout names the created Idea path.
+	if !strings.Contains(stdout, ideaPath) {
+		t.Errorf("stdout should name created Idea path %q; got: %s", ideaPath, stdout)
+	}
+
+	// The verb commits the pure rename, so git log --follow reaches the
+	// seed's original path across the subsequent transform.
+	out, logErr := exec.Command("git", "-C", source, "log", "--follow", "--name-only",
+		"--pretty=format:", "--", filepath.Join("spec", "ideas", "bar.md")).Output()
+	if logErr != nil {
+		t.Fatalf("git log --follow: %v", logErr)
+	}
+	if !strings.Contains(string(out), filepath.Join("spec", "ideas", "seeds", "bar.md")) {
+		t.Errorf("git log --follow should reach the original seed path; got:\n%s", out)
+	}
+
+	// specscore spec lint passes (no error-severity violations).
+	assertLintClean(t, source, "after promote bar")
 }
 
 // AC: dirty-tree-rejected
