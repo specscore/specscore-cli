@@ -95,6 +95,62 @@ Some prose.
 	}
 }
 
+func TestParse_PlanMetadataPopulated(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: Meta
+
+**Status:** Approved
+**Date:** 2026-06-04
+**Owner:** someone
+**Source Feature:** foo
+
+## Tasks
+
+### Task 1: One
+
+**Verifies:** foo#ac:x
+`
+	p, err := Parse(writePlan(t, dir, "meta", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Status != "Approved" {
+		t.Fatalf("got status %q", p.Status)
+	}
+	if p.Date != "2026-06-04" {
+		t.Fatalf("got date %q", p.Date)
+	}
+	if p.Owner != "someone" {
+		t.Fatalf("got owner %q", p.Owner)
+	}
+}
+
+// TestParse_MissingStatusIsEmpty covers cli/plan#ac:missing-status-is-empty:
+// a Plan with no `**Status:**` line reports an empty status and Parse succeeds.
+func TestParse_MissingStatusIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: NoStatus
+
+**Source Feature:** foo
+
+## Tasks
+
+### Task 1: One
+
+**Verifies:** foo#ac:x
+`
+	p, err := Parse(writePlan(t, dir, "no-status", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Status != "" {
+		t.Fatalf("expected empty status, got %q", p.Status)
+	}
+	if p.StatusLine != 0 {
+		t.Fatalf("expected StatusLine=0, got %d", p.StatusLine)
+	}
+}
+
 func TestParse_ModeAbsentDefaultsFull(t *testing.T) {
 	dir := t.TempDir()
 	body := `# Plan: NoMode
