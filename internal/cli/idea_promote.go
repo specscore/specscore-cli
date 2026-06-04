@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/ideapromote"
+	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +61,8 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 	}
 
 	verdictRaw, _ := cmd.Flags().GetString("verdict")
-	if _, err := ideapromote.ValidateVerdict(verdictRaw); err != nil {
+	verdictFlag, err := ideapromote.ValidateVerdict(verdictRaw)
+	if err != nil {
 		return err
 	}
 
@@ -68,7 +75,8 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 	}
 
 	// Guard 1: seed must exist (exit 3, no mutation).
-	if _, err := ideapromote.ResolveSeed(specRoot, slug); err != nil {
+	seedPath, err := ideapromote.ResolveSeed(specRoot, slug)
+	if err != nil {
 		return err
 	}
 
@@ -85,5 +93,68 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Resolve the effective verdict carry-forward mode: flag wins,
+	// else specscore.yaml promote.verdict_carry_forward, else default.
+	verdictMode := ideapromote.ResolveVerdictMode(specRoot, verdictFlag)
+
+	// Read + parse the seed, then build the transformed Idea body.
+	seedBytes, err := os.ReadFile(seedPath)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("reading seed %s: %v", seedPath, err)
+	}
+	seed := ideapromote.ParseSeed(string(seedBytes))
+	transformed, err := ideapromote.Transform(seed, ideapromote.TransformOptions{
+		Slug:              slug,
+		Owner:             seed.Frontmatter["captured_by"],
+		VerdictMode:       verdictMode,
+		SeedRefForPointer: paths.SeedRel,
+	})
+	if err != nil {
+		return exitcode.UnexpectedErrorf("transforming seed: %v", err)
+	}
+
+	// Same-repo path: git-mv the seed to the Idea path, overwrite with
+	// the transformed body. (Cross-repo archive is Task 4.)
+	ideaAbs, err := ideapromote.SameRepoPromote(specRoot, slug, transformed)
+	if err != nil {
+		return err
+	}
+
+	// Run lint-fix so the created Idea is lint-clean by construction.
+	if err := promoteLintFix(specRoot, ideaAbs); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", ideaAbs)
+	return nil
+}
+
+// promoteLintFix runs `lint --fix` to sync indexes touched by the move,
+// then re-runs lint to surface any error-severity violation on the
+// created Idea or in the ideas tree. Mirrors `idea new`'s lint discipline.
+func promoteLintFix(specRoot, ideaAbs string) error {
+	specSub := filepath.Join(specRoot, "spec")
+	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
+		return exitcode.UnexpectedErrorf("running lint --fix: %v", err)
+	}
+	violations, err := lintLintFn(lint.Options{SpecRoot: specSub})
+	if err != nil {
+		return exitcode.UnexpectedErrorf("running lint: %v", err)
+	}
+	relIdea, _ := filepath.Rel(specSub, ideaAbs)
+	var own []lint.Violation
+	for _, v := range violations {
+		if v.Severity == "error" && (v.File == relIdea || strings.HasPrefix(v.File, "ideas/")) {
+			own = append(own, v)
+		}
+	}
+	if len(own) > 0 {
+		var sb strings.Builder
+		sb.WriteString("promoted Idea failed lint:\n")
+		for _, v := range own {
+			fmt.Fprintf(&sb, "  %s:%d [%s] %s\n", v.File, v.Line, v.Rule, v.Message)
+		}
+		return exitcode.UnexpectedError(sb.String())
+	}
 	return nil
 }
