@@ -33,10 +33,10 @@ func CrossRepoPromote(specRoot, slug string, transformed []byte, seedBody string
 	}
 	archivedAbs = filepath.Join(specRoot, paths.ArchivedSeedRel)
 	marked := markArchivedSeed(seedBody, slug)
-	if err := writeFileAbs(archivedAbs, []byte(marked)); err != nil {
+	if err := writeFileAbsFn(archivedAbs, []byte(marked)); err != nil {
 		return "", "", err
 	}
-	if err := gitStage(specRoot, paths.ArchivedSeedRel); err != nil {
+	if err := gitStageFn(specRoot, paths.ArchivedSeedRel); err != nil {
 		return "", "", err
 	}
 	return ideaAbs, archivedAbs, nil

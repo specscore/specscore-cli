@@ -71,10 +71,10 @@ func SameRepoPromote(specRoot, slug string, transformed []byte) (string, error) 
 		}
 	}
 
-	if err := writeFileAbs(dstAbs, transformed); err != nil {
+	if err := writeFileAbsFn(dstAbs, transformed); err != nil {
 		return "", err
 	}
-	if err := gitStage(specRoot, paths.IdeaRel); err != nil {
+	if err := gitStageFn(specRoot, paths.IdeaRel); err != nil {
 		return "", err
 	}
 	return dstAbs, nil
@@ -132,3 +132,11 @@ var isGitRepoFn = func(repoRoot string) bool {
 	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "--is-inside-work-tree")
 	return cmd.Run() == nil
 }
+
+// writeFileAbsFn and gitStageFn are seams over the post-rename mutation
+// helpers so the otherwise-defensive write/stage error branches in
+// SameRepoPromote and CrossRepoPromote are testable.
+var (
+	writeFileAbsFn = writeFileAbs
+	gitStageFn     = gitStage
+)

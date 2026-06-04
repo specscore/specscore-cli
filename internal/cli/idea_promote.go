@@ -98,7 +98,7 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	backLinks, err := ideapromote.DiscoverBackLinks(scanRepos, slug)
+	backLinks, err := ideapromoteDiscoverBackLinksFn(scanRepos, slug)
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("reading seed %s: %v", seedPath, err)
 	}
 	seed := ideapromote.ParseSeed(string(seedBytes))
-	transformed, err := ideapromote.Transform(seed, ideapromote.TransformOptions{
+	transformed, err := ideapromoteTransformFn(seed, ideapromote.TransformOptions{
 		Slug:              slug,
 		Owner:             seed.Frontmatter["captured_by"],
 		VerdictMode:       verdictMode,
@@ -147,7 +147,7 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		// seed to spec/ideas/archived/<slug>.md with frontmatter
 		// status: promoted and promoted_to: <slug>. Sibling repos are
 		// left untouched (delegated to lint/UI cross-repo resolution).
-		ideaAbs, seedAbs, err = ideapromote.CrossRepoPromote(specRoot, slug, transformed, string(seedBytes))
+		ideaAbs, seedAbs, err = ideapromoteCrossRepoPromoteFn(specRoot, slug, transformed, string(seedBytes))
 		if err != nil {
 			return err
 		}
@@ -155,12 +155,12 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 	} else {
 		// Same-repo path: git-mv the seed to the Idea path, overwrite
 		// with the transformed body, and reconcile same-repo back-links.
-		ideaAbs, err = ideapromote.SameRepoPromote(specRoot, slug, transformed)
+		ideaAbs, err = ideapromoteSameRepoPromoteFn(specRoot, slug, transformed)
 		if err != nil {
 			return err
 		}
 		seedAbs = ideaAbs // the seed became the Idea
-		reconciled, err = ideapromote.ReconcileSameRepoBackLinks(backLinks, slug)
+		reconciled, err = ideapromoteReconcileFn(backLinks, slug)
 		if err != nil {
 			return err
 		}
@@ -209,7 +209,7 @@ func promoteScanRepos(specRoot string) ([]ideapromote.RepoRef, error) {
 		return nil, exitcode.UnexpectedErrorf("discovering sibling repos: %v", err)
 	}
 	canon := func(p string) string {
-		if abs, err := filepath.Abs(p); err == nil {
+		if abs, err := filepathAbsFn(p); err == nil {
 			if r, err := filepath.EvalSymlinks(abs); err == nil {
 				return filepath.Clean(r)
 			}
