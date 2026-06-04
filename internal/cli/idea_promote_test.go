@@ -32,6 +32,7 @@ func stagePromoteRepo(t *testing.T, parent, name, repoSlug string) string {
 	yaml := "# SpecScore Repo Config Schema: https://specscore.md/repo-config\n" +
 		"project:\n" +
 		"  title: " + name + "\n" +
+		"  host: github.com\n" +
 		"  org: " + repoSlug + "\n" +
 		"  repo: " + repoSlug + "\n"
 	if err := os.WriteFile(filepath.Join(root, "specscore.yaml"), []byte(yaml), 0o644); err != nil {
@@ -201,6 +202,51 @@ func TestIdeaPromoteCLI_SameRepoHappyPath(t *testing.T) {
 
 	// specscore spec lint passes (no error-severity violations).
 	assertLintClean(t, source, "after promote bar")
+}
+
+// AC: same-repo-backlinks-reconciled
+func TestIdeaPromoteCLI_SameRepoBackLinksReconciled(t *testing.T) {
+	parent := t.TempDir()
+	source := stagePromoteRepo(t, parent, "src", "src")
+	writePromoteSeed(t, source, "bar", "Bar Idea", false)
+
+	// A same-repo Feature with a Sidekick Seeds Generated back-link to
+	// the seed (bare relative path → same-repo).
+	featDir := filepath.Join(source, "spec", "features", "x")
+	if err := os.MkdirAll(featDir, 0o755); err != nil {
+		t.Fatalf("mkdir feature: %v", err)
+	}
+	featBody := "# Feature: X\n\n**Status:** Approved\n\n## Summary\n\nText.\n\n" +
+		"## Sidekick Seeds Generated\n\n" +
+		"- [bar](../../ideas/seeds/bar.md) — captured 2026-06-01 by specstudio:specify\n\n" +
+		"## Open Questions\n\nNone at this time.\n\n" +
+		"---\n*This document follows the https://specscore.md/feature-specification*\n"
+	featPath := filepath.Join(featDir, "README.md")
+	if err := os.WriteFile(featPath, []byte(featBody), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	initGitRepoForTest(t, source)
+
+	stdout, _, err := runIdeaPromoteCLI(t, source, "bar")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, readErr := os.ReadFile(featPath)
+	if readErr != nil {
+		t.Fatalf("read feature after: %v", readErr)
+	}
+	content := string(got)
+	if !strings.Contains(content, "(../../ideas/bar.md)") {
+		t.Errorf("back-link should point at the new Idea path; got:\n%s", content)
+	}
+	if strings.Contains(content, "ideas/seeds/bar.md") {
+		t.Errorf("no back-link should still reference the seeds path; got:\n%s", content)
+	}
+	if !strings.Contains(stdout, "reconciled back-link") {
+		t.Errorf("stdout should report the reconciled back-link; got: %s", stdout)
+	}
+	assertLintClean(t, source, "after backlink reconcile")
 }
 
 // AC: dirty-tree-rejected

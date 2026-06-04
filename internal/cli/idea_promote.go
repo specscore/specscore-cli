@@ -85,11 +85,30 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Guard 3: clean-tree pre-flight over the paths the verb would touch.
+	// Discover and classify back-links to the seed across the source repo
+	// and sibling SpecScore repos (the same discovery `idea relocate`
+	// performs). The presence of any cross-repo (<repo-slug>:) reference
+	// selects the cross-repo path; otherwise the same-repo path applies.
+	scanRepos, err := promoteScanRepos(specRoot)
+	if err != nil {
+		return err
+	}
+	backLinks, err := ideapromote.DiscoverBackLinks(scanRepos, slug)
+	if err != nil {
+		return err
+	}
+
+	// Guard 3: clean-tree pre-flight over the paths the verb would touch
+	// — the seed, the destination Idea path, and every same-repo file
+	// carrying a reconcilable back-link.
 	paths := ideapromote.PathsFor(slug)
-	if err := ideapromote.Preflight(specRoot, []string{
-		paths.SeedRel, paths.IdeaRel, paths.ArchivedSeedRel,
-	}); err != nil {
+	preflightPaths := []string{paths.SeedRel, paths.IdeaRel, paths.ArchivedSeedRel}
+	for _, bl := range backLinks {
+		if !bl.CrossRepo && bl.RepoRoot == specRoot {
+			preflightPaths = append(preflightPaths, bl.RelPath)
+		}
+	}
+	if err := ideapromote.Preflight(specRoot, preflightPaths); err != nil {
 		return err
 	}
 
@@ -120,13 +139,55 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Reconcile same-repo back-links from the old seeds path to the new
+	// Idea path. Cross-repo entries are left untouched.
+	reconciled, err := ideapromote.ReconcileSameRepoBackLinks(backLinks, slug)
+	if err != nil {
+		return err
+	}
+
 	// Run lint-fix so the created Idea is lint-clean by construction.
 	if err := promoteLintFix(specRoot, ideaAbs); err != nil {
 		return err
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", ideaAbs)
+	for _, r := range reconciled {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled back-link: %s\n", r.RelPath)
+	}
 	return nil
+}
+
+// promoteScanRepos returns the set of repos to scan for back-links: the
+// source repo plus every sibling SpecScore repo discovered in the
+// workspace, deduplicated by canonical path so the source (which
+// DiscoverSiblings also returns) is scanned exactly once.
+func promoteScanRepos(specRoot string) ([]ideapromote.RepoRef, error) {
+	siblings, err := idearelocateDiscoverSiblingsFn(specRoot)
+	if err != nil {
+		return nil, exitcode.UnexpectedErrorf("discovering sibling repos: %v", err)
+	}
+	canon := func(p string) string {
+		if abs, err := filepath.Abs(p); err == nil {
+			if r, err := filepath.EvalSymlinks(abs); err == nil {
+				return filepath.Clean(r)
+			}
+			return filepath.Clean(abs)
+		}
+		return filepath.Clean(p)
+	}
+	seen := map[string]struct{}{}
+	repos := []ideapromote.RepoRef{{Path: specRoot}}
+	seen[canon(specRoot)] = struct{}{}
+	for _, s := range siblings {
+		c := canon(s.Path)
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		repos = append(repos, ideapromote.RepoRef{Path: s.Path})
+	}
+	return repos, nil
 }
 
 // promoteLintFix runs `lint --fix` to sync indexes touched by the move,
