@@ -1,6 +1,6 @@
 # Plan: Plan (CLI) — command group
 
-**Status:** Implementing
+**Status:** Completed
 **Source Feature:** cli/plan
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok
@@ -26,6 +26,7 @@ Extend the `pkg/plan.Plan` struct and parser to capture the plan-level `**Status
 ### Task 2: `plan` cobra group — shared flags, slug resolution, exit codes
 
 **Verifies:** cli/plan#ac:group-exposes-subcommands, cli/plan#ac:invalid-format-rejected, cli/plan#ac:unknown-slug-exits-3
+**Status:** done
 
 Register the `plan` parent command and wire it into the root command tree, mirroring `cli/feature`. Provide the shared `--format yaml|json|text` and `--project` flags, print group help with exit `0` when invoked with no subcommand, reject an invalid `--format` value with exit `2` naming the value, and resolve a `<slug>` argument to `spec/plans/<slug>.md` with exit `3` (naming the slug) when it does not exist.
 

@@ -43,6 +43,7 @@ func Run(args []string) error {
 		codeCommand(),
 		entityCommand(),
 		featureCommand(),
+		planCommand(),
 		propertyCommand(),
 		rulesCommand(),
 		specCommand(),
