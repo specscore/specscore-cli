@@ -43,7 +43,7 @@ Discover `## Sidekick Seeds Generated` entries referencing the seed (reusing `id
 
 ### Task 4: Cross-repo archive branch
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 3
 **Verifies:** cli/idea/promote#ac:cross-repo-archive, cli/idea/promote#ac:never-deprecated
 

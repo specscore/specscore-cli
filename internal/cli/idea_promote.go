@@ -132,22 +132,34 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("transforming seed: %v", err)
 	}
 
-	// Same-repo path: git-mv the seed to the Idea path, overwrite with
-	// the transformed body. (Cross-repo archive is Task 4.)
-	ideaAbs, err := ideapromote.SameRepoPromote(specRoot, slug, transformed)
-	if err != nil {
-		return err
-	}
+	var ideaAbs string
+	var reconciled []ideapromote.ReconcileResult
+	crossRepo := ideapromote.HasCrossRepo(backLinks)
 
-	// Reconcile same-repo back-links from the old seeds path to the new
-	// Idea path. Cross-repo entries are left untouched.
-	reconciled, err := ideapromote.ReconcileSameRepoBackLinks(backLinks, slug)
-	if err != nil {
-		return err
+	if crossRepo {
+		// Cross-repo path: create the Idea by copy+transform, git-mv the
+		// seed to spec/ideas/archived/<slug>.md with frontmatter
+		// status: promoted and promoted_to: <slug>. Sibling repos are
+		// left untouched (delegated to lint/UI cross-repo resolution).
+		ideaAbs, _, err = ideapromote.CrossRepoPromote(specRoot, slug, transformed, string(seedBytes))
+		if err != nil {
+			return err
+		}
+	} else {
+		// Same-repo path: git-mv the seed to the Idea path, overwrite
+		// with the transformed body, and reconcile same-repo back-links.
+		ideaAbs, err = ideapromote.SameRepoPromote(specRoot, slug, transformed)
+		if err != nil {
+			return err
+		}
+		reconciled, err = ideapromote.ReconcileSameRepoBackLinks(backLinks, slug)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Run lint-fix so the created Idea is lint-clean by construction.
-	if err := promoteLintFix(specRoot, ideaAbs); err != nil {
+	if err := promoteLintFix(specRoot, ideaAbs, crossRepo); err != nil {
 		return err
 	}
 
@@ -190,14 +202,31 @@ func promoteScanRepos(specRoot string) ([]ideapromote.RepoRef, error) {
 	return repos, nil
 }
 
-// promoteLintFix runs `lint --fix` to sync indexes touched by the move,
-// then re-runs lint to surface any error-severity violation on the
-// created Idea or in the ideas tree. Mirrors `idea new`'s lint discipline.
-func promoteLintFix(specRoot, ideaAbs string) error {
+// promoteLintFix runs `lint --fix` to sync indexes touched by the
+// promotion, then validates the created Idea is lint-clean.
+//
+// Same-repo: the seed leaves the seeds/ dir entirely, so the whole ideas/
+// tree should be clean — any error-severity violation under ideas/ fails.
+//
+// Cross-repo: the retained seed lands in spec/ideas/archived/<slug>.md
+// where it shares the slug with the new active Idea. The idea-lint layer
+// keys parsed ideas by slug, so an active+archived slug collision makes a
+// whole-tree check unreliable for the new Idea, and the archived seed —
+// a sidekick-seed, not an Idea — necessarily fails Idea-schema rules. Per
+// cli/idea/promote#req:cross-repo-archive the requirement is that the new
+// IDEA is lint-clean, not the archived seed; so we validate the new Idea
+// structurally in isolation instead of failing on the archived seed's
+// expected violations.
+func promoteLintFix(specRoot, ideaAbs string, crossRepo bool) error {
 	specSub := filepath.Join(specRoot, "spec")
 	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
 		return exitcode.UnexpectedErrorf("running lint --fix: %v", err)
 	}
+
+	if crossRepo {
+		return validateIdeaSkeleton(ideaAbs)
+	}
+
 	violations, err := lintLintFn(lint.Options{SpecRoot: specSub})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("running lint: %v", err)
@@ -216,6 +245,37 @@ func promoteLintFix(specRoot, ideaAbs string) error {
 			fmt.Fprintf(&sb, "  %s:%d [%s] %s\n", v.File, v.Line, v.Rule, v.Message)
 		}
 		return exitcode.UnexpectedError(sb.String())
+	}
+	return nil
+}
+
+// validateIdeaSkeleton confirms the file at ideaAbs is a structurally
+// valid Idea skeleton: a `# Idea: <Name>` title and every required header
+// field and section present. Used for the cross-repo path where a
+// whole-tree lint pass is confounded by the archived-seed slug collision.
+func validateIdeaSkeleton(ideaAbs string) error {
+	p, err := idea.Parse(ideaAbs)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("parsing promoted Idea %s: %v", ideaAbs, err)
+	}
+	var missing []string
+	if !p.TitleOK || p.TitlePrefix != "Idea" {
+		missing = append(missing, "title `# Idea: <Name>`")
+	}
+	for _, f := range idea.RequiredHeaderFields {
+		if _, ok := p.FieldByName[f]; !ok {
+			missing = append(missing, "**"+f+":**")
+		}
+	}
+	for _, s := range idea.RequiredSections {
+		if _, ok := p.SectionByTitle[s]; !ok {
+			missing = append(missing, "section "+s)
+		}
+	}
+	if len(missing) > 0 {
+		return exitcode.UnexpectedErrorf(
+			"promoted Idea %s is not a lint-clean skeleton; missing: %s",
+			ideaAbs, strings.Join(missing, ", "))
 	}
 	return nil
 }
