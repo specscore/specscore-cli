@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
 // writePlanInDir writes a single-file plan at plansDir/<slug>.md with the
@@ -12,6 +14,18 @@ import (
 func writePlanInDir(t *testing.T, plansDir, slug, status string) {
 	t.Helper()
 	content := "# Plan: " + slug + "\n\n**Status:** " + status + "\n\n## Tasks\n\n### Task 1: x\n\nBody.\n"
+	if err := os.WriteFile(filepath.Join(plansDir, slug+".md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan %s: %v", slug, err)
+	}
+}
+
+// writePlanWithSource writes a single-file plan with a status and a
+// Source Feature field.
+func writePlanWithSource(t *testing.T, plansDir, slug, status, sourceFeature string) {
+	t.Helper()
+	content := "# Plan: " + slug + "\n\n**Status:** " + status +
+		"\n\n**Source Feature:** " + sourceFeature +
+		"\n\n## Tasks\n\n### Task 1: x\n\nBody.\n"
 	if err := os.WriteFile(filepath.Join(plansDir, slug+".md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write plan %s: %v", slug, err)
 	}
@@ -133,5 +147,77 @@ func TestPlanList_FormatYAML(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "status: Draft") {
 		t.Errorf("yaml missing status: %s", stdout)
+	}
+}
+
+// TestPlanList_FieldsReturnsYAML verifies cli/plan/list#ac:fields-returns-yaml.
+func TestPlanList_FieldsReturnsYAML(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	writePlanWithSource(t, plansDir, "fielded-plan", "Approved", "cli/plan/list")
+
+	stdout, _, err := runPlan(t, "list", "--fields", "status,source-feature")
+	if err != nil {
+		t.Fatalf("plan list --fields: %v", err)
+	}
+	if !strings.Contains(stdout, "slug: fielded-plan") {
+		t.Errorf("yaml missing slug key: %s", stdout)
+	}
+	if !strings.Contains(stdout, "status: Approved") {
+		t.Errorf("yaml missing status key: %s", stdout)
+	}
+	if !strings.Contains(stdout, "source-feature: cli/plan/list") {
+		t.Errorf("yaml missing source-feature key: %s", stdout)
+	}
+}
+
+// TestPlanList_FieldsUpgradesTextToYAML verifies the text->yaml auto-upgrade
+// of cli/plan/list#ac:fields-returns-yaml.
+func TestPlanList_FieldsUpgradesTextToYAML(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	writePlanInDir(t, plansDir, "upgraded-plan", "Draft")
+
+	stdout, _, err := runPlan(t, "list", "--format", "text", "--fields", "status")
+	if err != nil {
+		t.Fatalf("plan list --format text --fields status: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "- ") {
+		t.Errorf("expected YAML list output, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "status: Draft") {
+		t.Errorf("expected status key in upgraded output, got: %s", stdout)
+	}
+}
+
+// TestPlanList_UnknownFieldExitsTwo verifies cli/plan/list#ac:unknown-field-exits-2.
+func TestPlanList_UnknownFieldExitsTwo(t *testing.T) {
+	setupPlansSpec(t)
+
+	_, _, err := runPlan(t, "list", "--fields", "bogus")
+	if err == nil {
+		t.Fatal("expected error for unknown field")
+	}
+	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d (InvalidArgs)", got, exitcode.InvalidArgs)
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should name offending field: %v", err)
+	}
+}
+
+// TestPlanList_FieldsEmptyValueKeyPresent guards the no-omitempty requirement:
+// a plan with an empty status still emits a status key.
+func TestPlanList_FieldsEmptyValueKeyPresent(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	writePlanInDir(t, plansDir, "no-status-plan", "")
+
+	stdout, _, err := runPlan(t, "list", "--fields", "status")
+	if err != nil {
+		t.Fatalf("plan list --fields status: %v", err)
+	}
+	if !strings.Contains(stdout, "status:") {
+		t.Errorf("expected status key present even when empty, got: %s", stdout)
 	}
 }

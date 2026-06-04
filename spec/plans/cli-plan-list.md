@@ -1,6 +1,6 @@
 # Plan: Plan List (CLI)
 
-**Status:** Implementing
+**Status:** Completed
 **Source Feature:** cli/plan/list
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok
@@ -26,6 +26,7 @@ Implement `plan list` default output: one plan slug per line, alphabetically sor
 ### Task 2: Structured `--fields` output
 
 **Verifies:** cli/plan/list#ac:fields-returns-yaml, cli/plan/list#ac:unknown-field-exits-2
+**Status:** done
 
 Add `--fields` support: a comma-separated selector over the recognized set (`status`, `source-feature`, `mode`, `date`, `owner`) producing a YAML (default) or JSON list of `{slug, …fields}` entries. `--format text` alongside `--fields` auto-upgrades to YAML rather than erroring; an unrecognized field name exits `2` naming the offending field.
 
