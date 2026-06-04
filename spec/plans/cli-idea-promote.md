@@ -1,6 +1,6 @@
 # Plan: Idea Promote (CLI) — internal/cli idea promote
 
-**Status:** Under Review
+**Status:** Approved
 **Mode:** full
 **Source Feature:** cli/idea/promote
 **Date:** 2026-06-04
