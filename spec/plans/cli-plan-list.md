@@ -1,6 +1,6 @@
 # Plan: Plan List (CLI)
 
-**Status:** Approved
+**Status:** Implementing
 **Source Feature:** cli/plan/list
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok
@@ -19,6 +19,7 @@ Two tasks, linear. Task 1 delivers the default text listing and the `--status` f
 ### Task 1: Text default and `--status` filter
 
 **Verifies:** cli/plan/list#ac:default-listing-pipeable, cli/plan/list#ac:status-filter-selects, cli/plan/list#ac:empty-match-exits-zero
+**Status:** done
 
 Implement `plan list` default output: one plan slug per line, alphabetically sorted, no headers or trailing blank, exit `0` even when the result is empty. Add `--status <value>` as a case-insensitive exact match against each plan's parsed `**Status:**`, including only matching plans and still exiting `0` on an empty match.
 

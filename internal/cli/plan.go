@@ -11,14 +11,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// planCommand returns the "plan" command group. Subcommands (list, info)
-// are added by later plans; with no Run/RunE and no subcommands, cobra
+// planCommand returns the "plan" command group. With no Run/RunE, cobra
 // prints help and exits 0 for `specscore plan`.
 func planCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Query plans — listing and inspecting plan metadata",
 	}
+	cmd.AddCommand(planListCommand())
+	return cmd
 }
 
 // resolvePlansDir resolves the plans directory from a --project flag or CWD.
