@@ -44,6 +44,7 @@ type SpecConfig struct {
 	Studio       *StudioConfig  `yaml:"studio,omitempty"`
 	Modules      []ModuleConfig `yaml:"modules,omitempty"`
 	Grade        *GradeConfig   `yaml:"grade,omitempty"`
+	Promote      *PromoteConfig `yaml:"promote,omitempty"`
 	Extras       map[string]any `yaml:",inline"`
 
 	// studioExplicitNull is set to true when YAML contains
@@ -133,6 +134,17 @@ func (r *RepositoryConfig) UnmarshalYAML(node *yaml.Node) error {
 type StudioConfig struct {
 	Name string `yaml:"name"`
 	URL  string `yaml:"url"`
+}
+
+// PromoteConfig is the optional `promote:` block. It configures the
+// `specscore idea promote` verb's project defaults. See
+// spec/features/cli/idea/promote/README.md#req:verdict-carry-forward.
+type PromoteConfig struct {
+	// VerdictCarryForward sets the project-default verdict carry-forward
+	// mode (pointer | full | drop). Empty/absent means the verb falls back
+	// to its built-in default. A `--verdict` flag overrides this.
+	VerdictCarryForward string         `yaml:"verdict_carry_forward,omitempty"`
+	Extras              map[string]any `yaml:",inline"`
 }
 
 // DefaultGradeValues is the built-in grade value set applied when no

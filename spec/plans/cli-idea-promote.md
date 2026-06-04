@@ -51,7 +51,7 @@ When the classifier finds any cross-repo reference, take the no-move-of-content 
 
 ### Task 5: Verdict carry-forward
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 2
 **Verifies:** cli/idea/promote#ac:verdict-carry-forward-modes
 

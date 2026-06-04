@@ -55,28 +55,16 @@ func ResolveVerdictMode(specRoot string, flag VerdictMode) VerdictMode {
 }
 
 // readConfigVerdictMode reads promote.verdict_carry_forward from
-// specscore.yaml. The promote block is carried in SpecConfig.Extras
-// (inline) as a map. Returns (mode, true) only for a recognized value.
+// specscore.yaml's typed `promote:` block. Returns (mode, true) only for
+// a recognized value.
 func readConfigVerdictMode(specRoot string) (VerdictMode, bool) {
 	cfg, err := projectdef.ReadSpecConfig(specRoot)
-	if err != nil {
+	if err != nil || cfg.Promote == nil {
 		return "", false
 	}
-	promoteRaw, ok := cfg.Extras["promote"]
-	if !ok {
-		return "", false
-	}
-	promoteMap, ok := promoteRaw.(map[string]any)
-	if !ok {
-		return "", false
-	}
-	v, ok := promoteMap["verdict_carry_forward"].(string)
-	if !ok {
-		return "", false
-	}
-	switch VerdictMode(v) {
+	switch VerdictMode(cfg.Promote.VerdictCarryForward) {
 	case VerdictPointer, VerdictFull, VerdictDrop:
-		return VerdictMode(v), true
+		return VerdictMode(cfg.Promote.VerdictCarryForward), true
 	default:
 		return "", false
 	}
