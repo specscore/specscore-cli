@@ -313,3 +313,134 @@ func TestDiscover_NonDirFeatureEntrySkipped(t *testing.T) {
 		t.Errorf("expected 0 discovered, got %d", len(got))
 	}
 }
+
+// promotedSeed is the canonical content of a promoted sidekick-seed parked
+// under spec/ideas/archived/ after `specscore idea promote`'s cross-repo path.
+const promotedSeed = `---
+type: sidekick-seed
+slug: foo
+captured_at: 2026-06-04T00:00:00Z
+captured_by: specstudio:plan
+captured_during: null
+trigger: explicit
+status: promoted
+promoted_to: foo
+synchestra_task: null
+---
+# Foo seed
+
+Original seed prose.
+`
+
+// TestDiscover_ArchivedPromotedSeedSkipped verifies that a promoted
+// sidekick-seed in archived/ is NOT discovered as an Idea, while the active
+// Idea sharing the same slug still is. This locks in the fix for the lint
+// bug where the archived seed was mis-parsed as an Idea and collided with
+// the active Idea by slug.
+func TestDiscover_ArchivedPromotedSeedSkipped(t *testing.T) {
+	root := t.TempDir()
+	specRoot := filepath.Join(root, "spec")
+	ideasDir := filepath.Join(specRoot, "ideas")
+	archivedDir := filepath.Join(ideasDir, "archived")
+	if err := os.MkdirAll(archivedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Active Idea with slug foo.
+	if err := os.WriteFile(filepath.Join(ideasDir, "foo.md"), []byte("# Idea: Foo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Promoted seed (same slug) parked in archived/.
+	if err := os.WriteFile(filepath.Join(archivedDir, "foo.md"), []byte(promotedSeed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(specRoot)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 discovered (active Idea only), got %d: %+v", len(got), got)
+	}
+	if got[0].Slug != "foo" || got[0].Archived {
+		t.Errorf("got[0] = %+v, want active foo Idea", got[0])
+	}
+}
+
+// TestDiscover_ArchivedIdeaStillDiscovered is a regression guard: a genuine
+// archived Idea (frontmatter type is NOT sidekick-seed, or no frontmatter at
+// all) must still be discovered as an archived Idea.
+func TestDiscover_ArchivedIdeaStillDiscovered(t *testing.T) {
+	root := t.TempDir()
+	specRoot := filepath.Join(root, "spec")
+	archivedDir := filepath.Join(specRoot, "ideas", "archived")
+	if err := os.MkdirAll(archivedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Plain archived Idea (no frontmatter).
+	if err := os.WriteFile(filepath.Join(archivedDir, "alpha.md"), []byte("# Idea: Alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Archived Idea WITH frontmatter whose type is not sidekick-seed.
+	withFront := "---\ntype: idea\nslug: beta\n---\n# Idea: Beta\n"
+	if err := os.WriteFile(filepath.Join(archivedDir, "beta.md"), []byte(withFront), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(specRoot)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 archived Ideas, got %d: %+v", len(got), got)
+	}
+	for _, d := range got {
+		if !d.Archived {
+			t.Errorf("expected archived, got %+v", d)
+		}
+	}
+}
+
+// TestIsSidekickSeedFile_Edges covers the helper's non-seed paths: an
+// unreadable path, a file without leading frontmatter, and a frontmatter
+// block that closes before declaring a seed type.
+func TestIsSidekickSeedFile_Edges(t *testing.T) {
+	dir := t.TempDir()
+
+	if isSidekickSeedFile(filepath.Join(dir, "missing.md")) {
+		t.Error("missing file should not be a seed")
+	}
+
+	noFront := filepath.Join(dir, "nofront.md")
+	if err := os.WriteFile(noFront, []byte("# Idea: Plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isSidekickSeedFile(noFront) {
+		t.Error("file without frontmatter should not be a seed")
+	}
+
+	closedFirst := filepath.Join(dir, "closed.md")
+	if err := os.WriteFile(closedFirst, []byte("---\nslug: x\n---\ntype: sidekick-seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isSidekickSeedFile(closedFirst) {
+		t.Error("type after closing fence is body, not frontmatter")
+	}
+
+	// Frontmatter that never closes and never declares the seed type: the
+	// scanner reaches EOF and the helper returns false.
+	unterminated := filepath.Join(dir, "unterminated.md")
+	if err := os.WriteFile(unterminated, []byte("---\nslug: x\ntype: idea\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isSidekickSeedFile(unterminated) {
+		t.Error("unterminated non-seed frontmatter should not be a seed")
+	}
+
+	seed := filepath.Join(dir, "seed.md")
+	if err := os.WriteFile(seed, []byte(promotedSeed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isSidekickSeedFile(seed) {
+		t.Error("promoted seed should be detected")
+	}
+}

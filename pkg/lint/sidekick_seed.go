@@ -9,6 +9,12 @@ package lint
 // `sidekick-capture` Feature (REQ seed-frontmatter-schema, REQ
 // seed-lint-rule). Each violation surfaces under the single rule name
 // `sidekick-seed`.
+//
+// Promoted sidekick-seeds parked under `spec/ideas/archived/` are also in
+// scope: any archived file whose frontmatter declares `type: sidekick-seed`
+// is validated as a seed (and excluded from Idea discovery). Such seeds may
+// carry the optional `promoted_to` frontmatter key. Archived files that are
+// not seeds (genuine archived Ideas) are left untouched by this rule.
 
 import (
 	"fmt"
@@ -48,6 +54,14 @@ var sidekickSeedRequiredKeySet = func() map[string]bool {
 	return m
 }()
 
+// sidekickSeedOptionalKeys names keys permitted in a seed's frontmatter
+// beyond the required set. A promoted seed (parked under
+// `spec/ideas/archived/`) records `promoted_to: <slug>`, which must not be
+// flagged as an unknown key.
+var sidekickSeedOptionalKeys = map[string]bool{
+	"promoted_to": true,
+}
+
 // sidekickSeedTriggerValues enumerates the values allowed for the
 // `trigger` key per REQ seed-frontmatter-schema.
 var sidekickSeedTriggerValues = map[string]bool{
@@ -63,12 +77,38 @@ func (c *sidekickSeedChecker) name() string     { return sidekickSeedRule }
 func (c *sidekickSeedChecker) severity() string { return "error" }
 
 func (c *sidekickSeedChecker) check(specRoot string) ([]Violation, error) {
+	var violations []Violation
+
+	// seeds/: every *.md is a seed by location.
 	seedsDir := filepath.Join(specRoot, "ideas", "seeds")
-	info, err := os.Stat(seedsDir)
+	vs, err := scanSeedDir(specRoot, seedsDir, false)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, vs...)
+
+	// archived/: only files whose frontmatter declares type: sidekick-seed
+	// are promoted seeds; genuine archived Ideas are left to the Idea rules.
+	archivedDir := filepath.Join(specRoot, "ideas", "archived")
+	vs, err = scanSeedDir(specRoot, archivedDir, true)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, vs...)
+
+	return violations, nil
+}
+
+// scanSeedDir validates seed files in dir. When seedsOnly is true, only
+// files whose frontmatter declares `type: sidekick-seed` are considered
+// (other files are skipped); otherwise every *.md is treated as a seed.
+// A missing directory yields no violations.
+func scanSeedDir(specRoot, dir string, seedsOnly bool) ([]Violation, error) {
+	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(seedsDir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -78,10 +118,10 @@ func (c *sidekickSeedChecker) check(specRoot string) ([]Violation, error) {
 			continue
 		}
 		name := e.Name()
-		if !strings.HasSuffix(name, ".md") {
+		if name == "README.md" || !strings.HasSuffix(name, ".md") {
 			continue
 		}
-		path := filepath.Join(seedsDir, name)
+		path := filepath.Join(dir, name)
 		rel, _ := filepath.Rel(specRoot, path)
 		content, readErr := os.ReadFile(path)
 		if readErr != nil {
@@ -94,9 +134,27 @@ func (c *sidekickSeedChecker) check(specRoot string) ([]Violation, error) {
 			})
 			continue
 		}
+		if seedsOnly && !frontmatterDeclaresSeed(string(content)) {
+			continue
+		}
 		violations = append(violations, checkSidekickSeed(rel, string(content))...)
 	}
 	return violations, nil
+}
+
+// frontmatterDeclaresSeed reports whether content's leading YAML
+// frontmatter sets `type` to the sidekick-seed literal. Files without a
+// closing frontmatter fence, or with a non-seed type, return false.
+func frontmatterDeclaresSeed(content string) bool {
+	front, _, ok := splitFrontmatter(content)
+	if !ok {
+		return false
+	}
+	keys, _, err := parseFrontmatterKeys(front)
+	if err != nil {
+		return false
+	}
+	return keys["type"] == sidekickSeedTypeValue
 }
 
 // checkSidekickSeed validates one seed's content. relPath is included in
@@ -133,7 +191,7 @@ func checkSidekickSeed(relPath, content string) []Violation {
 	// (a) unknown frontmatter keys.
 	var unknown []string
 	for _, k := range keyOrder {
-		if !sidekickSeedRequiredKeySet[k] {
+		if !sidekickSeedRequiredKeySet[k] && !sidekickSeedOptionalKeys[k] {
 			unknown = append(unknown, k)
 		}
 	}
