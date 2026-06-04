@@ -1,6 +1,6 @@
 # Plan: Plan Info (CLI)
 
-**Status:** Approved
+**Status:** Implementing
 **Source Feature:** cli/plan/info
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok
@@ -19,6 +19,7 @@ Two tasks, linear. Task 1 adds the task-status rollup helper to `pkg/plan` (coun
 ### Task 1: Task-status rollup in pkg/plan
 
 **Verifies:** cli/plan/info#ac:info-returns-task-rollup
+**Status:** done
 
 Add a rollup helper to `pkg/plan` that counts a plan's tasks by their parsed `**Status:**` values — `done`, `in-progress`, `pending`, `blocked` — plus a `total`, each `0` when none. Derived from the existing per-task status parse, independent of the plan-level status. Unit-test a plan with all tasks `done`.
 
