@@ -7,6 +7,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/entity"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/idea"
+	"github.com/specscore/specscore-cli/pkg/ideapromote"
 	"github.com/specscore/specscore-cli/pkg/idearelocate"
 	"github.com/specscore/specscore-cli/pkg/issue"
 )
@@ -26,6 +27,15 @@ var (
 	idearelocateExecuteCommitPhaseFn = idearelocate.ExecuteCommitPhase
 	idearelocatePreflightSubjectsFn  = idearelocate.PreflightSubjectsForRelocate
 	idearelocateCheckPreflightFn     = idearelocate.CheckPreflight
+
+	// idea promote seams — the verb's pure/mutating helpers wrapped so the
+	// CLI's defensive error-return branches (which a real fixture cannot
+	// reach once the pre-mutation guards have passed) are testable.
+	ideapromoteDiscoverBackLinksFn = ideapromote.DiscoverBackLinks
+	ideapromoteTransformFn         = ideapromote.Transform
+	ideapromoteSameRepoPromoteFn   = ideapromote.SameRepoPromote
+	ideapromoteCrossRepoPromoteFn  = ideapromote.CrossRepoPromote
+	ideapromoteReconcileFn         = ideapromote.ReconcileSameRepoBackLinks
 
 	// filepathAbsCLI wraps filepath.Abs for the entity/property verbs'
 	// defensive fallbacks. Tests inject failures via cleanup-restored swap.

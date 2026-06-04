@@ -59,6 +59,13 @@ type RepoRef struct {
 // linkRe captures the target of a markdown link: [text](target).
 var linkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)]+)\)`)
 
+// filepathWalkFn and filepathRelFn are seams over the stdlib so the
+// otherwise-defensive walk-error and relativize-error branches are testable.
+var (
+	filepathWalkFn = filepath.Walk
+	filepathRelFn  = filepath.Rel
+)
+
 func discoverBackLinksInRepo(repoRoot, slug string) ([]BackLink, error) {
 	specDir := filepath.Join(repoRoot, "spec")
 	info, err := os.Stat(specDir)
@@ -68,7 +75,7 @@ func discoverBackLinksInRepo(repoRoot, slug string) ([]BackLink, error) {
 	seedSuffix := "ideas/seeds/" + slug + ".md"
 
 	var out []BackLink
-	walkErr := filepath.Walk(specDir, func(path string, fi os.FileInfo, err error) error {
+	walkErr := filepathWalkFn(specDir, func(path string, fi os.FileInfo, err error) error {
 		if err != nil || fi.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil
 		}
@@ -97,7 +104,7 @@ func discoverBackLinksInRepo(repoRoot, slug string) ([]BackLink, error) {
 			if !targetReferencesSeed(target, seedSuffix, slug) {
 				continue
 			}
-			rel, err := filepath.Rel(repoRoot, path)
+			rel, err := filepathRelFn(repoRoot, path)
 			if err != nil {
 				continue
 			}
