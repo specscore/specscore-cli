@@ -44,6 +44,36 @@ func TestDiscover_AbsentDirIsEmpty(t *testing.T) {
 	}
 }
 
+func TestDiscover_ReadDirError(t *testing.T) {
+	// A regular file (not a directory) at plansDir makes os.ReadDir return a
+	// non-IsNotExist error, which Discover propagates.
+	dir := t.TempDir()
+	notDir := filepath.Join(dir, "plans")
+	if err := os.WriteFile(notDir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Discover(notDir); err == nil {
+		t.Fatal("expected error when plansDir is a regular file")
+	}
+}
+
+func TestDiscover_ParseError(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A dangling symlink named *.md is a direct-child candidate whose Parse()
+	// (os.Open) fails because its target does not exist.
+	link := filepath.Join(plansDir, "dangling.md")
+	if err := os.Symlink(filepath.Join(dir, "nonexistent-target"), link); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	if _, err := Discover(plansDir); err == nil {
+		t.Fatal("expected Parse error for dangling symlink candidate")
+	}
+}
+
 func TestDiscover_SkipsSubdirectories(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, "plans")
