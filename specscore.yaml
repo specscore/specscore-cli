@@ -23,4 +23,19 @@ gates:
       reviewers:
         - name: human-approval
           type: human
+  # Verify gate for specstudio:pull-request — runs BEFORE a PR is created, so a
+  # branch below the 100% coverage gate never reaches an open PR (the failure
+  # mode behind PR #48). pull-request-gate.sh is the PR-specific verify command;
+  # it delegates to scripts/coverage-gate.sh — the single source of truth for
+  # coverage that CI and the pre-push hook also enforce. The deterministic
+  # reviewer's verdict is the script's exit code (0 -> Approved; non-zero ->
+  # Issues Found, PR creation blocked). Human approval follows.
+  pull_request:
+    pre_dispatch:
+      reviewers:
+        - name: verify
+          type: deterministic
+          run: ./scripts/pull-request-gate.sh
+        - name: human-approval
+          type: human
 
