@@ -59,7 +59,7 @@ Implement the three carry-forward modes — `pointer` (default, single line), `f
 
 ### Task 6: stdout summary + structured output
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 2
 **Verifies:** cli/idea/promote#ac:stdout-summary
 

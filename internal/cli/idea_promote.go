@@ -68,6 +68,11 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 
 	force, _ := cmd.Flags().GetBool("force")
 
+	format, _ := cmd.Flags().GetString("format")
+	if format != "" && format != "text" && format != "yaml" && format != "json" {
+		return exitcode.InvalidArgsErrorf("invalid --format: %s (valid: text, yaml, json)", format)
+	}
+
 	projectFlag, _ := cmd.Flags().GetString("project")
 	specRoot, err := resolveSpecRoot(projectFlag)
 	if err != nil {
@@ -132,19 +137,21 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("transforming seed: %v", err)
 	}
 
-	var ideaAbs string
+	var ideaAbs, seedAbs string
 	var reconciled []ideapromote.ReconcileResult
 	crossRepo := ideapromote.HasCrossRepo(backLinks)
+	seedFate := ideapromote.FateMoved
 
 	if crossRepo {
 		// Cross-repo path: create the Idea by copy+transform, git-mv the
 		// seed to spec/ideas/archived/<slug>.md with frontmatter
 		// status: promoted and promoted_to: <slug>. Sibling repos are
 		// left untouched (delegated to lint/UI cross-repo resolution).
-		ideaAbs, _, err = ideapromote.CrossRepoPromote(specRoot, slug, transformed, string(seedBytes))
+		ideaAbs, seedAbs, err = ideapromote.CrossRepoPromote(specRoot, slug, transformed, string(seedBytes))
 		if err != nil {
 			return err
 		}
+		seedFate = ideapromote.FateArchived
 	} else {
 		// Same-repo path: git-mv the seed to the Idea path, overwrite
 		// with the transformed body, and reconcile same-repo back-links.
@@ -152,6 +159,7 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		seedAbs = ideaAbs // the seed became the Idea
 		reconciled, err = ideapromote.ReconcileSameRepoBackLinks(backLinks, slug)
 		if err != nil {
 			return err
@@ -163,11 +171,32 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", ideaAbs)
+	backLinkPaths := make([]string, 0, len(reconciled))
 	for _, r := range reconciled {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled back-link: %s\n", r.RelPath)
+		backLinkPaths = append(backLinkPaths, r.RelPath)
 	}
-	return nil
+	result := ideapromote.Result{
+		Slug:                slug,
+		IdeaPath:            ideaAbs,
+		SeedFate:            seedFate,
+		SeedPath:            seedAbs,
+		ReconciledBackLinks: backLinkPaths,
+	}
+
+	w := cmd.OutOrStdout()
+	switch format {
+	case "yaml":
+		enc := newYAMLEnc(w)
+		if err := enc.Encode(result); err != nil {
+			return exitcode.UnexpectedErrorf("encoding yaml: %v", err)
+		}
+		return enc.Close()
+	case "json":
+		return newJSONEnc(w).Encode(result)
+	default:
+		_, _ = fmt.Fprint(w, result.FormatText())
+		return nil
+	}
 }
 
 // promoteScanRepos returns the set of repos to scan for back-links: the
