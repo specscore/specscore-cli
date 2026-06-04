@@ -63,8 +63,4 @@ jobs:
         run: go test ./... -count=1 -coverprofile=cover.out -covermode=atomic
 
       - name: coverage gate (100%)
-        run: |
-          set -eu
-          PCT=$(go tool cover -func=cover.out | awk '/^total:/ {gsub(/%/,""); print $NF}')
-          echo "Total coverage: ${PCT}%"
-          awk "BEGIN { if (${PCT}+0 < 100) { print \"Coverage ${PCT}% is below 100% threshold\"; exit 1 } }"
+        run: ./scripts/coverage-gate.sh
