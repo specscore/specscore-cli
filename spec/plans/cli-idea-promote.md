@@ -19,7 +19,7 @@ Foundation → branches → presentation. Task 1 lands the command, argument/fla
 
 ### Task 1: Scaffold `idea promote` command + pre-mutation guards
 
-**Status:** pending
+**Status:** done
 **Depends-On:** —
 **Verifies:** cli/idea/promote#ac:seed-not-found, cli/idea/promote#ac:collision-without-force, cli/idea/promote#ac:dirty-tree-rejected
 
