@@ -18,7 +18,10 @@ func planCommand() *cobra.Command {
 		Use:   "plan",
 		Short: "Query plans — listing and inspecting plan metadata",
 	}
-	cmd.AddCommand(planListCommand())
+	cmd.AddCommand(
+		planListCommand(),
+		planInfoCommand(),
+	)
 	return cmd
 }
 

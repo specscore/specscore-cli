@@ -1,6 +1,6 @@
 # Plan: Plan Info (CLI)
 
-**Status:** Implementing
+**Status:** Completed
 **Source Feature:** cli/plan/info
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok
@@ -26,6 +26,7 @@ Add a rollup helper to `pkg/plan` that counts a plan's tasks by their parsed `**
 ### Task 2: `plan info` command — metadata, rollup, not-found
 
 **Verifies:** cli/plan/info#ac:info-returns-metadata, cli/plan/info#ac:info-returns-task-rollup, cli/plan/info#ac:not-found-exits-3
+**Status:** done
 
 Implement `plan info <slug>`: emit a YAML (default) / JSON / text document with `slug`, `status`, `source_feature`, `mode`, `date`, `owner`, and the `tasks` rollup from Task 1. An unresolved slug exits `3` naming the missing slug, with no partial output written to stdout.
 
