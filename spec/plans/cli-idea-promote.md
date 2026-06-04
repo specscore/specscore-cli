@@ -35,7 +35,7 @@ Implement the same-repo path: `git mv` the seed to `spec/ideas/<slug>.md`, then 
 
 ### Task 3: Back-link discovery, classification, and same-repo reconcile
 
-**Status:** pending
+**Status:** done
 **Depends-On:** 2
 **Verifies:** cli/idea/promote#ac:same-repo-backlinks-reconciled
 
