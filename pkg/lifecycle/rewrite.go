@@ -39,6 +39,11 @@ var (
 // outside of the single mutated value.
 var statusLineRe = regexp.MustCompile(`^([ \t]*)\*\*Status:\*\*[ \t]+([^\r\n]*?)([ \t]*\r?)$`)
 
+// fmStatusLineRe matches a YAML-frontmatter `status:` mirror line (lowercase
+// key, no bold markers), distinguishing it from the body `**Status:**` line.
+// Capture groups mirror statusLineRe: [1] indent, [2] value, [3] trailing.
+var fmStatusLineRe = regexp.MustCompile(`^([ \t]*)status:[ \t]*([^\r\n]*?)([ \t]*\r?)$`)
+
 // ErrStatusLineNotFound is returned by Validate/Rewrite when the artifact
 // does not contain a recognizable `**Status:**` line.
 var ErrStatusLineNotFound = errors.New("lifecycle: artifact has no **Status:** line")
@@ -97,6 +102,14 @@ func Rewrite(artifactPath string, newStatus Status) (string, error) {
 	newBody := fmt.Sprintf("%s**Status:** %s%s", indent, string(newStatus), trailing)
 	lines[idx] = newBody + terminator
 
+	// artifact-frontmatter-convention REQ:scaffold-and-change-status — the body
+	// `**Status:**` and the frontmatter `status:` mirror are rewritten together
+	// in this one atomic write, so a mid-flight failure leaves both at the prior
+	// value. Files with no frontmatter mirror are unaffected.
+	if fmIdx := findFrontmatterStatusLineIndex(lines); fmIdx >= 0 {
+		setFrontmatterStatusLine(lines, fmIdx, string(newStatus))
+	}
+
 	if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
 		return "", err
 	}
@@ -127,7 +140,57 @@ func Rollback(artifactPath string, originalStatusLine string) error {
 		return ErrStatusLineNotFound
 	}
 	lines[idx] = originalStatusLine
+	// Re-mirror the frontmatter `status:` from the restored body value so the
+	// rollback leaves both surfaces at the prior value, in lockstep with the
+	// dual-write in Rewrite.
+	if fmIdx := findFrontmatterStatusLineIndex(lines); fmIdx >= 0 {
+		if v := bodyStatusValue(originalStatusLine); v != "" {
+			setFrontmatterStatusLine(lines, fmIdx, v)
+		}
+	}
 	return writeFileAtomic(artifactPath, joinLines(lines))
+}
+
+// findFrontmatterStatusLineIndex returns the index of the `status:` line inside
+// a leading `---`-fenced YAML frontmatter block, or -1 when the file has no
+// such block or the block carries no `status:` key. The search stops at the
+// closing fence so a body line is never mistaken for the mirror.
+func findFrontmatterStatusLineIndex(lines []string) int {
+	if len(lines) == 0 {
+		return -1
+	}
+	if body, _ := splitTerminator(lines[0]); body != "---" {
+		return -1
+	}
+	for i := 1; i < len(lines); i++ {
+		body, _ := splitTerminator(lines[i])
+		if body == "---" {
+			return -1
+		}
+		if fmStatusLineRe.MatchString(body) {
+			return i
+		}
+	}
+	return -1
+}
+
+// setFrontmatterStatusLine rewrites the value of the frontmatter `status:` line
+// at lines[idx] to value, preserving its indentation and trailing whitespace.
+func setFrontmatterStatusLine(lines []string, idx int, value string) {
+	body, terminator := splitTerminator(lines[idx])
+	m := fmStatusLineRe.FindStringSubmatch(body)
+	lines[idx] = fmt.Sprintf("%sstatus: %s%s", m[1], value, m[3]) + terminator
+}
+
+// bodyStatusValue extracts the status value from a body `**Status:**` line
+// (terminator included), or "" when the line is not a recognizable status line.
+func bodyStatusValue(statusLine string) string {
+	body, _ := splitTerminator(statusLine)
+	m := statusLineRe.FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m[2])
 }
 
 // readStatus opens the file and returns the value text of the first
