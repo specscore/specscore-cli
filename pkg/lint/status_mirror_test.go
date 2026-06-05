@@ -102,22 +102,61 @@ func TestStatusMirrorChecker_Check(t *testing.T) {
 	}
 }
 
-// TestStatusMirrorChecker_StatusLessTypeIgnored confirms the rule never
-// inspects a status-less type: a features-index README carrying a body status
-// and a divergent frontmatter status produces no status-mirror violation.
-func TestStatusMirrorChecker_StatusLessTypeIgnored(t *testing.T) {
-	specRoot := writeSpec(t, map[string]string{
-		"features/README.md": "---\nstatus: Draft\n---\n\n# Features\n\n**Status:** Approved\n",
-	})
-	c := newStatusMirrorChecker()
-	violations, err := c.check(specRoot)
-	if err != nil {
-		t.Fatal(err)
+// TestStatusMirrorChecker_StatusLessRejectsStatus covers REQ:lint-status-mirror
+// case (b): a status-less type (features-index README) carrying a frontmatter
+// `status:` is flagged, while the same type with no `status:` passes — keyed by
+// type, not file location.
+func TestStatusMirrorChecker_StatusLessRejectsStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantViol bool
+	}{
+		{
+			name:     "status-less carrying status is flagged",
+			content:  "---\nstatus: Draft\n---\n\n# Features\n",
+			wantViol: true,
+		},
+		{
+			name:     "status-less with no frontmatter passes",
+			content:  "# Features\n\nNo frontmatter.\n",
+			wantViol: false,
+		},
+		{
+			name:     "status-less with frontmatter but no status key passes",
+			content:  "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n",
+			wantViol: false,
+		},
 	}
-	for _, v := range violations {
-		if v.Rule == "status-mirror" {
-			t.Errorf("status-less features-index should be ignored, got %+v", v)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			specRoot := writeSpec(t, map[string]string{
+				"features/README.md": tc.content,
+			})
+			violations, err := newStatusMirrorChecker().check(specRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var v *Violation
+			for i := range violations {
+				if violations[i].Rule == "status-mirror" {
+					v = &violations[i]
+				}
+			}
+			if tc.wantViol {
+				if v == nil {
+					t.Fatalf("expected a status-mirror violation, got %+v", violations)
+				}
+				if v.Severity != "warning" {
+					t.Errorf("severity = %q, want warning", v.Severity)
+				}
+				if !strings.Contains(v.Message, "must not carry") {
+					t.Errorf("message %q does not mention rejection", v.Message)
+				}
+			} else if v != nil {
+				t.Errorf("expected no status-mirror violation, got %+v", *v)
+			}
+		})
 	}
 }
 

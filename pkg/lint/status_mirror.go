@@ -15,9 +15,10 @@ import (
 // body line is canonical; `specscore spec lint --fix` writes or rewrites the
 // frontmatter `status:` from the body value, never the reverse.
 //
-// Only status-bearing types (per docTypeTarget.statusBearing) are inspected.
-// The complementary rejection of `status:` on a status-less type is a separate
-// rule (added in a later task); this checker reports nothing for those types.
+// The check is keyed by type (docTypeTarget.statusBearing), not file location
+// (REQ:status-concept-by-type): a status-bearing type's mirror is enforced as
+// above, while a status-less type (the *-index READMEs, scenarios, properties,
+// entities) MUST NOT carry `status:` at all — its presence is a violation.
 //
 // Graced at "warning" severity during the migration rollout
 // (REQ:migration-sequencing): `specscore spec lint` defaults to
@@ -39,12 +40,16 @@ var bodyStatusRe = regexp.MustCompile(`^\*\*Status:\*\*\s*(.+)$`)
 func (c *statusMirrorChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	for _, t := range docTypeTargets {
-		if !t.statusBearing {
-			continue
-		}
 		target := t
 		err := target.walk(specRoot, func(path string, content []byte) {
-			if v, ok := statusMirrorViolation(specRoot, path, content, target.description); ok {
+			var v Violation
+			var ok bool
+			if target.statusBearing {
+				v, ok = statusMirrorViolation(specRoot, path, content, target.description)
+			} else {
+				v, ok = statusLessStatusViolation(specRoot, path, content, target.description)
+			}
+			if ok {
 				violations = append(violations, v)
 			}
 		})
@@ -53,6 +58,28 @@ func (c *statusMirrorChecker) check(specRoot string) ([]Violation, error) {
 		}
 	}
 	return violations, nil
+}
+
+// statusLessStatusViolation flags a status-less artifact that carries a
+// frontmatter `status:` field, which its type has no Status concept to mirror
+// (REQ:status-field, REQ:lint-status-mirror case (b)). An artifact with no
+// frontmatter block, or a block without a `status:` key, passes.
+func statusLessStatusViolation(specRoot, path string, content []byte, description string) (Violation, bool) {
+	fields, present := parseLeadingFrontmatter(content)
+	if !present {
+		return Violation{}, false
+	}
+	if _, ok := fields["status"]; !ok {
+		return Violation{}, false
+	}
+	relPath, _ := filepath.Rel(specRoot, path)
+	return Violation{
+		File:     relPath,
+		Line:     0,
+		Severity: "warning",
+		Rule:     "status-mirror",
+		Message:  fmt.Sprintf("status-less %s must not carry a frontmatter `status:` field (its type has no Status concept)", description),
+	}, true
 }
 
 // statusMirrorViolation returns the mirror violation, if any, for one
