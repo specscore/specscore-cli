@@ -157,6 +157,21 @@ func TestFeatureNew_FetchesPublishedTemplate(t *testing.T) {
 	}
 }
 
+// An empty SPECSCORE_TEMPLATE_BASE_URL falls back to the public default.
+func TestTemplateBaseURL_DefaultWhenEmpty(t *testing.T) {
+	t.Setenv("SPECSCORE_TEMPLATE_BASE_URL", "")
+	if got := templateBaseURL(); got != "https://specscore.md" {
+		t.Errorf("templateBaseURL() = %q, want https://specscore.md", got)
+	}
+}
+
+// An empty slug part is skipped when title-casing (leaving a double space).
+func TestTemplateTitleCaseFromSlug_EmptyPart(t *testing.T) {
+	if got := templateTitleCaseFromSlug("a--b"); got != "A  B" {
+		t.Errorf("templateTitleCaseFromSlug(%q) = %q, want %q", "a--b", got, "A  B")
+	}
+}
+
 // AC:maps-type-to-url — each type resolves to <base>/new/<type>.md.
 func TestFetchTemplate_MapsTypeToURL(t *testing.T) {
 	var gotPath string
