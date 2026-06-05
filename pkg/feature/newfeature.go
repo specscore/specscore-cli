@@ -17,6 +17,10 @@ type NewOptions struct {
 	Status      string   // Initial feature status (default "Draft").
 	Description string   // Short description for the Summary section.
 	DependsOn   []string // Feature IDs this feature depends on.
+	// Body, when non-empty, is used verbatim as the README content instead of
+	// the generated template (e.g. a template fetched from the gallery by the
+	// CLI's runtime-fetch). The caller is responsible for its validity.
+	Body string
 }
 
 // NewResult describes the outcome of creating a new feature.
@@ -102,7 +106,10 @@ func New(featuresDir string, opts NewOptions) (*NewResult, error) {
 		return nil, exitcode.UnexpectedErrorf("creating feature directory: %v", err)
 	}
 
-	readme := GenerateReadme(opts.Title, status, opts.Description, opts.DependsOn)
+	readme := opts.Body
+	if readme == "" {
+		readme = GenerateReadme(opts.Title, status, opts.Description, opts.DependsOn)
+	}
 	readmePath := filepath.Join(featureDir, "README.md")
 	if err := osWriteFile(readmePath, []byte(readme), 0o644); err != nil {
 		return nil, exitcode.UnexpectedErrorf("writing README.md: %v", err)

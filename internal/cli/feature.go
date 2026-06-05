@@ -718,6 +718,20 @@ func runFeatureNew(cmd *cobra.Command, _ []string) error {
 		DependsOn:   deps,
 	}
 
+	// cli-template-runtime-fetch: a bare feature (no description, deps, parent,
+	// or non-default status) pulls the published template as its body; on any
+	// fetch failure feature.New falls back to the generated README.
+	if descFlag == "" && len(deps) == 0 && parentFlag == "" &&
+		(statusFlag == "" || statusFlag == "Draft") {
+		if t, ok := resolveBareTemplate("feature", map[string]string{
+			"<Feature Name>": templateTitleOrSlug(title, slugFlag),
+		}); ok {
+			opts.Body = string(t)
+		} else {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), fellBackWarning)
+		}
+	}
+
 	result, err := feature.New(featuresDir, opts)
 	if err != nil {
 		return err
