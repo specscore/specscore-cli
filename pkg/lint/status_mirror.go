@@ -199,6 +199,15 @@ func setFrontmatterStatus(content []byte, status string) []byte {
 	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
 		return content
 	}
+	return []byte(strings.Join(upsertFrontmatterField(lines, "status", status), "\n"))
+}
+
+// upsertFrontmatterField sets `key: value` within the leading frontmatter block
+// (lines[0] == "---" up to the next "---"): an existing top-level `key:` line is
+// rewritten in place, otherwise a new line is inserted just before the closing
+// fence. Other lines are preserved. When there is no closing fence the lines are
+// returned unchanged. The caller guarantees lines[0] opens a fence.
+func upsertFrontmatterField(lines []string, key, value string) []string {
 	for i := 1; i < len(lines); i++ {
 		if strings.TrimRight(lines[i], "\r") != "---" {
 			continue
@@ -213,15 +222,15 @@ func setFrontmatterStatus(content []byte, status string) []byte {
 			if idx <= 0 {
 				continue
 			}
-			if strings.TrimSpace(line[:idx]) == "status" {
-				lines[j] = "status: " + status
-				return []byte(strings.Join(lines, "\n"))
+			if strings.TrimSpace(line[:idx]) == key {
+				lines[j] = key + ": " + value
+				return lines
 			}
 		}
 		inserted := append([]string{}, lines[:i]...)
-		inserted = append(inserted, "status: "+status)
+		inserted = append(inserted, key+": "+value)
 		inserted = append(inserted, lines[i:]...)
-		return []byte(strings.Join(inserted, "\n"))
+		return inserted
 	}
-	return content
+	return lines
 }
