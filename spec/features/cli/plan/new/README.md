@@ -2,7 +2,7 @@
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=request-change) |
 
-**Status:** Draft
+**Status:** Approved
 
 ## Summary
 
@@ -46,7 +46,7 @@ The generated file is lint-clean on creation. Authored content is left as HTML-c
 
 #### REQ: scaffolds-lint-clean
 
-The scaffold MUST emit the plan body-metadata header block (`**Status:** Draft`, the resolved source line, `**Date:**`, `**Owner:**`, `**Supersedes:** —`), the `## Summary`, `## Approach`, `## Tasks`, and `## Open Questions` sections (with `<!-- TODO: ... -->` prompts where content is absent), and the adherence footer. `specscore spec lint` immediately afterwards MUST report no new error-severity violations outside the scaffolded file itself.
+The scaffold MUST emit the flat-file plan model that `specscore spec lint` actually enforces today — the same shape every plan in `spec/plans/*.md` uses and that `specstudio:plan` produces: a single file `spec/plans/<slug>.md` (not a directory), the body-metadata header block (`**Status:** Draft`, the resolved source line, `**Date:**`, `**Owner:**`, `**Supersedes:** —`), the `## Summary`, `## Approach`, `## Tasks`, and `## Open Questions` sections (with `<!-- TODO: ... -->` prompts where content is absent), and the adherence footer line `*This document follows the https://specscore.md/plan-specification*`. `specscore spec lint` immediately afterwards MUST report no new error-severity violations outside the scaffolded file itself. (The canonical `plan` Feature's prose currently describes an older directory-based model with lowercase statuses; lint does not enforce it and no plan follows it — see Open Questions.)
 
 #### REQ: emits-frontmatter
 
@@ -89,7 +89,7 @@ When `plan new` writes `spec/plans/<slug>.md`, the command MUST also materialize
 | Feature | Interaction |
 |---|---|
 | [plan (CLI group)](../README.md) | Parent group. `new` is the first mutating verb in the group; `list`/`info` stay read-only. |
-| [plan](../../../../../../specscore/spec/features/plan/README.md) | Source of truth for plan required sections, the two source modes, and lint checks. |
+| [plan](../../../../../../specscore/spec/features/plan/README.md) | Conceptual source for the two source modes (Feature-sourced vs Idea-sourced). The scaffold's concrete structure follows the lint-enforced flat-file model used in practice, which currently diverges from this Feature's directory-based prose (see Open Questions), not the spec's literal section/header/status list. |
 | [artifact-frontmatter-convention](../../../../../../specscore/spec/features/artifact-frontmatter-convention/README.md) | Owns the `format:`/`status:` scaffold-emission contract this verb implements for plans. |
 | [cli/idea/new](../../idea/new/README.md) | Sibling create verb whose slug/no-clobber/ancestor-index/lint-clean contract this verb mirrors. |
 
@@ -125,8 +125,17 @@ Running the command twice for the same slug without `--force` exits `1` on the s
 
 `specscore plan new My_Plan --feature some-feature` exits `2` with a message that the slug contains invalid characters. No file is created.
 
+### AC: ancestor-indexes-materialized
+
+**Requirements:** cli/plan/new#req:ancestor-indexes-materialized
+
+**Given** a project with `specscore.yaml` but no `spec/plans/` tree
+**When** the user runs `specscore plan new my-plan --feature some-feature`
+**Then** `spec/README.md`, `spec/plans/README.md`, and `spec/plans/my-plan.md` are created; a subsequent `specscore spec lint` reports no error-severity violations outside the new plan file; and re-running the command leaves the pre-existing indexes untouched.
+
 ## Open Questions
 
+- **Canonical Plan-spec drift (cross-repo, blocks nothing here but flagged):** `specscore/spec/features/plan/README.md` still specifies a directory-based plan (`spec/plans/<slug>/README.md`), sections `Context`/`Acceptance criteria`/`Tasks`, header `Features`/`Source type`/`Source`/`Author`/`Created`, and lowercase statuses `draft`/`in_review`/`approved`. None of that matches the flat-file model lint actually enforces or that any plan uses. This verb deliberately scaffolds the real lint-clean model; reconciling the canonical Plan Feature with reality is separate work owned by the `specscore` repo.
 - Should `plan new` accept a `--task "<name>"` repeatable flag to pre-seed `### Task N:` blocks, or is an empty `## Tasks` with a prompt sufficient for the scaffold?
 - Should `--feature`/`--idea` validate that the named source exists and is in an Approved-family status at scaffold time, or stay purely structural (defer resolution to lint)?
 
