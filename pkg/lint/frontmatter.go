@@ -47,6 +47,22 @@ func parseLeadingFrontmatter(content []byte) (fields map[string]string, present 
 	return fields, true
 }
 
+// frontmatterEndIndex returns the index of the first content line after a
+// complete leading `---`-fenced frontmatter block, or 0 when there is no opening
+// fence or no closing fence. Parsers anchor their title/header scan to this so a
+// leading frontmatter block does not displace the title.
+func frontmatterEndIndex(lines []string) int {
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return 0
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r") == "---" {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 // bodyAfterFrontmatter returns content with any complete leading YAML
 // frontmatter block (a `---` fence, intervening lines, and a closing `---`
 // fence) removed, so callers inspecting the human-visible body do not match

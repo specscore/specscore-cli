@@ -123,9 +123,11 @@ func parseDecisionFile(path, relPath string, archived bool) (*parsedDecision, er
 		d.slug = strings.TrimSuffix(base, ".md")
 	}
 
-	// Parse title
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
+	// Parse title — anchored past any leading frontmatter block
+	// (artifact-frontmatter-convention) so a Decision carrying format:/status:
+	// frontmatter still resolves its `# Decision:` title.
+	for i := frontmatterEndIndex(lines); i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
 		if trimmed == "" {
 			continue
 		}

@@ -23,6 +23,10 @@ type ScaffoldOptions struct {
 
 var slugRe = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
+// FormatURL is the canonical spec URL for the Decision document type, emitted in
+// both the frontmatter `format:` field and the adherence-footer line.
+const FormatURL = "https://specscore.md/decision-specification"
+
 func ValidateSlug(slug string) error {
 	if slug == "" {
 		return fmt.Errorf("slug must not be empty")
@@ -141,6 +145,10 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	}
 
 	var out strings.Builder
+	// artifact-frontmatter-convention REQ:scaffold-and-change-status — a Decision
+	// is a status-bearing type, so emit format:/status: frontmatter (status:
+	// mirrors the body **Status:** Proposed below).
+	out.WriteString("---\nformat: " + FormatURL + "\nstatus: Proposed\n---\n\n")
 	fmt.Fprintf(&out, "# Decision: %s\n\n", title)
 	fmt.Fprintf(&out, "**Status:** Proposed\n")
 	fmt.Fprintf(&out, "**Date:** %s\n", date)
@@ -173,7 +181,7 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	out.WriteString("None at this time.\n")
 
 	out.WriteString("\n---\n")
-	out.WriteString("*This document follows the https://specscore.md/decision-specification*\n")
+	out.WriteString("*This document follows the " + FormatURL + "*\n")
 
 	return []byte(out.String()), nil
 }
