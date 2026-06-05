@@ -2,6 +2,11 @@ package feature
 
 import "strings"
 
+// FormatURL is the canonical spec URL for the Feature document type, emitted in
+// both the frontmatter `format:` field (artifact-frontmatter-convention) and
+// the adherence-footer line, which carry the same URL.
+const FormatURL = "https://specscore.md/feature-specification"
+
 // ValidStatuses lists the allowed feature lifecycle statuses.
 var ValidStatuses = []string{"Draft", "Under Review", "Approved", "Implementing", "Stable", "Deprecated"}
 
@@ -25,6 +30,15 @@ func GenerateReadme(title, status, description string, deps []string) string {
 	}
 
 	var b strings.Builder
+
+	// artifact-frontmatter-convention REQ:scaffold-and-change-status — a Feature
+	// is a status-bearing type, so emit the format:/status: frontmatter on
+	// creation (status: mirrors the body **Status:** below).
+	b.WriteString("---\nformat: ")
+	b.WriteString(FormatURL)
+	b.WriteString("\nstatus: ")
+	b.WriteString(status)
+	b.WriteString("\n---\n\n")
 
 	b.WriteString("# Feature: ")
 	b.WriteString(title)
@@ -74,7 +88,7 @@ func GenerateReadme(title, status, description string, deps []string) string {
 
 	b.WriteByte('\n')
 	b.WriteString("---\n")
-	b.WriteString("*This document follows the https://specscore.md/feature-specification*\n")
+	b.WriteString("*This document follows the " + FormatURL + "*\n")
 
 	return b.String()
 }

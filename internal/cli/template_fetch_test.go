@@ -73,6 +73,90 @@ status: Draft
 *This document follows the https://specscore.md/idea-specification*
 `
 
+// testFeatureTemplate mirrors the published new/feature.md gallery template,
+// carrying the artifact-frontmatter-convention frontmatter and a placeholder.
+const testFeatureTemplate = `---
+format: https://specscore.md/feature-specification
+status: Draft
+---
+
+# Feature: <Feature Name>
+
+**Status:** Draft
+
+## Summary
+
+<!-- FEATURE-GALLERY-MARKER -->
+
+## Problem
+
+TODO.
+
+## Behavior
+
+TODO.
+
+## Acceptance Criteria
+
+TODO.
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/feature-specification*
+`
+
+// The embedded (offline) feature scaffold carries format:/status: frontmatter.
+func TestFeatureNew_EmbeddedEmitsFrontmatter(t *testing.T) {
+	root := setupFeatureSpec(t, "Draft")
+	if _, _, err := runFeature(t, "new", "--title=New Feature"); err != nil {
+		t.Fatalf("feature new: %v", err)
+	}
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "features", "new-feature", "README.md"))
+	if !strings.HasPrefix(string(body), "---\nformat: https://specscore.md/feature-specification\nstatus: Draft\n---") {
+		t.Errorf("feature scaffold missing frontmatter:\n%s", body)
+	}
+}
+
+// AC:fetches-published-template (feature) — the fetched bare scaffold carries
+// frontmatter and substitutes <Feature Name>.
+func TestFeatureNew_FetchesPublishedTemplate(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(testFeatureTemplate))
+	}))
+	defer srv.Close()
+	t.Setenv("SPECSCORE_TEMPLATE_BASE_URL", srv.URL)
+
+	root := setupFeatureSpec(t, "Draft")
+	_, stderr, err := runFeature(t, "new", "--title=Fetched Feature")
+	if err != nil {
+		t.Fatalf("feature new: %v (stderr=%s)", err, stderr)
+	}
+	if gotPath != "/new/feature.md" {
+		t.Errorf("fetched path = %q, want /new/feature.md", gotPath)
+	}
+	if stderr != "" {
+		t.Errorf("unexpected fallback warning on successful fetch: %q", stderr)
+	}
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "features", "fetched-feature", "README.md"))
+	s := string(body)
+	if !strings.HasPrefix(s, "---\nformat: https://specscore.md/feature-specification\nstatus: Draft\n---") {
+		t.Errorf("fetched feature missing frontmatter:\n%s", s)
+	}
+	for _, want := range []string{"# Feature: Fetched Feature", "<!-- FEATURE-GALLERY-MARKER -->"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "<Feature Name>") {
+		t.Errorf("placeholder not substituted:\n%s", s)
+	}
+}
+
 // AC:maps-type-to-url — each type resolves to <base>/new/<type>.md.
 func TestFetchTemplate_MapsTypeToURL(t *testing.T) {
 	var gotPath string
