@@ -47,6 +47,24 @@ func parseLeadingFrontmatter(content []byte) (fields map[string]string, present 
 	return fields, true
 }
 
+// bodyAfterFrontmatter returns content with any complete leading YAML
+// frontmatter block (a `---` fence, intervening lines, and a closing `---`
+// fence) removed, so callers inspecting the human-visible body do not match
+// lines inside frontmatter. When there is no opening fence, or the opening
+// fence is never closed, the full content is returned unchanged.
+func bodyAfterFrontmatter(content []byte) string {
+	lines := strings.Split(string(content), "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return string(content)
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r") == "---" {
+			return strings.Join(lines[i+1:], "\n")
+		}
+	}
+	return string(content)
+}
+
 // stripQuotes removes a single matching pair of surrounding single or double
 // quotes from s. Unbalanced or absent quotes leave s unchanged.
 func stripQuotes(s string) string {
