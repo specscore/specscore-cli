@@ -118,6 +118,11 @@ var builtinRules = []Rule{
 	{ID: "grade-placement", Family: "grade", Severity: "error", Description: "Requires the grade field to appear in the correct position."},
 	{ID: "grade-value", Family: "grade", Severity: "error", Description: "Rejects grade values outside the allowed A-F set."},
 
+	// Artifact-frontmatter-convention lint rules. Graced at warning severity
+	// during the migration rollout (REQ:migration-sequencing); flips to error
+	// after target repos are migrated.
+	{ID: "format-field", Family: "frontmatter", Severity: "warning", Description: "Requires every artifact to carry a frontmatter format: field matching its type's spec URL."},
+
 	// Plan lint rules.
 	{ID: "P-001", Family: "plan", Severity: "error", Description: "Requires every plan task to reference at least one feature AC."},
 	{ID: "P-002", Family: "plan", Severity: "error", Description: "Requires plan tasks to declare valid dependency references."},

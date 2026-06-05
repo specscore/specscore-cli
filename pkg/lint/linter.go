@@ -43,6 +43,7 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(newPlanHierarchyChecker())
 	l.registerChecker(newPlanROIChecker())
 	l.registerChecker(newAdherenceFooterChecker())
+	l.registerChecker(newFormatFieldChecker())
 	l.registerChecker(newStudioToolbarChecker())
 	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion))
 	l.registerChecker(newImplementsReferenceChecker())
