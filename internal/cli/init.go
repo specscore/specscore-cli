@@ -298,6 +298,29 @@ None at this time.
 `
 }
 
+func plansIndexContent(_ projectdef.SpecConfig) string {
+	return `# Plans
+
+Canonical index of all plans in this repository. Each plan is a single Markdown file under ` + "`spec/plans/`" + ` governed by the [plan specification](https://specscore.md/plan-specification).
+
+## Contents
+
+| Plan | Status | Source | Date | Owner |
+|---|---|---|---|---|
+
+## Recently Closed
+
+None at this time.
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/plans-index-specification*
+`
+}
+
 func featuresIndexContent(_ projectdef.SpecConfig) string {
 	return `# Features
 
