@@ -196,23 +196,27 @@ func (c *studioToolbarChecker) check(specRoot string) ([]Violation, error) {
 		relFromSpec, _ := filepath.Rel(specRoot, readmePath)
 		relFromSpec = filepath.ToSlash(relFromSpec)
 
-		if len(lines) < 3 {
+		tbIdx := studioToolbarLineIndex(lines)
+		if tbIdx < 0 {
+			tbIdx = 2 // no title found — fall back to the legacy position 3
+		}
+		if tbIdx >= len(lines) {
 			violations = append(violations, Violation{
 				File:     relFromSpec,
-				Line:     3,
+				Line:     tbIdx + 1,
 				Severity: "error",
 				Rule:     "studio-toolbar",
-				Message:  fmt.Sprintf("missing studio toolbar at file position 3; expected: %s (studio-toolbar#req:toolbar-position)", expectedLine),
+				Message:  fmt.Sprintf("missing studio toolbar at file position %d; expected: %s (studio-toolbar#req:toolbar-position)", tbIdx+1, expectedLine),
 			})
 			return
 		}
-		actual := lines[2]
+		actual := lines[tbIdx]
 		if actual == expectedLine {
 			return
 		}
 		violations = append(violations, Violation{
 			File:     relFromSpec,
-			Line:     3,
+			Line:     tbIdx + 1,
 			Severity: "error",
 			Rule:     "studio-toolbar",
 			Message:  classifyDeviation(actual, expectedLine),
@@ -235,6 +239,31 @@ func (c *studioToolbarChecker) check(specRoot string) ([]Violation, error) {
 		})
 	}
 	return violations, nil
+}
+
+// studioToolbarLineIndex returns the 0-based line index at which the studio
+// toolbar must sit: two lines below the feature title (`# …`) — title, blank,
+// toolbar. A leading YAML frontmatter block (artifact-frontmatter-convention)
+// is skipped so the toolbar position tracks the title rather than an absolute
+// file line; for a frontmatter-less README the title is line 0 and this returns
+// the legacy index 2 (file position 3). Returns -1 when no `# ` title line is
+// found.
+func studioToolbarLineIndex(lines []string) int {
+	start := 0
+	if len(lines) > 0 && strings.TrimRight(lines[0], "\r") == "---" {
+		for i := 1; i < len(lines); i++ {
+			if strings.TrimRight(lines[i], "\r") == "---" {
+				start = i + 1
+				break
+			}
+		}
+	}
+	for i := start; i < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "# ") {
+			return i + 2
+		}
+	}
+	return -1
 }
 
 // classifyDeviation returns a message identifying the most specific
@@ -338,14 +367,21 @@ func (c *studioToolbarChecker) fix(specRoot string) error {
 			lines = lines[:len(lines)-1]
 		}
 
+		// Toolbar position tracks the title (skipping any leading frontmatter
+		// block); falls back to the legacy position 3 when no title is found.
+		tbIdx := studioToolbarLineIndex(lines)
+		if tbIdx < 0 {
+			tbIdx = 2
+		}
+
 		if suppressed {
-			// Opt-out: remove a line-3 toolbar-shaped blockquote if one
-			// exists; do nothing otherwise. Detection is loose — any
-			// "> [...](" blockquote at position 3 is treated as a toolbar
+			// Opt-out: remove a toolbar-shaped blockquote at the toolbar
+			// position if one exists; do nothing otherwise. Detection is
+			// loose — any "> [...](" blockquote there is treated as a toolbar
 			// remnant (legacy view-link OR canonical toolbar).
-			if len(lines) >= 3 && isToolbarLikeLine(lines[2]) {
-				newLines := append([]string{}, lines[:2]...)
-				newLines = append(newLines, lines[3:]...)
+			if tbIdx < len(lines) && isToolbarLikeLine(lines[tbIdx]) {
+				newLines := append([]string{}, lines[:tbIdx]...)
+				newLines = append(newLines, lines[tbIdx+1:]...)
 				writeBack(readmePath, newLines, trailingLF)
 			}
 			return
@@ -356,26 +392,24 @@ func (c *studioToolbarChecker) fix(specRoot string) error {
 		artifactPath := strings.TrimSuffix(relFromRoot, "/README.md")
 		expected := strings.TrimRight(RenderStudioToolbar(name, urlStr, host, org, repo, artifactPath), "\n")
 
-		// Pad to at least 3 lines so we always have a position 3 to operate on.
-		for len(lines) < 3 {
+		// Pad so the toolbar position is always addressable.
+		for len(lines) <= tbIdx {
 			lines = append(lines, "")
 		}
-		if lines[2] == expected {
+		if lines[tbIdx] == expected {
 			return // idempotent: already canonical
 		}
-		// If line 3 already looks like a toolbar (canonical drifted or
-		// legacy "> [View in ...]"), REPLACE it. Otherwise INSERT a new
-		// line at position 3 so we don't clobber genuine content (e.g.
+		// If the toolbar position already looks like a toolbar (canonical
+		// drifted or legacy "> [View in ...]"), REPLACE it. Otherwise INSERT a
+		// new line there so we don't clobber genuine content (e.g.
 		// "**Status:**" produced by a freshly scaffolded README).
-		if isToolbarLikeLine(lines[2]) {
-			lines[2] = expected
+		if isToolbarLikeLine(lines[tbIdx]) {
+			lines[tbIdx] = expected
 		} else {
-			// Insert: new[0]=lines[0], new[1]=lines[1], new[2]=expected,
-			// new[3..]=lines[2..].
 			newLines := make([]string, 0, len(lines)+1)
-			newLines = append(newLines, lines[:2]...)
+			newLines = append(newLines, lines[:tbIdx]...)
 			newLines = append(newLines, expected)
-			newLines = append(newLines, lines[2:]...)
+			newLines = append(newLines, lines[tbIdx:]...)
 			lines = newLines
 		}
 		writeBack(readmePath, lines, trailingLF)
