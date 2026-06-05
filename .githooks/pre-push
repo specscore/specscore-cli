@@ -25,7 +25,22 @@ go build ./...
 
 echo "pre-push: go test + coverage gate…"
 rm -f cover.out
-go test ./... -count=1 -coverprofile=cover.out -covermode=atomic
+# git invokes this hook with GIT_DIR / GIT_INDEX_FILE (and friends) exported.
+# Those leak into the test process, where tests that shell out to git create
+# temp repos and run `git add`/`commit` — the inherited index/dir points them
+# at THIS repo, so they fail with "nothing to commit, working tree clean".
+# Run the tests with the repo-local git env unset so child git processes
+# resolve their own context. GOFLAGS=-buildvcs=false then keeps every Go
+# compile in the now-git-env-less subshell — the test build itself AND any
+# `go build` a test shells out to (e.g. cmd/specscore's TestMain_*) — from
+# trying to VCS-stamp (which would fail with no git env). The build/vet steps
+# above keep the normal env so their own VCS stamping still works. (CI never
+# hits this — it does not run inside a git hook.)
+(
+  unset $(git rev-parse --local-env-vars) 2>/dev/null || true
+  export GOFLAGS=-buildvcs=false
+  go test ./... -count=1 -coverprofile=cover.out -covermode=atomic
+)
 ./scripts/coverage-gate.sh
 rm -f cover.out
 
