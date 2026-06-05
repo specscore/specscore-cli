@@ -46,6 +46,7 @@ func stagePromoteRepo(t *testing.T, parent, name, repoSlug string) string {
 	_ = os.WriteFile(filepath.Join(root, "spec", "ideas", "README.md"), []byte(idx), 0o644)
 	arch := "# Archived\n\n_No archived ideas yet._\n\n## Open Questions\n\nNone at this time.\n"
 	_ = os.WriteFile(filepath.Join(root, "spec", "ideas", "archived", "README.md"), []byte(arch), 0o644)
+	migrateTree(t, root)
 	return root
 }
 
@@ -236,6 +237,7 @@ func TestIdeaPromoteCLI_SameRepoBackLinksReconciled(t *testing.T) {
 	if err := os.WriteFile(featPath, []byte(featBody), 0o644); err != nil {
 		t.Fatalf("write feature: %v", err)
 	}
+	migrateTree(t, source)
 	initGitRepoForTest(t, source)
 
 	stdout, _, err := runIdeaPromoteCLI(t, source, "bar")

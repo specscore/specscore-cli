@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Implemented
+---
+
 # Idea: Lifecycle Verbs for Idea and Feature
 
 **Status:** Implemented

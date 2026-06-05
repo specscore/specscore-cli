@@ -30,7 +30,7 @@ type statusMirrorChecker struct{}
 func newStatusMirrorChecker() checker { return &statusMirrorChecker{} }
 
 func (c *statusMirrorChecker) name() string     { return "status-mirror" }
-func (c *statusMirrorChecker) severity() string { return "warning" }
+func (c *statusMirrorChecker) severity() string { return "error" }
 
 // bodyStatusRe matches the canonical body status line `**Status:** <value>`.
 // The bold markers distinguish it from the lowercase frontmatter `status:`
@@ -76,7 +76,7 @@ func statusLessStatusViolation(specRoot, path string, content []byte, descriptio
 	return Violation{
 		File:     relPath,
 		Line:     0,
-		Severity: "warning",
+		Severity: "error",
 		Rule:     "status-mirror",
 		Message:  fmt.Sprintf("status-less %s must not carry a frontmatter `status:` field (its type has no Status concept)", description),
 	}, true
@@ -97,7 +97,7 @@ func statusMirrorViolation(specRoot, path string, content []byte, description st
 		return Violation{
 			File:     relPath,
 			Line:     0,
-			Severity: "warning",
+			Severity: "error",
 			Rule:     "status-mirror",
 			Message:  fmt.Sprintf("missing required frontmatter field `status: %s` on %s (mirror of body **Status:**)", body, description),
 		}, true
@@ -106,7 +106,7 @@ func statusMirrorViolation(specRoot, path string, content []byte, description st
 		return Violation{
 			File:     relPath,
 			Line:     0,
-			Severity: "warning",
+			Severity: "error",
 			Rule:     "status-mirror",
 			Message:  fmt.Sprintf("frontmatter `status: %s` on %s does not mirror body **Status:** %q", fmStatus, description, body),
 		}, true

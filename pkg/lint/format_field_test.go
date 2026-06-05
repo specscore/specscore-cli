@@ -20,8 +20,8 @@ func ideaWithFrontmatter(frontmatter, body string) string {
 
 func TestFormatFieldChecker_Severity(t *testing.T) {
 	c := newFormatFieldChecker()
-	if got := c.severity(); got != "warning" {
-		t.Errorf("severity() = %q, want %q (graced rollout)", got, "warning")
+	if got := c.severity(); got != "error" {
+		t.Errorf("severity() = %q, want %q (enforced)", got, "error")
 	}
 	if got := c.name(); got != "format-field" {
 		t.Errorf("name() = %q, want %q", got, "format-field")
@@ -92,8 +92,8 @@ func TestFormatFieldChecker_Check(t *testing.T) {
 				if formatViol == nil {
 					t.Fatalf("expected a format-field violation on ideas/sample.md, got %+v", violations)
 				}
-				if formatViol.Severity != "warning" {
-					t.Errorf("severity = %q, want warning", formatViol.Severity)
+				if formatViol.Severity != "error" {
+					t.Errorf("severity = %q, want error", formatViol.Severity)
 				}
 				if !strings.Contains(formatViol.Message, tc.wantSubstr) {
 					t.Errorf("message %q does not contain %q", formatViol.Message, tc.wantSubstr)

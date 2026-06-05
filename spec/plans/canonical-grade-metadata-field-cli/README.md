@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: draft
+---
+
 # Plan: Grade Lint Support (CLI)
 
 **Status:** draft

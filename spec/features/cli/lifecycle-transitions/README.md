@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/feature-specification
+status: Stable
+---
+
 # Feature: Lifecycle Transitions (Shared Contract)
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lifecycle-transitions?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lifecycle-transitions?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lifecycle-transitions?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lifecycle-transitions?op=request-change) |

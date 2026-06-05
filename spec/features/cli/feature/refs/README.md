@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/feature-specification
+status: Stable
+---
+
 # Feature: Feature Refs
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/feature/refs?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/feature/refs?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/feature/refs?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/feature/refs?op=request-change) |

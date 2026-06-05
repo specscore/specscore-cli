@@ -28,8 +28,8 @@ func TestFooterFormatMirror_Meta(t *testing.T) {
 	if got := c.name(); got != "footer-format-mirror" {
 		t.Errorf("name() = %q, want footer-format-mirror", got)
 	}
-	if got := c.severity(); got != "warning" {
-		t.Errorf("severity() = %q, want warning (graced)", got)
+	if got := c.severity(); got != "error" {
+		t.Errorf("severity() = %q, want error (enforced)", got)
 	}
 }
 
@@ -89,8 +89,8 @@ func TestFooterFormatMirror_Check(t *testing.T) {
 				if v == nil {
 					t.Fatalf("expected a footer-format-mirror violation, got %+v", violations)
 				}
-				if v.Severity != "warning" {
-					t.Errorf("severity = %q, want warning", v.Severity)
+				if v.Severity != "error" {
+					t.Errorf("severity = %q, want error", v.Severity)
 				}
 				if !strings.Contains(v.Message, "does not match the canonical frontmatter") {
 					t.Errorf("unexpected message %q", v.Message)

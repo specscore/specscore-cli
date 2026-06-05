@@ -14,17 +14,16 @@ import (
 // adherence-footer check uses — because, by REQ:footer-format-mirror, the
 // footer URL and the frontmatter `format:` URL are the same URL for a type.
 //
-// During the migration grace period (REQ:migration-sequencing) the rule
-// reports at "warning" severity for every type so existing un-migrated repos
-// are not broken on landing: `specscore spec lint` defaults to
-// --severity=error, and FilterBySeverity excludes "warning" violations at that
-// level. The severity flips to "error" once the target repos are migrated.
+// The rule is enforced at "error" severity. The grace period
+// (REQ:migration-sequencing) has ended for this repo: every artifact has been
+// migrated by `specscore spec migrate` to carry `format:`, and the create verbs
+// emit it on new artifacts.
 type formatFieldChecker struct{}
 
 func newFormatFieldChecker() checker { return &formatFieldChecker{} }
 
 func (c *formatFieldChecker) name() string     { return "format-field" }
-func (c *formatFieldChecker) severity() string { return "warning" }
+func (c *formatFieldChecker) severity() string { return "error" }
 
 func (c *formatFieldChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
@@ -49,7 +48,7 @@ func (c *formatFieldChecker) check(specRoot string) ([]Violation, error) {
 			violations = append(violations, Violation{
 				File:     relPath,
 				Line:     0,
-				Severity: "warning",
+				Severity: "error",
 				Rule:     "format-field",
 				Message:  msg,
 			})

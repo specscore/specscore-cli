@@ -27,8 +27,8 @@ func TestStatusMirrorChecker_Meta(t *testing.T) {
 	if got := c.name(); got != "status-mirror" {
 		t.Errorf("name() = %q, want status-mirror", got)
 	}
-	if got := c.severity(); got != "warning" {
-		t.Errorf("severity() = %q, want warning (graced)", got)
+	if got := c.severity(); got != "error" {
+		t.Errorf("severity() = %q, want error (enforced)", got)
 	}
 }
 
@@ -89,8 +89,8 @@ func TestStatusMirrorChecker_Check(t *testing.T) {
 				if v == nil {
 					t.Fatalf("expected a status-mirror violation, got %+v", violations)
 				}
-				if v.Severity != "warning" {
-					t.Errorf("severity = %q, want warning", v.Severity)
+				if v.Severity != "error" {
+					t.Errorf("severity = %q, want error", v.Severity)
 				}
 				if !strings.Contains(v.Message, tc.wantSubstr) {
 					t.Errorf("message %q does not contain %q", v.Message, tc.wantSubstr)
@@ -147,8 +147,8 @@ func TestStatusMirrorChecker_StatusLessRejectsStatus(t *testing.T) {
 				if v == nil {
 					t.Fatalf("expected a status-mirror violation, got %+v", violations)
 				}
-				if v.Severity != "warning" {
-					t.Errorf("severity = %q, want warning", v.Severity)
+				if v.Severity != "error" {
+					t.Errorf("severity = %q, want error", v.Severity)
 				}
 				if !strings.Contains(v.Message, "must not carry") {
 					t.Errorf("message %q does not mention rejection", v.Message)

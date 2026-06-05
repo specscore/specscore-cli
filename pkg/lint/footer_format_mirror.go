@@ -29,7 +29,7 @@ type footerFormatMirrorChecker struct{}
 func newFooterFormatMirrorChecker() checker { return &footerFormatMirrorChecker{} }
 
 func (c *footerFormatMirrorChecker) name() string     { return "footer-format-mirror" }
-func (c *footerFormatMirrorChecker) severity() string { return "warning" }
+func (c *footerFormatMirrorChecker) severity() string { return "error" }
 
 // specURLRe matches a canonical SpecScore spec URL (without a trailing slash).
 var specURLRe = regexp.MustCompile(`https://specscore\.md/[a-z0-9-]+-specification`)
@@ -47,7 +47,7 @@ func (c *footerFormatMirrorChecker) check(specRoot string) ([]Violation, error) 
 			violations = append(violations, Violation{
 				File:     relPath,
 				Line:     0,
-				Severity: "warning",
+				Severity: "error",
 				Rule:     "footer-format-mirror",
 				Message: fmt.Sprintf(
 					"adherence-footer URL %q on %s does not match the canonical frontmatter `format: %s`",

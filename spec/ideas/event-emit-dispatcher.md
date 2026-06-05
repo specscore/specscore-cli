@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Implemented
+---
+
 # Idea: Event Emit Dispatcher
 
 **Status:** Implemented

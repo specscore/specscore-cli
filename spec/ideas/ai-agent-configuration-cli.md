@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Implemented
+---
+
 # Idea: AI Agent Configuration CLI
 
 **Status:** Implemented

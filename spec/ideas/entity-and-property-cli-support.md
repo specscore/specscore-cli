@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Implemented
+---
+
 # Idea: Entity and Property CLI Support
 
 **Status:** Implemented

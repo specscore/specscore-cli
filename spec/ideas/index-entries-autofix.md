@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Specified
+---
+
 # Idea: index-entries autofix for spec lint --fix
 
 **Status:** Specified

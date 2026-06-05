@@ -121,9 +121,9 @@ var builtinRules = []Rule{
 	// Artifact-frontmatter-convention lint rules. Graced at warning severity
 	// during the migration rollout (REQ:migration-sequencing); flips to error
 	// after target repos are migrated.
-	{ID: "format-field", Family: "frontmatter", Severity: "warning", Description: "Requires every artifact to carry a frontmatter format: field matching its type's spec URL."},
-	{ID: "status-mirror", Family: "frontmatter", Severity: "warning", Description: "Requires a status-bearing artifact's frontmatter status: to mirror its body **Status:** line, and forbids status: on status-less types."},
-	{ID: "footer-format-mirror", Family: "frontmatter", Severity: "warning", Description: "Requires the adherence-footer URL to match the frontmatter format: URL; --fix derives the footer from format:."},
+	{ID: "format-field", Family: "frontmatter", Severity: "error", Description: "Requires every artifact to carry a frontmatter format: field matching its type's spec URL."},
+	{ID: "status-mirror", Family: "frontmatter", Severity: "error", Description: "Requires a status-bearing artifact's frontmatter status: to mirror its body **Status:** line, and forbids status: on status-less types."},
+	{ID: "footer-format-mirror", Family: "frontmatter", Severity: "error", Description: "Requires the adherence-footer URL to match the frontmatter format: URL; --fix derives the footer from format:."},
 
 	// Plan lint rules.
 	{ID: "P-001", Family: "plan", Severity: "error", Description: "Requires every plan task to reference at least one feature AC."},

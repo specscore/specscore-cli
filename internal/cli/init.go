@@ -280,7 +280,11 @@ None at this time.
 }
 
 func ideasIndexContent(_ projectdef.SpecConfig) string {
-	return `# Ideas
+	return `---
+format: https://specscore.md/ideas-index-specification
+---
+
+# Ideas
 
 Pre-spec one-pagers. Each Idea is a lint-clean problem-direction-MVP one-pager that may later promote into one or more SpecScore Features under [` + "`features/`" + `](../features/README.md).
 
@@ -299,7 +303,11 @@ None at this time.
 }
 
 func plansIndexContent(_ projectdef.SpecConfig) string {
-	return `# Plans
+	return `---
+format: https://specscore.md/plans-index-specification
+---
+
+# Plans
 
 Canonical index of all plans in this repository. Each plan is a single Markdown file under ` + "`spec/plans/`" + ` governed by the [plan specification](https://specscore.md/plan-specification).
 
@@ -322,7 +330,11 @@ None at this time.
 }
 
 func featuresIndexContent(_ projectdef.SpecConfig) string {
-	return `# Features
+	return `---
+format: https://specscore.md/features-index-specification
+---
+
+# Features
 
 Feature specifications for this project.
 

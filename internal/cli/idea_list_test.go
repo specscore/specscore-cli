@@ -386,7 +386,7 @@ func nonEmptyLines(s string) []string {
 
 func writeFeaturesReadme(t *testing.T, root string) {
 	t.Helper()
-	content := "# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	content := "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write features README: %v", err)
 	}
