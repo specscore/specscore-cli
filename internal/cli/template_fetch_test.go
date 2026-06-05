@@ -13,7 +13,12 @@ import (
 // testIdeaTemplate mirrors the published new/idea.md gallery template: a bare
 // skeleton with placeholder tokens. Substituting title/date/owner must yield a
 // lint-clean Idea.
-const testIdeaTemplate = `# Idea: <Idea Name>
+const testIdeaTemplate = `---
+format: https://specscore.md/idea-specification
+status: Draft
+---
+
+# Idea: <Idea Name>
 
 **Status:** Draft
 **Date:** YYYY-MM-DD
@@ -178,6 +183,11 @@ func TestIdeaNew_FetchesPublishedTemplate(t *testing.T) {
 
 	body, _ := os.ReadFile(filepath.Join(root, "spec", "ideas", "fetched-idea.md"))
 	s := string(body)
+	// The published template carries the artifact-frontmatter-convention
+	// frontmatter, so the fetched scaffold does too.
+	if !strings.HasPrefix(s, "---\nformat: https://specscore.md/idea-specification\nstatus: Draft\n---") {
+		t.Errorf("fetched idea missing frontmatter:\n%s", s)
+	}
 	for _, want := range []string{"# Idea: Fetched Idea", "**Owner:** alex"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %q in created file:\n%s", want, s)

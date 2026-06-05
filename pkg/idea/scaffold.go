@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// FormatURL is the canonical spec URL for the Idea document type, emitted in
+// the frontmatter `format:` field per the artifact-frontmatter-convention.
+const FormatURL = "https://specscore.md/idea-specification"
+
 // ScaffoldOptions controls the content emitted by Scaffold. Any field left
 // empty keeps the section's default HTML-comment prompt.
 type ScaffoldOptions struct {
@@ -198,6 +202,14 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	}
 
 	var out strings.Builder
+	// artifact-frontmatter-convention REQ:scaffold-and-change-status — an Idea is
+	// a status-bearing type, so emit the `format:`/`status:` frontmatter on
+	// creation (status: mirrors the body `**Status:**`). Proposals
+	// (change-requests) are a different document type and are left untouched
+	// here.
+	if !isChangeRequest {
+		fmt.Fprintf(&out, "---\nformat: %s\nstatus: %s\n---\n\n", FormatURL, status)
+	}
 	fmt.Fprintf(&out, "# %s: %s\n\n", titlePrefix, title)
 	fmt.Fprintf(&out, "**Status:** %s\n", status)
 	if isChangeRequest {
