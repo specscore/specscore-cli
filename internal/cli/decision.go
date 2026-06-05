@@ -98,7 +98,17 @@ func runDecisionNew(cmd *cobra.Command, args []string) error {
 		Supersedes: supersedes,
 	}
 
-	body, err := decisionScaffoldFn(opts)
+	// cli-template-runtime-fetch: a bare decision (no tags / source-idea /
+	// supersedes) pulls the published template; otherwise the embedded
+	// scaffolder fills those fields.
+	bare := tags == "" && sourceIdea == "" && supersedes == ""
+	body, err := bareOrEmbedded(bare, "decision", map[string]string{
+		"<Decision Name>": templateTitleOrSlug(title, slug),
+		"YYYY-MM-DD":      templateTodayUTC(),
+		"<your-handle>":   templateOwnerOrUnknown(owner),
+	}, cmd.ErrOrStderr(), func() ([]byte, error) {
+		return decisionScaffoldFn(opts)
+	})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("scaffolding decision: %v", err)
 	}

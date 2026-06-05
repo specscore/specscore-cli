@@ -109,7 +109,18 @@ func runIssueNew(cmd *cobra.Command, args []string) error {
 		AffectedComponent: affectedComponent,
 	}
 
-	body, err := issueScaffoldFn(opts)
+	// cli-template-runtime-fetch: a bare issue (no severity / affected-component)
+	// pulls the published template; otherwise the embedded scaffolder fills
+	// those frontmatter fields.
+	bare := severity == "" && affectedComponent == ""
+	body, err := bareOrEmbedded(bare, "issue", map[string]string{
+		"<Issue Title>":        templateTitleOrSlug(title, slug),
+		"<slug>":               slug,
+		"<ISO-8601 timestamp>": templateNowRFC3339(),
+		"<your-handle>":        templateOwnerOrUnknown(capturedBy),
+	}, cmd.ErrOrStderr(), func() ([]byte, error) {
+		return issueScaffoldFn(opts)
+	})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("scaffolding issue: %v", err)
 	}

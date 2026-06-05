@@ -298,9 +298,34 @@ func runIdeaNew(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("materializing ancestor indexes: %v", err)
 	}
 
-	body, err := ideaScaffoldFn(opts)
+	// cli-template-runtime-fetch: a *bare* scaffold (no authored content,
+	// non-interactive) pulls the published template from the gallery; anything
+	// carrying authored content — or an offline fetch — uses the embedded
+	// scaffolder (which fills those fields, as the static template cannot).
+	bare := !interactive &&
+		hmw == "" && ctx == "" && direction == "" && mvp == "" && len(notDoing) == 0
+
+	fetchType := "idea"
+	repl := map[string]string{
+		"<Idea Name>":   templateTitleOrSlug(title, slug),
+		"YYYY-MM-DD":    templateTodayUTC(),
+		"<your-handle>": templateOwnerOrUnknown(owner),
+	}
+	if isChangeRequest {
+		fetchType = "proposal"
+		repl = map[string]string{
+			"<Proposal Name>": templateTitleOrSlug(title, slug),
+			"<feature-slug>":  targets,
+			"YYYY-MM-DD":      templateTodayUTC(),
+			"<your-handle>":   templateOwnerOrUnknown(owner),
+		}
+	}
+
+	body, err := bareOrEmbedded(bare, fetchType, repl, cmd.ErrOrStderr(), func() ([]byte, error) {
+		return ideaScaffoldFn(opts)
+	})
 	if err != nil {
-		return exitcode.UnexpectedErrorf("scaffolding idea: %v", err)
+		return exitcode.UnexpectedErrorf("scaffolding %s: %v", fetchType, err)
 	}
 	if err := os.WriteFile(target, body, 0o644); err != nil {
 		return exitcode.UnexpectedErrorf("writing %s: %v", target, err)
