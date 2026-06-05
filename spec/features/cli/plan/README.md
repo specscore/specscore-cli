@@ -9,7 +9,7 @@
 
 ## Summary
 
-`specscore plan` commands query Plan artifacts in `spec/plans/` — listing them and inspecting one plan's metadata and task rollup — so agents and humans can answer "what plans exist and what status do they hold?" without hand-grepping. This group is read-only: it provides `list` and `info`, with no creation or lifecycle mutation.
+`specscore plan` commands work with Plan artifacts in `spec/plans/` — listing them, inspecting one plan's metadata and task rollup, and scaffolding a new plan — so agents and humans can answer "what plans exist and what status do they hold?" and create new ones through one stable entry point. The `list` and `info` subcommands are read-only; `new` is the group's only mutating verb and creates a fresh plan without editing or transitioning existing ones.
 
 ## Contents
 
@@ -17,6 +17,7 @@
 |---|---|
 | [list](list/README.md) | Flat, alphabetically sorted list of plan slugs, with optional `--status` filter and structured output |
 | [info](info/README.md) | Metadata and task rollup for a single plan |
+| [new](new/README.md) | Scaffold a lint-clean plan (body + `format:`/`status:` frontmatter) against a Source Feature or Idea |
 
 ## Problem
 
@@ -26,15 +27,15 @@ Plans (`spec/plans/*.md`) are the only first-class spec artifact without a CLI q
 
 ### Command group
 
-The `plan` group is read-only and additive. It introduces no changes to how plans are authored or stored.
+The `plan` group is additive. Its query verbs introduce no changes to how plans are authored or stored; its single create verb scaffolds new plans only.
 
 #### REQ: subcommands
 
-`specscore plan` MUST expose the `list` and `info` subcommands. Invoking `specscore plan` with no subcommand MUST print the group help and exit `0` (not error as an unknown command).
+`specscore plan` MUST expose the `list`, `info`, and `new` subcommands. Invoking `specscore plan` with no subcommand MUST print the group help and exit `0` (not error as an unknown command).
 
-#### REQ: read-only-scope
+#### REQ: mutation-scope
 
-The `plan` group MUST NOT create, edit, or transition plan files. It reads `spec/plans/*.md` only.
+The `list` and `info` subcommands MUST NOT create, edit, or transition plan files — they read `spec/plans/*.md` only. The `new` subcommand (see [new](new/README.md)) MAY create a new plan file but MUST NOT edit or transition existing plans. No verb in this group transitions a plan's lifecycle status.
 
 ### Shared flags
 
@@ -77,7 +78,7 @@ The reported status of a plan MUST be the literal value of its `**Status:**` lin
 
 **Given** a project with a `spec/plans/` directory
 **When** the user runs `specscore plan`
-**Then** the group help is printed listing `list` and `info`, and the command exits `0`.
+**Then** the group help is printed listing `list`, `info`, and `new`, and the command exits `0`.
 
 ### AC: invalid-format-rejected (verifies REQ:format-selection)
 
