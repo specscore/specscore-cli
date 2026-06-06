@@ -12,7 +12,7 @@ Implements the skill-bundle and comma-separated-agent increment added to the `cl
 
 ## Approach
 
-Built bottom-up in `internal/cli/agent.go`: input parsing first (comma-split), then the skills-directory registry, then the bundle source (gallery fetch + embedded fallback), then the copy engine that consumes both, then the `--no-skills` gate over that engine, and finally the per-path change report that spans every write. Each task is independently testable against its ACs and ordered so later tasks depend only on earlier ones.
+Built bottom-up in `internal/cli/agent.go`: input parsing first (comma-split), then the skills-directory registry, then the bundle source (GitHub marketplace download, fail-clear when offline), then the copy engine that consumes both, then the `--no-skills` gate over that engine, and finally the per-path change report that spans every write. Each task is independently testable against its ACs and ordered so later tasks depend only on earlier ones.
 
 ## Tasks
 
@@ -28,11 +28,11 @@ Split each positional agent argument on commas, trim whitespace, and drop empty 
 
 Extend `agentDef` with an optional skills-directory field and populate it only for `claude` (`.claude/skills/`) and `cursor` (`.cursor/skills/`); all other agents resolve to no skills directory and remain instruction-file only. This registry is the single source of truth the copy engine consults.
 
-### Task 3: Source skill bundles via gallery fetch with embedded fallback
+### Task 3: Download skill bundles from the GitHub marketplace registry
 
-**Verifies:** cli/agent/setup#ac:skill-source-offline-fallback
+**Verifies:** cli/agent/setup#ac:skill-source-offline-fails
 
-Obtain the skill bundle the same way `template_fetch.go` obtains new-artefact templates: fetch from the SpecScore gallery when reachable, fall back to a binary-embedded snapshot when offline. Surface exit `10` when neither source can supply the bundle, without writing a partial skills directory.
+Download skill bundles in three steps — marketplace manifest (`specscore/ai-marketplace`), then each plugin repo's manifest, then the enumerated skill files — with the base location overridable via an environment variable for tests. There is no embedded fallback: when GitHub is unreachable or any manifest/skill fetch fails, write the instruction files, report a clear error naming the source, exit `10`, and leave no partial skills directory.
 
 ### Task 4: Copy skill bundles into the agent skills directory
 
@@ -70,7 +70,7 @@ Report every touched path on its own line, prefixed `added`, `modified` (overwri
 ## Open Questions
 
 - Which agents beyond Claude and Cursor gain a stable skills directory (would extend Task 2's registry)?
-- Should the embedded fallback snapshot be version-pinned per CLI release, and where does the canonical skill source-of-truth live?
+- Which marketplace ref (branch/tag/commit) does the CLI pin when downloading manifests and skills, and should it be configurable?
 
 ---
 *This document follows the https://specscore.md/plan-specification*

@@ -130,7 +130,7 @@ When `--no-skills` is supplied, the command MUST NOT copy any skill bundles for 
 
 #### REQ: skill-bundle-source
 
-The skill bundles copied are obtained the same way new-artefact templates are obtained (the gallery-fetch path): fetched from the SpecScore gallery when reachable, falling back to a binary-embedded snapshot when offline. The command MUST NOT depend on the Claude-only plugin marketplace to obtain skills. If neither the gallery nor the embedded fallback can provide the bundle, the command MUST surface the failure as exit `10` and MUST NOT write a partial skill directory.
+The skill bundles are downloaded from GitHub via the SpecScore marketplace registry, in three steps: (1) fetch the marketplace manifest (`specscore/ai-marketplace` → `.claude-plugin/marketplace.json`); (2) for each referenced plugin, fetch that plugin repo's manifest; (3) download the skill files the plugin manifests enumerate. The marketplace base location is overridable via an environment variable for testing and self-hosted mirrors, defaulting to the public GitHub source. There is no binary-embedded fallback: when GitHub is unreachable, or any manifest or skill file cannot be fetched, the command MUST still write the instruction files, report a clear error for the skill-copy step that names the unreachable source, exit `10`, and MUST NOT leave a partial skill directory behind.
 
 #### REQ: skill-copy-raw-markdown
 
@@ -156,7 +156,7 @@ The command MUST report every path it touches, one line per path, each prefixed 
 | `2` | No agents specified, unknown agent name, `--all` combined with positional args, or invalid `--project` path |
 | `3` | Project root not found (no `specscore.yaml` or `spec/features/` in any ancestor) |
 | `6` | Project root found but `specscore.yaml` absent (e.g., found via `spec/features/` fallback) |
-| `10` | Unexpected I/O failure, or skill bundles unavailable from both the gallery and the embedded fallback |
+| `10` | Unexpected I/O failure, or skill bundles could not be downloaded from the GitHub marketplace source |
 
 #### REQ: exit-code-discipline
 
@@ -336,13 +336,13 @@ Positional arguments: one or more agent names from the supported set, given sepa
 **When** `specscore agent setup cursor --project <root>` runs
 **Then** stdout contains an `added` line for `.cursor/rules/specscore.mdc` and an `added` line for each copied skill file; the command exits `0`.
 
-### AC: skill-source-offline-fallback
+### AC: skill-source-offline-fails
 
 **Requirements:** cli/agent/setup#req:skill-bundle-source
 
-**Given** an initialized SpecScore project with the SpecScore gallery unreachable
+**Given** an initialized SpecScore project with the GitHub marketplace source unreachable
 **When** `specscore agent setup cursor --project <root>` runs
-**Then** skill bundles are copied from the binary-embedded fallback snapshot, `.cursor/skills/` is populated, and the command exits `0`.
+**Then** `.cursor/rules/specscore.mdc` is still written, the skill-copy step reports an error naming the unreachable source, no partial `.cursor/skills/` content is left behind, and the command exits `10`.
 
 ## Open Questions
 
