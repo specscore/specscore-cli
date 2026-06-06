@@ -41,9 +41,9 @@ func (c *formatFieldChecker) check(specRoot string) ([]Violation, error) {
 			relPath, _ := filepath.Rel(specRoot, path)
 			var msg string
 			if got == "" {
-				msg = fmt.Sprintf("missing required frontmatter field `format: %s` on %s", target.url, target.description)
+				msg = fmt.Sprintf("missing required frontmatter field `format: %s` on %s", target.url, target.description) + migrateHint
 			} else {
-				msg = fmt.Sprintf("frontmatter `format: %s` on %s does not match the canonical URL %q", got, target.description, target.url)
+				msg = fmt.Sprintf("frontmatter `format: %s` on %s does not match the canonical URL %q", got, target.description, target.url) + migrateHint
 			}
 			violations = append(violations, Violation{
 				File:     relPath,

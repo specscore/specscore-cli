@@ -99,7 +99,7 @@ func statusMirrorViolation(specRoot, path string, content []byte, description st
 			Line:     0,
 			Severity: "error",
 			Rule:     "status-mirror",
-			Message:  fmt.Sprintf("missing required frontmatter field `status: %s` on %s (mirror of body **Status:**)", body, description),
+			Message:  fmt.Sprintf("missing required frontmatter field `status: %s` on %s (mirror of body **Status:**)", body, description) + migrateHint,
 		}, true
 	}
 	if !strings.EqualFold(strings.TrimSpace(fmStatus), strings.TrimSpace(body)) {
@@ -108,7 +108,7 @@ func statusMirrorViolation(specRoot, path string, content []byte, description st
 			Line:     0,
 			Severity: "error",
 			Rule:     "status-mirror",
-			Message:  fmt.Sprintf("frontmatter `status: %s` on %s does not mirror body **Status:** %q", fmStatus, description, body),
+			Message:  fmt.Sprintf("frontmatter `status: %s` on %s does not mirror body **Status:** %q", fmStatus, description, body) + migrateHint,
 		}, true
 	}
 	return Violation{}, false

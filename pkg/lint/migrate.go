@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// migrateHint is appended to the frontmatter-rule violations that a one-shot
+// `specscore spec migrate` run resolves, so an upgrading user who hits the
+// now-enforced rules is pointed at the fix.
+const migrateHint = " (run `specscore spec migrate` to backfill)"
+
 // Migrate performs the one-shot artifact-frontmatter-convention backfill
 // (cli/spec/migrate): for every artifact the convention rules walk, it ensures
 // a leading frontmatter block carrying the type's canonical `format:` URL and,
