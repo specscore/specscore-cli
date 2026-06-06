@@ -21,6 +21,9 @@ import (
 // the skills/ subtree. There is no embedded fallback: any fetch failure is
 // surfaced to the caller. Verifies cli/agent/setup#req:skill-bundle-source.
 
+// fetchSkillBundleFn wraps fetchSkillBundle so tests can stub the download.
+var fetchSkillBundleFn = fetchSkillBundle
+
 // skillsFetchTimeout bounds the total network wait. A var so tests can lower it.
 var skillsFetchTimeout = 30 * time.Second
 

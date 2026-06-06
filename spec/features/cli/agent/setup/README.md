@@ -246,7 +246,7 @@ Positional arguments: one or more agent names from the supported set, given sepa
 
 **Given** an initialized SpecScore project with an existing `CLAUDE.md`
 **When** `specscore agent setup claude --force --project <root>` runs
-**Then** `CLAUDE.md` is replaced with freshly rendered content; stdout reports `overwritten`; the command exits `0`.
+**Then** `CLAUDE.md` is replaced with freshly rendered content; stdout reports it as `modified`; the command exits `0`.
 
 ### AC: not-specscore-repo
 
