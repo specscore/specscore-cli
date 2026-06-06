@@ -1,11 +1,11 @@
 ---
 format: https://specscore.md/idea-specification
-status: Specified
+status: Implemented
 ---
 
 # Idea: Agent Setup Skill Bundles
 
-**Status:** Specified
+**Status:** Implemented
 **Date:** 2026-06-06
 **Owner:** alexander.trakhimenok
 **Promotes To:** cli/agent/setup
