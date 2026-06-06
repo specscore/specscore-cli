@@ -25,5 +25,9 @@ func TestMain(m *testing.M) {
 		}
 		_ = os.Setenv("SPECSCORE_TEMPLATE_BASE_URL", base)
 	}
+	// Make `agent setup` skill-copying offline-by-default: stub the bundle
+	// download to return nothing, so instruction-file tests don't hit GitHub.
+	// Tests exercising skill copying override fetchSkillBundleFn themselves.
+	fetchSkillBundleFn = func() ([]skillFile, error) { return nil, nil }
 	os.Exit(m.Run())
 }

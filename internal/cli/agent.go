@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,17 +17,21 @@ var osMkdirAllFn = os.MkdirAll
 type agentDef struct {
 	name    string
 	relPath string
-	render  func(projectTitle string) string
+	// skillsDir is the relative directory into which skill bundles are copied.
+	// Empty means the agent has no known skills directory (instruction file only).
+	// Verifies #ac:skills-dir-agents-mvp, #ac:non-skilldir-agent-instruction-only.
+	skillsDir string
+	render    func(projectTitle string) string
 }
 
 var supportedAgents = []agentDef{
-	{"antigravity.google", "GEMINI.md", antigravityTemplate},
-	{"claude", "CLAUDE.md", claudeTemplate},
-	{"codex", "codex.md", codexTemplate},
-	{"copilot", ".github/copilot-instructions.md", copilotTemplate},
-	{"cursor", ".cursor/rules/specscore.mdc", cursorTemplate},
-	{"opencode", "AGENTS.md", opencodeTemplate},
-	{"pi.dev", "AGENTS.md", piTemplate},
+	{"antigravity.google", "GEMINI.md", "", antigravityTemplate},
+	{"claude", "CLAUDE.md", ".claude/skills", claudeTemplate},
+	{"codex", "codex.md", "", codexTemplate},
+	{"copilot", ".github/copilot-instructions.md", "", copilotTemplate},
+	{"cursor", ".cursor/rules/specscore.mdc", ".cursor/skills", cursorTemplate},
+	{"opencode", "AGENTS.md", "", opencodeTemplate},
+	{"pi.dev", "AGENTS.md", "", piTemplate},
 }
 
 func supportedAgentNames() []string {
@@ -35,6 +40,21 @@ func supportedAgentNames() []string {
 		names[i] = a.name
 	}
 	return names
+}
+
+// expandAgentArgs splits each positional argument on commas so that
+// "claude,codex" is equivalent to "claude codex". Whitespace around each
+// field is trimmed and empty fields are dropped. Verifies #ac:comma-separated-agents.
+func expandAgentArgs(args []string) []string {
+	var out []string
+	for _, a := range args {
+		for _, part := range strings.Split(a, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
 }
 
 func findAgent(name string) (agentDef, bool) {
@@ -72,7 +92,8 @@ Examples:
 		RunE: runAgentSetup,
 	}
 	cmd.Flags().Bool("all", false, "Configure all supported agents")
-	cmd.Flags().Bool("force", false, "Overwrite existing config files")
+	cmd.Flags().Bool("force", false, "Overwrite existing config files and skill files")
+	cmd.Flags().Bool("no-skills", false, "Write instruction files only; do not copy skill bundles")
 	cmd.Flags().String("project", "", "Project root (autodetected from current directory if omitted)")
 	return cmd
 }
@@ -80,7 +101,10 @@ Examples:
 func runAgentSetup(cmd *cobra.Command, args []string) error {
 	allFlag, _ := cmd.Flags().GetBool("all")
 	force, _ := cmd.Flags().GetBool("force")
+	noSkills, _ := cmd.Flags().GetBool("no-skills")
 	projectFlag, _ := cmd.Flags().GetString("project")
+
+	args = expandAgentArgs(args)
 
 	if allFlag && len(args) > 0 {
 		return exitcode.InvalidArgsError("--all and positional agent names are mutually exclusive")
@@ -117,39 +141,91 @@ func runAgentSetup(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	w := cmd.OutOrStdout()
 	seen := make(map[string]bool)
 	for _, a := range agents {
-		absPath := filepath.Join(root, a.relPath)
-
 		if seen[a.relPath] {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (skipped, already written this run)\n", a.relPath)
+			_, _ = fmt.Fprintf(w, "skipped %s (already written this run)\n", a.relPath)
 			continue
 		}
 		seen[a.relPath] = true
 
-		if _, statErr := os.Stat(absPath); statErr == nil && !force {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (skipped, already exists — use --force to overwrite)\n", a.relPath)
-			continue
+		if err := writeAgentFile(w, root, a.relPath, []byte(a.render(projectTitle)), force); err != nil {
+			return err
 		}
-
-		if dir := filepath.Dir(absPath); dir != root {
-			if mkErr := osMkdirAllFn(dir, 0o755); mkErr != nil {
-				return exitcode.UnexpectedErrorf("creating directory %s: %v", dir, mkErr)
-			}
-		}
-
-		content := a.render(projectTitle)
-		if writeErr := osWriteFileFn(absPath, []byte(content), 0o644); writeErr != nil {
-			return exitcode.UnexpectedErrorf("writing %s: %v", a.relPath, writeErr)
-		}
-
-		action := "created"
-		if force {
-			action = "overwritten"
-		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (%s)\n", a.relPath, action)
 	}
 
+	if !noSkills {
+		if err := copySkillBundles(w, root, agents, force); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeAgentFile writes content to root/relPath, creating parent directories as
+// needed, and reports the action on its own line: "added" for a new file,
+// "modified" for an overwrite under --force, or "skipped" for an existing file
+// left untouched. Verifies #ac:per-path-change-report, #ac:skill-copy-skips-existing,
+// #ac:skills-parent-dirs-created.
+func writeAgentFile(w io.Writer, root, relPath string, content []byte, force bool) error {
+	abs := filepath.Join(root, relPath)
+	_, statErr := os.Stat(abs)
+	exists := statErr == nil
+
+	if exists && !force {
+		_, _ = fmt.Fprintf(w, "skipped %s (exists — use --force to overwrite)\n", relPath)
+		return nil
+	}
+
+	if dir := filepath.Dir(abs); dir != root {
+		if mkErr := osMkdirAllFn(dir, 0o755); mkErr != nil {
+			return exitcode.UnexpectedErrorf("creating directory %s: %v", dir, mkErr)
+		}
+	}
+	if writeErr := osWriteFileFn(abs, content, 0o644); writeErr != nil {
+		return exitcode.UnexpectedErrorf("writing %s: %v", relPath, writeErr)
+	}
+
+	action := "added"
+	if exists {
+		action = "modified"
+	}
+	_, _ = fmt.Fprintf(w, "%s %s\n", action, relPath)
+	return nil
+}
+
+// copySkillBundles downloads the SpecScore skill bundles and copies them into
+// the skills directory of every requested agent that has one. Agents without a
+// skills directory are left untouched. A download failure surfaces as exit 10
+// with no partial skills directory written. Verifies #ac:skill-copy-default-on,
+// #ac:skill-copy-cursor-default, #ac:skill-copy-claude-always,
+// #ac:skill-source-offline-fails.
+func copySkillBundles(w io.Writer, root string, agents []agentDef, force bool) error {
+	var targets []agentDef
+	for _, a := range agents {
+		if a.skillsDir != "" {
+			targets = append(targets, a)
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	bundle, err := fetchSkillBundleFn()
+	if err != nil {
+		return exitcode.UnexpectedErrorf("downloading skill bundles: %v", err)
+	}
+
+	for _, a := range targets {
+		for _, f := range bundle {
+			rel := filepath.Join(a.skillsDir, f.relPath)
+			if writeErr := writeAgentFile(w, root, rel, f.content, force); writeErr != nil {
+				return writeErr
+			}
+		}
+	}
 	return nil
 }
 

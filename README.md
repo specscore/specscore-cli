@@ -71,6 +71,18 @@ specscore self-update --version 0.4.0 --allow-downgrade   # an older target requ
 
 `--check` exit codes: `0` up to date, `10` update available, other non-zero on error — convenient for CI staleness gates. Full contract: [`spec/features/cli/self-update/`](spec/features/cli/self-update/).
 
+## Configure your AI agents
+
+Teach the AI coding agents working in this repo about its SpecScore conventions in one command. `specscore agent setup` writes each agent's instruction file (and, where the agent supports a skills directory, copies the SpecScore skill bundles into it).
+
+Pass agents as a comma-separated list (space-separated and `--all` also work):
+
+```bash
+specscore agent setup claude,codex,copilot,cursor,antigravity.google,pi.dev,opencode
+```
+
+Supported agents: `claude`, `codex`, `copilot`, `cursor`, `antigravity.google`, `pi.dev`, `opencode`. The command is idempotent (existing files are skipped unless `--force`) and reports every path it adds, modifies, or skips. Full contract: [`spec/features/cli/agent/setup/`](spec/features/cli/agent/setup/).
+
 ## AI skills
 
 If you drive `specscore` from inside Claude Code (or any agent host that loads Claude Code plugins), install the [`ai-plugin-specscore`](https://github.com/specscore/ai-plugin-specscore) plugin. It ships agent skills that wrap each CLI resource group — they teach the agent *when* to call which command, *which* flags to pass, and *how* to interpret exit codes, all grounded in the feature specs in this repo.

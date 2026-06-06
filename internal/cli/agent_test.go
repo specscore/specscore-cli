@@ -36,13 +36,192 @@ func setupSpecScoreProject(t *testing.T, title string) string {
 	return root
 }
 
+func TestAgentSetup_CommaSeparatedAgents(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	// "claude,cursor" (with stray spaces and a trailing comma) must be
+	// equivalent to passing the agents as separate positional args.
+	out, _, err := runAgentCmd(t, "setup", " claude , cursor ,", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if !strings.Contains(out, "added CLAUDE.md") {
+		t.Errorf("missing CLAUDE.md line: %q", out)
+	}
+	if !strings.Contains(out, "added .cursor/rules/specscore.mdc") {
+		t.Errorf("missing cursor line: %q", out)
+	}
+	for _, rel := range []string{"CLAUDE.md", ".cursor/rules/specscore.mdc"} {
+		if _, statErr := os.Stat(filepath.Join(root, rel)); statErr != nil {
+			t.Errorf("%s not created: %v", rel, statErr)
+		}
+	}
+}
+
+func TestAgentSkillsDirRegistry(t *testing.T) {
+	// Only claude and cursor have a skills directory in the MVP.
+	want := map[string]string{
+		"claude": ".claude/skills",
+		"cursor": ".cursor/skills",
+	}
+	for _, a := range supportedAgents {
+		if got := a.skillsDir; got != want[a.name] {
+			t.Errorf("agent %q skillsDir = %q, want %q", a.name, got, want[a.name])
+		}
+	}
+}
+
+func TestAgentSetup_NonSkillsDirAgentInstructionOnly(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	if _, _, err := runAgentCmd(t, "setup", "codex", "--project", root); err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "codex.md")); statErr != nil {
+		t.Errorf("codex.md not created: %v", statErr)
+	}
+	// Codex has no skills directory — none must be created for it.
+	if _, statErr := os.Stat(filepath.Join(root, ".codex", "skills")); statErr == nil {
+		t.Error("no skills directory should be created for codex")
+	}
+}
+
+func stubSkillBundle(t *testing.T, files ...skillFile) {
+	t.Helper()
+	old := fetchSkillBundleFn
+	fetchSkillBundleFn = func() ([]skillFile, error) { return files, nil }
+	t.Cleanup(func() { fetchSkillBundleFn = old })
+}
+
+func TestAgentSetup_SkillCopyCursorDefault(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t,
+		skillFile{relPath: "ideate/SKILL.md", content: []byte("ideate skill")},
+		skillFile{relPath: "ideate/references/x.md", content: []byte("ref")},
+	)
+	out, _, err := runAgentCmd(t, "setup", "cursor", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(root, ".cursor", "skills", "ideate", "SKILL.md"))
+	if readErr != nil {
+		t.Fatalf("skill not copied: %v", readErr)
+	}
+	if string(got) != "ideate skill" {
+		t.Errorf("skill content = %q", got)
+	}
+	if _, e := os.Stat(filepath.Join(root, ".cursor", "skills", "ideate", "references", "x.md")); e != nil {
+		t.Errorf("nested skill file not copied: %v", e)
+	}
+	if !strings.Contains(out, "added .cursor/skills/ideate/SKILL.md") {
+		t.Errorf("expected skill add line, got: %q", out)
+	}
+}
+
+func TestAgentSetup_SkillCopyClaudeAlways(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "spec/SKILL.md", content: []byte("spec skill")})
+	if _, _, err := runAgentCmd(t, "setup", "claude", "--project", root); err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(root, ".claude", "skills", "spec", "SKILL.md")); e != nil {
+		t.Errorf("claude skill not copied: %v", e)
+	}
+}
+
+func TestAgentSetup_NoSkillsSuppressesCopy(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "x/SKILL.md", content: []byte("x")})
+	if _, _, err := runAgentCmd(t, "setup", "cursor", "--no-skills", "--project", root); err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(root, ".cursor", "rules", "specscore.mdc")); e != nil {
+		t.Errorf("instruction file should still be written: %v", e)
+	}
+	if _, e := os.Stat(filepath.Join(root, ".cursor", "skills")); e == nil {
+		t.Error("--no-skills must not create a skills directory")
+	}
+}
+
+func TestAgentSetup_SkillCopySkipsExisting(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "ideate/SKILL.md", content: []byte("fresh")})
+	existing := filepath.Join(root, ".cursor", "skills", "ideate", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existing), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(existing, []byte("custom content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runAgentCmd(t, "setup", "cursor", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if content, _ := os.ReadFile(existing); string(content) != "custom content" {
+		t.Error("existing skill file should be preserved byte-identical")
+	}
+	if !strings.Contains(out, "skipped .cursor/skills/ideate/SKILL.md") || !strings.Contains(out, "use --force") {
+		t.Errorf("expected skip line mentioning --force, got: %q", out)
+	}
+}
+
+func TestAgentSetup_ChangeReportOutput(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "ideate/SKILL.md", content: []byte("x")})
+	out, _, err := runAgentCmd(t, "setup", "cursor", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	for _, want := range []string{"added .cursor/rules/specscore.mdc", "added .cursor/skills/ideate/SKILL.md"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("change report missing %q in: %q", want, out)
+		}
+	}
+}
+
+func TestAgentSetup_SkillSourceOfflineFails(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	old := fetchSkillBundleFn
+	fetchSkillBundleFn = func() ([]skillFile, error) {
+		return nil, errors.New("github unreachable: codeload.github.com")
+	}
+	t.Cleanup(func() { fetchSkillBundleFn = old })
+
+	_, _, err := runAgentCmd(t, "setup", "cursor", "--project", root)
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Errorf("exit code: got %d want %d", got, exitcode.Unexpected)
+	}
+	if _, e := os.Stat(filepath.Join(root, ".cursor", "rules", "specscore.mdc")); e != nil {
+		t.Errorf("instruction file should be written before the failure: %v", e)
+	}
+	if _, e := os.Stat(filepath.Join(root, ".cursor", "skills")); e == nil {
+		t.Error("no partial skills directory should be left behind")
+	}
+}
+
+func TestAgentSetup_SkillWriteError(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "ideate/SKILL.md", content: []byte("x")})
+	old := osWriteFileFn
+	osWriteFileFn = func(name string, data []byte, perm os.FileMode) error {
+		if strings.Contains(name, "skills") {
+			return errors.New("mock skill write error")
+		}
+		return os.WriteFile(name, data, perm)
+	}
+	t.Cleanup(func() { osWriteFileFn = old })
+
+	_, _, err := runAgentCmd(t, "setup", "cursor", "--project", root)
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Errorf("exit code: got %d want %d", got, exitcode.Unexpected)
+	}
+}
+
 func TestAgentSetup_SingleAgent(t *testing.T) {
 	root := setupSpecScoreProject(t, "My Project")
 	out, _, err := runAgentCmd(t, "setup", "claude", "--project", root)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if !strings.Contains(out, "CLAUDE.md (created)") {
+	if !strings.Contains(out, "added CLAUDE.md") {
 		t.Errorf("expected created message, got: %q", out)
 	}
 	content, readErr := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
@@ -60,10 +239,10 @@ func TestAgentSetup_MultipleAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if !strings.Contains(out, "CLAUDE.md (created)") {
+	if !strings.Contains(out, "added CLAUDE.md") {
 		t.Errorf("missing CLAUDE.md line: %q", out)
 	}
-	if !strings.Contains(out, ".github/copilot-instructions.md (created)") {
+	if !strings.Contains(out, "added .github/copilot-instructions.md") {
 		t.Errorf("missing copilot line: %q", out)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "CLAUDE.md")); statErr != nil {
@@ -146,8 +325,8 @@ func TestAgentSetup_SkipsExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if !strings.Contains(out, "skipped, already exists") {
-		t.Errorf("expected skip message, got: %q", out)
+	if !strings.Contains(out, "skipped CLAUDE.md") || !strings.Contains(out, "use --force") {
+		t.Errorf("expected skip message mentioning --force, got: %q", out)
 	}
 	content, _ := os.ReadFile(existing)
 	if string(content) != "existing content" {
@@ -165,8 +344,8 @@ func TestAgentSetup_ForceOverwrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if !strings.Contains(out, "overwritten") {
-		t.Errorf("expected overwritten message, got: %q", out)
+	if !strings.Contains(out, "modified CLAUDE.md") {
+		t.Errorf("expected modified message, got: %q", out)
 	}
 	content, _ := os.ReadFile(existing)
 	if string(content) == "old" {
@@ -303,7 +482,7 @@ func TestAgentSetup_DuplicateRelPath(t *testing.T) {
 		t.Fatalf("expected success, got: %v", err)
 	}
 	// First writes AGENTS.md, second is skipped.
-	if !strings.Contains(out, "AGENTS.md (created)") {
+	if !strings.Contains(out, "added AGENTS.md") {
 		t.Errorf("expected created message: %q", out)
 	}
 	if !strings.Contains(out, "already written this run") {
@@ -377,7 +556,7 @@ func TestAgentSetup_ResolvesProjectViaCwd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if !strings.Contains(out, "CLAUDE.md (created)") {
+	if !strings.Contains(out, "added CLAUDE.md") {
 		t.Errorf("expected created: %q", out)
 	}
 }
@@ -414,8 +593,9 @@ func TestAgentSetup_ForceCreatesNew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if !strings.Contains(out, "overwritten") {
-		t.Errorf("expected 'overwritten' message: %q", out)
+	// --force on a not-yet-existing file still reports it as added, not modified.
+	if !strings.Contains(out, "added CLAUDE.md") {
+		t.Errorf("expected 'added' message: %q", out)
 	}
 }
 
