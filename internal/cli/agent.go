@@ -94,6 +94,7 @@ Examples:
 	cmd.Flags().Bool("all", false, "Configure all supported agents")
 	cmd.Flags().Bool("force", false, "Overwrite existing config files and skill files")
 	cmd.Flags().Bool("no-skills", false, "Write instruction files only; do not copy skill bundles")
+	cmd.Flags().String("ref", "", "Git ref (branch/tag/commit) to download skills from; defaults to SPECSCORE_MARKETPLACE_REF or main")
 	cmd.Flags().String("project", "", "Project root (autodetected from current directory if omitted)")
 	return cmd
 }
@@ -102,6 +103,7 @@ func runAgentSetup(cmd *cobra.Command, args []string) error {
 	allFlag, _ := cmd.Flags().GetBool("all")
 	force, _ := cmd.Flags().GetBool("force")
 	noSkills, _ := cmd.Flags().GetBool("no-skills")
+	refFlag, _ := cmd.Flags().GetString("ref")
 	projectFlag, _ := cmd.Flags().GetString("project")
 
 	args = expandAgentArgs(args)
@@ -156,7 +158,7 @@ func runAgentSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	if !noSkills {
-		if err := copySkillBundles(w, root, agents, force); err != nil {
+		if err := copySkillBundles(w, root, agents, force, resolveMarketplaceRef(refFlag)); err != nil {
 			return err
 		}
 	}
@@ -202,7 +204,7 @@ func writeAgentFile(w io.Writer, root, relPath string, content []byte, force boo
 // with no partial skills directory written. Verifies #ac:skill-copy-default-on,
 // #ac:skill-copy-cursor-default, #ac:skill-copy-claude-always,
 // #ac:skill-source-offline-fails.
-func copySkillBundles(w io.Writer, root string, agents []agentDef, force bool) error {
+func copySkillBundles(w io.Writer, root string, agents []agentDef, force bool, ref string) error {
 	var targets []agentDef
 	for _, a := range agents {
 		if a.skillsDir != "" {
@@ -213,7 +215,7 @@ func copySkillBundles(w io.Writer, root string, agents []agentDef, force bool) e
 		return nil
 	}
 
-	bundle, err := fetchSkillBundleFn()
+	bundle, err := fetchSkillBundleFn(ref)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("downloading skill bundles: %v", err)
 	}
