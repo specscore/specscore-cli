@@ -10,6 +10,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/ideapromote"
 	"github.com/specscore/specscore-cli/pkg/idearelocate"
 	"github.com/specscore/specscore-cli/pkg/issue"
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // Test seams — package-level vars wrapping external functions.
@@ -18,6 +19,7 @@ var (
 	decisionScaffoldFn   = decision.Scaffold
 	decisionNextNumberFn = decision.NextNumber
 	ideaScaffoldFn       = idea.Scaffold
+	planScaffoldFn       = plan.Scaffold
 	issueScaffoldFn      = issue.Scaffold
 	issueParseFn         = issue.Parse
 	featureFindRefsFn    = feature.FindFeatureRefs

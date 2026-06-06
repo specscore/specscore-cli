@@ -46,6 +46,7 @@ func stagePromoteRepo(t *testing.T, parent, name, repoSlug string) string {
 	_ = os.WriteFile(filepath.Join(root, "spec", "ideas", "README.md"), []byte(idx), 0o644)
 	arch := "# Archived\n\n_No archived ideas yet._\n\n## Open Questions\n\nNone at this time.\n"
 	_ = os.WriteFile(filepath.Join(root, "spec", "ideas", "archived", "README.md"), []byte(arch), 0o644)
+	migrateTree(t, root)
 	return root
 }
 
@@ -170,8 +171,16 @@ func TestIdeaPromoteCLI_SameRepoHappyPath(t *testing.T) {
 	if !strings.Contains(content, "# Idea: Bar Feature Idea") {
 		t.Errorf("expected `# Idea: <title>` heading; got:\n%s", content)
 	}
-	if !strings.HasPrefix(content, "# Idea:") {
-		t.Errorf("frontmatter should be dropped; got prefix:\n%s", content[:min(80, len(content))])
+	// The seed's frontmatter (type/slug/captured_*) is dropped; the promoted
+	// Idea instead carries the Idea type's own format:/status: frontmatter per
+	// the artifact-frontmatter-convention.
+	if !strings.HasPrefix(content, "---\nformat: https://specscore.md/idea-specification\nstatus: Draft\n---") {
+		t.Errorf("expected Idea frontmatter at the top; got prefix:\n%s", content[:min(120, len(content))])
+	}
+	for _, seedKey := range []string{"type: sidekick-seed", "captured_at:", "captured_by:"} {
+		if strings.Contains(content, seedKey) {
+			t.Errorf("seed frontmatter key %q should be dropped; got:\n%s", seedKey, content)
+		}
 	}
 	for _, field := range []string{"**Status:** Draft", "**Date:**", "**Owner:**",
 		"**Promotes To:** —", "**Supersedes:** —", "**Related Ideas:** —"} {
@@ -228,6 +237,7 @@ func TestIdeaPromoteCLI_SameRepoBackLinksReconciled(t *testing.T) {
 	if err := os.WriteFile(featPath, []byte(featBody), 0o644); err != nil {
 		t.Fatalf("write feature: %v", err)
 	}
+	migrateTree(t, source)
 	initGitRepoForTest(t, source)
 
 	stdout, _, err := runIdeaPromoteCLI(t, source, "bar")

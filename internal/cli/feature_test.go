@@ -61,6 +61,7 @@ func setupFeatureSpec(t *testing.T, status string) string {
 		t.Fatalf("write auth/README.md: %v", err)
 	}
 
+	migrateTree(t, root)
 	withCwd(t, root)
 	return root
 }
@@ -272,6 +273,7 @@ func TestFeatureChangeStatus_NestedFeatureID(t *testing.T) {
 	if err := os.WriteFile(idxPath, []byte(idxWithCLI), 0o644); err != nil {
 		t.Fatalf("rewrite features index: %v", err)
 	}
+	migrateTree(t, root)
 
 	out, errOut, err := runFeature(t, "change-status", "cli/idea/change-status", "--to=approved")
 	if err != nil {

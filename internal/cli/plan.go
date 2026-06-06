@@ -3,11 +3,14 @@ package cli
 // Features implemented: cli/plan
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
+	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
 
@@ -21,8 +24,141 @@ func planCommand() *cobra.Command {
 	cmd.AddCommand(
 		planListCommand(),
 		planInfoCommand(),
+		planNewCommand(),
 	)
 	return cmd
+}
+
+// planNewCommand scaffolds a lint-clean flat Plan artifact at
+// spec/plans/<slug>.md per the cli/plan/new Feature.
+func planNewCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "new <slug>",
+		Short: "Scaffold a new Plan artifact",
+		Long: `Creates a lint-clean Plan at spec/plans/<slug>.md, carrying the
+artifact-frontmatter-convention frontmatter (format:/status:), the
+body-metadata header, the required sections with TODO prompts, and the
+adherence footer.
+
+A plan decomposes exactly one source: pass --feature <feature-slug> or
+--idea <idea-slug> (exactly one). A bare scaffold pulls the published
+template from the gallery; on any fetch failure the embedded template is
+used and a warning is printed to stderr.`,
+		Args: cobra.ExactArgs(1),
+		RunE: runPlanNew,
+	}
+	cmd.Flags().String("feature", "", "source Feature slug (mutually exclusive with --idea)")
+	cmd.Flags().String("idea", "", "source Idea slug (mutually exclusive with --feature)")
+	cmd.Flags().String("title", "", "plan title (defaults to title-cased slug)")
+	cmd.Flags().String("owner", "", "owner/author (defaults to $USER)")
+	cmd.Flags().Bool("force", false, "overwrite an existing plan file at that slug")
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	return cmd
+}
+
+func runPlanNew(cmd *cobra.Command, args []string) error {
+	slug := args[0]
+	if err := plan.ValidateSlug(slug); err != nil {
+		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
+	}
+
+	featureSrc, _ := cmd.Flags().GetString("feature")
+	ideaSrc, _ := cmd.Flags().GetString("idea")
+	// Exactly one of --feature / --idea (cli/plan/new#req:source-required).
+	if (featureSrc == "") == (ideaSrc == "") {
+		return exitcode.InvalidArgsError(
+			"exactly one of --feature <feature-slug> or --idea <idea-slug> is required")
+	}
+
+	title, _ := cmd.Flags().GetString("title")
+	owner, _ := cmd.Flags().GetString("owner")
+	force, _ := cmd.Flags().GetBool("force")
+	projectFlag, _ := cmd.Flags().GetString("project")
+	if owner == "" {
+		owner = os.Getenv("USER")
+	}
+
+	root, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	target := filepath.Join(root, "spec", "plans", slug+".md")
+	// Collision check BEFORE any write (cli/plan/new#req:no-clobber-default).
+	if _, statErr := os.Stat(target); statErr == nil && !force {
+		return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
+	}
+
+	// Materialize ancestor indexes before the plan file
+	// (cli/plan/new#req:ancestor-indexes-materialized). This also creates the
+	// spec/plans/ directory (via spec/plans/README.md), so the plan file's
+	// parent is guaranteed to exist before the write below.
+	if err := ensurePlanAncestorIndexes(root); err != nil {
+		return exitcode.UnexpectedErrorf("materializing ancestor indexes: %v", err)
+	}
+
+	body, err := buildPlanBody(cmd, slug, title, owner, featureSrc, ideaSrc)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("scaffolding plan: %v", err)
+	}
+	if err := os.WriteFile(target, body, 0o644); err != nil {
+		return exitcode.UnexpectedErrorf("writing %s: %v", target, err)
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)
+	return nil
+}
+
+// buildPlanBody resolves the Plan body: a bare scaffold fetches the published
+// gallery template (<base>/new/plan.md) and substitutes the known fields; on
+// any fetch failure it falls back to the embedded scaffolder (which emits the
+// same frontmatter, header, sections, and footer). The source line differs by
+// mode: --feature yields `**Source Feature:** <slug>`, --idea yields
+// `**Source:** idea:<slug>`.
+func buildPlanBody(cmd *cobra.Command, slug, title, owner, featureSrc, ideaSrc string) ([]byte, error) {
+	repl := map[string]string{
+		"<Plan Name>":   templateTitleOrSlug(title, slug),
+		"YYYY-MM-DD":    templateTodayUTC(),
+		"<your-handle>": templateOwnerOrUnknown(owner),
+	}
+	if featureSrc != "" {
+		repl["<feature-slug>"] = featureSrc
+	} else {
+		// Rewrite the whole default (feature-sourced) line into the idea form.
+		repl["**Source Feature:** <feature-slug>"] = "**Source:** idea:" + ideaSrc
+	}
+
+	return bareOrEmbedded(true, "plan", repl, cmd.ErrOrStderr(), func() ([]byte, error) {
+		return planScaffoldFn(plan.ScaffoldOptions{
+			Slug:          slug,
+			Title:         title,
+			Owner:         owner,
+			SourceFeature: featureSrc,
+			SourceIdea:    ideaSrc,
+		})
+	})
+}
+
+// ensurePlanAncestorIndexes materializes spec/README.md and spec/plans/README.md
+// when they don't already exist, using the same templates as `specscore init`.
+// Existing files are left untouched (cli/plan/new#req:ancestor-indexes-materialized).
+func ensurePlanAncestorIndexes(root string) error {
+	cfg, err := projectdef.ReadSpecConfig(root)
+	if err != nil {
+		cfg = projectdef.SpecConfig{}
+	}
+	for _, w := range []struct {
+		path    string
+		content string
+	}{
+		{"spec/README.md", specReadmeContent(cfg)},
+		{"spec/plans/README.md", plansIndexContent(cfg)},
+	} {
+		if err := writeMissingIndex(root, w.path, w.content); err != nil {
+			return fmt.Errorf("writing %s: %w", w.path, err)
+		}
+	}
+	return nil
 }
 
 // resolvePlansDir resolves the plans directory from a --project flag or CWD.

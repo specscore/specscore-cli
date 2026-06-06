@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 116
+Total rules: 119
 
 ## capability
 
@@ -91,6 +91,14 @@ Total rules: 116
 | Rule | Severity | Description |
 | --- | --- | --- |
 | feature-index-row-sync | error | Requires each feature index row to match its feature file. |
+
+## frontmatter
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| footer-format-mirror | error | Requires the adherence-footer URL to match the frontmatter format: URL; --fix derives the footer from format:. |
+| format-field | error | Requires every artifact to carry a frontmatter format: field matching its type's spec URL. |
+| status-mirror | error | Requires a status-bearing artifact's frontmatter status: to mirror its body **Status:** line, and forbids status: on status-less types. |
 
 ## grade
 

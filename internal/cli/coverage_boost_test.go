@@ -784,7 +784,7 @@ func TestLintPostMutationHook_CleanTree(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
 	// Write a features index so the tree is lint-clean.
-	featuresReadme := "# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	featuresReadme := "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(featuresReadme), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestLintPostMutationHook_WithError(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
 	// Write a features index.
-	featuresReadme := "# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	featuresReadme := "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(featuresReadme), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -3466,7 +3466,7 @@ func TestFeatureList_EmptyFeaturesDir(t *testing.T) {
 	if err := os.MkdirAll(featDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	idxBody := "# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n## Open Questions\n\nNone at this time.\n"
+	idxBody := "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(featDir, "README.md"), []byte(idxBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -5845,7 +5845,7 @@ func TestLintPostMutationHook_VerifyError(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
 	// Write a features index and spec README.
-	featuresReadme := "# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	featuresReadme := "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(featuresReadme), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -6016,7 +6016,7 @@ func TestLintPostMutationHook_LintVerifyFails(t *testing.T) {
 
 	root := setupSpecRoot(t)
 	withCwd(t, root)
-	featuresReadme := "# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	featuresReadme := "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(featuresReadme), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -61,6 +61,11 @@ func TestScaffold_BareIsLintClean(t *testing.T) {
 	if !strings.Contains(string(body), "# Idea: Demo Bare") {
 		t.Errorf("expected title `# Idea: Demo Bare`, body:\n%s", body)
 	}
+	// artifact-frontmatter-convention: an Idea scaffold carries format:/status:
+	// frontmatter (status mirrors the body **Status:** Draft).
+	if !strings.HasPrefix(string(body), "---\nformat: https://specscore.md/idea-specification\nstatus: Draft\n---") {
+		t.Errorf("idea scaffold missing frontmatter:\n%s", body)
+	}
 	root := writeSpecTree(t, body, "demo-bare")
 	if errs := ideaErrorsFor(t, root, "demo-bare"); len(errs) > 0 {
 		t.Errorf("bare scaffold failed lint: %+v", errs)
@@ -182,6 +187,11 @@ func TestScaffold_ChangeRequestProposal(t *testing.T) {
 	}
 	if strings.Contains(s, "# Idea:") {
 		t.Errorf("change-request should not have Idea prefix:\n%s", s)
+	}
+	// Proposals are a different document type and are not retrofitted here, so
+	// no Idea frontmatter is emitted.
+	if strings.HasPrefix(s, "---") {
+		t.Errorf("change-request must not carry Idea frontmatter:\n%s", s)
 	}
 }
 

@@ -24,8 +24,51 @@ func specCommand() *cobra.Command {
 	}
 	cmd.AddCommand(
 		specLintCommand(),
+		specMigrateCommand(),
 	)
 	return cmd
+}
+
+// specMigrateCommand performs the one-shot artifact-frontmatter-convention
+// backfill across the spec tree (cli/spec/migrate).
+func specMigrateCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "migrate",
+		Short: "Backfill artifact-frontmatter-convention frontmatter across the spec tree",
+		Long: `One-shot, deterministic, offline migration: writes the format:/status:
+frontmatter into every artifact that lacks it (status: only for status-bearing
+types) and aligns each adherence-footer URL to format:. Idempotent — re-running
+on an already-migrated tree changes nothing and exits 0.`,
+		Args: cobra.NoArgs,
+		RunE: runSpecMigrate,
+	}
+	cmd.Flags().StringP("project", "p", "", "path to spec repository root (default: auto-discover from CWD)")
+	return cmd
+}
+
+func runSpecMigrate(cmd *cobra.Command, _ []string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+
+	specRoot, err := resolveConfigSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	changed, err := lintMigrateFn(specRoot)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("migrating frontmatter: %v", err)
+	}
+
+	w := cmd.OutOrStdout()
+	if len(changed) == 0 {
+		_, _ = fmt.Fprintln(w, "Already migrated: no files changed.")
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "Migrated %d file(s):\n", len(changed))
+	for _, f := range changed {
+		_, _ = fmt.Fprintf(w, "  %s\n", f)
+	}
+	return nil
 }
 
 func specLintCommand() *cobra.Command {
@@ -51,32 +94,39 @@ invalid arguments, 10+ = unexpected error.`,
 	return cmd
 }
 
-func runSpecLint(cmd *cobra.Command, args []string) error {
-	projectFlag, _ := cmd.Flags().GetString("project")
-
+// resolveConfigSpecRoot resolves the `spec/` directory of the project that
+// anchors --project (or the CWD). Unlike feature/idea/task commands, the spec
+// verbs REQUIRE an anchoring specscore.yaml (cli/spec/lint#req:specscore-yaml-required)
+// — no fallback to a bare spec/features/ directory.
+func resolveConfigSpecRoot(projectFlag string) (string, error) {
 	var startDir string
 	if projectFlag != "" {
 		abs, err := filepathAbsFn(projectFlag)
 		if err != nil {
-			return exitcode.InvalidArgsErrorf("resolving --project path: %v", err)
+			return "", exitcode.InvalidArgsErrorf("resolving --project path: %v", err)
 		}
 		startDir = abs
 	} else {
 		cwd, err := osGetwdFn()
 		if err != nil {
-			return exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
+			return "", exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
 		}
 		startDir = cwd
 	}
-
-	// cli/spec/lint#req:specscore-yaml-required — lint REQUIRES an
-	// anchoring specscore.yaml. Unlike feature/idea/task commands, no
-	// fallback to a bare spec/features/ directory.
 	root, err := findRepoConfigRoot(startDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "spec"), nil
+}
+
+func runSpecLint(cmd *cobra.Command, args []string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+
+	specRoot, err := resolveConfigSpecRoot(projectFlag)
 	if err != nil {
 		return err
 	}
-	specRoot := filepath.Join(root, "spec")
 
 	rulesStr, _ := cmd.Flags().GetString("rules")
 	ignoreStr, _ := cmd.Flags().GetString("ignore")
@@ -149,7 +199,7 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// the project root (where specscore.yaml lives) so consumers can `git add`
 	// the reported paths directly. cli/spec/lint#req:fix-reports-modified-files.
 	fixedRel := res.Fixed
-	if prefix, perr := filepath.Rel(root, specRoot); perr == nil && prefix != "." {
+	if prefix, perr := filepath.Rel(filepath.Dir(specRoot), specRoot); perr == nil && prefix != "." {
 		fixedRel = make([]string, len(res.Fixed))
 		for i, f := range res.Fixed {
 			fixedRel[i] = filepath.ToSlash(filepath.Join(prefix, f))

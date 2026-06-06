@@ -218,6 +218,7 @@ func setupLintCleanProject(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(specDir, "ideas", "README.md"), []byte(ideasIdx), 0o644); err != nil {
 		t.Fatalf("write ideas/README.md: %v", err)
 	}
+	migrateTree(t, root)
 	return root
 }
 

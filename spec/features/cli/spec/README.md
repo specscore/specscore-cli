@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/feature-specification
+status: Implementing
+---
+
 # Feature: Spec
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec?op=request-change) |
@@ -19,10 +24,15 @@ A specification tree is only as useful as its structural consistency. Without a 
 | Directory | Description |
 |---|---|
 | [lint/](lint/README.md) | Validate the spec tree against structural conventions |
+| [migrate/](migrate/README.md) | One-shot frontmatter-convention backfill + graced-rule cutover |
 
 ### lint
 
 Scans the spec tree and reports violations of structural conventions (README presence, Open Questions sections, heading levels, feature references, internal links, index entries, adherence footers, Idea-specific rules). `--fix` applies autofixes for rules that support them.
+
+### migrate
+
+Performs the one-shot, deterministic per-repo migration that backfills the artifact-frontmatter-convention `format:`/`status:` frontmatter into every existing artifact and aligns each footer to `format:`, then flips the graced frontmatter rules to `error`.
 
 ## Behavior
 

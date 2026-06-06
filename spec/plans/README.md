@@ -1,3 +1,7 @@
+---
+format: https://specscore.md/plans-index-specification
+---
+
 # SpecScore CLI Plans
 
 Canonical index of all plans in this repository. Each plan lives in its own directory under `spec/plans/` and is governed by the [plan Feature](https://specscore.md/plan-specification) in the SpecScore meta-spec.

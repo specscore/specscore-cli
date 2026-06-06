@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: approved
+---
+
 # Plan: Entity and Property CLI Support
 
 **Status:** approved

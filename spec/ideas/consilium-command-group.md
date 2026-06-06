@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Specified
+---
+
 # Idea: Consilium Command Group (Deterministic Arbiter + Roster + Gate Config)
 
 **Status:** Specified

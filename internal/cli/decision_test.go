@@ -63,6 +63,7 @@ None at this time.
 	if err := os.WriteFile(filepath.Join(specDir, "decisions", "archived", "README.md"), []byte(archivedIdx), 0o644); err != nil {
 		t.Fatalf("write archived index: %v", err)
 	}
+	migrateTree(t, root)
 	return root
 }
 
@@ -620,6 +621,7 @@ None at this time.
 		t.Fatal(err)
 	}
 
+	migrateTree(t, root)
 	_, _, err = runDecision(t, "new", "new", "--supersedes", "0001-old")
 	if err != nil {
 		t.Fatalf("decision new --supersedes failed: %v", err)

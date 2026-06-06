@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Specified
+---
+
 # Idea: CLI plan Verb (list + info)
 
 **Status:** Specified

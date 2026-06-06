@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/idea-specification
+status: Implemented
+---
+
 # Idea: CLI Error Telemetry
 
 **Status:** Implemented

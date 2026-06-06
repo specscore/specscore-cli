@@ -230,6 +230,13 @@ func TestGenerateReadme(t *testing.T) {
 
 			got := GenerateReadme(tt.title, tt.status, tt.description, tt.deps)
 
+			// artifact-frontmatter-convention: the scaffold leads with the
+			// format:/status: frontmatter, status mirroring the body **Status:**.
+			wantFM := "---\nformat: https://specscore.md/feature-specification\nstatus: " + tt.status + "\n---\n\n# Feature: "
+			if !strings.HasPrefix(got, wantFM) {
+				t.Errorf("GenerateReadme() missing leading frontmatter for status %q\ngot:\n%s", tt.status, got)
+			}
+
 			for _, want := range tt.wantContain {
 				if !strings.Contains(got, want) {
 					t.Errorf("GenerateReadme() missing expected string %q\ngot:\n%s", want, got)

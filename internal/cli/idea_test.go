@@ -32,6 +32,7 @@ func setupSpecRoot(t *testing.T) string {
 	_ = os.WriteFile(filepath.Join(ideasDir, "README.md"), []byte(idx), 0o644)
 	arch := "# Archived\n\n_No archived ideas yet._\n\n## Open Questions\n\nNone at this time.\n"
 	_ = os.WriteFile(filepath.Join(ideasDir, "archived", "README.md"), []byte(arch), 0o644)
+	migrateTree(t, root)
 	return root
 }
 
@@ -331,6 +332,7 @@ func stageActiveIdea(t *testing.T, slug, status string, extraHeader string) stri
 	if err := os.WriteFile(path, []byte(patched), 0o644); err != nil {
 		t.Fatalf("write patched idea: %v", err)
 	}
+	migrateTree(t, root)
 	// Sync indexes via lint --fix so the active index reflects the
 	// patched status.
 	if _, err := lint.Lint(lint.Options{
@@ -533,6 +535,7 @@ func setupSpecRootWithFeature(t *testing.T, featureSlug string) string {
 		[]byte(featuresReadme), 0o644); err != nil {
 		t.Fatalf("write features README: %v", err)
 	}
+	migrateTree(t, root)
 	return root
 }
 

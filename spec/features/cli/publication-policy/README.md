@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/feature-specification
+status: Draft
+---
+
 # Feature: CLI Publication Policy
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/publication-policy?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/publication-policy?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/publication-policy?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/publication-policy?op=request-change) |

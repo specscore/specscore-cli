@@ -11,11 +11,21 @@ import (
 // docTypeTarget describes one document type subject to the adherence-footer
 // check. The walk function enumerates the consumer paths defined for that
 // Kind by the document types registry.
+//
+// statusBearing records the Status-concept classification mandated by
+// artifact-frontmatter-convention REQ:status-concept-by-type: status-bearing
+// types (Idea, Feature, Plan, Task, Decision) MUST mirror their body
+// `**Status:**` into frontmatter `status:`; status-less types (the *-index
+// READMEs, scenarios, properties, entities) MUST NOT. This per-type flag is the
+// single source of truth the status-mirror rule consumes. (Sidekick-seeds are
+// also status-bearing but have their own checker and are gated on the
+// seed-lifecycle CLI, so they are not represented here.)
 type docTypeTarget struct {
-	description string
-	url         string
-	severity    string
-	walk        func(specRoot string, fn func(path string, content []byte)) error
+	description   string
+	url           string
+	severity      string
+	statusBearing bool
+	walk          func(specRoot string, fn func(path string, content []byte)) error
 }
 
 // docTypeTargets mirrors the Document-Kind and Index-Kind rows in the
@@ -28,10 +38,11 @@ type docTypeTarget struct {
 // transition to "error" after a cycle of clean runs.
 var docTypeTargets = []docTypeTarget{
 	{
-		description: "feature README",
-		url:         "https://specscore.md/feature-specification",
-		severity:    "error",
-		walk:        walkFeatureReadmesExcludingIndex,
+		description:   "feature README",
+		url:           "https://specscore.md/feature-specification",
+		severity:      "error",
+		statusBearing: true,
+		walk:          walkFeatureReadmesExcludingIndex,
 	},
 	{
 		description: "features-index README",
@@ -40,10 +51,11 @@ var docTypeTargets = []docTypeTarget{
 		walk:        walkFeaturesIndex,
 	},
 	{
-		description: "Idea file",
-		url:         "https://specscore.md/idea-specification",
-		severity:    "warn",
-		walk:        walkIdeaFiles,
+		description:   "Idea file",
+		url:           "https://specscore.md/idea-specification",
+		severity:      "warn",
+		statusBearing: true,
+		walk:          walkIdeaFiles,
 	},
 	{
 		description: "plans-index README",
@@ -58,16 +70,18 @@ var docTypeTargets = []docTypeTarget{
 		walk:        walkIdeasIndex,
 	},
 	{
-		description: "Plan README",
-		url:         "https://specscore.md/plan-specification",
-		severity:    "warn",
-		walk:        walkPlanReadmes,
+		description:   "Plan README",
+		url:           "https://specscore.md/plan-specification",
+		severity:      "warn",
+		statusBearing: true,
+		walk:          walkPlanReadmes,
 	},
 	{
-		description: "Task README",
-		url:         "https://specscore.md/task-specification",
-		severity:    "warn",
-		walk:        walkTaskReadmes,
+		description:   "Task README",
+		url:           "https://specscore.md/task-specification",
+		severity:      "warn",
+		statusBearing: true,
+		walk:          walkTaskReadmes,
 	},
 	{
 		description: "Scenario file",
@@ -82,10 +96,11 @@ var docTypeTargets = []docTypeTarget{
 		walk:        walkScenariosIndexes,
 	},
 	{
-		description: "Decision file",
-		url:         "https://specscore.md/decision-specification",
-		severity:    "error",
-		walk:        walkDecisionFiles,
+		description:   "Decision file",
+		url:           "https://specscore.md/decision-specification",
+		severity:      "error",
+		statusBearing: true,
+		walk:          walkDecisionFiles,
 	},
 	{
 		description: "decisions-index README",

@@ -93,6 +93,14 @@ func TestEntityAndPropertyMetaSpecIntegration(t *testing.T) {
 	cloneDir := setupMetaSpec(t)
 	specRoot := filepath.Join(cloneDir, "spec")
 
+	// The upstream meta-spec clone is not yet frontmatter-migrated; bring it
+	// into convention conformance (format:/status: backfill) so the now-error
+	// frontmatter rules don't fire on un-migrated upstream artifacts. This
+	// emulates the per-repo `spec migrate` maintenance step.
+	if _, err := lint.Migrate(specRoot); err != nil {
+		t.Fatalf("frontmatter migrate pre-pass failed: %v", err)
+	}
+
 	// Pre-pass: run `lint --fix` once to bring the cloned tree into
 	// canonical form before the assertion. This makes the smoke-test
 	// robust against stale managed-section bodies at the upstream HEAD —
