@@ -127,9 +127,12 @@ func parseDecisionFromContent(content, relPath string, archived bool) (*parsedDe
 		sectionByName: make(map[string]decisionSection),
 	}
 
-	// Parse title
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
+	// Parse title — anchored past any leading frontmatter block
+	// (artifact-frontmatter-convention) so the committed-version comparison in
+	// the D-immutability check reads the real `# Decision:` title rather than
+	// the `---` fence. Mirrors the title scan in decision_rules.go.
+	for i := frontmatterEndIndex(lines); i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
 		if trimmed == "" {
 			continue
 		}
@@ -144,11 +147,17 @@ func parseDecisionFromContent(content, relPath string, archived bool) (*parsedDe
 		break
 	}
 
-	// Parse header fields
+	// Parse header fields (lines between title and first ## heading). When no
+	// title was found (titleLine == 0) the header is not parsed, so a stray
+	// `**Field:**` above a missing title is not mistaken for header metadata.
+	inHeader := d.titleLine > 0
 	for i := d.titleLine; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if strings.HasPrefix(trimmed, "## ") {
 			break
+		}
+		if !inHeader {
+			continue
 		}
 		if m := decisionFieldRe.FindStringSubmatch(trimmed); m != nil {
 			f := decisionField{
