@@ -15,7 +15,7 @@ status: Approved
 ## Synopsis
 
 ```
-specscore sidekick new "<one-liner>" [--captured-by <id>] [--captured-during <path>] [--trigger heuristic|explicit] [--body <markdown>] [--force] [--project <path>]
+specscore sidekick new "<one-liner>" [--slug <slug>] [--captured-by <id>] [--captured-during <path>] [--trigger heuristic|explicit] [--body <markdown>] [--force] [--project <path>]
 ```
 
 ## Problem
@@ -38,11 +38,15 @@ The trimmed one-liner MUST NOT exceed 500 characters. A longer one-liner MUST ex
 
 ### Slug derivation
 
-The slug is derived from the one-liner — never supplied directly — matching the `specstudio:sidekick` skill's algorithm so the CLI and the skill produce identical slugs for identical input.
+By default the slug is derived from the one-liner — matching the `specstudio:sidekick` skill's algorithm so the CLI and the skill produce identical slugs for identical input. A caller that owns its own slug and collision policy (e.g. the skill's `-N` never-overwrite disambiguation) MAY override the derived slug with `--slug`.
 
 #### REQ: slug-derivation
 
-The slug MUST be derived from the trimmed one-liner by: lowercasing; replacing every run of characters outside `[a-z0-9]` with a single `-`; trimming leading and trailing `-`; and, when the result exceeds 60 characters, truncating to the nearest preceding `-` boundary that yields a slug ≤ 60 characters. If derivation yields an empty slug (a one-liner with no `[a-z0-9]` characters), the command MUST exit `2` (InvalidArgs).
+When `--slug` is **not** supplied, the slug MUST be derived from the trimmed one-liner by: lowercasing; replacing every run of characters outside `[a-z0-9]` with a single `-`; trimming leading and trailing `-`; and, when the result exceeds 60 characters, truncating to the nearest preceding `-` boundary that yields a slug ≤ 60 characters. If derivation yields an empty slug (a one-liner with no `[a-z0-9]` characters), the command MUST exit `2` (InvalidArgs).
+
+#### REQ: slug-override
+
+When `--slug <slug>` is supplied, the command MUST use it verbatim as the file name and frontmatter `slug` — derivation is skipped. The override MUST be a lowercase, hyphen-separated, URL-safe identifier (no `/`) of at most 60 characters; an invalid override MUST exit `2` (InvalidArgs) naming the offending value. The one-liner is still required (it remains the H1 body), so `--slug` decouples the file identity from the H1 text.
 
 ### Scaffold content
 
@@ -77,6 +81,7 @@ When `sidekick new` writes the seed, the command MUST also materialize `spec/REA
 | Name | Required | Description |
 |---|---|---|
 | `one-liner` | Yes | Seed one-liner — becomes the H1 body and the basis for the derived slug. |
+| `--slug` | No | Override the derived slug verbatim (lowercase, hyphen-separated, URL-safe, ≤60 chars). |
 | `--captured-by` | No | Capturer identity (defaults to `user`). |
 | `--captured-during` | No | Active spec path at capture time (defaults to `null`). |
 | `--trigger` | No | `heuristic` or `explicit` (defaults to `explicit`). |
@@ -113,6 +118,12 @@ When `sidekick new` writes the seed, the command MUST also materialize `spec/REA
 **Requirements:** cli/sidekick/new#req:slug-derivation
 
 `specscore sidekick new "Add Batch Mode!"` derives the slug `add-batch-mode` and writes `spec/ideas/seeds/add-batch-mode.md`. A one-liner longer than 60 derived characters is truncated at a `-` boundary to ≤ 60 characters.
+
+### AC: slug-override-used-verbatim
+
+**Requirements:** cli/sidekick/new#req:slug-override
+
+`specscore sidekick new "Add batch mode" --slug add-batch-mode-2` writes `spec/ideas/seeds/add-batch-mode-2.md` with frontmatter `slug: add-batch-mode-2` (the H1 stays `# Add batch mode`). `specscore sidekick new "x" --slug Bad_Slug` exits `2` naming the invalid value and creates no file.
 
 ### AC: empty-one-liner-rejected
 

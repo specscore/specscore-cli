@@ -40,10 +40,12 @@ one-liner verbatim.
 The slug is DERIVED from the one-liner (a seed is a scaled-down Idea, so
 capture is quick and slug-free at the call site). The same algorithm the
 specstudio:sidekick skill uses is applied, so the CLI and the skill produce
-identical slugs for identical input.`,
+identical slugs for identical input. Pass --slug to override the derived
+slug verbatim — used by callers that own their own slug + collision policy.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSidekickNew,
 	}
+	cmd.Flags().String("slug", "", "override the derived slug (must be lowercase, hyphen-separated, URL-safe)")
 	cmd.Flags().String("captured-by", "", `capturer identity (defaults to "user")`)
 	cmd.Flags().String("captured-during", "", "active spec path at capture time (defaults to null)")
 	cmd.Flags().String("trigger", "explicit", "heuristic or explicit")
@@ -69,10 +71,22 @@ func runSidekickNew(cmd *cobra.Command, args []string) error {
 	body, _ := cmd.Flags().GetString("body")
 	force, _ := cmd.Flags().GetBool("force")
 	projectFlag, _ := cmd.Flags().GetString("project")
+	slugFlag, _ := cmd.Flags().GetString("slug")
 
-	slug, err := sidekick.DeriveSlug(oneLiner)
-	if err != nil {
-		return exitcode.InvalidArgsErrorf("cannot derive a slug from %q: %v", oneLiner, err)
+	// A --slug override is used verbatim (validated); otherwise the slug is
+	// derived from the one-liner (cli/sidekick/new#req:slug-override).
+	var slug string
+	if slugFlag != "" {
+		if err := sidekick.ValidateSlug(slugFlag); err != nil {
+			return exitcode.InvalidArgsErrorf("invalid --slug %q: %v", slugFlag, err)
+		}
+		slug = slugFlag
+	} else {
+		derived, err := sidekick.DeriveSlug(oneLiner)
+		if err != nil {
+			return exitcode.InvalidArgsErrorf("cannot derive a slug from %q: %v", oneLiner, err)
+		}
+		slug = derived
 	}
 
 	// Build (and validate) the body before touching the filesystem, so invalid

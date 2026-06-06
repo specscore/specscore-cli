@@ -34,6 +34,21 @@ func TestDeriveSlug_EmptyWhenNoSlugSafeChars(t *testing.T) {
 	}
 }
 
+func TestValidateSlug(t *testing.T) {
+	valid := []string{"a", "add-batch-mode", "add-batch-mode-2", "x1-y2", "abc123"}
+	for _, s := range valid {
+		if err := ValidateSlug(s); err != nil {
+			t.Errorf("ValidateSlug(%q) = %v, want nil", s, err)
+		}
+	}
+	invalid := []string{"", "Add-Batch", "add_batch", "add/batch", "-lead", "trail-", "a--b", strings.Repeat("a", MaxSlugChars+1)}
+	for _, s := range invalid {
+		if err := ValidateSlug(s); err == nil {
+			t.Errorf("ValidateSlug(%q) = nil, want error", s)
+		}
+	}
+}
+
 func TestDeriveSlug_TruncatesAtHyphenBoundaryUnder60(t *testing.T) {
 	in := "this is a very long one liner that should be truncated at a hyphen boundary well past sixty characters total"
 	got, err := DeriveSlug(in)
