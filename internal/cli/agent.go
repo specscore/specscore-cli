@@ -37,6 +37,21 @@ func supportedAgentNames() []string {
 	return names
 }
 
+// expandAgentArgs splits each positional argument on commas so that
+// "claude,codex" is equivalent to "claude codex". Whitespace around each
+// field is trimmed and empty fields are dropped. Verifies #ac:comma-separated-agents.
+func expandAgentArgs(args []string) []string {
+	var out []string
+	for _, a := range args {
+		for _, part := range strings.Split(a, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
 func findAgent(name string) (agentDef, bool) {
 	for _, a := range supportedAgents {
 		if a.name == name {
@@ -81,6 +96,8 @@ func runAgentSetup(cmd *cobra.Command, args []string) error {
 	allFlag, _ := cmd.Flags().GetBool("all")
 	force, _ := cmd.Flags().GetBool("force")
 	projectFlag, _ := cmd.Flags().GetString("project")
+
+	args = expandAgentArgs(args)
 
 	if allFlag && len(args) > 0 {
 		return exitcode.InvalidArgsError("--all and positional agent names are mutually exclusive")

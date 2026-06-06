@@ -36,6 +36,27 @@ func setupSpecScoreProject(t *testing.T, title string) string {
 	return root
 }
 
+func TestAgentSetup_CommaSeparatedAgents(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	// "claude,cursor" (with stray spaces and a trailing comma) must be
+	// equivalent to passing the agents as separate positional args.
+	out, _, err := runAgentCmd(t, "setup", " claude , cursor ,", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if !strings.Contains(out, "CLAUDE.md (created)") {
+		t.Errorf("missing CLAUDE.md line: %q", out)
+	}
+	if !strings.Contains(out, ".cursor/rules/specscore.mdc (created)") {
+		t.Errorf("missing cursor line: %q", out)
+	}
+	for _, rel := range []string{"CLAUDE.md", ".cursor/rules/specscore.mdc"} {
+		if _, statErr := os.Stat(filepath.Join(root, rel)); statErr != nil {
+			t.Errorf("%s not created: %v", rel, statErr)
+		}
+	}
+}
+
 func TestAgentSetup_SingleAgent(t *testing.T) {
 	root := setupSpecScoreProject(t, "My Project")
 	out, _, err := runAgentCmd(t, "setup", "claude", "--project", root)

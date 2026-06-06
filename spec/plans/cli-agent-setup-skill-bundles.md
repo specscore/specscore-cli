@@ -1,6 +1,6 @@
 # Plan: Agent Setup Skill Bundles
 
-**Status:** Approved
+**Status:** Implementing
 **Source Feature:** cli/agent/setup
 **Date:** 2026-06-06
 **Owner:** alexander.trakhimenok
