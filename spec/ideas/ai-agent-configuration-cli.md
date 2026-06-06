@@ -1,11 +1,11 @@
 ---
 format: https://specscore.md/idea-specification
-status: Implemented
+status: Specified
 ---
 
 # Idea: AI Agent Configuration CLI
 
-**Status:** Implemented
+**Status:** Specified
 **Date:** 2026-05-27
 **Owner:** alexander.trakhimenok
 **Promotes To:** cli/agent, cli/agent/setup

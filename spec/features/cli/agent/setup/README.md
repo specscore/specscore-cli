@@ -1,24 +1,26 @@
 ---
 format: https://specscore.md/feature-specification
-status: Stable
+status: Approved
 ---
 
 # Feature: Agent Setup (CLI)
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/agent/setup?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/agent/setup?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/agent/setup?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/agent/setup?op=request-change) |
 
-**Status:** Stable
-**Source Ideas:** ai-agent-configuration-cli
+**Status:** Approved
+**Source Ideas:** ai-agent-configuration-cli, agent-setup-skill-bundles
 
 ## Summary
 
-`specscore agent setup` generates agent-specific instruction/rules files for AI coding agents in a SpecScore-managed project. Each generated file teaches the agent about SpecScore conventions, the spec tree structure, key CLI commands (with the correct `--caller` flag), and (where applicable) plugin installation instructions. The command supports seven agents in its MVP: Claude Code, Codex, GitHub Copilot, Cursor, Antigravity, Pi, and OpenCode.
+`specscore agent setup` generates agent-specific instruction/rules files for AI coding agents in a SpecScore-managed project. Each generated file teaches the agent about SpecScore conventions, the spec tree structure, key CLI commands (with the correct `--caller` flag), and (where applicable) plugin installation instructions. The command supports seven agents in its MVP: Claude Code, Codex, GitHub Copilot, Cursor, Antigravity, Pi, and OpenCode. For agents that read skills from a known directory (Claude and Cursor), the command also copies SpecScore's invokable skill bundles into that directory, so agents without a skill marketplace get the same skills Claude Code installs from its plugin. Every path the command adds, modifies, or skips is reported.
 
 ## Synopsis
 
 ```
-specscore agent setup <agent-name>... [--all] [--force] [--project <path>]
+specscore agent setup <agent-name>... [--all] [--force] [--no-skills] [--project <path>]
 ```
+
+Agent names may be given as separate positional arguments (`claude codex`) or as a single comma-separated value (`claude,codex`).
 
 ## Problem
 
@@ -52,23 +54,31 @@ Each positional agent name MUST be validated against the supported set. An unrec
 
 `--all` and positional agent names are mutually exclusive. Supplying both MUST exit `2`.
 
+#### REQ: comma-separated-agent-list
+
+Agent names MAY be supplied as a single comma-separated value (`claude,codex`), as separate positional arguments (`claude codex`), or any mix (`claude,codex cursor`). The command MUST split each positional argument on commas, trim surrounding whitespace, and discard empty fields before validating each resulting name against the supported set per `agent-name-validation`. A comma-separated list is equivalent to the same names passed positionally.
+
 ### Supported agents
 
 #### REQ: supported-agents-mvp
 
-The MVP supports seven agents with the following config file mappings:
+The MVP supports seven agents with the following config file mappings. The **Skills Dir** column gives the directory into which skill bundles are copied; `—` marks agents with no known skills directory (instruction file only).
 
-| Agent | Caller ID | Config File |
-|---|---|---|
-| Claude Code | `claude` | `CLAUDE.md` |
-| GitHub Copilot | `copilot` | `.github/copilot-instructions.md` |
-| Cursor | `cursor` | `.cursor/rules/specscore.mdc` |
-| Codex (OpenAI) | `codex` | `codex.md` |
-| Antigravity (Google) | `antigravity.google` | `GEMINI.md` |
-| Pi (StackBlitz) | `pi.dev` | `AGENTS.md` |
-| OpenCode | `opencode` | `AGENTS.md` |
+| Agent | Caller ID | Config File | Skills Dir |
+|---|---|---|---|
+| Claude Code | `claude` | `CLAUDE.md` | `.claude/skills/` |
+| GitHub Copilot | `copilot` | `.github/copilot-instructions.md` | — |
+| Cursor | `cursor` | `.cursor/rules/specscore.mdc` | `.cursor/skills/` |
+| Codex (OpenAI) | `codex` | `codex.md` | — |
+| Antigravity (Google) | `antigravity.google` | `GEMINI.md` | — |
+| Pi (StackBlitz) | `pi.dev` | `AGENTS.md` | — |
+| OpenCode | `opencode` | `AGENTS.md` | — |
 
 Codex uses `codex.md` (not `AGENTS.md`) to avoid clobbering the project's existing `AGENTS.md` maintainer documentation. Pi and OpenCode both target `AGENTS.md`; when both are requested in the same run, the first writes the file and the second is skipped with an informational message.
+
+#### REQ: skills-dir-agents-mvp
+
+Only agents with a confirmed skills directory receive skill bundles: `claude` (`.claude/skills/`) and `cursor` (`.cursor/skills/`). Agents whose Skills Dir is `—` MUST receive only their instruction file; the command MUST NOT invent a skills directory for them. As other agents adopt a stable skills-directory convention, they are added to this set.
 
 ### File writing
 
@@ -106,7 +116,39 @@ The Cursor config file (`.cursor/rules/specscore.mdc`) MUST use MDC format: YAML
 
 The Claude Code config file (`CLAUDE.md`) MUST include the `ai-plugin-specscore` plugin install command (`/plugin install specscore@specscore`) so users can opt in to richer agent skill integration.
 
-### Exit codes
+### Skill bundle copying
+
+For agents with a skills directory, `agent setup` copies SpecScore's invokable skill bundles into that directory alongside writing the instruction file. This gives agents without a skill marketplace (notably Cursor) the same skills Claude Code installs from its plugin.
+
+#### REQ: skill-copy-default-on
+
+For each requested agent that has a skills directory (per `skills-dir-agents-mvp`), the command MUST copy the SpecScore skill bundles into that directory by default — no extra flag required. Agents without a skills directory are unaffected.
+
+#### REQ: no-skills-flag
+
+When `--no-skills` is supplied, the command MUST NOT copy any skill bundles for any agent; it writes only the instruction files. With `--no-skills`, the command's file output is identical to its behavior before skill copying existed.
+
+#### REQ: skill-bundle-source
+
+The skill bundles copied are obtained the same way new-artefact templates are obtained (the gallery-fetch path): fetched from the SpecScore gallery when reachable, falling back to a binary-embedded snapshot when offline. The command MUST NOT depend on the Claude-only plugin marketplace to obtain skills. If neither the gallery nor the embedded fallback can provide the bundle, the command MUST surface the failure as exit `10` and MUST NOT write a partial skill directory.
+
+#### REQ: skill-copy-raw-markdown
+
+Skill bundles MUST be copied as raw skill files (markdown and any sibling assets) into a per-skill subdirectory of the agent's skills directory. The command MUST NOT transpile, reformat, or rewrite skill content per agent in this MVP — bytes are copied as-is.
+
+#### REQ: skill-copy-idempotent
+
+Skill copying follows the same idempotency rule as instruction files: an existing skill file MUST be preserved byte-identical and skipped unless `--force` is supplied. `--force` overwrites existing skill files with the freshly sourced content. Claude is copied to like any other skills-directory agent — the skip-existing rule, not a marketplace check, prevents clobbering a plugin-managed install.
+
+#### REQ: skills-parent-dirs-created
+
+The agent's skills directory and per-skill subdirectories MUST be created automatically when absent, consistent with `parent-dirs-created`.
+
+### Change reporting
+
+#### REQ: per-path-change-report
+
+The command MUST report every path it touches, one line per path, each prefixed with an explicit action: `added <path>` for a newly written file, `modified <path>` for a path overwritten under `--force`, and `skipped <path>` for an existing path left untouched (the skip line MUST mention `--force`). The report covers both instruction files and copied skill files. When the command makes no changes (everything skipped), it still prints the skip lines and exits `0`.
 
 | Code | Condition |
 |---|---|
@@ -114,7 +156,7 @@ The Claude Code config file (`CLAUDE.md`) MUST include the `ai-plugin-specscore`
 | `2` | No agents specified, unknown agent name, `--all` combined with positional args, or invalid `--project` path |
 | `3` | Project root not found (no `specscore.yaml` or `spec/features/` in any ancestor) |
 | `6` | Project root found but `specscore.yaml` absent (e.g., found via `spec/features/` fallback) |
-| `10` | Unexpected I/O failure |
+| `10` | Unexpected I/O failure, or skill bundles unavailable from both the gallery and the embedded fallback |
 
 #### REQ: exit-code-discipline
 
@@ -125,10 +167,11 @@ The command MUST exit with one of the documented codes above and no other code. 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | bool | `false` | Configure all supported agents |
-| `--force` | bool | `false` | Overwrite existing config files |
+| `--force` | bool | `false` | Overwrite existing config files and skill files |
+| `--no-skills` | bool | `false` | Write instruction files only; do not copy skill bundles |
 | `--project` | string | cwd | Project root directory (autodetected from current directory if omitted) |
 
-Positional arguments: one or more agent names from the supported set.
+Positional arguments: one or more agent names from the supported set, given separately (`claude codex`) or comma-separated (`claude,codex`).
 
 ## Interaction with Other Features
 
@@ -237,11 +280,78 @@ Positional arguments: one or more agent names from the supported set.
 **When** `specscore agent setup claude --project <root>` runs
 **Then** the generated `CLAUDE.md` contains the project root's directory basename as the title; the command exits `0`.
 
+### AC: comma-separated-agents
+
+**Requirements:** cli/agent/setup#req:comma-separated-agent-list
+
+**Given** an initialized SpecScore project
+**When** `specscore agent setup claude,cursor --project <root>` runs
+**Then** both `CLAUDE.md` and `.cursor/rules/specscore.mdc` are created exactly as if `claude cursor` had been passed as separate arguments; the command exits `0`.
+
+### AC: skill-copy-cursor-default
+
+**Requirements:** cli/agent/setup#req:skill-copy-default-on, cli/agent/setup#req:skills-dir-agents-mvp, cli/agent/setup#req:skill-copy-raw-markdown, cli/agent/setup#req:skills-parent-dirs-created
+
+**Given** an initialized SpecScore project with no `.cursor/` directory
+**When** `specscore agent setup cursor --project <root>` runs
+**Then** `.cursor/skills/` is created and populated with per-skill subdirectories whose skill files match the source bundles byte-for-byte; the command exits `0`.
+
+### AC: skill-copy-claude-always
+
+**Requirements:** cli/agent/setup#req:skill-copy-idempotent
+
+**Given** an initialized SpecScore project
+**When** `specscore agent setup claude --project <root>` runs
+**Then** `.claude/skills/` is created and populated with the SpecScore skill bundles regardless of whether the `ai-plugin-specscore` marketplace plugin is installed; the command exits `0`.
+
+### AC: no-skills-suppresses-copy
+
+**Requirements:** cli/agent/setup#req:no-skills-flag
+
+**Given** an initialized SpecScore project
+**When** `specscore agent setup cursor --no-skills --project <root>` runs
+**Then** `.cursor/rules/specscore.mdc` is created but no `.cursor/skills/` directory is created; the command exits `0`.
+
+### AC: non-skilldir-agent-instruction-only
+
+**Requirements:** cli/agent/setup#req:skills-dir-agents-mvp
+
+**Given** an initialized SpecScore project
+**When** `specscore agent setup codex --project <root>` runs
+**Then** `codex.md` is created and no skills directory is created for Codex; the command exits `0`.
+
+### AC: skill-copy-skips-existing
+
+**Requirements:** cli/agent/setup#req:skill-copy-idempotent
+
+**Given** an initialized SpecScore project where a skill file under `.cursor/skills/` already exists with `custom content`
+**When** `specscore agent setup cursor --project <root>` runs without `--force`
+**Then** that skill file is preserved byte-identical; stdout contains a skip line mentioning `--force`; the command exits `0`.
+
+### AC: change-report-output
+
+**Requirements:** cli/agent/setup#req:per-path-change-report
+
+**Given** an initialized SpecScore project with no existing agent files
+**When** `specscore agent setup cursor --project <root>` runs
+**Then** stdout contains an `added` line for `.cursor/rules/specscore.mdc` and an `added` line for each copied skill file; the command exits `0`.
+
+### AC: skill-source-offline-fallback
+
+**Requirements:** cli/agent/setup#req:skill-bundle-source
+
+**Given** an initialized SpecScore project with the SpecScore gallery unreachable
+**When** `specscore agent setup cursor --project <root>` runs
+**Then** skill bundles are copied from the binary-embedded fallback snapshot, `.cursor/skills/` is populated, and the command exits `0`.
+
 ## Open Questions
 
 - Should `agent setup` also generate `.gitignore` entries for agent-specific files that users might not want tracked (e.g., `.cursor/`)? Some teams track these, others don't.
 - Should a future `agent remove <name>` verb be added to clean up generated files?
 - Should the command support `--dry-run` to preview which files would be created without writing them?
+- Which agents beyond Claude and Cursor have a stable skills-directory convention worth adding to `skills-dir-agents-mvp` (Codex, Copilot, Antigravity, Pi, OpenCode)?
+- Should copied skill bundles eventually be transpiled per agent (e.g., Cursor-native skill/command format) rather than copied as raw markdown?
+- How is the copied skill-bundle set versioned relative to the CLI release, and should the embedded fallback snapshot be pinned per release?
 
 ---
 *This document follows the https://specscore.md/feature-specification*
