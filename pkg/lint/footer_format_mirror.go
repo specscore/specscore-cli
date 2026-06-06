@@ -51,7 +51,7 @@ func (c *footerFormatMirrorChecker) check(specRoot string) ([]Violation, error) 
 				Rule:     "footer-format-mirror",
 				Message: fmt.Sprintf(
 					"adherence-footer URL %q on %s does not match the canonical frontmatter `format: %s`",
-					footer, target.description, format),
+					footer, target.description, format) + migrateHint,
 			})
 		})
 		if err != nil {
