@@ -87,8 +87,26 @@ func TestAgentSetup_NonSkillsDirAgentInstructionOnly(t *testing.T) {
 func stubSkillBundle(t *testing.T, files ...skillFile) {
 	t.Helper()
 	old := fetchSkillBundleFn
-	fetchSkillBundleFn = func() ([]skillFile, error) { return files, nil }
+	fetchSkillBundleFn = func(string) ([]skillFile, error) { return files, nil }
 	t.Cleanup(func() { fetchSkillBundleFn = old })
+}
+
+func TestAgentSetup_RefFlagThreaded(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	var gotRef string
+	old := fetchSkillBundleFn
+	fetchSkillBundleFn = func(ref string) ([]skillFile, error) {
+		gotRef = ref
+		return nil, nil
+	}
+	t.Cleanup(func() { fetchSkillBundleFn = old })
+
+	if _, _, err := runAgentCmd(t, "setup", "cursor", "--ref", "v1.2.3", "--project", root); err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if gotRef != "v1.2.3" {
+		t.Errorf("ref not threaded to fetch: got %q want v1.2.3", gotRef)
+	}
 }
 
 func TestAgentSetup_SkillCopyCursorDefault(t *testing.T) {
@@ -180,7 +198,7 @@ func TestAgentSetup_ChangeReportOutput(t *testing.T) {
 func TestAgentSetup_SkillSourceOfflineFails(t *testing.T) {
 	root := setupSpecScoreProject(t, "")
 	old := fetchSkillBundleFn
-	fetchSkillBundleFn = func() ([]skillFile, error) {
+	fetchSkillBundleFn = func(string) ([]skillFile, error) {
 		return nil, errors.New("github unreachable: codeload.github.com")
 	}
 	t.Cleanup(func() { fetchSkillBundleFn = old })

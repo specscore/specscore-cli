@@ -31,9 +31,18 @@ var skillsFetchTimeout = 30 * time.Second
 // so tests can swap it.
 var skillsHTTPClient = &http.Client{}
 
-// marketplaceRef is the git ref the CLI pins when downloading manifests and
-// plugin archives.
-const marketplaceRef = "main"
+// resolveMarketplaceRef resolves the git ref used to download the marketplace
+// manifest and plugin tarballs: the flag value wins, then the
+// SPECSCORE_MARKETPLACE_REF environment variable, then "main".
+func resolveMarketplaceRef(flagRef string) string {
+	if r := strings.TrimSpace(flagRef); r != "" {
+		return r
+	}
+	if r := strings.TrimSpace(os.Getenv("SPECSCORE_MARKETPLACE_REF")); r != "" {
+		return r
+	}
+	return "main"
+}
 
 // marketplaceBaseURL is the raw base serving the marketplace manifest.
 // Override via SPECSCORE_MARKETPLACE_BASE_URL (tests / self-hosted mirrors).
@@ -89,12 +98,12 @@ func httpGetBytes(ctx context.Context, url string) ([]byte, error) {
 // plugin's tarball, extracting every file under skills/. Returns the merged set
 // keyed by path relative to skills/ (first plugin wins on a path collision). Any
 // failure returns an error and no partial bundle.
-func fetchSkillBundle() ([]skillFile, error) {
+func fetchSkillBundle(ref string) ([]skillFile, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), skillsFetchTimeout)
 	defer cancel()
 
 	mURL := strings.TrimRight(marketplaceBaseURL(), "/") +
-		"/specscore/ai-marketplace/" + marketplaceRef + "/.claude-plugin/marketplace.json"
+		"/specscore/ai-marketplace/" + ref + "/.claude-plugin/marketplace.json"
 	raw, err := httpGetBytes(ctx, mURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetching marketplace manifest: %w", err)
@@ -111,7 +120,7 @@ func fetchSkillBundle() ([]skillFile, error) {
 		if repo == "" {
 			continue
 		}
-		files, err := fetchPluginSkills(ctx, repo)
+		files, err := fetchPluginSkills(ctx, repo, ref)
 		if err != nil {
 			return nil, fmt.Errorf("fetching skills for %s: %w", repo, err)
 		}
@@ -126,8 +135,8 @@ func fetchSkillBundle() ([]skillFile, error) {
 	return bundle, nil
 }
 
-func fetchPluginSkills(ctx context.Context, repo string) ([]skillFile, error) {
-	url := strings.TrimRight(pluginArchiveBaseURL(), "/") + "/" + repo + "/tar.gz/" + marketplaceRef
+func fetchPluginSkills(ctx context.Context, repo, ref string) ([]skillFile, error) {
+	url := strings.TrimRight(pluginArchiveBaseURL(), "/") + "/" + repo + "/tar.gz/" + ref
 	raw, err := httpGetBytes(ctx, url)
 	if err != nil {
 		return nil, err

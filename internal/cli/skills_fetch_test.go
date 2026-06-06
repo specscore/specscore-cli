@@ -95,7 +95,7 @@ func TestFetchSkillBundle_HappyPath(t *testing.T) {
 		}
 	})
 
-	bundle, err := fetchSkillBundle()
+	bundle, err := fetchSkillBundle("main")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestFetchSkillBundle_DedupAndEmptyRepo(t *testing.T) {
 		}
 	})
 
-	bundle, err := fetchSkillBundle()
+	bundle, err := fetchSkillBundle("main")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestFetchSkillBundle_MarketplaceNotFound(t *testing.T) {
 	startSkillsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
-	if _, err := fetchSkillBundle(); err == nil || !strings.Contains(err.Error(), "marketplace manifest") {
+	if _, err := fetchSkillBundle("main"); err == nil || !strings.Contains(err.Error(), "marketplace manifest") {
 		t.Errorf("expected marketplace manifest error, got %v", err)
 	}
 }
@@ -149,7 +149,7 @@ func TestFetchSkillBundle_MarketplaceInvalidJSON(t *testing.T) {
 	startSkillsServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("not json"))
 	})
-	if _, err := fetchSkillBundle(); err == nil || !strings.Contains(err.Error(), "parsing marketplace") {
+	if _, err := fetchSkillBundle("main"); err == nil || !strings.Contains(err.Error(), "parsing marketplace") {
 		t.Errorf("expected parse error, got %v", err)
 	}
 }
@@ -162,7 +162,7 @@ func TestFetchSkillBundle_PluginTarballNotFound(t *testing.T) {
 		}
 		http.NotFound(w, r)
 	})
-	if _, err := fetchSkillBundle(); err == nil || !strings.Contains(err.Error(), "fetching skills for test/plugin") {
+	if _, err := fetchSkillBundle("main"); err == nil || !strings.Contains(err.Error(), "fetching skills for test/plugin") {
 		t.Errorf("expected plugin fetch error, got %v", err)
 	}
 }
@@ -175,7 +175,7 @@ func TestFetchSkillBundle_BadGzip(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("this is not gzip"))
 	})
-	if _, err := fetchSkillBundle(); err == nil {
+	if _, err := fetchSkillBundle("main"); err == nil {
 		t.Error("expected gzip error")
 	}
 }
@@ -183,7 +183,7 @@ func TestFetchSkillBundle_BadGzip(t *testing.T) {
 func TestHTTPGetBytes_NewRequestError(t *testing.T) {
 	// A control character in the URL makes http.NewRequestWithContext fail.
 	t.Setenv("SPECSCORE_MARKETPLACE_BASE_URL", "http://example.com/\x7f")
-	if _, err := fetchSkillBundle(); err == nil {
+	if _, err := fetchSkillBundle("main"); err == nil {
 		t.Error("expected NewRequest error")
 	}
 }
@@ -193,7 +193,7 @@ func TestHTTPGetBytes_DoError(t *testing.T) {
 	t.Cleanup(func() { skillsFetchTimeout = old })
 	// Port 1 on loopback refuses immediately — exercises the client.Do error path.
 	t.Setenv("SPECSCORE_MARKETPLACE_BASE_URL", "http://127.0.0.1:1")
-	if _, err := fetchSkillBundle(); err == nil {
+	if _, err := fetchSkillBundle("main"); err == nil {
 		t.Error("expected Do error")
 	}
 }
@@ -204,7 +204,7 @@ func TestHTTPGetBytes_ReadAllError(t *testing.T) {
 		w.Header().Set("Content-Length", "100")
 		_, _ = w.Write([]byte("short"))
 	})
-	if _, err := fetchSkillBundle(); err == nil {
+	if _, err := fetchSkillBundle("main"); err == nil {
 		t.Error("expected ReadAll error")
 	}
 }
@@ -250,6 +250,53 @@ func TestStripSkillsPrefix(t *testing.T) {
 		if got := stripSkillsPrefix(in); got != want {
 			t.Errorf("stripSkillsPrefix(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestResolveMarketplaceRef(t *testing.T) {
+	t.Setenv("SPECSCORE_MARKETPLACE_REF", "from-env")
+	if got := resolveMarketplaceRef("from-flag"); got != "from-flag" {
+		t.Errorf("flag should win: got %q", got)
+	}
+	if got := resolveMarketplaceRef(" "); got != "from-env" {
+		t.Errorf("blank flag should fall back to env: got %q", got)
+	}
+	t.Setenv("SPECSCORE_MARKETPLACE_REF", "")
+	if got := resolveMarketplaceRef(""); got != "main" {
+		t.Errorf("default should be main: got %q", got)
+	}
+}
+
+func TestFetchSkillBundle_RefThreadedIntoURLs(t *testing.T) {
+	tarball := gzTar(t, "plugin-main", []tentry{
+		{"skills/foo/SKILL.md", tar.TypeReg, "foo"},
+	})
+	var sawManifestRef, sawArchiveRef bool
+	startSkillsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "marketplace.json"):
+			if strings.Contains(r.URL.Path, "/v9.9.9/") {
+				sawManifestRef = true
+			}
+			_, _ = w.Write(marketplaceJSON(t, "test/plugin"))
+		case strings.Contains(r.URL.Path, "/tar.gz/"):
+			if strings.HasSuffix(r.URL.Path, "/tar.gz/v9.9.9") {
+				sawArchiveRef = true
+			}
+			_, _ = w.Write(tarball)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	if _, err := fetchSkillBundle("v9.9.9"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sawManifestRef {
+		t.Error("ref not used in marketplace manifest URL")
+	}
+	if !sawArchiveRef {
+		t.Error("ref not used in plugin archive URL")
 	}
 }
 

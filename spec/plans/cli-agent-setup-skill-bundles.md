@@ -52,6 +52,12 @@ Add the `--no-skills` boolean flag that, when set, suppresses all skill copying 
 
 Report every touched path on its own line, prefixed `added`, `modified` (overwrite under `--force`), or `skipped` (existing path, message mentions `--force`). The report spans both instruction files and copied skill files, and prints even when every path is skipped.
 
+### Task 7: Make the marketplace ref overridable via --ref / SPECSCORE_MARKETPLACE_REF
+
+**Verifies:** cli/agent/setup#ac:ref-override-precedence
+
+Replace the hardcoded `main` ref with a resolved value: the `--ref` flag wins, else the `SPECSCORE_MARKETPLACE_REF` env var, else `main`. Thread the resolved ref through the marketplace-manifest and plugin-tarball downloads so callers can pin a reproducible tag or commit.
+
 ## Deferred AC Coverage
 
 - cli/agent/setup#ac:single-agent-claude — Already implemented and Stable in the shipped instruction-file behavior; this Plan scopes only the skill-bundle/CSV increment.

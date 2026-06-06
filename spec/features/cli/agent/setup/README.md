@@ -17,7 +17,7 @@ status: Stable
 ## Synopsis
 
 ```
-specscore agent setup <agent-name>... [--all] [--force] [--no-skills] [--project <path>]
+specscore agent setup <agent-name>... [--all] [--force] [--no-skills] [--ref <ref>] [--project <path>]
 ```
 
 Agent names may be given as separate positional arguments (`claude codex`) or as a single comma-separated value (`claude,codex`).
@@ -132,6 +132,10 @@ When `--no-skills` is supplied, the command MUST NOT copy any skill bundles for 
 
 The skill bundles are downloaded from GitHub via the SpecScore marketplace registry, in three steps: (1) fetch the marketplace manifest (`specscore/ai-marketplace` → `.claude-plugin/marketplace.json`); (2) for each referenced plugin, fetch that plugin repo's manifest; (3) download the skill files the plugin manifests enumerate. The marketplace base location is overridable via an environment variable for testing and self-hosted mirrors, defaulting to the public GitHub source. There is no binary-embedded fallback: when GitHub is unreachable, or any manifest or skill file cannot be fetched, the command MUST still write the instruction files, report a clear error for the skill-copy step that names the unreachable source, exit `10`, and MUST NOT leave a partial skill directory behind.
 
+#### REQ: marketplace-ref-override
+
+The git ref used to download the marketplace manifest and every plugin tarball defaults to `main`. It is overridable so callers can pin a reproducible tag or commit. The resolved ref is, in precedence order: the `--ref` flag value when non-empty; otherwise the `SPECSCORE_MARKETPLACE_REF` environment variable when set and non-empty; otherwise `main`. The same resolved ref is applied to both the marketplace repository and every plugin repository fetched in the run.
+
 #### REQ: skill-copy-raw-markdown
 
 Skill bundles MUST be copied as raw skill files (markdown and any sibling assets) into a per-skill subdirectory of the agent's skills directory. The command MUST NOT transpile, reformat, or rewrite skill content per agent in this MVP — bytes are copied as-is.
@@ -169,6 +173,7 @@ The command MUST exit with one of the documented codes above and no other code. 
 | `--all` | bool | `false` | Configure all supported agents |
 | `--force` | bool | `false` | Overwrite existing config files and skill files |
 | `--no-skills` | bool | `false` | Write instruction files only; do not copy skill bundles |
+| `--ref` | string | `main` | Git ref (branch/tag/commit) to download skills from; falls back to `SPECSCORE_MARKETPLACE_REF`, then `main` |
 | `--project` | string | cwd | Project root directory (autodetected from current directory if omitted) |
 
 Positional arguments: one or more agent names from the supported set, given separately (`claude codex`) or comma-separated (`claude,codex`).
@@ -344,6 +349,14 @@ Positional arguments: one or more agent names from the supported set, given sepa
 **When** `specscore agent setup cursor --project <root>` runs
 **Then** `.cursor/rules/specscore.mdc` is still written, the skill-copy step reports an error naming the unreachable source, no partial `.cursor/skills/` content is left behind, and the command exits `10`.
 
+### AC: ref-override-precedence
+
+**Requirements:** cli/agent/setup#req:marketplace-ref-override
+
+**Given** the `SPECSCORE_MARKETPLACE_REF` environment variable is set to `from-env`
+**When** the marketplace ref is resolved with `--ref env-loses-to-flag` supplied, then again with no `--ref`, then again with neither the flag nor the env set
+**Then** the resolved ref is `env-loses-to-flag` (flag wins), then `from-env` (env used), then `main` (default).
+
 ## Open Questions
 
 - Should `agent setup` also generate `.gitignore` entries for agent-specific files that users might not want tracked (e.g., `.cursor/`)? Some teams track these, others don't.
@@ -351,7 +364,7 @@ Positional arguments: one or more agent names from the supported set, given sepa
 - Should the command support `--dry-run` to preview which files would be created without writing them?
 - Which agents beyond Claude and Cursor have a stable skills-directory convention worth adding to `skills-dir-agents-mvp` (Codex, Copilot, Antigravity, Pi, OpenCode)?
 - Should copied skill bundles eventually be transpiled per agent (e.g., Cursor-native skill/command format) rather than copied as raw markdown?
-- How is the copied skill-bundle set versioned relative to the CLI release, and should the embedded fallback snapshot be pinned per release?
+- A single `--ref` is applied to both the marketplace repo and every plugin repo; should plugins be pinnable to independent refs (e.g. resolved from the marketplace manifest) when their tags diverge?
 
 ---
 *This document follows the https://specscore.md/feature-specification*
