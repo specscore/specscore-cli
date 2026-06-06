@@ -16,17 +16,21 @@ var osMkdirAllFn = os.MkdirAll
 type agentDef struct {
 	name    string
 	relPath string
-	render  func(projectTitle string) string
+	// skillsDir is the relative directory into which skill bundles are copied.
+	// Empty means the agent has no known skills directory (instruction file only).
+	// Verifies #ac:skills-dir-agents-mvp, #ac:non-skilldir-agent-instruction-only.
+	skillsDir string
+	render    func(projectTitle string) string
 }
 
 var supportedAgents = []agentDef{
-	{"antigravity.google", "GEMINI.md", antigravityTemplate},
-	{"claude", "CLAUDE.md", claudeTemplate},
-	{"codex", "codex.md", codexTemplate},
-	{"copilot", ".github/copilot-instructions.md", copilotTemplate},
-	{"cursor", ".cursor/rules/specscore.mdc", cursorTemplate},
-	{"opencode", "AGENTS.md", opencodeTemplate},
-	{"pi.dev", "AGENTS.md", piTemplate},
+	{"antigravity.google", "GEMINI.md", "", antigravityTemplate},
+	{"claude", "CLAUDE.md", ".claude/skills", claudeTemplate},
+	{"codex", "codex.md", "", codexTemplate},
+	{"copilot", ".github/copilot-instructions.md", "", copilotTemplate},
+	{"cursor", ".cursor/rules/specscore.mdc", ".cursor/skills", cursorTemplate},
+	{"opencode", "AGENTS.md", "", opencodeTemplate},
+	{"pi.dev", "AGENTS.md", "", piTemplate},
 }
 
 func supportedAgentNames() []string {

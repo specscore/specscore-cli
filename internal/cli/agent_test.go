@@ -57,6 +57,33 @@ func TestAgentSetup_CommaSeparatedAgents(t *testing.T) {
 	}
 }
 
+func TestAgentSkillsDirRegistry(t *testing.T) {
+	// Only claude and cursor have a skills directory in the MVP.
+	want := map[string]string{
+		"claude": ".claude/skills",
+		"cursor": ".cursor/skills",
+	}
+	for _, a := range supportedAgents {
+		if got := a.skillsDir; got != want[a.name] {
+			t.Errorf("agent %q skillsDir = %q, want %q", a.name, got, want[a.name])
+		}
+	}
+}
+
+func TestAgentSetup_NonSkillsDirAgentInstructionOnly(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	if _, _, err := runAgentCmd(t, "setup", "codex", "--project", root); err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "codex.md")); statErr != nil {
+		t.Errorf("codex.md not created: %v", statErr)
+	}
+	// Codex has no skills directory — none must be created for it.
+	if _, statErr := os.Stat(filepath.Join(root, ".codex", "skills")); statErr == nil {
+		t.Error("no skills directory should be created for codex")
+	}
+}
+
 func TestAgentSetup_SingleAgent(t *testing.T) {
 	root := setupSpecScoreProject(t, "My Project")
 	out, _, err := runAgentCmd(t, "setup", "claude", "--project", root)
