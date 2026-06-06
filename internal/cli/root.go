@@ -49,6 +49,7 @@ func Run(args []string) error {
 		specCommand(),
 		taskCommand(),
 		ideaCommand(),
+		sidekickCommand(),
 		decisionCommand(),
 		issueCommand(),
 		proposalCommand(),
