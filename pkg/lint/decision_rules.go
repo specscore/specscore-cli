@@ -105,94 +105,21 @@ func parseDecisionFile(path, relPath string, archived bool) (*parsedDecision, er
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(string(data), "\n")
-
-	d := &parsedDecision{
-		path:          path,
-		relPath:       relPath,
-		archived:      archived,
-		lines:         lines,
-		fieldByName:   make(map[string]decisionField),
-		sectionByName: make(map[string]decisionSection),
+	// Single source of truth for decision title/header/section parsing —
+	// shared with the D-immutability committed-version comparison so a fix to
+	// the parser (e.g. leading-frontmatter tolerance) covers both call sites.
+	d, err := parseDecisionFromContentFn(string(data), relPath, archived)
+	if err != nil {
+		return nil, err
 	}
-
-	// Parse filename
+	// Filename-derived fields are only meaningful for an on-disk file (not the
+	// git-show'd content the immutability check parses).
+	d.path = path
 	base := filepath.Base(path)
 	if m := decisionFilenameRe.FindStringSubmatch(base); m != nil {
 		d.number, _ = strconv.Atoi(m[1])
 		d.slug = strings.TrimSuffix(base, ".md")
 	}
-
-	// Parse title — anchored past any leading frontmatter block
-	// (artifact-frontmatter-convention) so a Decision carrying format:/status:
-	// frontmatter still resolves its `# Decision:` title.
-	for i := frontmatterEndIndex(lines); i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" {
-			continue
-		}
-		if m := decisionTitleRe.FindStringSubmatch(trimmed); m != nil {
-			d.title = strings.TrimSpace(m[1])
-			d.titleLine = i + 1
-			d.titleOK = true
-			d.hasTitleTag = true
-		} else if strings.HasPrefix(trimmed, "# ") {
-			d.titleLine = i + 1
-			d.hasTitleTag = false
-		}
-		break
-	}
-
-	// Parse header fields (lines between title and first ## heading)
-	inHeader := d.titleLine > 0
-	for i := d.titleLine; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "## ") {
-			break
-		}
-		if !inHeader {
-			continue
-		}
-		if m := decisionFieldRe.FindStringSubmatch(trimmed); m != nil {
-			f := decisionField{
-				Name:  m[1],
-				Value: strings.TrimSpace(m[2]),
-				Line:  i + 1,
-			}
-			d.fields = append(d.fields, f)
-			d.fieldByName[f.Name] = f
-		}
-	}
-
-	// Parse sections
-	var currentSection *decisionSection
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## ") && !strings.HasPrefix(trimmed, "### ") {
-			if currentSection != nil {
-				s := *currentSection
-				d.sections = append(d.sections, s)
-				d.sectionByName[s.Title] = s
-			}
-			title := strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
-			currentSection = &decisionSection{
-				Title:     title,
-				StartLine: i + 1,
-			}
-		} else if strings.HasPrefix(trimmed, "### ") && currentSection != nil {
-			h3 := strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))
-			currentSection.SubH3s = append(currentSection.SubH3s, h3)
-		}
-		if currentSection != nil && !strings.HasPrefix(trimmed, "## ") {
-			currentSection.Body += line + "\n"
-		}
-	}
-	if currentSection != nil {
-		s := *currentSection
-		d.sections = append(d.sections, s)
-		d.sectionByName[s.Title] = s
-	}
-
 	return d, nil
 }
 

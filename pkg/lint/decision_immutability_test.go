@@ -81,6 +81,26 @@ func TestImmutabilityTitleModified(t *testing.T) {
 	}
 }
 
+// Regression: a frontmatter-carrying Accepted decision (post artifact-
+// frontmatter-convention migration) must not falsely trip immutability. The
+// committed version read via `git show HEAD:` also carries the frontmatter, so
+// the shared parser must skip the leading `---` block to read the real title —
+// otherwise it reads "" and reports a spurious "title changed from ”".
+func TestImmutabilityFrontmatterTolerated(t *testing.T) {
+	fm := "---\nformat: https://specscore.md/decision-specification\nstatus: Accepted\n---\n\n" + acceptedDecisionContent()
+	root := setupGitRepo(t, map[string]string{
+		"decisions/0001-test.md": fm,
+	})
+	// Committed == working tree (both carry the frontmatter); nothing changed.
+	vs, err := checkDecisionImmutability(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasDecisionViolation(vs, "D-immutability-once-accepted", "title changed") {
+		t.Errorf("frontmatter-carrying committed decision falsely flagged: %+v", vs)
+	}
+}
+
 func TestImmutabilityFieldModified(t *testing.T) {
 	original := acceptedDecisionContent()
 
