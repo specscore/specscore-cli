@@ -100,6 +100,30 @@ func TestSidekickNew_SlugDerived(t *testing.T) {
 	}
 }
 
+// AC: slug-override-used-verbatim
+func TestSidekickNew_SlugOverride(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+
+	// Valid override: file + frontmatter slug use the override; H1 keeps the one-liner.
+	if _, _, err := runSidekick(t, "new", "Add batch mode", "--slug", "add-batch-mode-2"); err != nil {
+		t.Fatalf("sidekick new --slug: %v", err)
+	}
+	s := readSeed(t, root, "add-batch-mode-2")
+	if !strings.Contains(s, "slug: add-batch-mode-2\n") || !strings.Contains(s, "# Add batch mode\n") {
+		t.Errorf("override seed content wrong:\n%s", s)
+	}
+
+	// Invalid override exits 2 and writes nothing.
+	_, _, err := runSidekick(t, "new", "x", "--slug", "Bad_Slug")
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("invalid --slug: exit = %d, want 2", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "ideas", "seeds", "Bad_Slug.md")); statErr == nil {
+		t.Error("no file should be created on invalid --slug")
+	}
+}
+
 // AC: empty-one-liner-rejected
 func TestSidekickNew_EmptyOrUnslugableRejected(t *testing.T) {
 	root := setupSpecRoot(t)

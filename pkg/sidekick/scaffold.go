@@ -32,6 +32,24 @@ var TriggerValues = []string{"heuristic", "explicit"}
 
 var nonSlugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
+var slugRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// ValidateSlug returns nil when slug is a lowercase, hyphen-separated, URL-safe
+// identifier with no `/` — the same shape DeriveSlug produces. It is used to
+// validate a caller-supplied `--slug` override (cli/sidekick/new#req:slug-override).
+func ValidateSlug(slug string) error {
+	if slug == "" {
+		return fmt.Errorf("slug must not be empty")
+	}
+	if len(slug) > MaxSlugChars {
+		return fmt.Errorf("slug too long (%d chars); max is %d", len(slug), MaxSlugChars)
+	}
+	if !slugRe.MatchString(slug) {
+		return fmt.Errorf("slug %q must be lowercase, hyphen-separated, and URL-safe (no '/')", slug)
+	}
+	return nil
+}
+
 // DeriveSlug turns a one-liner into a lowercase, hyphen-separated, URL-safe
 // slug, mirroring the specstudio:sidekick skill's algorithm so the CLI and
 // the skill produce identical slugs for identical input
