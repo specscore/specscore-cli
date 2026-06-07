@@ -11,12 +11,12 @@ status: Approved
 
 ## Summary
 
-`specscore plan new <slug>` scaffolds a lint-clean Plan artifact at `spec/plans/<slug>.md`. The scaffold emits the plan's body-metadata header block, the required sections (`## Summary`, `## Approach`, `## Tasks`, `## Open Questions`) with HTML-comment prompts, the adherence footer, AND the frontmatter `format:` / `status:` fields mandated by the [artifact-frontmatter-convention](../../../../../../specscore/spec/features/artifact-frontmatter-convention/README.md) feature — so a freshly scaffolded plan carries its machine-readable surfaces from creation rather than acquiring them on a later `lint --fix`. A plan is created against a Source Feature (`--feature`) or a Source Idea (`--idea`).
+`specscore plan new <slug>` scaffolds a lint-clean Plan artifact at `spec/plans/<slug>.md`. The scaffold emits the plan's body-metadata header block, the required sections (`## Summary`, `## Approach`, `## Tasks`, `## Open Questions`) with HTML-comment prompts, the adherence footer, AND the frontmatter `format:` / `status:` fields mandated by the [artifact-frontmatter-convention](../../../../../../specscore/spec/features/artifact-frontmatter-convention/README.md) feature — so a freshly scaffolded plan carries its machine-readable surfaces from creation rather than acquiring them on a later `lint --fix`. A plan is created against a Source Feature (`--feature`) or a Source Idea (`--idea`). An optional `--parent <plan-ref>` records that the new plan is a **sub-plan** of a master plan, the primitive behind cross-repo plan composition; the reference may be a same-repo plan slug or a `<repo-slug>:<slug>` cross-repo soft reference.
 
 ## Synopsis
 
 ```
-specscore plan new <slug> (--feature <feature-slug> | --idea <idea-slug>) [--title <text>] [--owner <id>] [--force] [--project <path>]
+specscore plan new <slug> (--feature <feature-slug> | --idea <idea-slug>) [--parent <plan-ref>] [--title <text>] [--owner <id>] [--force] [--project <path>]
 ```
 
 ## Problem
@@ -27,7 +27,7 @@ Plans are the only status-bearing spec artifact with no creation verb: the `plan
 
 ### Slug argument
 
-The `<slug>` positional argument becomes the file name (`spec/plans/<slug>.md`). Plan slugs are flat — plans have no hierarchy.
+The `<slug>` positional argument becomes the file name (`spec/plans/<slug>.md`). Plan **slugs** are flat — the file namespace has no nesting (a slug never contains `/`). This is orthogonal to plan **composition**: a plan MAY still declare a `--parent` (see [Parent](#parent-sub-plan-composition)) to become a sub-plan of a master plan. Composition is a metadata relationship between flat-slugged plan files, not a directory hierarchy.
 
 #### REQ: slug-required
 
@@ -45,13 +45,21 @@ A plan decomposes exactly one source: a Feature or an Idea. Exactly one of `--fe
 
 `specscore plan new` MUST require exactly one of `--feature <feature-slug>` or `--idea <idea-slug>`. Supplying neither, or both, MUST exit `2` (InvalidArgs) with a message naming the conflict. `--feature` scaffolds a `**Source Feature:**` header line; `--idea` scaffolds a `**Source:** idea:<slug>` header line, per the [plan](../../../../../../specscore/spec/features/plan/README.md) feature's two source modes.
 
+### Parent (sub-plan composition)
+
+A plan MAY be a sub-plan of one master plan. `--parent` records that relationship at scaffold time; the value is stored verbatim and resolution is deferred to lint.
+
+#### REQ: parent-ref-optional
+
+`specscore plan new` MUST accept an optional `--parent <plan-ref>` flag. When supplied, the scaffold MUST emit a `**Parent:** <plan-ref>` body-metadata line (in the header block, after `**Supersedes:**`) recording the master plan this sub-plan belongs to. When omitted, the plan is a root plan and the scaffold MUST NOT emit a `**Parent:**` line. `<plan-ref>` MAY be a same-repo plan slug (e.g., `master-rollout`) or a cross-repo soft reference of the form `<repo-slug>:<plan-slug>` (e.g., `specscore:cross-repo-master`). `plan new` records `<plan-ref>` **verbatim** and MUST NOT resolve it, scan sibling repos, or fail on an unresolvable reference — all `**Parent:**` validation (same-repo resolution and acyclicity; cross-repo syntactic-only checks) is owned by [cli/spec/lint/plan-rules](../../spec/lint/plan-rules/README.md). A malformed flag value (empty string) MUST exit `2` (InvalidArgs).
+
 ### Scaffold content
 
 The generated file is lint-clean on creation. Authored content is left as HTML-comment prompts the author fills in.
 
 #### REQ: scaffolds-lint-clean
 
-The scaffold MUST emit the flat-file plan model that `specscore spec lint` actually enforces today — the same shape every plan in `spec/plans/*.md` uses and that `specstudio:plan` produces: a single file `spec/plans/<slug>.md` (not a directory), the body-metadata header block (`**Status:** Draft`, the resolved source line, `**Date:**`, `**Owner:**`, `**Supersedes:** —`), the `## Summary`, `## Approach`, `## Tasks`, and `## Open Questions` sections (with `<!-- TODO: ... -->` prompts where content is absent), and the adherence footer line `*This document follows the https://specscore.md/plan-specification*`. `specscore spec lint` immediately afterwards MUST report no new error-severity violations outside the scaffolded file itself. (The canonical `plan` Feature's prose currently describes an older directory-based model with lowercase statuses; lint does not enforce it and no plan follows it — see Open Questions.)
+The scaffold MUST emit the flat-file plan model that `specscore spec lint` actually enforces today — the same shape every plan in `spec/plans/*.md` uses and that `specstudio:plan` produces: a single file `spec/plans/<slug>.md` (not a directory), the body-metadata header block (`**Status:** Draft`, the resolved source line, `**Date:**`, `**Owner:**`, `**Supersedes:** —`, and a `**Parent:** <plan-ref>` line only when `--parent` was supplied), the `## Summary`, `## Approach`, `## Tasks`, and `## Open Questions` sections (with `<!-- TODO: ... -->` prompts where content is absent), and the adherence footer line `*This document follows the https://specscore.md/plan-specification*`. `specscore spec lint` immediately afterwards MUST report no new error-severity violations outside the scaffolded file itself. (The canonical `plan` Feature's prose currently describes an older directory-based model with lowercase statuses; lint does not enforce it and no plan follows it — see Open Questions.)
 
 #### REQ: emits-frontmatter
 
@@ -76,6 +84,7 @@ When `plan new` writes `spec/plans/<slug>.md`, the command MUST also materialize
 | `slug` | Yes | Plan slug — becomes the file name. |
 | `--feature` | One of | Source Feature slug (mutually exclusive with `--idea`). |
 | `--idea` | One of | Source Idea slug (mutually exclusive with `--feature`). |
+| `--parent` | No | Parent (master) plan reference — a same-repo slug or a `<repo-slug>:<slug>` cross-repo soft ref. Recorded verbatim; validated by lint, not by this verb. |
 | `--title` | No | Plan title (defaults to title-cased slug). |
 | `--owner` | No | Owner/author (defaults to `$USER`). |
 | `--force` | No | Overwrite an existing plan file. |
@@ -86,7 +95,7 @@ When `plan new` writes `spec/plans/<slug>.md`, the command MUST also materialize
 |---|---|
 | `0` | Plan file created |
 | `1` | File already exists and `--force` not supplied |
-| `2` | Missing/invalid `slug`, or `--feature`/`--idea` not exactly one |
+| `2` | Missing/invalid `slug`, `--feature`/`--idea` not exactly one, or empty `--parent` value |
 | `10` | Unexpected I/O failure while writing |
 
 ## Interaction with Other Features
@@ -117,6 +126,14 @@ A plan scaffolded by `plan new` carries a frontmatter `format: https://specscore
 **Requirements:** cli/plan/new#req:source-required
 
 `specscore plan new my-plan` with neither `--feature` nor `--idea`, and the same command with both, each exit `2` naming the conflict; supplying exactly one succeeds.
+
+### AC: parent-recorded-verbatim
+
+**Requirements:** cli/plan/new#req:parent-ref-optional
+
+**Given** a project ready to scaffold a plan
+**When** the user runs `specscore plan new sub-a --feature some-feature --parent specscore:master-rollout`
+**Then** `spec/plans/sub-a.md` is created with a `**Parent:** specscore:master-rollout` body-metadata line recorded verbatim, the command exits `0` without resolving or scanning for that reference, and a plan scaffolded without `--parent` contains no `**Parent:**` line.
 
 ### AC: existing-file-conflict
 

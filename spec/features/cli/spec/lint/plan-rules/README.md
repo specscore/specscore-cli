@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-Adds four lint rules (`P-001`–`P-004`) and the underlying single-file Plan parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `plan` Feature (`spec/features/skills/plan/README.md` in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo). The rules and parser unblock the in-development `specstudio:implement` skill, which depends on machine-checkable validation of `**Mode:**`, `**Status:**`, and `**Depends-On:**` task fields on single-file Plans at `spec/plans/<slug>.md`.
+Adds five lint rules (`P-001`–`P-005`) and the underlying single-file Plan parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `plan` Feature (`spec/features/skills/plan/README.md` in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo). `P-001`–`P-004` unblock the in-development `specstudio:implement` skill, which depends on machine-checkable validation of `**Mode:**`, `**Status:**`, and `**Depends-On:**` task fields on single-file Plans at `spec/plans/<slug>.md`. `P-005` validates the optional `**Parent:**` body-metadata line that `cli/plan/new --parent` emits — the master/sub-plan composition primitive — resolving same-repo parents and accepting cross-repo `<repo-slug>:<slug>` references syntactically without sibling-repo scanning.
 
 ## Problem
 
@@ -164,11 +164,43 @@ In a Plan with `**Mode:** stub`, a placeholder body on a task whose `**Status:**
 
 `P-004` MUST NOT be autofixable in the MVP. Replacing a placeholder body with prose requires user intent (re-run `specstudio:implement` to write back the post-batch journal, vs. revert `**Status:**` to `pending`). Schema-token violations on `**Mode:**` and `**Status:**` are also user-driven (typo fix vs. value choice).
 
+### Lint rule P-005 — Parent reference validity
+
+`P-005` validates the optional `**Parent:**` body-metadata line that records master/sub-plan composition. Same-repo parents are resolved and checked for cycles; cross-repo parents are validated syntactically only.
+
+#### REQ: plan-parent-field
+
+The parser MUST recognize an optional `**Parent:** <plan-ref>` body-metadata line on a single-file Plan (in the header block, conventionally after `**Supersedes:**`). When the line is absent the Plan is a **root** plan and `P-005` MUST emit nothing for it. The parser MUST classify `<plan-ref>` by its single `:` separator: a value with **no** colon is a **same-repo** plan slug; a value with **exactly one** colon is a **cross-repo** reference of the form `<repo-slug>:<plan-slug>`.
+
+#### REQ: rule-p-005-registered
+
+`P-005` MUST be registered in the lint rule registry under the name `P-005` (uppercase, hyphenated), at severity `error`, and MUST execute as part of the default rule suite.
+
+#### REQ: rule-p-005-same-repo-resolves
+
+For a same-repo `**Parent:**` value, `P-005` MUST report a violation when no single-file Plan exists at `spec/plans/<plan-ref>.md`. The message MUST name the dangling parent slug and cite the Plan file path and the `**Parent:**` line.
+
+#### REQ: rule-p-005-no-self-parent
+
+`P-005` MUST report a violation when a Plan's same-repo `**Parent:**` value equals the Plan's own slug. The message MUST cite the Plan path and the `**Parent:**` line.
+
+#### REQ: rule-p-005-acyclic
+
+`P-005` MUST report a violation when same-repo `**Parent:**` links form a cycle (a Plan reachable as its own ancestor by following `**Parent:**`). The message MUST cite the cycle path in the form `plan-a → plan-b → … → plan-a`. A cross-repo `**Parent:**` terminates the chain (it is not followed) and therefore cannot participate in a detected cycle.
+
+#### REQ: rule-p-005-cross-repo-syntactic-only
+
+For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST validate only the syntactic shape: exactly one `:` separator, with both `<repo-slug>` and `<plan-slug>` non-empty, lowercase, hyphen-separated, URL-safe slugs (`^[a-z0-9]+(?:-[a-z0-9]+)*$`). `P-005` MUST NOT resolve the reference, MUST NOT scan sibling repositories, and MUST NOT report a violation merely because the referenced repo or plan cannot be found in the workspace. A malformed cross-repo value (empty side, more than one `:`, or an invalid slug token on either side) MUST be a violation citing the offending value.
+
+#### REQ: rule-p-005-not-autofixable
+
+`P-005` MUST NOT be autofixable in the MVP. Resolving a dangling, self-referential, cyclic, or malformed parent reference requires user intent (rename the parent vs. remove the line vs. fix the cross-repo slug).
+
 ### Co-existence with existing plan checkers
 
 #### REQ: directory-plans-untouched
 
-`P-001`–`P-004` MUST NOT inspect or report violations on directory-form plans at `spec/plans/<slug>/README.md`. The existing `plan-hierarchy` and `plan-roi-metadata` checkers continue to own that path. This isolation lets this repo's own directory-form plans coexist with single-file SpecStudio Plans without spurious violations from either rule set.
+`P-001`–`P-005` MUST NOT inspect or report violations on directory-form plans at `spec/plans/<slug>/README.md`. The existing `plan-hierarchy` and `plan-roi-metadata` checkers continue to own that path. This isolation lets this repo's own directory-form plans coexist with single-file SpecStudio Plans without spurious violations from either rule set.
 
 #### REQ: no-rule-overlap
 
@@ -178,11 +210,11 @@ In a Plan with `**Mode:** stub`, a placeholder body on a task whose `**Status:**
 
 #### REQ: rules-in-default-suite
 
-`P-001`, `P-002`, `P-003`, and `P-004` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
+`P-001`, `P-002`, `P-003`, `P-004`, and `P-005` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
 
 #### REQ: rules-emit-stable-violation-shape
 
-Violations from `P-001`–`P-004` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations).
+Violations from `P-001`–`P-005` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations).
 
 ## Acceptance Criteria
 
@@ -272,9 +304,45 @@ Violations from `P-001`–`P-004` MUST use the existing `lint.Violation` struct 
 
 ### AC: rules-in-default-suite (verifies REQ:rules-in-default-suite, REQ:rules-emit-stable-violation-shape)
 
-**Given** a project with a single-file Plan containing one `P-001`, one `P-002`, one `P-003`, and one `P-004` violation,
+**Given** a project with single-file Plans containing one `P-001`, one `P-002`, one `P-003`, one `P-004`, and one `P-005` violation,
 **When** `specscore spec lint` runs with no `--rules` filter,
-**Then** exactly four violations are reported (one per rule), each violation's `Rule` field equals the rule name (`P-001`, `P-002`, `P-003`, `P-004`), each violation's `Severity` is `error`, and `specscore spec lint --rules P-003` returns only the cycle/dangling/self-ref violation.
+**Then** exactly five violations are reported (one per rule), each violation's `Rule` field equals the rule name (`P-001`, `P-002`, `P-003`, `P-004`, `P-005`), each violation's `Severity` is `error`, and `specscore spec lint --rules P-005` returns only the parent-reference violation.
+
+### AC: root-plan-no-parent (verifies REQ:plan-parent-field, REQ:rule-p-005-registered)
+
+**Given** a single-file Plan with no `**Parent:**` line,
+**When** `specscore spec lint` runs,
+**Then** `P-005` emits zero violations for that Plan (it is a root plan).
+
+### AC: dangling-parent-flagged (verifies REQ:rule-p-005-same-repo-resolves)
+
+**Given** a Plan `sub.md` declaring `**Parent:** ghost` where `spec/plans/ghost.md` does not exist,
+**When** `specscore spec lint` runs,
+**Then** a `P-005` violation is emitted naming `ghost` as a dangling parent, with `File` set to `sub.md`'s path and `Line` at the `**Parent:**` line.
+
+### AC: self-parent-flagged (verifies REQ:rule-p-005-no-self-parent)
+
+**Given** a Plan `loop.md` declaring `**Parent:** loop`,
+**When** `specscore spec lint` runs,
+**Then** a `P-005` violation is emitted citing `loop` as its own parent.
+
+### AC: parent-cycle-flagged (verifies REQ:rule-p-005-acyclic)
+
+**Given** plans `a.md` declaring `**Parent:** b` and `b.md` declaring `**Parent:** a`,
+**When** `specscore spec lint` runs,
+**Then** a `P-005` violation is emitted whose message contains a cycle path of the form `a → b → a` (or any rotation thereof).
+
+### AC: cross-repo-parent-accepted (verifies REQ:rule-p-005-cross-repo-syntactic-only, REQ:plan-parent-field)
+
+**Given** a Plan `sub.md` declaring `**Parent:** specscore:master-rollout` and no sibling repo is scanned,
+**When** `specscore spec lint` runs,
+**Then** `P-005` emits no violation — the cross-repo reference is accepted on its syntax alone, with no resolution or sibling-repo scan.
+
+### AC: malformed-cross-repo-parent-flagged (verifies REQ:rule-p-005-cross-repo-syntactic-only)
+
+**Given** a Plan declaring `**Parent:** Bad_Repo:` (uppercase/underscore repo token and an empty plan side),
+**When** `specscore spec lint` runs,
+**Then** a `P-005` violation is emitted citing the malformed `**Parent:**` value.
 
 ### AC: directory-plans-untouched (verifies REQ:directory-plans-untouched, REQ:no-rule-overlap)
 
@@ -282,11 +350,11 @@ Violations from `P-001`–`P-004` MUST use the existing `lint.Violation` struct 
 **When** `specscore spec lint` runs,
 **Then** `P-001`–`P-004` emit zero violations against `legacy/README.md`, and existing plan checkers (`plan-hierarchy`, `plan-roi-metadata`) emit zero violations against `new-plan.md`.
 
-### AC: not-autofixable (verifies REQ:rule-p-001-not-autofixable, REQ:rule-p-002-not-autofixable, REQ:rule-p-003-not-autofixable, REQ:rule-p-004-not-autofixable)
+### AC: not-autofixable (verifies REQ:rule-p-001-not-autofixable, REQ:rule-p-002-not-autofixable, REQ:rule-p-003-not-autofixable, REQ:rule-p-004-not-autofixable, REQ:rule-p-005-not-autofixable)
 
-**Given** a project with `P-001`, `P-002`, `P-003`, and `P-004` violations,
+**Given** a project with `P-001`, `P-002`, `P-003`, `P-004`, and `P-005` violations,
 **When** `specscore spec lint --fix` runs,
-**Then** no file under `spec/plans/` is modified by these four rules (other autofixable rules may still run), and the violations are still reported on the post-`--fix` lint pass.
+**Then** no file under `spec/plans/` is modified by these five rules (other autofixable rules may still run), and the violations are still reported on the post-`--fix` lint pass.
 
 ## Interaction with Other Features
 
