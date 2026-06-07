@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: deferred-ac-coverage-parser-truncates-hyphenated-ac-slugs
-captured_at: 2026-06-03T14:00:00Z
 captured_by: specstudio:specify
-captured_during: null
-trigger: heuristic
 status: queued
-synchestra_task: null
 ---
 # Plan lint's Deferred AC Coverage parser truncates hyphenated AC slugs at the first hyphen
 

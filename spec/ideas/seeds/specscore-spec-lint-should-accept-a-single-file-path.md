@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: specscore-spec-lint-should-accept-a-single-file-path
-captured_at: 2026-06-04T00:00:00Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 
 # specscore spec lint should accept a single-file path argument

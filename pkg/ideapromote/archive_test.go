@@ -51,7 +51,25 @@ func TestMarkArchivedSeed_SynthesizesFrontmatterWhenMissing(t *testing.T) {
 	if !strings.HasPrefix(got, "---\n") {
 		t.Errorf("frontmatter should be synthesized; got:\n%s", got)
 	}
+	if !strings.Contains(got, "type: sidekick-seed") {
+		t.Errorf("synthesized frontmatter must carry type: sidekick-seed; got:\n%s", got)
+	}
 	if !strings.Contains(got, "status: promoted") || !strings.Contains(got, "promoted_to: baz") {
 		t.Errorf("synthesized frontmatter must carry promotion keys; got:\n%s", got)
+	}
+}
+
+// TestMarkArchivedSeed_InjectsTypeWhenAbsent locks in the archive-time `type`
+// injection: captured seeds in spec/ideas/seeds/ no longer store `type`, so
+// archiving must add `type: sidekick-seed` (the key the archived-dir lint scan
+// and Idea-discovery exclusion key off).
+func TestMarkArchivedSeed_InjectsTypeWhenAbsent(t *testing.T) {
+	seed := "---\ncaptured_by: user\nstatus: queued\n---\n# Baz\n\nprose\n"
+	got := markArchivedSeed(seed, "baz")
+	if !strings.Contains(got, "type: sidekick-seed") {
+		t.Errorf("type: sidekick-seed should be injected at archive time; got:\n%s", got)
+	}
+	if !strings.Contains(got, "status: promoted") || !strings.Contains(got, "promoted_to: baz") {
+		t.Errorf("promotion keys must be set; got:\n%s", got)
 	}
 }

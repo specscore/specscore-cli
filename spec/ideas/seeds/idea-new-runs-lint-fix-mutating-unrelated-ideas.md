@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: idea-new-runs-lint-fix-mutating-unrelated-ideas
-captured_at: 2026-06-03T12:00:00Z
 captured_by: claude
-captured_during: spec/ideas/canonical-lint-rule-catalog.md
-trigger: heuristic
 status: queued
-synchestra_task: null
 ---
 # specscore idea new runs lint --fix, mutating unrelated idea files
 

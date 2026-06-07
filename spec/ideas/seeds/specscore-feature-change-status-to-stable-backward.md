@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: specscore-feature-change-status-to-stable-backward
-captured_at: 2026-05-22T00:00:00Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: resolved
-synchestra_task: null
 ---
 
 # specscore feature change-status --to=stable backward-transitions Source Idea Implementing → Specified

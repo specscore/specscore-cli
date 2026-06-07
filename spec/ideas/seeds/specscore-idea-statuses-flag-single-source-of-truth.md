@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: specscore-idea-statuses-flag-single-source-of-truth
-captured_at: 2026-06-03T17:40:00Z
 captured_by: specscore:change-status
-captured_during: null
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 # Add `specscore idea --statuses` to expose the canonical idea status set + transitions as the single source of truth
 

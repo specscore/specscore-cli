@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: lint-fix-fixed-files-report-omits-deleted-files
-captured_at: 2026-06-02T08:23:31Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 
 # lint --fix fixed-files report omits files deleted by a fixer

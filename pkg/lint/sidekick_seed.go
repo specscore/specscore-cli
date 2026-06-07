@@ -32,18 +32,14 @@ const (
 	sidekickSeedMaxBodyChars = 2000
 )
 
-// sidekickSeedRequiredKeys names the exact 8 keys allowed in a seed's
+// sidekickSeedRequiredKeys names the keys that must be present in a seed's
 // frontmatter. The list is closed: missing keys are rejected (3b) and
-// extra keys are rejected (3a).
+// unknown keys are rejected (3a). Captured seeds live in
+// `spec/ideas/seeds/` and are identified by location, so they carry only
+// the two coordination-relevant keys.
 var sidekickSeedRequiredKeys = []string{
-	"type",
-	"slug",
-	"captured_at",
 	"captured_by",
-	"captured_during",
-	"trigger",
 	"status",
-	"synchestra_task",
 }
 
 var sidekickSeedRequiredKeySet = func() map[string]bool {
@@ -55,18 +51,14 @@ var sidekickSeedRequiredKeySet = func() map[string]bool {
 }()
 
 // sidekickSeedOptionalKeys names keys permitted in a seed's frontmatter
-// beyond the required set. A promoted seed (parked under
-// `spec/ideas/archived/`) records `promoted_to: <slug>`, which must not be
-// flagged as an unknown key.
+// beyond the required set. `type: sidekick-seed` is added when a seed is
+// archived (it identifies the document for the archived-dir scan and for
+// Idea-discovery exclusion). A promoted seed (parked under
+// `spec/ideas/archived/`) also records `promoted_to: <slug>`. Neither must
+// be flagged as an unknown key.
 var sidekickSeedOptionalKeys = map[string]bool{
+	"type":        true,
 	"promoted_to": true,
-}
-
-// sidekickSeedTriggerValues enumerates the values allowed for the
-// `trigger` key per REQ seed-frontmatter-schema.
-var sidekickSeedTriggerValues = map[string]bool{
-	"heuristic": true,
-	"explicit":  true,
 }
 
 type sidekickSeedChecker struct{}
@@ -159,7 +151,7 @@ func frontmatterDeclaresSeed(content string) bool {
 
 // checkSidekickSeed validates one seed's content. relPath is included in
 // every returned violation. The function emits at most one violation per
-// rejection path (a–f) so that a fully-malformed file produces a focused
+// rejection path (a–e) so that a fully-malformed file produces a focused
 // punch list rather than a cascade of duplicates.
 func checkSidekickSeed(relPath, content string) []Violation {
 	var vs []Violation
@@ -234,18 +226,7 @@ func checkSidekickSeed(relPath, content string) []Violation {
 		})
 	}
 
-	// (d) `trigger` must be heuristic|explicit.
-	if tr, present := keys["trigger"]; present && !sidekickSeedTriggerValues[tr] {
-		vs = append(vs, Violation{
-			File:     relPath,
-			Line:     0,
-			Severity: "error",
-			Rule:     sidekickSeedRule,
-			Message:  fmt.Sprintf("trigger must be one of {heuristic, explicit}; got %q", tr),
-		})
-	}
-
-	// (e) body's first non-blank line must be an H1.
+	// (d) body's first non-blank line must be an H1.
 	if !bodyFirstLineIsH1(body) {
 		vs = append(vs, Violation{
 			File:     relPath,
@@ -256,7 +237,7 @@ func checkSidekickSeed(relPath, content string) []Violation {
 		})
 	}
 
-	// (f) body length cap.
+	// (e) body length cap.
 	if len(body) > sidekickSeedMaxBodyChars {
 		vs = append(vs, Violation{
 			File:     relPath,

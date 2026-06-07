@@ -63,11 +63,9 @@ func TestDeriveSlug_TruncatesAtHyphenBoundaryUnder60(t *testing.T) {
 	}
 }
 
-func TestScaffold_EmitsClosedFrontmatterAndH1(t *testing.T) {
+func TestScaffold_EmitsMinimalFrontmatterAndH1(t *testing.T) {
 	body, err := Scaffold(ScaffoldOptions{
-		Slug:       "add-batch-mode",
-		OneLiner:   "Add batch mode",
-		CapturedAt: "2026-06-06T00:00:00Z",
+		OneLiner: "Add batch mode",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,31 +73,30 @@ func TestScaffold_EmitsClosedFrontmatterAndH1(t *testing.T) {
 	s := string(body)
 	for _, want := range []string{
 		"---\n",
-		"type: sidekick-seed\n",
-		"slug: add-batch-mode\n",
-		"captured_at: 2026-06-06T00:00:00Z\n",
-		"captured_by: user\n",     // default
-		"captured_during: null\n", // default
-		"trigger: explicit\n",     // default
+		"captured_by: user\n", // default
 		"status: queued\n",
-		"synchestra_task: null\n",
 		"# Add batch mode\n",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("scaffold missing %q:\n%s", want, s)
 		}
 	}
+	// The slimmed schema must NOT emit the dropped keys — captured seeds carry
+	// only {captured_by, status}; `type` is added at archive time, not here.
+	for _, gone := range []string{
+		"type:", "slug:", "captured_at:", "captured_during:", "trigger:",
+	} {
+		if strings.Contains(s, gone) {
+			t.Errorf("scaffold must not emit %q:\n%s", gone, s)
+		}
+	}
 }
 
 func TestScaffold_OverridesAndOptionalBody(t *testing.T) {
 	body, err := Scaffold(ScaffoldOptions{
-		Slug:           "with-body",
-		OneLiner:       "with body",
-		CapturedBy:     "specstudio:specify",
-		CapturedDuring: "spec/features/foo/README.md",
-		Trigger:        "heuristic",
-		Body:           "Some **markdown** detail.",
-		CapturedAt:     "2026-06-06T00:00:00Z",
+		OneLiner:   "with body",
+		CapturedBy: "specstudio:specify",
+		Body:       "Some **markdown** detail.",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -107,8 +104,6 @@ func TestScaffold_OverridesAndOptionalBody(t *testing.T) {
 	s := string(body)
 	for _, want := range []string{
 		"captured_by: specstudio:specify\n",
-		"captured_during: spec/features/foo/README.md\n",
-		"trigger: heuristic\n",
 		"# with body\n\nSome **markdown** detail.\n",
 	} {
 		if !strings.Contains(s, want) {
@@ -122,11 +117,9 @@ func TestScaffold_RejectsBadInput(t *testing.T) {
 		name string
 		opts ScaffoldOptions
 	}{
-		{"empty one-liner", ScaffoldOptions{Slug: "s", OneLiner: "   "}},
-		{"empty slug", ScaffoldOptions{Slug: "", OneLiner: "x"}},
-		{"bad trigger", ScaffoldOptions{Slug: "s", OneLiner: "x", Trigger: "maybe"}},
-		{"one-liner too long", ScaffoldOptions{Slug: "s", OneLiner: strings.Repeat("a", MaxOneLinerChars+1)}},
-		{"body too long", ScaffoldOptions{Slug: "s", OneLiner: "x", Body: strings.Repeat("a", MaxBodyChars+1)}},
+		{"empty one-liner", ScaffoldOptions{OneLiner: "   "}},
+		{"one-liner too long", ScaffoldOptions{OneLiner: strings.Repeat("a", MaxOneLinerChars+1)}},
+		{"body too long", ScaffoldOptions{OneLiner: "x", Body: strings.Repeat("a", MaxBodyChars+1)}},
 	}
 	for _, c := range cases {
 		if _, err := Scaffold(c.opts); err == nil {

@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: specscore-cli-should-expose-a-plan-verb-with-list-and-query
-captured_at: 2026-06-04T00:00:00Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 
 # specscore CLI should expose a plan verb with list and query subcommands

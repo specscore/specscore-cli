@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: linter-to-output-supported-prefixes-for-related-ideas
-captured_at: 2026-05-28T17:34:52Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 
 # Linter to output supported prefixes for Related Ideas

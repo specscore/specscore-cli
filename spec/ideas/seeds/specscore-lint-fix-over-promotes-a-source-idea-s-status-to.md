@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: specscore-lint-fix-over-promotes-a-source-idea-s-status-to
-captured_at: 2026-05-29T10:56:46Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: resolved
-synchestra_task: null
 ---
 
 # specscore lint --fix over-promotes a source Idea's Status to Implementing when its Feature is only Approved

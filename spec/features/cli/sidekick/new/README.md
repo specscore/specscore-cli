@@ -10,12 +10,12 @@ status: Approved
 
 ## Summary
 
-`specscore sidekick new "<one-liner>"` scaffolds a lint-clean sidekick-seed at `spec/ideas/seeds/<slug>.md`. The slug is **derived from the one-liner** (the seed is a scaled-down Idea, so capture is quick and slug-free at the call site). The scaffold emits the closed 8-key `sidekick-seed` frontmatter (`type`, `slug`, `captured_at`, `captured_by`, `captured_during`, `trigger`, `status`, `synchestra_task`) and an H1 body whose heading is the one-liner verbatim — so a freshly scaffolded seed passes `specscore spec lint` (the `sidekick-seed` rule) by construction.
+`specscore sidekick new "<one-liner>"` scaffolds a lint-clean sidekick-seed at `spec/ideas/seeds/<slug>.md`. The slug is **derived from the one-liner** (the seed is a scaled-down Idea, so capture is quick and slug-free at the call site). The scaffold emits the minimal `sidekick-seed` frontmatter (`captured_by`, `status`) and an H1 body whose heading is the one-liner verbatim — so a freshly scaffolded seed passes `specscore spec lint` (the `sidekick-seed` rule) by construction. Captured seeds are identified by location, so `type: sidekick-seed` is added only when a seed is archived, not at capture time.
 
 ## Synopsis
 
 ```
-specscore sidekick new "<one-liner>" [--slug <slug>] [--captured-by <id>] [--captured-during <path>] [--trigger heuristic|explicit] [--body <markdown>] [--force] [--project <path>]
+specscore sidekick new "<one-liner>" [--slug <slug>] [--captured-by <id>] [--body <markdown>] [--force] [--project <path>]
 ```
 
 ## Problem
@@ -46,7 +46,7 @@ When `--slug` is **not** supplied, the slug MUST be derived from the trimmed one
 
 #### REQ: slug-override
 
-When `--slug <slug>` is supplied, the command MUST use it verbatim as the file name and frontmatter `slug` — derivation is skipped. The override MUST be a lowercase, hyphen-separated, URL-safe identifier (no `/`) of at most 60 characters; an invalid override MUST exit `2` (InvalidArgs) naming the offending value. The one-liner is still required (it remains the H1 body), so `--slug` decouples the file identity from the H1 text.
+When `--slug <slug>` is supplied, the command MUST use it verbatim as the file name — derivation is skipped. The override MUST be a lowercase, hyphen-separated, URL-safe identifier (no `/`) of at most 60 characters; an invalid override MUST exit `2` (InvalidArgs) naming the offending value. The one-liner is still required (it remains the H1 body), so `--slug` decouples the file identity from the H1 text.
 
 ### Scaffold content
 
@@ -54,11 +54,11 @@ The generated file is lint-clean on creation against the `sidekick-seed` rule. A
 
 #### REQ: scaffolds-lint-clean
 
-The scaffold MUST emit a single file `spec/ideas/seeds/<slug>.md` carrying exactly the 8 `sidekick-seed` frontmatter keys (`type: sidekick-seed`, `slug:` matching the file, `captured_at:`, `captured_by:`, `captured_during:`, `trigger:`, `status: queued`, `synchestra_task: null`) and a body whose first non-blank line is the H1 `# <one-liner>`. `specscore spec lint` immediately afterwards MUST report no new error-severity violations outside the scaffolded file itself.
+The scaffold MUST emit a single file `spec/ideas/seeds/<slug>.md` carrying the minimal `sidekick-seed` frontmatter keys (`captured_by:`, `status: queued`) and a body whose first non-blank line is the H1 `# <one-liner>`. `type: sidekick-seed` MUST NOT be written at capture time — it is added only when a seed is archived. `specscore spec lint` immediately afterwards MUST report no new error-severity violations outside the scaffolded file itself.
 
 #### REQ: frontmatter-values
 
-`captured_at` MUST be an ISO-8601 UTC timestamp at creation time. `captured_by` defaults to `user` and is overridable via `--captured-by`. `captured_during` defaults to the literal `null` and is set verbatim from `--captured-during` when supplied. `trigger` defaults to `explicit` and MUST be one of `heuristic` or `explicit` — any other value exits `2` (InvalidArgs). `status` is always `queued`; `synchestra_task` is always `null`.
+`captured_by` defaults to `user` and is overridable via `--captured-by`. `status` is always `queued`.
 
 #### REQ: optional-body
 
@@ -83,8 +83,6 @@ When `sidekick new` writes the seed, the command MUST also materialize `spec/REA
 | `one-liner` | Yes | Seed one-liner — becomes the H1 body and the basis for the derived slug. |
 | `--slug` | No | Override the derived slug verbatim (lowercase, hyphen-separated, URL-safe, ≤60 chars). |
 | `--captured-by` | No | Capturer identity (defaults to `user`). |
-| `--captured-during` | No | Active spec path at capture time (defaults to `null`). |
-| `--trigger` | No | `heuristic` or `explicit` (defaults to `explicit`). |
 | `--body` | No | Additional markdown appended after the H1. |
 | `--force` | No | Overwrite an existing seed file. |
 
@@ -94,7 +92,7 @@ When `sidekick new` writes the seed, the command MUST also materialize `spec/REA
 |---|---|
 | `0` | Seed file created |
 | `1` | File already exists and `--force` not supplied |
-| `2` | Empty/too-long one-liner, empty derived slug, invalid `--trigger`, or over-cap body |
+| `2` | Empty/too-long one-liner, empty derived slug, invalid `--slug`, or over-cap body |
 | `10` | Unexpected I/O failure while writing |
 
 ## Interaction with Other Features
@@ -111,7 +109,7 @@ When `sidekick new` writes the seed, the command MUST also materialize `spec/REA
 
 **Requirements:** cli/sidekick/new#req:scaffolds-lint-clean, cli/sidekick/new#req:frontmatter-values
 
-`specscore sidekick new "specscore needs a seed verb"` creates `spec/ideas/seeds/specscore-needs-a-seed-verb.md` with the 8 `sidekick-seed` frontmatter keys, `status: queued`, `synchestra_task: null`, and an H1 `# specscore needs a seed verb`. `specscore spec lint` immediately afterwards reports no new error-severity violations outside the scaffolded file.
+`specscore sidekick new "specscore needs a seed verb"` creates `spec/ideas/seeds/specscore-needs-a-seed-verb.md` with the minimal `sidekick-seed` frontmatter (`captured_by`, `status: queued`) and an H1 `# specscore needs a seed verb`. `specscore spec lint` immediately afterwards reports no new error-severity violations outside the scaffolded file.
 
 ### AC: slug-derived-from-one-liner
 
@@ -123,19 +121,13 @@ When `sidekick new` writes the seed, the command MUST also materialize `spec/REA
 
 **Requirements:** cli/sidekick/new#req:slug-override
 
-`specscore sidekick new "Add batch mode" --slug add-batch-mode-2` writes `spec/ideas/seeds/add-batch-mode-2.md` with frontmatter `slug: add-batch-mode-2` (the H1 stays `# Add batch mode`). `specscore sidekick new "x" --slug Bad_Slug` exits `2` naming the invalid value and creates no file.
+`specscore sidekick new "Add batch mode" --slug add-batch-mode-2` writes `spec/ideas/seeds/add-batch-mode-2.md` (the file name uses the override; the H1 stays `# Add batch mode`). `specscore sidekick new "x" --slug Bad_Slug` exits `2` naming the invalid value and creates no file.
 
 ### AC: empty-one-liner-rejected
 
 **Requirements:** cli/sidekick/new#req:one-liner-required, cli/sidekick/new#req:slug-derivation
 
 `specscore sidekick new "   "` exits `2` with a message that a non-empty one-liner is required, and `specscore sidekick new "!!!"` (no `[a-z0-9]`) exits `2` for an empty derived slug. No file is created in either case.
-
-### AC: invalid-trigger-rejected
-
-**Requirements:** cli/sidekick/new#req:frontmatter-values
-
-`specscore sidekick new "x" --trigger maybe` exits `2` naming the legal values `heuristic` and `explicit`. No file is created.
 
 ### AC: existing-file-conflict
 
@@ -154,7 +146,6 @@ Running the command twice for the same derived slug without `--force` exits `1` 
 ## Open Questions
 
 - Should a derived-slug collision auto-disambiguate with a `-2`/`-3` suffix (as the `specstudio:sidekick` skill does) instead of exiting `1` (Conflict)? This verb follows the CLI house style (`Conflict` + `--force`, like `idea new`/`plan new`) for predictability; the skill can pass `--force` or vary the one-liner. Auto-suffix is deferred.
-- Should `--captured-during` be validated to resolve to an existing markdown file at scaffold time, or stay purely structural (written verbatim, validated nowhere)? Currently structural.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

@@ -34,8 +34,8 @@ func sidekickNewCommand() *cobra.Command {
 		Use:   "new <one-liner>",
 		Short: "Scaffold a lint-clean sidekick-seed from a one-liner",
 		Long: `Creates a lint-clean sidekick-seed at spec/ideas/seeds/<slug>.md, carrying
-the closed 8-key sidekick-seed frontmatter and an H1 whose heading is the
-one-liner verbatim.
+the minimal sidekick-seed frontmatter (captured_by, status) and an H1 whose
+heading is the one-liner verbatim.
 
 The slug is DERIVED from the one-liner (a seed is a scaled-down Idea, so
 capture is quick and slug-free at the call site). The same algorithm the
@@ -47,8 +47,6 @@ slug verbatim — used by callers that own their own slug + collision policy.`,
 	}
 	cmd.Flags().String("slug", "", "override the derived slug (must be lowercase, hyphen-separated, URL-safe)")
 	cmd.Flags().String("captured-by", "", `capturer identity (defaults to "user")`)
-	cmd.Flags().String("captured-during", "", "active spec path at capture time (defaults to null)")
-	cmd.Flags().String("trigger", "explicit", "heuristic or explicit")
 	cmd.Flags().String("body", "", "additional markdown appended after the H1")
 	cmd.Flags().Bool("force", false, "overwrite an existing seed file at that slug")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
@@ -65,9 +63,7 @@ func runSidekickNew(cmd *cobra.Command, args []string) error {
 			"one-liner too long (%d chars); max is %d", len(oneLiner), sidekick.MaxOneLinerChars)
 	}
 
-	trigger, _ := cmd.Flags().GetString("trigger")
 	capturedBy, _ := cmd.Flags().GetString("captured-by")
-	capturedDuring, _ := cmd.Flags().GetString("captured-during")
 	body, _ := cmd.Flags().GetString("body")
 	force, _ := cmd.Flags().GetBool("force")
 	projectFlag, _ := cmd.Flags().GetString("project")
@@ -90,14 +86,11 @@ func runSidekickNew(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build (and validate) the body before touching the filesystem, so invalid
-	// args (bad --trigger, over-cap --body) never materialize indexes.
+	// args (over-cap --body) never materialize indexes.
 	content, err := sidekick.Scaffold(sidekick.ScaffoldOptions{
-		Slug:           slug,
-		OneLiner:       oneLiner,
-		CapturedBy:     capturedBy,
-		CapturedDuring: capturedDuring,
-		Trigger:        trigger,
-		Body:           body,
+		OneLiner:   oneLiner,
+		CapturedBy: capturedBy,
+		Body:       body,
 	})
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("scaffolding seed: %v", err)
