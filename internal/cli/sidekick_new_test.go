@@ -208,6 +208,20 @@ func TestSidekickNew_OneLinerTooLong(t *testing.T) {
 	}
 }
 
+// REQ: optional-body — an over-cap --body makes Scaffold reject the seed, which
+// the CLI surfaces as exit 2 (InvalidArgs) before any file is written.
+func TestSidekickNew_BodyTooLong(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	_, _, err := runSidekick(t, "new", "valid one liner", "--body", strings.Repeat("a", 2001))
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exit = %d, want 2", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "ideas", "seeds", "valid-one-liner.md")); statErr == nil {
+		t.Error("no file should be created when --body exceeds the cap")
+	}
+}
+
 // REQ: ancestor-indexes-materialized — an unresolvable spec root surfaces an error.
 func TestSidekickNew_ResolveSpecRootError(t *testing.T) {
 	dir := t.TempDir() // no spec/ tree → FindSpecRepoRoot fails
