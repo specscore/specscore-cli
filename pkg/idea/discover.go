@@ -21,7 +21,7 @@ type Discovered struct {
 // Discover walks `<specRoot>/ideas` and returns every idea file found.
 // Returns ([], nil) if the directory does not exist.
 func Discover(specRoot string) ([]Discovered, error) {
-	ideasDir := filepath.Join(specRoot, "ideas")
+	ideasDir := ResolveIdeasDir(specRoot)
 	info, err := os.Stat(ideasDir)
 	if err != nil || !info.IsDir() {
 		return nil, nil
@@ -129,7 +129,7 @@ func Discover(specRoot string) ([]Discovered, error) {
 // `seeds/` directories — `seeds/` holds sidekick-seed documents, which
 // are a separate document type, not malformed Ideas.
 func FindIdeaDirectories(specRoot string) ([]string, error) {
-	ideasDir := filepath.Join(specRoot, "ideas")
+	ideasDir := ResolveIdeasDir(specRoot)
 	info, err := os.Stat(ideasDir)
 	if err != nil || !info.IsDir() {
 		return nil, nil

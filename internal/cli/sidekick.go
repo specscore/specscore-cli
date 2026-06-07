@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/specscore/specscore-cli/pkg/sidekick"
 	"github.com/spf13/cobra"
@@ -101,7 +102,7 @@ func runSidekickNew(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	target := filepath.Join(root, "spec", "ideas", "seeds", slug+".md")
+	target := filepath.Join(idea.ResolveSeedsDir(filepath.Join(root, "spec")), slug+".md")
 	// Collision check BEFORE any write (cli/sidekick/new#req:no-clobber-default).
 	if _, statErr := os.Stat(target); statErr == nil && !force {
 		return exitcode.ConflictErrorf("seed already exists: %s (pass --force to overwrite)", target)

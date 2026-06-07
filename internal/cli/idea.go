@@ -273,8 +273,8 @@ func runIdeaNew(cmd *cobra.Command, args []string) error {
 		}
 		target = filepath.Join(proposalsDir, slug+".md")
 	} else {
-		// Standard idea: scaffold at spec/ideas/<slug>.md.
-		ideasDir := filepath.Join(specRoot, "spec", "ideas")
+		// Standard idea: scaffold at the resolved ideas dir/<slug>.md.
+		ideasDir := idea.ResolveIdeasDir(filepath.Join(specRoot, "spec"))
 		if err := os.MkdirAll(ideasDir, 0o755); err != nil {
 			return exitcode.UnexpectedErrorf("creating %s: %v", ideasDir, err)
 		}
@@ -378,12 +378,22 @@ func ensureIdeaAncestorIndexes(root string) error {
 		// them.
 		cfg = projectdef.SpecConfig{}
 	}
+	// The ideas index lives at the resolved ideas dir's README.md, which may
+	// be relocated out of spec/ via path_overrides.ideas_path
+	// (configurable-ideas-path#req:single-resolver). Compute the repo-relative
+	// ideas dir from the root module's config.
+	rootMod := cfg.EffectiveModules()[0]
+	ideasIndexRel := filepath.Join(
+		rootMod.EffectivePath(),
+		filepath.FromSlash(rootMod.EffectiveIdeasPath()),
+		"README.md",
+	)
 	for _, w := range []struct {
 		path    string
 		content string
 	}{
 		{"spec/README.md", specReadmeContent(cfg)},
-		{"spec/ideas/README.md", ideasIndexContent(cfg)},
+		{ideasIndexRel, ideasIndexContent(cfg)},
 	} {
 		if err := writeMissingIndex(root, w.path, w.content); err != nil {
 			return fmt.Errorf("writing %s: %w", w.path, err)

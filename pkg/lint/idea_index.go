@@ -29,7 +29,7 @@ func ideaIndexRules(specRoot string, discovered []idea.Discovered, parsed map[st
 	var vs []Violation
 	fixed := false
 
-	ideasDir := filepath.Join(specRoot, "ideas")
+	ideasDir := idea.ResolveIdeasDir(specRoot)
 	archivedDir := filepath.Join(ideasDir, "archived")
 
 	var active []idea.Discovered
