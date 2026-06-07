@@ -309,7 +309,7 @@ Expected: 3 lines, all containing `github.com/specscore/specscore-cli/internal/c
 
 **Files:** Modify markdown under `/tmp/specscore-cli-migration/spec/features/cli/`
 
-The CLI's own spec contains references to the old module path and Synchestra Hub URLs that need rewriting.
+The CLI's own spec contains references to the old module path and legacy hub URLs that need rewriting.
 
 - [ ] **Step 1: Update Hub URLs (project id changes from `specscore` to `specscore-cli`)**
 

@@ -10,10 +10,10 @@
 
 set -eu
 
-REPO="synchestra-io/specscore-cli"
+REPO="specscore/specscore-cli"
 BIN_NAME="specscore"
 # Multi-component releases: when releases are published to a different repo
-# (e.g. synchestra-io/synchestra-releases) and/or tags are prefixed
+# (e.g. specscore/specscore-releases) and/or tags are prefixed
 # (e.g. "cli-v0.x.y" alongside "servers-v0.x.y"), set these.
 RELEASES_REPO=""
 RELEASE_TAG_PREFIX=""

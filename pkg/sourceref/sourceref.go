@@ -23,8 +23,8 @@ type SourceRef struct {
 
 var (
 	mu       sync.Mutex
-	prefixes = []string{"specscore", "synchestra"}
-	domains  = []string{"specscore.io", "synchestra.io"}
+	prefixes = []string{"specscore"}
+	domains  = []string{"specscore.io"}
 
 	// DetectionRegex is rebuilt when prefixes change.
 	DetectionRegex *regexp.Regexp

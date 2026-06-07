@@ -15,11 +15,11 @@ try {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch {}
 
-$Repo    = 'synchestra-io/specscore-cli'
+$Repo    = 'specscore/specscore-cli'
 $Project = 'specscore'
 $BinName = "$Project.exe"
 # Multi-component releases: when releases are published to a different repo
-# (e.g. synchestra-io/synchestra-releases) and/or tags are prefixed
+# (e.g. specscore/specscore-releases) and/or tags are prefixed
 # (e.g. "cli-v0.x.y" alongside "servers-v0.x.y"), set these.
 $ReleasesRepo     = ''
 $ReleaseTagPrefix = ''

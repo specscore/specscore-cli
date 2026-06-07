@@ -276,7 +276,7 @@ func TestParse_CheckKeyApplicability(t *testing.T) {
 // smoke fixture (when available on the developer's machine). Skips when the
 // upstream checkout is absent so this test is hermetic enough for CI.
 func TestParse_MetaSpecSmokeFixture(t *testing.T) {
-	path := "/home/ai/projects/synchestra-io/specscore/spec/features/idea/email.property.md"
+	path := "/home/ai/projects/specscore/specscore/spec/features/idea/email.property.md"
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("meta-spec smoke fixture not available at %s; skipping", path)
 	}

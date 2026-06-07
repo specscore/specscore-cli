@@ -18,7 +18,7 @@ status: draft
 
 ## Context
 
-The [studio-toolbar Feature](https://github.com/specscore/specscore/blob/main/spec/features/studio-toolbar/README.md) is `Approved` in the `specscore` spec repository. It specifies a four-item toolbar (Explore | Edit | Ask question | Request change) replacing the legacy `> [View in SpecStudio](url) — graph, discussions, approvals` line at file position 3 of every feature README. The Feature also renames the `viewer:` yaml block to `studio:`, migrates the default URL from `https://specstudio.synchestra.io/` to `https://specscore.studio/`, and introduces a new path-style grammar `{studio.url}/app/p/{host}/{org}/{repo}/{artifact_path}?op={verb}` where `{verb}` is in the closed set `{explore, edit, ask, request-change}`. Brand attribution is a clickable link wrapping `studio.name` with the segment after the last `.` rendered bold.
+The [studio-toolbar Feature](https://github.com/specscore/specscore/blob/main/spec/features/studio-toolbar/README.md) is `Approved` in the `specscore` spec repository. It specifies a four-item toolbar (Explore | Edit | Ask question | Request change) replacing the legacy `> [View in SpecStudio](url) — graph, discussions, approvals` line at file position 3 of every feature README. The Feature also renames the `viewer:` yaml block to `studio:`, migrates the default URL from `https://specscore.studio/` to `https://specscore.studio/`, and introduces a new path-style grammar `{studio.url}/app/p/{host}/{org}/{repo}/{artifact_path}?op={verb}` where `{verb}` is in the closed set `{explore, edit, ask, request-change}`. Brand attribution is a clickable link wrapping `studio.name` with the segment after the last `.` rendered bold.
 
 This plan delivers the CLI-side implementation in `specscore-cli`. The sibling spec-side plan in [`specscore`](https://github.com/specscore/specscore/blob/main/spec/plans/studio-toolbar/README.md) handles the spec revisions, `specscore.yaml` hand-edit, and final `--fix` invocation against the spec tree.
 
@@ -40,7 +40,7 @@ Implementation is structured for **subagent-driven parallelism**:
 - The canonical-form renderer (used by both the lint rule and the autofix) strips exactly one trailing `/` from `studio.url` before joining with the path grammar, produces the brand attribution per REQs `brand-attribution-rendering` / `brand-attribution-no-dot` / `brand-attribution-multi-dot`, and never emits UTM parameters or `@branch`/`?ref=` suffixes.
 - `specscore spec lint --fix` rewrites non-conforming toolbar lines (legacy `> [View in ...]` form, any drifted toolbar, missing toolbar entirely when `studio:` is not null) to the canonical form. The fix MUST refuse to run while `viewer:` is still present in `specscore.yaml`, emitting a hard error directing the user to rename the block first. The fix MUST NOT touch any line of any README other than file position 3.
 - The legacy `view-link` lint rule is removed from the rule registry. Invocations like `--ignore view-link` or `--rules view-link` produce a "rule not found" error naming `studio-toolbar` as the replacement.
-- The default `studio.url` value in the parser is `https://specscore.studio/` (not the legacy `https://specstudio.synchestra.io/`).
+- The default `studio.url` value in the parser is `https://specscore.studio/` (not the legacy `https://specscore.studio/`).
 - Every `AC:` block in the [studio-toolbar Feature](https://github.com/specscore/specscore/blob/main/spec/features/studio-toolbar/README.md) (14 ACs covering 18 REQs) is exercised by at least one Go test (`*_test.go`) that runs against a tmp-dir spec tree fixture. All tests pass.
 - `specscore <kind> --help` for relevant subcommands does not contain stale references to `viewer:` or the legacy URL host.
 - `go build ./...` and `go test ./...` pass on the implementer's branch before tagging the release.
@@ -78,7 +78,7 @@ Modify the config parser (likely `internal/config/` or wherever `repo-config` is
 - Reject `viewer:` blocks in any form:
   - Detect the presence of the `viewer:` key in the parsed yaml (BEFORE further parsing — if `viewer:` is present, fail fast).
   - Emit a hard parse error with a clear migration message: `viewer: block is no longer supported. Rename to studio: in specscore.yaml. See https://specscore.md/repo-config-specification.` (or similar URL pointing at the canonical doc).
-- Wire the new default values: `Name = "SpecScore.Studio"`, `URL = "https://specscore.studio/"`. Remove any constant references to `SpecStudio` / `specstudio.synchestra.io/` in default value definitions.
+- Wire the new default values: `Name = "SpecScore.Studio"`, `URL = "https://specscore.studio/"`. Remove any constant references to `SpecStudio` / `specscore.studio/` in default value definitions.
 
 Add unit tests for each case: omitted, null, full mapping, partial mapping (error), `viewer:` present (error), invalid `studio.url` without trailing slash (error). Ensure existing tests that previously asserted `viewer:` parse outcomes are updated or removed.
 
@@ -157,9 +157,9 @@ Audit help text across `specscore --help`, `specscore spec lint --help`, error m
 
 - `viewer:` → `studio:`
 - `View in SpecStudio` / "View in" verbiage → "studio toolbar" or analogous
-- `specstudio.synchestra.io` → `specscore.studio` (where it appears as an example or default)
+- `specscore.studio` → `specscore.studio` (where it appears as an example or default)
 
-Grep is sufficient: `grep -r "viewer\|specstudio\.synchestra\.io" cmd/ internal/ pkg/`. Hand-update each match.
+Grep is sufficient: `grep -r "viewer\|specstudio\.specscore\.io" cmd/ internal/ pkg/`. Hand-update each match.
 
 ### 7. Release
 

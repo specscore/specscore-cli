@@ -11,21 +11,21 @@ func TestDetectReference(t *testing.T) {
 		name string
 	}{
 		// Valid detection (different comment prefixes)
-		{"// synchestra:feature/cli/task/claim", true, "Go comment with space"},
-		{"//synchestra:feature/cli/task/claim", true, "Go comment no space"},
-		{"# synchestra:feature/model-selection", true, "Python comment"},
-		{"-- https://synchestra.io/github.com/org/repo/spec/features/x", true, "SQL comment with URL"},
-		{"; synchestra:plan/v2-migration", true, "Lisp comment"},
-		{"%synchestra:doc/api", true, "LaTeX comment no space"},
-		{"/* synchestra:feature/x", true, "Block comment start"},
-		{"  // synchestra:feature/x", true, "Go comment with leading whitespace"},
+		{"// specscore:feature/cli/task/claim", true, "Go comment with space"},
+		{"//specscore:feature/cli/task/claim", true, "Go comment no space"},
+		{"# specscore:feature/model-selection", true, "Python comment"},
+		{"-- https://specscore.io/github.com/org/repo/spec/features/x", true, "SQL comment with URL"},
+		{"; specscore:plan/v2-migration", true, "Lisp comment"},
+		{"%specscore:doc/api", true, "LaTeX comment no space"},
+		{"/* specscore:feature/x", true, "Block comment start"},
+		{"  // specscore:feature/x", true, "Go comment with leading whitespace"},
 		{"// specscore:feature/cli", true, "specscore prefix"},
 		{"# specscore:plan/v2", true, "specscore plan prefix"},
 
 		// Invalid (no comment prefix)
-		{"synchestra:feature/cli/task/claim", false, "No comment prefix"},
-		{"fmt.Println(\"synchestra:feature/x\")", false, "Inside string literal"},
-		{"var x = \"https://synchestra.io/...\"", false, "URL in string literal"},
+		{"specscore:feature/cli/task/claim", false, "No comment prefix"},
+		{"fmt.Println(\"specscore:feature/x\")", false, "Inside string literal"},
+		{"var x = \"https://specscore.io/...\"", false, "URL in string literal"},
 		{"", false, "Empty line"},
 		{"// just a comment", false, "Comment without reference"},
 		{"// unknown:feature/cli", false, "Unregistered prefix"},
@@ -47,11 +47,11 @@ func TestExtractReference(t *testing.T) {
 		want string
 		name string
 	}{
-		{"// synchestra:feature/cli/task/claim", "synchestra:feature/cli/task/claim", "Go comment"},
-		{"# synchestra:plan/v2", "synchestra:plan/v2", "Python comment"},
-		{"-- https://synchestra.io/github.com/org/repo/spec/features/x", "https://synchestra.io/github.com/org/repo/spec/features/x", "SQL with URL"},
-		{"// synchestra:feature/cli/task/claim more text", "synchestra:feature/cli/task/claim", "With trailing text"},
-		{"  //  synchestra:doc/api/rest  ", "synchestra:doc/api/rest", "Whitespace handling"},
+		{"// specscore:feature/cli/task/claim", "specscore:feature/cli/task/claim", "Go comment"},
+		{"# specscore:plan/v2", "specscore:plan/v2", "Python comment"},
+		{"-- https://specscore.io/github.com/org/repo/spec/features/x", "https://specscore.io/github.com/org/repo/spec/features/x", "SQL with URL"},
+		{"// specscore:feature/cli/task/claim more text", "specscore:feature/cli/task/claim", "With trailing text"},
+		{"  //  specscore:doc/api/rest  ", "specscore:doc/api/rest", "Whitespace handling"},
 		{"// specscore:feature/cli", "specscore:feature/cli", "specscore prefix"},
 		{"", "", "Empty line"},
 		{"// just a comment", "", "No reference marker"},
@@ -76,30 +76,30 @@ func TestParseReference(t *testing.T) {
 		wantErr     bool
 		name        string
 	}{
-		// Short notation with type prefixes — synchestra:
+		// Short notation with type prefixes — specscore:
 		{
-			"synchestra:feature/cli/task/claim",
+			"specscore:feature/cli/task/claim",
 			"spec/features/cli/task/claim",
 			"feature",
 			"",
 			false,
-			"Feature shortcut synchestra",
+			"Feature shortcut specscore",
 		},
 		{
-			"synchestra:plan/v2-migration",
+			"specscore:plan/v2-migration",
 			"spec/plans/v2-migration",
 			"plan",
 			"",
 			false,
-			"Plan shortcut synchestra",
+			"Plan shortcut specscore",
 		},
 		{
-			"synchestra:doc/api/rest",
+			"specscore:doc/api/rest",
 			"docs/api/rest",
 			"doc",
 			"",
 			false,
-			"Doc shortcut synchestra",
+			"Doc shortcut specscore",
 		},
 
 		// Short notation with type prefixes — specscore:
@@ -122,7 +122,7 @@ func TestParseReference(t *testing.T) {
 
 		// Short notation with full paths (no prefix)
 		{
-			"synchestra:spec/features/cli/task/claim",
+			"specscore:spec/features/cli/task/claim",
 			"spec/features/cli/task/claim",
 			"feature",
 			"",
@@ -130,7 +130,7 @@ func TestParseReference(t *testing.T) {
 			"Full path to feature",
 		},
 		{
-			"synchestra:README.md",
+			"specscore:README.md",
 			"README.md",
 			"",
 			"",
@@ -140,7 +140,7 @@ func TestParseReference(t *testing.T) {
 
 		// Cross-repo references
 		{
-			"synchestra:feature/agent-skills@github.com/acme/orchestrator",
+			"specscore:feature/agent-skills@github.com/acme/orchestrator",
 			"spec/features/agent-skills",
 			"feature",
 			"@github.com/acme/orchestrator",
@@ -148,7 +148,7 @@ func TestParseReference(t *testing.T) {
 			"Feature with cross-repo",
 		},
 		{
-			"synchestra:doc/api/rest@bitbucket.org/acme/docs",
+			"specscore:doc/api/rest@bitbucket.org/acme/docs",
 			"docs/api/rest",
 			"doc",
 			"@bitbucket.org/acme/docs",
@@ -158,7 +158,7 @@ func TestParseReference(t *testing.T) {
 
 		// Edge cases
 		{
-			"synchestra:",
+			"specscore:",
 			"",
 			"",
 			"",
@@ -249,7 +249,7 @@ func TestScanLine(t *testing.T) {
 		name string
 	}{
 		{
-			"// synchestra:feature/cli/task/claim",
+			"// specscore:feature/cli/task/claim",
 			&Reference{
 				ResolvedPath:    "spec/features/cli/task/claim",
 				CrossRepoSuffix: "",
@@ -258,7 +258,7 @@ func TestScanLine(t *testing.T) {
 			"Valid feature reference",
 		},
 		{
-			"# synchestra:plan/v2",
+			"# specscore:plan/v2",
 			&Reference{
 				ResolvedPath:    "spec/plans/v2",
 				CrossRepoSuffix: "",
@@ -331,7 +331,7 @@ func TestMultiplePrefixes(t *testing.T) {
 		detected bool
 	}{
 		{"// specscore:feature/cli", true},
-		{"// synchestra:feature/cli", true},
+		{"// specscore:feature/cli", true},
 		{"# specscore:plan/v2", true},
 		{"// unknown:feature/cli", false},
 	}

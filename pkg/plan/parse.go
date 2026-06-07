@@ -1,6 +1,6 @@
 // Package plan parses single-file Plan artifacts at spec/plans/<slug>.md per
 // the SpecStudio plan-Feature contract
-// (https://github.com/synchestra-io/specstudio-skills/blob/main/spec/features/skills/plan/README.md).
+// (https://github.com/specscore/specstudio-skills/blob/main/spec/features/skills/plan/README.md).
 //
 // The directory-form plans at spec/plans/<slug>/README.md historically used by
 // specscore-cli are out of scope for this package — they are parsed by the

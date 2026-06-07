@@ -14,19 +14,19 @@ import (
 
 const (
 	acHost  = "github.com"
-	acOwner = "synchestra-io"
+	acOwner = "specscore"
 	acRepo  = "specscore"
 )
 
 // acDefaultExpectedLine is the canonical toolbar bytes for a feature at
-// spec/features/repo-config under synchestra-io/specscore with defaults,
+// spec/features/repo-config under specscore/specscore with defaults,
 // per AC: toolbar-rendered-with-defaults. Used as the byte-equality target
 // for several AC tests.
 const acDefaultExpectedLine = "> [SpecScore.**Studio**](https://specscore.studio): | " +
-	"[Explore](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=explore) | " +
-	"[Edit](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=edit) | " +
-	"[Ask question](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=ask) | " +
-	"[Request change](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=request-change) |"
+	"[Explore](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=explore) | " +
+	"[Edit](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=edit) | " +
+	"[Ask question](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=ask) | " +
+	"[Request change](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=request-change) |"
 
 // setupDefaultStudioProject writes a header-only specscore.yaml so the
 // studio defaults apply (name=SpecScore.Studio, url=https://specscore.studio/),
@@ -128,15 +128,15 @@ func TestRenderStudioToolbar_DefaultsMatchAC(t *testing.T) {
 		"SpecScore.Studio",
 		"https://specscore.studio/",
 		"github.com",
-		"synchestra-io",
+		"specscore",
 		"specscore",
 		"spec/features/repo-config",
 	)
 	want := "> [SpecScore.**Studio**](https://specscore.studio): | " +
-		"[Explore](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=explore) | " +
-		"[Edit](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=edit) | " +
-		"[Ask question](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=ask) | " +
-		"[Request change](https://specscore.studio/app/github.com/synchestra-io/specscore/spec/features/repo-config?op=request-change) |\n"
+		"[Explore](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=explore) | " +
+		"[Edit](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=edit) | " +
+		"[Ask question](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=ask) | " +
+		"[Request change](https://specscore.studio/app/github.com/specscore/specscore/spec/features/repo-config?op=request-change) |\n"
 	if got != want {
 		t.Errorf("renderer mismatch.\n got: %q\nwant: %q", got, want)
 	}
@@ -220,7 +220,7 @@ func setupStudioProject(t *testing.T, studio *projectdef.StudioConfig) string {
 		Project: &projectdef.ProjectConfig{
 			Title: "Test",
 			Host:  "github.com",
-			Org:   "synchestra-io",
+			Org:   "specscore",
 			Repo:  "specscore",
 		},
 	}
@@ -245,7 +245,7 @@ func TestStudioToolbarFix_RewritesLegacyLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := "# Feature: Studio Toolbar\n\n" +
-		"> [View in SpecStudio](https://specstudio.synchestra.io/project/features?id=specscore@synchestra-io@github.com&path=spec%2Ffeatures%2Fstudio-toolbar) — graph, discussions, approvals\n" +
+		"> [View in SpecStudio](https://specscore.studio/project/features?id=specscore@specscore@github.com&path=spec%2Ffeatures%2Fstudio-toolbar) — graph, discussions, approvals\n" +
 		"\n**Status:** Approved\n"
 	readme := filepath.Join(featureDir, "README.md")
 	if err := os.WriteFile(readme, []byte(legacy), 0o644); err != nil {
@@ -262,7 +262,7 @@ func TestStudioToolbarFix_RewritesLegacyLine(t *testing.T) {
 	}
 	wantLine := strings.TrimRight(RenderStudioToolbar(
 		"SpecScore.Studio", "https://specscore.studio/",
-		"github.com", "synchestra-io", "specscore",
+		"github.com", "specscore", "specscore",
 		"spec/features/studio-toolbar"), "\n")
 	if lines[2] != wantLine {
 		t.Errorf("line 3 not rewritten to canonical form.\n got: %q\nwant: %q", lines[2], wantLine)
@@ -317,7 +317,7 @@ func TestStudioToolbarFix_InsertsWhenMissing(t *testing.T) {
 	}
 	wantLine := strings.TrimRight(RenderStudioToolbar(
 		"SpecScore.Studio", "https://specscore.studio/",
-		"github.com", "synchestra-io", "specscore",
+		"github.com", "specscore", "specscore",
 		"spec/features/foo"), "\n")
 	if lines[2] != wantLine {
 		t.Errorf("toolbar not inserted at line 3.\n got: %q\nwant: %q", lines[2], wantLine)
@@ -623,7 +623,7 @@ func TestAC_ViewerBlockIsHardError(t *testing.T) {
 	}{
 		{
 			name: "mapping",
-			body: "viewer:\n  name: SpecStudio\n  url: https://specstudio.synchestra.io/\n",
+			body: "viewer:\n  name: SpecStudio\n  url: https://specscore.studio/\n",
 		},
 		{
 			name: "null",
@@ -669,7 +669,7 @@ func TestAC_ViewerBlockIsHardError(t *testing.T) {
 // lines are preserved.
 func TestAC_AutofixRewritesLegacyLine(t *testing.T) {
 	root := setupDefaultStudioProject(t)
-	legacy := "> [View in SpecStudio](https://specstudio.synchestra.io/project/features?id=specscore@synchestra-io@github.com&path=spec%2Ffeatures%2Fstudio-toolbar) — graph, discussions, approvals"
+	legacy := "> [View in SpecStudio](https://specscore.studio/project/features?id=specscore@specscore@github.com&path=spec%2Ffeatures%2Fstudio-toolbar) — graph, discussions, approvals"
 	content := "# Feature: Studio Toolbar\n\n" + legacy + "\n\n**Status:** Approved\n## Summary\nsome text\n"
 	readme := writeStudioFeatureReadme(t, root, "studio-toolbar", content)
 
@@ -712,7 +712,7 @@ func TestAC_AutofixRewritesLegacyLine(t *testing.T) {
 // in specscore.yaml, --fix modifies nothing and emits the rejection.
 func TestAC_AutofixBlockedWhenViewerStillPresent(t *testing.T) {
 	root := setupViewerStillPresentProject(t,
-		"project:\n  host: "+acHost+"\n  org: "+acOwner+"\n  repo: "+acRepo+"\nviewer:\n  name: SpecStudio\n  url: https://specstudio.synchestra.io/\n")
+		"project:\n  host: "+acHost+"\n  org: "+acOwner+"\n  repo: "+acRepo+"\nviewer:\n  name: SpecStudio\n  url: https://specscore.studio/\n")
 	original := "# Feature: Foo\n\n> [whatever](url) — drifted line\n\n**Status:** Draft\n"
 	readme := writeStudioFeatureReadme(t, root, "foo", original)
 
