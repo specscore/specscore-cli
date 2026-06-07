@@ -11,7 +11,7 @@ status: Draft
 
 ## Summary
 
-`specscore spec migrate` performs the one-shot, deterministic, per-repo migration that brings every existing artifact into conformance with the artifact-frontmatter-convention (defined in the sibling `specscore` meta-spec): it backfills the leading-frontmatter `format:` field (the canonical spec URL for each artifact's type) and, for status-bearing types, the `status:` field (mirrored from the body `**Status:**`), and keeps each adherence-footer URL aligned with `format:`. It is the migration step that lets the graced frontmatter lint rules (`format-field`, `status-mirror`, `footer-format-mirror`) flip from `warning` to `error` against an already-conformant tree.
+`specscore migrate` performs the one-shot, deterministic, per-repo migration that brings every existing artifact into conformance with the artifact-frontmatter-convention (defined in the sibling `specscore` meta-spec): it backfills the leading-frontmatter `format:` field (the canonical spec URL for each artifact's type) and, for status-bearing types, the `status:` field (mirrored from the body `**Status:**`), and keeps each adherence-footer URL aligned with `format:`. The existing nested form, `specscore spec migrate`, remains an equivalent invocation for scripts and users who discover the verb through the `spec` command group. It is the migration step that lets the graced frontmatter lint rules (`format-field`, `status-mirror`, `footer-format-mirror`) flip from `warning` to `error` against an already-conformant tree.
 
 ## Problem
 
@@ -23,35 +23,37 @@ The frontmatter convention ships its lint rules graced (warning-only) so existin
 
 #### REQ: command-shape
 
-`specscore spec migrate` MUST, in a single invocation, walk the spec tree and write the frontmatter-convention fields into every artifact the frontmatter lint rules enforce. It takes no positional arguments; `--project <path>` selects the project root (default: autodetected from the current directory).
+`specscore migrate` MUST, in a single invocation, walk the spec tree and write the frontmatter-convention fields into every artifact the frontmatter lint rules enforce. It takes no positional arguments; `--project <path>` selects the project root (default: autodetected from the current directory).
+
+The nested form `specscore spec migrate` MUST remain available and behaviorally equivalent to `specscore migrate`, including the same flags, output, exit codes, and on-disk rewrites. The root `specscore --help` output MUST list `migrate` so the one-shot maintenance command is discoverable without expanding `spec [command]`.
 
 ### Format backfill
 
 #### REQ: format-backfill
 
-For every artifact of a Document or Index Kind the convention rules walk, `spec migrate` MUST ensure a leading YAML frontmatter block carrying `format: <url>`, where `<url>` is the canonical spec URL for that artifact's type. An artifact already carrying the correct `format:` is left byte-unchanged.
+For every artifact of a Document or Index Kind the convention rules walk, `migrate` MUST ensure a leading YAML frontmatter block carrying `format: <url>`, where `<url>` is the canonical spec URL for that artifact's type. An artifact already carrying the correct `format:` is left byte-unchanged.
 
 ### Status backfill
 
 #### REQ: status-backfill
 
-For a status-bearing artifact (Idea, Feature, Plan, Task, Decision), `spec migrate` MUST write a frontmatter `status:` mirroring the body `**Status:**` token. A status-less type (the `*-index` READMEs, scenarios, properties, entities) MUST NOT receive a `status:` field.
+For a status-bearing artifact (Idea, Feature, Plan, Task, Decision), `migrate` MUST write a frontmatter `status:` mirroring the body `**Status:**` token. A status-less type (the `*-index` READMEs, scenarios, properties, entities) MUST NOT receive a `status:` field.
 
 ### Footer alignment
 
 #### REQ: footer-alignment
 
-`spec migrate` MUST leave each artifact's adherence-footer URL equal to its frontmatter `format:` — the frontmatter is canonical for the pair, so the footer is aligned to it, never the reverse.
+`migrate` MUST leave each artifact's adherence-footer URL equal to its frontmatter `format:` — the frontmatter is canonical for the pair, so the footer is aligned to it, never the reverse.
 
 ### Determinism and idempotency
 
 #### REQ: deterministic-offline
 
-`spec migrate` MUST be deterministic and offline: the same tree yields byte-identical output with no network access.
+`migrate` MUST be deterministic and offline: the same tree yields byte-identical output with no network access.
 
 #### REQ: idempotent
 
-Re-running `spec migrate` on an already-migrated tree MUST be a no-op — exit `0` with no file changes.
+Re-running `migrate` on an already-migrated tree MUST be a no-op — exit `0` with no file changes.
 
 ### Rule cutover
 
@@ -66,7 +68,7 @@ Once the target repo is migrated, the graced frontmatter rules (`format-field`, 
 **Requirements:** cli/spec/migrate#req:command-shape, cli/spec/migrate#req:format-backfill, cli/spec/migrate#req:status-backfill
 
 **Given** a feature README and an idea file with body `**Status:**` lines but no frontmatter
-**When** `specscore spec migrate` runs
+**When** `specscore migrate` runs
 **Then** each gains a leading frontmatter block with the type's canonical `format:` URL and a `status:` mirroring its body `**Status:**`.
 
 ### AC: status-less-types-excluded
@@ -74,7 +76,7 @@ Once the target repo is migrated, the graced frontmatter rules (`format-field`, 
 **Requirements:** cli/spec/migrate#req:status-backfill
 
 **Given** an `*-index` README (a status-less type) with no frontmatter
-**When** `specscore spec migrate` runs
+**When** `specscore migrate` runs
 **Then** it gains `format:` but no `status:` field.
 
 ### AC: footer-aligned-to-format
@@ -90,8 +92,16 @@ Once the target repo is migrated, the graced frontmatter rules (`format-field`, 
 **Requirements:** cli/spec/migrate#req:idempotent, cli/spec/migrate#req:deterministic-offline
 
 **Given** an already-migrated tree
-**When** `specscore spec migrate` runs again
+**When** `specscore migrate` runs again
 **Then** it exits `0` and changes no files.
+
+### AC: root-alias-discoverable
+
+**Requirements:** cli/spec/migrate#req:command-shape
+
+**Given** a SpecScore CLI binary
+**When** `specscore --help` runs
+**Then** the command list includes `migrate`; and invoking `specscore migrate --project <root>` performs the same migration as `specscore spec migrate --project <root>`.
 
 ### AC: rules-enforce-after-cutover
 

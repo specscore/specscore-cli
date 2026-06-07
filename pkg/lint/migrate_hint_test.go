@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const wantHint = "specscore spec migrate"
+const wantHint = "specscore migrate"
 
 func ruleMessage(t *testing.T, c checker, specRoot, rule string) string {
 	t.Helper()
@@ -22,7 +22,7 @@ func ruleMessage(t *testing.T, c checker, specRoot, rule string) string {
 	return ""
 }
 
-// The migrate-fixable frontmatter violations point the user at `spec migrate`.
+// The migrate-fixable frontmatter violations point the user at root `migrate`.
 func TestFrontmatterRules_MigrateHintOnFixableViolations(t *testing.T) {
 	// A feature with a body **Status:** but no frontmatter → format-field
 	// (missing format) and status-mirror (missing status) both fire.
@@ -46,12 +46,12 @@ func TestFrontmatterRules_MigrateHintOnFixableViolations(t *testing.T) {
 }
 
 // The status-less rejection is a hand-fix (migrate only adds frontmatter, it
-// won't strip a stray status:), so its message must NOT suggest spec migrate.
+// won't strip a stray status:), so its message must NOT suggest migrate.
 func TestFrontmatterRules_NoMigrateHintOnStatusLess(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"features/README.md": "---\nstatus: Draft\n---\n\n# Features\n",
 	})
 	if m := ruleMessage(t, newStatusMirrorChecker(), specRoot, "status-mirror"); strings.Contains(m, wantHint) {
-		t.Errorf("status-less rejection must not suggest spec migrate: %q", m)
+		t.Errorf("status-less rejection must not suggest migrate: %q", m)
 	}
 }

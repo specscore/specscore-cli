@@ -22,6 +22,15 @@ var (
 
 // Run executes the specscore CLI with the given arguments.
 func Run(args []string) error {
+	rootCmd := newRootCommand()
+
+	if len(args) > 1 {
+		rootCmd.SetArgs(args[1:])
+	}
+	return executeWithPanicRecovery(rootCmd)
+}
+
+func newRootCommand() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:           "specscore",
 		Short:         "SpecScore CLI — validate and query specification repositories",
@@ -46,6 +55,7 @@ func Run(args []string) error {
 		planCommand(),
 		propertyCommand(),
 		rulesCommand(),
+		rootMigrateCommand(),
 		specCommand(),
 		taskCommand(),
 		ideaCommand(),
@@ -67,10 +77,14 @@ func Run(args []string) error {
 	// after Execute returns so the actual exit code is captured.
 	attachTelemetry(rootCmd)
 
-	if len(args) > 1 {
-		rootCmd.SetArgs(args[1:])
-	}
-	return executeWithPanicRecovery(rootCmd)
+	return rootCmd
+}
+
+func rootMigrateCommand() *cobra.Command {
+	cmd := specMigrateCommand()
+	cmd.Short = "Backfill artifact-frontmatter-convention frontmatter across the spec tree"
+	cmd.Long = "Equivalent to `specscore spec migrate`.\n\n" + cmd.Long
+	return cmd
 }
 
 func versionCommand() *cobra.Command {

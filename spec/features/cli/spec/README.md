@@ -32,7 +32,7 @@ Scans the spec tree and reports violations of structural conventions (README pre
 
 ### migrate
 
-Performs the one-shot, deterministic per-repo migration that backfills the artifact-frontmatter-convention `format:`/`status:` frontmatter into every existing artifact and aligns each footer to `format:`, then flips the graced frontmatter rules to `error`.
+Performs the one-shot, deterministic per-repo migration that backfills the artifact-frontmatter-convention `format:`/`status:` frontmatter into every existing artifact and aligns each footer to `format:`, then flips the graced frontmatter rules to `error`. It is also exposed as the root-visible `specscore migrate` alias for discoverability.
 
 ## Behavior
 

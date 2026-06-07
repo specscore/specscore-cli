@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -42,6 +43,34 @@ func TestSpecMigrate_MigratesAndReports(t *testing.T) {
 	}
 }
 
+func TestRootMigrate_MigratesAndReports(t *testing.T) {
+	root := setupLintCleanProject(t)
+	p := writeUnmigratedFeature(t, root, "auth")
+
+	stdout, _, err := runRoot(t, "migrate", "--project", root)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !strings.Contains(stdout, "Migrated") || !strings.Contains(stdout, "features/auth/README.md") {
+		t.Errorf("unexpected stdout:\n%s", stdout)
+	}
+	got, _ := os.ReadFile(p)
+	if !strings.HasPrefix(string(got), "---\nformat: https://specscore.md/feature-specification\nstatus: Draft\n---") {
+		t.Errorf("feature not migrated:\n%s", got)
+	}
+}
+
+func TestRootMigrate_VisibleInHelp(t *testing.T) {
+	stdout, _, err := runRoot(t, "--help")
+	if err != nil {
+		t.Fatalf("root help: %v", err)
+	}
+	if !strings.Contains(stdout, "migrate") ||
+		!strings.Contains(stdout, "Backfill artifact-frontmatter-convention frontmatter") {
+		t.Errorf("root help does not list migrate command:\n%s", stdout)
+	}
+}
+
 func TestSpecMigrate_AlreadyMigrated(t *testing.T) {
 	root := setupLintCleanProject(t)
 	writeUnmigratedFeature(t, root, "auth")
@@ -78,4 +107,17 @@ func TestSpecMigrate_Error(t *testing.T) {
 	if got := exitCodeOf(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
 	}
+}
+
+func runRoot(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+	cmd := newRootCommand()
+	cmd.SilenceUsage = true
+	cmd.PersistentPreRun = nil
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), errOut.String(), err
 }

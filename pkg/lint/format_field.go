@@ -16,7 +16,7 @@ import (
 //
 // The rule is enforced at "error" severity. The grace period
 // (REQ:migration-sequencing) has ended for this repo: every artifact has been
-// migrated by `specscore spec migrate` to carry `format:`, and the create verbs
+// migrated by `specscore migrate` to carry `format:`, and the create verbs
 // emit it on new artifacts.
 type formatFieldChecker struct{}
 
