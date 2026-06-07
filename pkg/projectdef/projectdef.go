@@ -33,6 +33,10 @@ const (
 	DefaultStudioName   = "SpecScore.Studio"
 	DefaultStudioURL    = "https://specscore.studio/"
 	DefaultModuleName   = "default"
+	// DefaultIdeasPath is the module-relative ideas directory used when a
+	// module declares no path_overrides.ideas_path
+	// (configurable-ideas-path#req:ideas-path-default).
+	DefaultIdeasPath = "spec/ideas"
 )
 
 // SpecConfig is the deserialized form of specscore.yaml.
@@ -255,10 +259,39 @@ func dedupeStrings(s []string) []string {
 // ModuleConfig is one entry in the `modules:` list — a code area inside
 // the repo, optionally with its own specs/docs subdirectories.
 type ModuleConfig struct {
-	Name   string         `yaml:"name,omitempty"`
-	Path   string         `yaml:"path,omitempty"`
-	Code   []string       `yaml:"code,omitempty"`
-	Extras map[string]any `yaml:",inline"`
+	Name          string         `yaml:"name,omitempty"`
+	Path          string         `yaml:"path,omitempty"`
+	Code          []string       `yaml:"code,omitempty"`
+	PathOverrides *PathOverrides `yaml:"path_overrides,omitempty"`
+	Extras        map[string]any `yaml:",inline"`
+}
+
+// PathOverrides holds per-module, per-artifact-kind directory overrides
+// (repo-config#req:path-overrides-optional). Only IdeasPath is interpreted
+// in v1; any other key round-trips unchanged via Extras.
+type PathOverrides struct {
+	IdeasPath string         `yaml:"ideas_path,omitempty"`
+	Extras    map[string]any `yaml:",inline"`
+}
+
+// EffectiveIdeasPath returns the module-relative ideas directory:
+// path_overrides.ideas_path when set, else the default "spec/ideas"
+// (configurable-ideas-path#req:ideas-path-default,
+// configurable-ideas-path#req:ideas-path-override). The result is relative
+// to the module root; join with the module's EffectivePath for a
+// repo-relative location.
+func (m ModuleConfig) EffectiveIdeasPath() string {
+	if m.PathOverrides != nil && m.PathOverrides.IdeasPath != "" {
+		return filepath.ToSlash(filepath.Clean(m.PathOverrides.IdeasPath))
+	}
+	return DefaultIdeasPath
+}
+
+// EffectiveSeedsPath returns the module-relative sidekick-seed directory,
+// which is always "seeds" under the resolved ideas directory
+// (configurable-ideas-path#req:seeds-follow-ideas).
+func (m ModuleConfig) EffectiveSeedsPath() string {
+	return filepath.ToSlash(filepath.Join(m.EffectiveIdeasPath(), "seeds"))
 }
 
 // EffectiveSpecsDirName returns the configured specs dir name or the
@@ -463,6 +496,16 @@ func validateModules(modules []ModuleConfig) error {
 		}
 		seen[p] = i
 	}
+	// 1b. path_overrides.ideas_path must be module-relative and must not
+	// escape the module root (configurable-ideas-path#req:ideas-path-relative-to-module).
+	for i, m := range modules {
+		if m.PathOverrides == nil || m.PathOverrides.IdeasPath == "" {
+			continue
+		}
+		if err := validateIdeasPath(m.PathOverrides.IdeasPath, i, m.EffectiveName()); err != nil {
+			return err
+		}
+	}
 	// 2. Non-nesting — applies only to explicit paths. The implicit-root
 	// module (no path:) is exempt per repo-config#req:module-paths-non-nested.
 	type idxPath struct {
@@ -488,6 +531,26 @@ func validateModules(modules []ModuleConfig) error {
 				)
 			}
 		}
+	}
+	return nil
+}
+
+// validateIdeasPath enforces configurable-ideas-path#req:ideas-path-relative-to-module:
+// an absolute path or one that escapes the module root via ".." is a hard
+// error naming the offending module.
+func validateIdeasPath(p string, idx int, name string) error {
+	if filepath.IsAbs(p) || strings.HasPrefix(filepath.ToSlash(p), "/") {
+		return fmt.Errorf(
+			"modules[%d] (%q): path_overrides.ideas_path %q must be module-relative, not absolute (configurable-ideas-path#req:ideas-path-relative-to-module)",
+			idx, name, p,
+		)
+	}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf(
+			"modules[%d] (%q): path_overrides.ideas_path %q must not escape the module root (configurable-ideas-path#req:ideas-path-relative-to-module)",
+			idx, name, p,
+		)
 	}
 	return nil
 }
