@@ -469,13 +469,13 @@ func TestParseExpandedURL(t *testing.T) {
 			"Doc URL",
 		},
 		{
-			"https://synchestra.io/github.com/org/repo/spec/features/x",
-			"https://synchestra.io/",
+			"https://specscore.io/github.com/org/repo/spec/features/x",
+			"https://specscore.io/",
 			"spec/features/x",
 			"feature",
 			"@github.com/org/repo",
 			false,
-			"Synchestra domain URL",
+			"Specscore domain URL",
 		},
 		{
 			"https://specscore.io/github.com/acme/project/spec/features/deep/nested/path",

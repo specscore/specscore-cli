@@ -871,7 +871,7 @@ func TestStudioToolbarCheck_ToolbarAlreadyCorrect(t *testing.T) {
 	// Write a feature README with the correct toolbar at line 3.
 	expectedLine := strings.TrimRight(RenderStudioToolbar(
 		"SpecScore.Studio", "https://specscore.studio/",
-		"github.com", "synchestra-io", "specscore",
+		"github.com", "specscore", "specscore",
 		"spec/features/auth"), "\n")
 	content := "# Feature: Auth\n\n" + expectedLine + "\n\n**Status:** Draft\n"
 	writeStudioFeatureReadme(t, root, "auth", content)

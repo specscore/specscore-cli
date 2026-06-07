@@ -25,7 +25,7 @@ package cli
 // Setup strategy: prefer `git clone --depth=1` for full hermeticity
 // (matches the plan's stated preference and pins to actual HEAD of
 // `main`). When the network is unreachable, fall back to copying the
-// developer's local clone at /home/ai/projects/synchestra-io/specscore.
+// developer's local clone at /home/ai/projects/specscore/specscore.
 // If neither path is available, t.Skip — the integration test is a
 // non-gate on machines without the meta-spec, mirroring the soft-skip
 // pattern in pkg/property/parse_test.go::TestParse_MetaSpecSmokeFixture.
@@ -42,8 +42,8 @@ import (
 )
 
 const (
-	metaSpecRepoURL    = "https://github.com/synchestra-io/specscore"
-	metaSpecLocalClone = "/home/ai/projects/synchestra-io/specscore"
+	metaSpecRepoURL    = "https://github.com/specscore/specscore"
+	metaSpecLocalClone = "/home/ai/projects/specscore/specscore"
 )
 
 // setupMetaSpec materialises the meta-spec repo into a tmp directory.

@@ -7,10 +7,10 @@ import (
 
 // metaSpecUserEntity is the canonical smoke-test fixture from the upstream
 // meta-spec repository — see plan T1's "Smoke-test fixture" reference.
-// The path is a sibling checkout of synchestra-io/specscore alongside
+// The path is a sibling checkout of specscore/specscore alongside
 // this CLI repo; we skip when that checkout is absent so CI in
 // containers without the sibling repo still passes.
-const metaSpecUserEntity = "/home/ai/projects/synchestra-io/specscore/spec/features/idea/user.entity.md"
+const metaSpecUserEntity = "/home/ai/projects/specscore/specscore/spec/features/idea/user.entity.md"
 
 func TestParse_MetaSpecUserEntitySmoke(t *testing.T) {
 	if _, err := os.Stat(metaSpecUserEntity); err != nil {

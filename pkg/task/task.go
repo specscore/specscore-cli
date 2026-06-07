@@ -19,7 +19,7 @@ const (
 )
 
 // Task represents a unit of work. Coordination-only fields (Run, Model, ClaimedAt)
-// are NOT included here -- those belong in the coordination layer (synchestra).
+// are NOT included here -- those belong in a separate coordination layer.
 type Task struct {
 	Slug      string
 	Title     string
