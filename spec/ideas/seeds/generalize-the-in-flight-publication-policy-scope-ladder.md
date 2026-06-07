@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: generalize-the-in-flight-publication-policy-scope-ladder
-captured_at: 2026-06-03T10:22:37Z
 captured_by: user
-captured_during: spec/plans/approval-autonomy.md
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 
 # Generalize the in-flight publication-policy scope-ladder config resolver into a shared specscore CLI config resolver (get/set/resolve across run/session/project/user) that also serves autonomy.implement.* knobs like commit_cadence

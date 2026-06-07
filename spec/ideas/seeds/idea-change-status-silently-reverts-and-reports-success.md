@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: idea-change-status-silently-reverts-and-reports-success
-captured_at: 2026-06-05T12:00:00Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 
 # `specscore idea change-status` reports a successful transition to stdout but its internal `lint --fix` silently reverts the status, leaving the file unchanged

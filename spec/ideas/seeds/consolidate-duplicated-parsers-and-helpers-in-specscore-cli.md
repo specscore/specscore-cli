@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: consolidate-duplicated-parsers-and-helpers-in-specscore-cli
-captured_at: 2026-06-06T09:10:14Z
 captured_by: user
-captured_during: null
-trigger: explicit
 status: queued
-synchestra_task: null
 ---
 # Consolidate duplicated parsers and helpers in specscore-cli for code reuse
 

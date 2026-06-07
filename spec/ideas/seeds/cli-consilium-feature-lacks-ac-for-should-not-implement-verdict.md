@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: cli-consilium-feature-lacks-ac-for-should-not-implement-verdict
-captured_at: 2026-06-03T12:30:00Z
 captured_by: specstudio:plan
-captured_during: spec/features/cli/consilium
-trigger: heuristic
 status: queued
-synchestra_task: null
 ---
 # cli/consilium Feature has no AC exercising the should-not-implement terminal verdict
 

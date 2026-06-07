@@ -8,12 +8,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 )
 
 const (
-	// TypeValue is the literal `type:` frontmatter value every seed carries.
-	TypeValue = "sidekick-seed"
 	// MaxOneLinerChars caps the trimmed one-liner length
 	// (cli/sidekick/new#req:one-liner-length).
 	MaxOneLinerChars = 500
@@ -25,10 +22,6 @@ const (
 	// (cli/sidekick/new#req:slug-derivation).
 	MaxSlugChars = 60
 )
-
-// TriggerValues enumerates the legal `trigger:` values
-// (cli/sidekick/new#req:frontmatter-values).
-var TriggerValues = []string{"heuristic", "explicit"}
 
 var nonSlugRe = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -72,36 +65,22 @@ func DeriveSlug(oneLiner string) (string, error) {
 	return s, nil
 }
 
-// validTrigger reports whether t is one of the legal trigger values.
-func validTrigger(t string) bool {
-	for _, v := range TriggerValues {
-		if t == v {
-			return true
-		}
-	}
-	return false
-}
-
 // ScaffoldOptions controls the lint-clean seed file Scaffold emits.
 type ScaffoldOptions struct {
-	Slug     string
 	OneLiner string // the H1 text; trimmed before use
 	// CapturedBy defaults to "user" when empty.
 	CapturedBy string
-	// CapturedDuring is written verbatim; empty renders the literal `null`.
-	CapturedDuring string
-	// Trigger defaults to "explicit" when empty; must be heuristic|explicit.
-	Trigger string
 	// Body is optional markdown appended after the H1 line.
 	Body string
-	// CapturedAt is an ISO-8601 timestamp; defaults to time.Now().UTC() when empty.
-	CapturedAt string
 }
 
-// Scaffold returns a lint-clean sidekick-seed file body: the closed 8-key
-// frontmatter the `sidekick-seed` lint rule enforces, followed by an H1 whose
-// heading is the one-liner verbatim and any optional body. It validates the
-// one-liner, trigger, and body cap, returning an error on violation.
+// Scaffold returns a lint-clean sidekick-seed file body: the minimal
+// `{captured_by, status}` frontmatter the `sidekick-seed` lint rule enforces,
+// followed by an H1 whose heading is the one-liner verbatim and any optional
+// body. The `type: sidekick-seed` key is NOT written here — captured seeds in
+// spec/ideas/seeds/ are identified by location; `type` is added only when a
+// seed is archived. It validates the one-liner and body cap, returning an
+// error on violation.
 func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	oneLiner := strings.TrimSpace(opts.OneLiner)
 	if oneLiner == "" {
@@ -110,41 +89,16 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	if len(oneLiner) > MaxOneLinerChars {
 		return nil, fmt.Errorf("one-liner too long (%d chars); max is %d", len(oneLiner), MaxOneLinerChars)
 	}
-	if strings.TrimSpace(opts.Slug) == "" {
-		return nil, fmt.Errorf("slug must not be empty")
-	}
 
 	capturedBy := strings.TrimSpace(opts.CapturedBy)
 	if capturedBy == "" {
 		capturedBy = "user"
 	}
-	trigger := strings.TrimSpace(opts.Trigger)
-	if trigger == "" {
-		trigger = "explicit"
-	}
-	if !validTrigger(trigger) {
-		return nil, fmt.Errorf("trigger must be one of {%s}; got %q",
-			strings.Join(TriggerValues, ", "), trigger)
-	}
-	capturedAt := strings.TrimSpace(opts.CapturedAt)
-	if capturedAt == "" {
-		capturedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	capturedDuring := strings.TrimSpace(opts.CapturedDuring)
-	if capturedDuring == "" {
-		capturedDuring = "null"
-	}
 
 	var front strings.Builder
 	front.WriteString("---\n")
-	front.WriteString("type: " + TypeValue + "\n")
-	front.WriteString("slug: " + opts.Slug + "\n")
-	front.WriteString("captured_at: " + capturedAt + "\n")
 	front.WriteString("captured_by: " + capturedBy + "\n")
-	front.WriteString("captured_during: " + capturedDuring + "\n")
-	front.WriteString("trigger: " + trigger + "\n")
 	front.WriteString("status: queued\n")
-	front.WriteString("synchestra_task: null\n")
 	front.WriteString("---\n")
 
 	var body strings.Builder

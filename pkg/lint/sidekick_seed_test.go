@@ -10,16 +10,13 @@ import (
 // validSeedBody returns a lint-clean sidekick-seed file body. `extra` lines
 // (one per element) are appended to the body after the H1.
 func validSeedBody(slug, title, trigger string, extraBody ...string) string {
+	// slug and trigger are retained in the signature for caller readability
+	// but are no longer part of the seed frontmatter schema.
+	_, _ = slug, trigger
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.WriteString("type: sidekick-seed\n")
-	b.WriteString("slug: " + slug + "\n")
-	b.WriteString("captured_at: 2026-05-18T00:00:00Z\n")
 	b.WriteString("captured_by: user\n")
-	b.WriteString("captured_during: null\n")
-	b.WriteString("trigger: " + trigger + "\n")
 	b.WriteString("status: queued\n")
-	b.WriteString("synchestra_task: null\n")
 	b.WriteString("---\n\n")
 	b.WriteString("# " + title + "\n")
 	for _, ln := range extraBody {
@@ -59,8 +56,8 @@ func TestSidekickSeed_CleanSeed(t *testing.T) {
 func TestSidekickSeed_UnknownFrontmatterKey(t *testing.T) {
 	body := strings.Replace(
 		validSeedBody("test", "Test seed", "explicit"),
-		"synchestra_task: null\n",
-		"synchestra_task: null\nunknown_key: oops\n",
+		"status: queued\n",
+		"status: queued\nunknown_key: oops\n",
 		1,
 	)
 	specRoot := writeSpec(t, map[string]string{
@@ -98,12 +95,14 @@ func TestSidekickSeed_MissingRequiredKey(t *testing.T) {
 }
 
 func TestSidekickSeed_WrongTypeValue(t *testing.T) {
-	body := strings.Replace(
-		validSeedBody("test", "Test seed", "explicit"),
-		"type: sidekick-seed\n",
-		"type: feature-readme\n",
-		1,
-	)
+	// `type` is optional, but when present (e.g. on an archived seed) it must
+	// be the literal `sidekick-seed`.
+	body := "---\n" +
+		"type: feature-readme\n" +
+		"captured_by: user\n" +
+		"status: queued\n" +
+		"---\n\n" +
+		"# Test seed\n"
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/seeds/test.md": body,
 	})
@@ -114,28 +113,10 @@ func TestSidekickSeed_WrongTypeValue(t *testing.T) {
 	}
 }
 
-func TestSidekickSeed_InvalidTriggerValue(t *testing.T) {
-	body := validSeedBody("test", "Test seed", "spontaneous")
-	specRoot := writeSpec(t, map[string]string{
-		"ideas/seeds/test.md": body,
-	})
-	c := newSidekickSeedChecker()
-	vs, _ := c.check(specRoot)
-	if !violationMessageContains(vs, "trigger must be one of") {
-		t.Fatalf("expected invalid-trigger violation; got %+v", vs)
-	}
-}
-
 func TestSidekickSeed_BodyMissingH1(t *testing.T) {
 	body := "---\n" +
-		"type: sidekick-seed\n" +
-		"slug: test\n" +
-		"captured_at: 2026-05-18T00:00:00Z\n" +
 		"captured_by: user\n" +
-		"captured_during: null\n" +
-		"trigger: explicit\n" +
 		"status: queued\n" +
-		"synchestra_task: null\n" +
 		"---\n\n" +
 		"Not a heading, just prose.\n"
 	specRoot := writeSpec(t, map[string]string{
@@ -245,17 +226,14 @@ func TestSidekickSeed_IntegratesWithLint(t *testing.T) {
 // promotedSeedBody returns a lint-clean promoted sidekick-seed body
 // (carries the optional promoted_to key) suitable for spec/ideas/archived/.
 func promotedSeedBody(slug, title, promotedTo string) string {
+	// slug is retained for caller readability but is not part of the schema.
+	_ = slug
 	var b strings.Builder
 	b.WriteString("---\n")
 	b.WriteString("type: sidekick-seed\n")
-	b.WriteString("slug: " + slug + "\n")
-	b.WriteString("captured_at: 2026-05-18T00:00:00Z\n")
 	b.WriteString("captured_by: user\n")
-	b.WriteString("captured_during: null\n")
-	b.WriteString("trigger: explicit\n")
 	b.WriteString("status: promoted\n")
 	b.WriteString("promoted_to: " + promotedTo + "\n")
-	b.WriteString("synchestra_task: null\n")
 	b.WriteString("---\n\n")
 	b.WriteString("# " + title + "\n")
 	return b.String()

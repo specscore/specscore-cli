@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: idea-sync-autofix-downgrades-implemented-idea-status
-captured_at: 2026-06-03T13:00:00Z
 captured_by: specstudio:implement
-captured_during: null
-trigger: heuristic
 status: queued
-synchestra_task: null
 ---
 # specscore spec lint --fix (idea-sync-lint-strict) wrongly downgrades Implemented ideas to Specified
 

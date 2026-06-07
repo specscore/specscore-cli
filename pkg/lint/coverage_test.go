@@ -4472,29 +4472,9 @@ func TestSidekickSeed_ValidSeedNoViolations(t *testing.T) {
 	}
 }
 
-func TestSidekickSeed_InvalidTrigger(t *testing.T) {
-	specRoot := writeSpec(t, map[string]string{
-		"ideas/seeds/bad-trigger.md": "---\ntype: sidekick-seed\nslug: bad-trigger\ncaptured_at: 2026-05-18T00:00:00Z\ncaptured_by: user\ncaptured_during: null\ntrigger: invalid-trigger\nstatus: queued\nsynchestra_task: null\n---\n\n# Bad Trigger\n",
-	})
-	c := newSidekickSeedChecker()
-	violations, err := c.check(specRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hasTrigger := false
-	for _, v := range violations {
-		if strings.Contains(v.Message, "trigger") {
-			hasTrigger = true
-		}
-	}
-	if !hasTrigger {
-		t.Error("expected violation for invalid trigger value")
-	}
-}
-
 func TestSidekickSeed_WrongType(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
-		"ideas/seeds/wrong-type.md": "---\ntype: not-a-seed\nslug: wrong-type\ncaptured_at: 2026-05-18T00:00:00Z\ncaptured_by: user\ncaptured_during: null\ntrigger: heuristic\nstatus: queued\nsynchestra_task: null\n---\n\n# Wrong Type\n",
+		"ideas/seeds/wrong-type.md": "---\ntype: not-a-seed\ncaptured_by: user\nstatus: queued\n---\n\n# Wrong Type\n",
 	})
 	c := newSidekickSeedChecker()
 	violations, err := c.check(specRoot)

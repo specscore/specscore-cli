@@ -318,14 +318,9 @@ func TestDiscover_NonDirFeatureEntrySkipped(t *testing.T) {
 // under spec/ideas/archived/ after `specscore idea promote`'s cross-repo path.
 const promotedSeed = `---
 type: sidekick-seed
-slug: foo
-captured_at: 2026-06-04T00:00:00Z
 captured_by: specstudio:plan
-captured_during: null
-trigger: explicit
 status: promoted
 promoted_to: foo
-synchestra_task: null
 ---
 # Foo seed
 

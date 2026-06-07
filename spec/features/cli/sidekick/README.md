@@ -20,7 +20,7 @@ status: Approved
 
 ## Problem
 
-A sidekick-seed is a scaled-down Idea: the cheapest durable artifact in the SpecScore graph, captured mid-task to park a sideline thought without derailing. Its on-disk shape is fixed by the `sidekick-seed` lint rule (a closed set of 8 frontmatter keys, `type: sidekick-seed`, `status: queued`, an H1 body, a 2000-character cap), but no CLI verb emits it — the `specstudio:sidekick` skill hand-writes the seed from an embedded template. That makes the skill carry a copy of the seed schema, which drifts from the lint rule as the rule evolves, and it blocks the skill from following the Required-CLI Artifact Creation policy that the other producer skills already adopted. A `sidekick new` verb that scaffolds a lint-clean seed makes the CLI the single source of canonical seed structure.
+A sidekick-seed is a scaled-down Idea: the cheapest durable artifact in the SpecScore graph, captured mid-task to park a sideline thought without derailing. Its on-disk shape is fixed by the `sidekick-seed` lint rule (the minimal frontmatter keys `captured_by` and `status: queued`, an H1 body, a 2000-character cap; captured seeds are identified by location, so `type: sidekick-seed` is added only at archive time). The `specstudio:sidekick` skill used to hand-write the seed from an embedded template, which duplicated the seed schema and drifted from the lint rule as the rule evolved. A `sidekick new` verb that scaffolds a lint-clean seed makes the CLI the single source of canonical seed structure, so the skill can shell out to it instead of carrying a template.
 
 ## Behavior
 

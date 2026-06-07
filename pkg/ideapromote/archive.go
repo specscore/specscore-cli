@@ -64,13 +64,17 @@ func CrossRepoPromote(specRoot, slug string, transformed []byte, seedBody string
 }
 
 // markArchivedSeed rewrites the seed's YAML frontmatter so `status` is
-// `promoted` and a `promoted_to: <slug>` key is present. `deprecated` is
-// never set. When the seed has no frontmatter fence, one is synthesized.
+// `promoted`, a `promoted_to: <slug>` key is present, and the seed carries
+// `type: sidekick-seed`. The `type` key is required only in the archived
+// directory — it is what the archived-dir lint scan and Idea-discovery
+// exclusion key off — so it is injected here at archive time rather than
+// stored on captured seeds in `spec/ideas/seeds/`. `deprecated` is never
+// set. When the seed has no frontmatter fence, one is synthesized.
 func markArchivedSeed(seedBody, slug string) string {
 	lines := strings.Split(seedBody, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		// No frontmatter: synthesize a minimal one.
-		fm := "---\nstatus: promoted\npromoted_to: " + slug + "\n---\n"
+		fm := "---\ntype: sidekick-seed\nstatus: promoted\npromoted_to: " + slug + "\n---\n"
 		return fm + seedBody
 	}
 
@@ -84,15 +88,19 @@ func markArchivedSeed(seedBody, slug string) string {
 	}
 	if closeIdx < 0 {
 		// Malformed (no closing fence): prepend keys after the opener.
-		out := append([]string{lines[0], "status: promoted", "promoted_to: " + slug}, lines[1:]...)
+		out := append([]string{lines[0], "type: sidekick-seed", "status: promoted", "promoted_to: " + slug}, lines[1:]...)
 		return strings.Join(out, "\n")
 	}
 
+	typeSet := false
 	statusSet := false
 	promotedToSet := false
 	for j := 1; j < closeIdx; j++ {
 		key := frontmatterKey(lines[j])
 		switch key {
+		case "type":
+			lines[j] = "type: sidekick-seed"
+			typeSet = true
 		case "status":
 			lines[j] = "status: promoted"
 			statusSet = true
@@ -103,6 +111,9 @@ func markArchivedSeed(seedBody, slug string) string {
 	}
 
 	var inserts []string
+	if !typeSet {
+		inserts = append(inserts, "type: sidekick-seed")
+	}
 	if !statusSet {
 		inserts = append(inserts, "status: promoted")
 	}

@@ -1,12 +1,6 @@
 ---
-type: sidekick-seed
-slug: deferred-ac-coverage-regex-truncates-hyphenated-ac-slugs
-captured_at: 2026-06-01T14:09:23Z
 captured_by: specstudio:specify
-captured_during: spec/features/cli/self-update
-trigger: heuristic
 status: resolved
-synchestra_task: null
 ---
 # Deferred AC Coverage regex truncates hyphenated AC slugs
 

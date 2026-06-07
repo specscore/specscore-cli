@@ -63,14 +63,17 @@ func TestSidekickNew_LintClean(t *testing.T) {
 	}
 	s := readSeed(t, root, "specscore-needs-a-seed-verb")
 	for _, want := range []string{
-		"type: sidekick-seed\n",
-		"slug: specscore-needs-a-seed-verb\n",
+		"captured_by: user\n",
 		"status: queued\n",
-		"synchestra_task: null\n",
 		"# specscore needs a seed verb\n",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("seed missing %q:\n%s", want, s)
+		}
+	}
+	for _, gone := range []string{"type:", "slug:"} {
+		if strings.Contains(s, gone) {
+			t.Errorf("seed must not emit %q:\n%s", gone, s)
 		}
 	}
 
@@ -105,12 +108,13 @@ func TestSidekickNew_SlugOverride(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
 
-	// Valid override: file + frontmatter slug use the override; H1 keeps the one-liner.
+	// Valid override: the override names the file; H1 keeps the one-liner.
+	// (slug is no longer written to frontmatter — it only drives the filename.)
 	if _, _, err := runSidekick(t, "new", "Add batch mode", "--slug", "add-batch-mode-2"); err != nil {
 		t.Fatalf("sidekick new --slug: %v", err)
 	}
 	s := readSeed(t, root, "add-batch-mode-2")
-	if !strings.Contains(s, "slug: add-batch-mode-2\n") || !strings.Contains(s, "# Add batch mode\n") {
+	if !strings.Contains(s, "# Add batch mode\n") {
 		t.Errorf("override seed content wrong:\n%s", s)
 	}
 
@@ -139,20 +143,6 @@ func TestSidekickNew_EmptyOrUnslugableRejected(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Join(root, "spec", "ideas", "seeds"))
 	if len(entries) != 0 {
 		t.Errorf("expected no seed files, got %d", len(entries))
-	}
-}
-
-// AC: invalid-trigger-rejected
-func TestSidekickNew_InvalidTriggerRejected(t *testing.T) {
-	root := setupSpecRoot(t)
-	withCwd(t, root)
-
-	_, _, err := runSidekick(t, "new", "x", "--trigger", "maybe")
-	if got := exitCodeOf(err); got != 2 {
-		t.Errorf("exit = %d, want 2", got)
-	}
-	if _, statErr := os.Stat(filepath.Join(root, "spec", "ideas", "seeds", "x.md")); statErr == nil {
-		t.Error("seed file should not have been created on invalid trigger")
 	}
 }
 

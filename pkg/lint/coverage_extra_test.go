@@ -74,7 +74,7 @@ func TestSidekickSeed_NoH1InBody(t *testing.T) {
 	})
 	// Rewrite to have a body without H1
 	path := filepath.Join(specRoot, "ideas", "seeds", "no-h1.md")
-	content := "---\ntype: sidekick-seed\nslug: no-h1\ncaptured_at: 2026-05-18T00:00:00Z\ncaptured_by: user\ncaptured_during: null\ntrigger: user-prompt\nstatus: queued\nsynchestra_task: null\n---\n\nJust text, no H1 heading.\n"
+	content := "---\ncaptured_by: user\nstatus: queued\n---\n\nJust text, no H1 heading.\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestSidekickSeed_NoH1InBody(t *testing.T) {
 
 func TestSidekickSeed_UnknownFrontmatterKey_Extra(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
-		"ideas/seeds/unknown.md": "---\ntype: sidekick-seed\nslug: unknown\ncaptured_at: 2026-05-18T00:00:00Z\ncaptured_by: user\ncaptured_during: null\ntrigger: user-prompt\nstatus: queued\nsynchestra_task: null\nextra_key: bad\n---\n\n# Unknown Key Seed\n",
+		"ideas/seeds/unknown.md": "---\ncaptured_by: user\nstatus: queued\nextra_key: bad\n---\n\n# Unknown Key Seed\n",
 	})
 	c := newSidekickSeedChecker()
 	violations, err := c.check(specRoot)
@@ -111,22 +111,6 @@ func TestSidekickSeed_UnknownFrontmatterKey_Extra(t *testing.T) {
 	}
 	if !hasUnknown {
 		t.Error("expected violation for unknown frontmatter key")
-	}
-}
-
-func TestSidekickSeed_WrongSlug(t *testing.T) {
-	specRoot := writeSpec(t, map[string]string{
-		// Slug in frontmatter doesn't match filename (actual-name.md vs slug: different-name)
-		"ideas/seeds/actual-name.md": "---\ntype: sidekick-seed\nslug: different-name\ncaptured_at: 2026-05-18T00:00:00Z\ncaptured_by: user\ncaptured_during: null\ntrigger: user-prompt\nstatus: queued\nsynchestra_task: null\n---\n\n# Different Name\n",
-	})
-	c := newSidekickSeedChecker()
-	violations, err := c.check(specRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// There should be at least one violation related to slug
-	if len(violations) == 0 {
-		t.Error("expected at least one violation for wrong slug seed")
 	}
 }
 
@@ -1282,7 +1266,7 @@ func TestWalkSpecDirs_WalkError(t *testing.T) {
 
 func TestSidekickSeed_UnreadableSeedFile(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
-		"ideas/seeds/unreadable.md": "---\ntype: sidekick-seed\nslug: unreadable\ncaptured_at: 2026-05-18T00:00:00Z\ncaptured_by: user\ncaptured_during: null\ntrigger: user-prompt\nstatus: queued\nsynchestra_task: null\n---\n\n# Unreadable Seed\n",
+		"ideas/seeds/unreadable.md": "---\ncaptured_by: user\nstatus: queued\n---\n\n# Unreadable Seed\n",
 	})
 	seedPath := filepath.Join(specRoot, "ideas", "seeds", "unreadable.md")
 	_ = os.Chmod(seedPath, 0o000)
@@ -1310,7 +1294,7 @@ func TestSidekickSeed_UnreadableSeedFile(t *testing.T) {
 
 func TestSidekickSeed_ReadDirError(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
-		"ideas/seeds/ok.md": "---\ntype: sidekick-seed\nslug: ok\ncaptured_at: 2026-05-18T00:00:00Z\ncaptured_by: user\ncaptured_during: null\ntrigger: user-prompt\nstatus: queued\nsynchestra_task: null\n---\n\n# OK Seed\n",
+		"ideas/seeds/ok.md": "---\ncaptured_by: user\nstatus: queued\n---\n\n# OK Seed\n",
 	})
 	seedsDir := filepath.Join(specRoot, "ideas", "seeds")
 	_ = os.Chmod(seedsDir, 0o000)
