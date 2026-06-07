@@ -64,7 +64,7 @@ None at this time.
 // specRoot is the project root that contains the spec/ subtree (NOT the
 // spec/ directory itself).
 func EnsureArchivedIndexStub(specRoot string) (created bool, err error) {
-	archivedDir := filepath.Join(specRoot, "spec", "ideas", "archived")
+	archivedDir := filepath.Join(ResolveIdeasDir(filepath.Join(specRoot, "spec")), "archived")
 	if err := os.MkdirAll(archivedDir, 0o755); err != nil {
 		return false, exitcode.UnexpectedErrorf(
 			"creating archived directory %s: %v", archivedDir, err)

@@ -72,7 +72,7 @@ func (c *ideaChecker) check(specRoot string) ([]Violation, error) {
 func CheckIdeas(specRoot string, fix bool) ([]Violation, error) {
 	var violations []Violation
 
-	ideasDir := filepath.Join(specRoot, "ideas")
+	ideasDir := idea.ResolveIdeasDir(specRoot)
 	if info, err := os.Stat(ideasDir); err != nil || !info.IsDir() {
 		return nil, nil
 	}
@@ -169,7 +169,7 @@ func CheckIdeas(specRoot string, fix bool) ([]Violation, error) {
 // document type validated by the sidekick-seed rule — files there are
 // not misplaced Ideas.
 func findMisplacedIdeaFiles(specRoot string) ([]string, error) {
-	ideasDir := filepath.Join(specRoot, "ideas")
+	ideasDir := idea.ResolveIdeasDir(specRoot)
 	archivedDir := filepath.Join(ideasDir, "archived")
 	seedsDir := filepath.Join(ideasDir, "seeds")
 	var out []string

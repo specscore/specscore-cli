@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/idea"
 )
 
 // docTypeTarget describes one document type subject to the adherence-footer
@@ -244,7 +246,7 @@ func splitTrailingNewlines(s string) (body, trailingNewlines string) {
 // walkIdeaFiles invokes fn for every Idea file under specRoot/ideas/*.md,
 // skipping README.md (the ideas index) and the archived/ subtree.
 func walkIdeaFiles(specRoot string, fn func(path string, content []byte)) error {
-	ideasDir := filepath.Join(specRoot, "ideas")
+	ideasDir := idea.ResolveIdeasDir(specRoot)
 	return walkMatchingFiles(ideasDir, func(path string, depth int, name string) bool {
 		if depth != 1 {
 			return false
@@ -269,7 +271,7 @@ func walkPlansIndex(specRoot string, fn func(path string, content []byte)) error
 
 // walkIdeasIndex invokes fn for specRoot/ideas/README.md if present.
 func walkIdeasIndex(specRoot string, fn func(path string, content []byte)) error {
-	path := filepath.Join(specRoot, "ideas", "README.md")
+	path := filepath.Join(idea.ResolveIdeasDir(specRoot), "README.md")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil
