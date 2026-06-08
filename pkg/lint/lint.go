@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 )
 
@@ -15,6 +16,10 @@ type Violation struct {
 	Severity string `json:"severity" yaml:"severity"`
 	Rule     string `json:"rule" yaml:"rule"`
 	Message  string `json:"message" yaml:"message"`
+	// FixTarget, when non-empty, names the `--fix=<target>` action that repairs
+	// this specific violation (e.g. "no-source"). Only set on violations a fixer
+	// can actually resolve; drives the "How to fix" hint in text output.
+	FixTarget string `json:"fix_target,omitempty" yaml:"fix_target,omitempty"`
 }
 
 // Options holds linting options.
@@ -24,11 +29,51 @@ type Options struct {
 	Ignore   []string // disabled rules
 	Severity string   // minimum severity: error, warning, info
 	Fix      bool     // when true, auto-fixable violations are repaired on disk by checkers that support it
+	// FixTargets names opt-in fixes to enable on top of the standard fix pass
+	// (only consulted when Fix is true). These are fixes that are deliberately
+	// off by default because they mask a likely authoring mistake — e.g.
+	// "no-source" rewrites a plan with no source line to `**Source:** none`.
+	FixTargets []string
 	// CLIVersion is the running CLI's own version as a semver string (e.g.
 	// "0.3.0", with optional leading "v"). Used by the dogfood-version-bump
 	// rule to detect stale pins in .github/workflows/*.yml. Empty, "dev",
 	// or any non-semver value disables the comparison silently.
 	CLIVersion string
+}
+
+// Fix target sentinels. FixTargetAll is the implicit target of a bare `--fix`
+// (run every standard fixer). FixTargetNoSource is the opt-in plan fix that
+// rewrites a sourceless plan to `**Source:** none` — never enabled by the
+// unscoped pass; only when explicitly named.
+const (
+	FixTargetAll      = "all"
+	FixTargetNoSource = "no-source"
+)
+
+// fixUnscoped reports whether the fix pass runs every standard fixer — true for
+// a bare `--fix` (no explicit targets) or an explicit `--fix=all`.
+func (o Options) fixUnscoped() bool {
+	return len(o.FixTargets) == 0 || slices.Contains(o.FixTargets, FixTargetAll)
+}
+
+// fixRequested reports whether a standard fixer whose action names are `names`
+// should run: fixing must be enabled, and the pass is either unscoped or
+// explicitly targets one of `names`. Opt-in-only fixes (e.g. no-source) must NOT
+// be gated through this — they are never enabled by the unscoped pass; gate them
+// on an explicit slices.Contains(FixTargets, FixTargetNoSource).
+func (o Options) fixRequested(names ...string) bool {
+	if !o.Fix {
+		return false
+	}
+	if o.fixUnscoped() {
+		return true
+	}
+	for _, n := range names {
+		if slices.Contains(o.FixTargets, n) {
+			return true
+		}
+	}
+	return false
 }
 
 // Result is the full outcome of a lint pass. Fixed is populated only when

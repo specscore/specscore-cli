@@ -118,12 +118,23 @@ func TestScaffold_DefaultDateIsToday(t *testing.T) {
 	}
 }
 
+func TestScaffold_SourceLess(t *testing.T) {
+	body, err := Scaffold(ScaffoldOptions{Slug: "p"})
+	if err != nil {
+		t.Fatalf("source-less scaffold: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "**Source:** none") {
+		t.Errorf("source-less plan missing `**Source:** none` line:\n%s", s)
+	}
+	if strings.Contains(s, "**Source Feature:**") || strings.Contains(s, "idea:") {
+		t.Errorf("source-less plan must not carry a Feature or Idea source line:\n%s", s)
+	}
+}
+
 func TestScaffold_Errors(t *testing.T) {
 	if _, err := Scaffold(ScaffoldOptions{Slug: "Bad_Slug", SourceFeature: "f"}); err == nil {
 		t.Error("expected error for invalid slug")
-	}
-	if _, err := Scaffold(ScaffoldOptions{Slug: "p"}); err == nil {
-		t.Error("expected error when neither source is set")
 	}
 	if _, err := Scaffold(ScaffoldOptions{Slug: "p", SourceFeature: "f", SourceIdea: "i"}); err == nil {
 		t.Error("expected error when both sources are set")

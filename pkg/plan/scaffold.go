@@ -32,8 +32,9 @@ type ScaffoldOptions struct {
 	Title string // defaults to a title-cased slug
 	Owner string // defaults to "unknown"
 	Date  string // ISO-8601 (YYYY-MM-DD); defaults to today's UTC date
-	// Exactly one of SourceFeature / SourceIdea must be set: a plan decomposes
-	// exactly one Feature or one Idea (cli/plan/new#req:source-required).
+	// At most one of SourceFeature / SourceIdea may be set: a plan decomposes
+	// one Feature, one Idea, or no source at all (source-less, emitted as
+	// `**Source:** none`) (cli/plan/new#req:source-optional).
 	SourceFeature string
 	SourceIdea    string
 	// Parent, when non-empty, records the master plan this plan is a sub-plan of
@@ -65,8 +66,8 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	if err := ValidateSlug(opts.Slug); err != nil {
 		return nil, err
 	}
-	if (opts.SourceFeature == "") == (opts.SourceIdea == "") {
-		return nil, fmt.Errorf("exactly one of SourceFeature or SourceIdea must be set")
+	if opts.SourceFeature != "" && opts.SourceIdea != "" {
+		return nil, fmt.Errorf("at most one of SourceFeature or SourceIdea may be set")
 	}
 
 	title := strings.TrimSpace(opts.Title)
@@ -82,8 +83,13 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 		date = time.Now().UTC().Format("2006-01-02")
 	}
 
-	sourceLine := "**Source Feature:** " + opts.SourceFeature
-	if opts.SourceIdea != "" {
+	// One source line, by mode: a Feature slug, an Idea slug, or `none`
+	// (source-less). Exactly one is emitted; at most one input is set.
+	sourceLine := "**Source:** none"
+	switch {
+	case opts.SourceFeature != "":
+		sourceLine = "**Source Feature:** " + opts.SourceFeature
+	case opts.SourceIdea != "":
 		sourceLine = "**Source:** idea:" + opts.SourceIdea
 	}
 

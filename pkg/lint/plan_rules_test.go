@@ -495,10 +495,65 @@ func TestRulesFilteringByName(t *testing.T) {
 	}
 }
 
-// AC: not-autofixable (the checker must not implement fixer)
-func TestPlanRulesNotAutofixable(t *testing.T) {
+// AC: the no-source fix is opt-in — the default fix pass (fixNoSource=false)
+// must NOT rewrite a sourceless plan, leaving it as a P-002 error.
+func TestPlanRulesNoSourceFixIsOptIn(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "plans"))
+	planPath := filepath.Join(root, "plans", "p.md")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+
+	c := newPlanRulesChecker() // fixNoSource defaults to false
+	if err := c.fix(root); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	data, _ := os.ReadFile(planPath)
+	if strings.Contains(string(data), "**Source:** none") {
+		t.Errorf("default fix pass must not add **Source:** none (no-source is opt-in):\n%s", data)
+	}
+}
+
+// AC: with the opt-in enabled, a sourceless plan gains `**Source:** none`,
+// inserted after the Status line, and the fix is idempotent.
+func TestPlanRulesNoSourceFixOptIn(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "plans"))
+	planPath := filepath.Join(root, "plans", "p.md")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+
 	c := newPlanRulesChecker()
-	if _, ok := c.(fixer); ok {
-		t.Fatal("planRulesChecker must not implement fixer (P-001..P-004 are not autofixable in MVP)")
+	c.fixNoSource = true
+	if err := c.fix(root); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	data, _ := os.ReadFile(planPath)
+	if !strings.Contains(string(data), "**Status:** Draft\n**Source:** none") {
+		t.Errorf("expected **Source:** none after Status line:\n%s", data)
+	}
+	if err := c.fix(root); err != nil {
+		t.Fatalf("fix (2nd pass): %v", err)
+	}
+	data2, _ := os.ReadFile(planPath)
+	if strings.Count(string(data2), "**Source:** none") != 1 {
+		t.Errorf("fix not idempotent (expected exactly one source line):\n%s", data2)
+	}
+}
+
+// AC: an unrecognized **Source:** value is NOT a fully-absent source line, so
+// the opt-in fix leaves it untouched (it stays a hard P-002 error).
+func TestPlanRulesNoSourceFixSkipsUnrecognizedValue(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "plans"))
+	planPath := filepath.Join(root, "plans", "p.md")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+
+	c := newPlanRulesChecker()
+	c.fixNoSource = true
+	if err := c.fix(root); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	data, _ := os.ReadFile(planPath)
+	if strings.Contains(string(data), "**Source:** none") {
+		t.Errorf("unrecognized **Source:** value must not be rewritten to none:\n%s", data)
 	}
 }

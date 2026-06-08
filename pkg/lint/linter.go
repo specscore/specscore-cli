@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 )
 
@@ -26,6 +27,14 @@ type checker interface {
 // the violations it would otherwise report. Fixes must be idempotent.
 type fixer interface {
 	fix(specRoot string) error
+}
+
+// fixTargeter is an optional interface a fixer may implement to declare the
+// `--fix=<target>` action names it answers to, when those differ from the rule
+// names it is registered under (e.g. the plan checker answers to "no-source",
+// not "P-001".."P-005"). Without it, a fixer's targets are its rule names.
+type fixTargeter interface {
+	fixTargets() []string
 }
 
 func newLinter(opts Options) *linter {
@@ -54,7 +63,7 @@ func newLinter(opts Options) *linter {
 
 	// Register idea checker under every idea-* rule name.
 	ic := newIdeaChecker()
-	ic.fix = opts.Fix
+	ic.fix = opts.fixRequested(ideaRuleNames...)
 	for _, n := range ideaRuleNames {
 		l.ruleSet[n] = ic
 	}
@@ -76,13 +85,14 @@ func newLinter(opts Options) *linter {
 	// The single checker emits violations for all four rules; deduping by
 	// pointer identity in lint() ensures it runs once per pass.
 	pc := newPlanRulesChecker()
+	pc.fixNoSource = slices.Contains(opts.FixTargets, FixTargetNoSource)
 	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005"} {
 		l.ruleSet[n] = pc
 	}
 
 	// Register the feature-rules checker (feature-source-ideas-required).
 	frc := newFeatureRulesChecker()
-	frc.autofix = opts.Fix
+	frc.autofix = opts.fixRequested("feature-source-ideas-required")
 	l.ruleSet["feature-source-ideas-required"] = frc
 
 	// Register decision-rules checker under all D-* rule IDs.
@@ -99,7 +109,7 @@ func newLinter(opts Options) *linter {
 
 	// Register decisions-index checker under all DI-* rule IDs.
 	dic := newDecisionsIndexChecker()
-	dic.autofix = opts.Fix
+	dic.autofix = opts.fixRequested(decisionsIndexRuleIDs...)
 	for _, n := range decisionsIndexRuleIDs {
 		l.ruleSet[n] = dic
 	}
@@ -114,14 +124,14 @@ func newLinter(opts Options) *linter {
 
 	// Register property checker under every property-* rule name.
 	prc := newPropertyChecker()
-	prc.autofix = opts.Fix
+	prc.autofix = opts.fixRequested(propertyRuleNames...)
 	for _, n := range propertyRuleNames {
 		l.ruleSet[n] = prc
 	}
 
 	// Register entity checker under every entity-* rule name.
 	ec := newEntityChecker()
-	ec.autofix = opts.Fix
+	ec.autofix = opts.fixRequested(entityRuleNames...)
 	for _, n := range entityRuleNames {
 		l.ruleSet[n] = ec
 	}
@@ -154,6 +164,13 @@ func (l *linter) isRuleEnabled(ruleName string) bool {
 // mutating the spec tree to resolve the violations those checkers report.
 // Fix failures are aggregated but do not stop subsequent fixers from running.
 func (l *linter) fix() error {
+	// checker -> the rule names it is registered under.
+	ruleNamesByChecker := map[checker][]string{}
+	for ruleName, c := range l.ruleSet {
+		ruleNamesByChecker[c] = append(ruleNamesByChecker[c], ruleName)
+	}
+	unscoped := l.opts.fixUnscoped()
+
 	seen := make(map[checker]bool)
 	var firstErr error
 	for _, c := range l.ruleSet {
@@ -161,9 +178,14 @@ func (l *linter) fix() error {
 			continue
 		}
 		seen[c] = true
+		f, ok := c.(fixer)
+		if !ok {
+			continue
+		}
+		// Respect --rules / --ignore: at least one rule name must be enabled.
 		enabled := false
-		for ruleName, rc := range l.ruleSet {
-			if rc == c && l.isRuleEnabled(ruleName) {
+		for _, ruleName := range ruleNamesByChecker[c] {
+			if l.isRuleEnabled(ruleName) {
 				enabled = true
 				break
 			}
@@ -171,9 +193,20 @@ func (l *linter) fix() error {
 		if !enabled {
 			continue
 		}
-		f, ok := c.(fixer)
-		if !ok {
-			continue
+		// Respect --fix=<targets>: when the pass is scoped, run only fixers an
+		// explicit target names. A fixer's targets default to its rule names,
+		// overridden via fixTargeter (e.g. the plan checker -> "no-source").
+		if !unscoped {
+			targets := ruleNamesByChecker[c]
+			if ft, ok := c.(fixTargeter); ok {
+				targets = ft.fixTargets()
+			}
+			inScope := slices.ContainsFunc(targets, func(t string) bool {
+				return slices.Contains(l.opts.FixTargets, t)
+			})
+			if !inScope {
+				continue
+			}
 		}
 		if err := f.fix(l.opts.SpecRoot); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("fixer %s: %v", c.name(), err)
@@ -224,6 +257,71 @@ func (l *linter) lint() ([]Violation, error) {
 	}
 
 	return violations, nil
+}
+
+// FixTargetNames returns the sorted set of valid `--fix=<target>` action names:
+// every fixer-backed rule name (both fixer-interface and check-time fixers) plus
+// the opt-in "no-source" action. It excludes the "all" sentinel, which is always
+// valid. Used by the CLI to validate `--fix=<targets>` and to render help.
+func FixTargetNames() []string {
+	set := map[string]bool{FixTargetNoSource: true}
+
+	l := newLinter(Options{})
+	ruleNamesByChecker := map[checker][]string{}
+	for ruleName, c := range l.ruleSet {
+		ruleNamesByChecker[c] = append(ruleNamesByChecker[c], ruleName)
+	}
+	seen := map[checker]bool{}
+	for _, c := range l.ruleSet {
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		if _, ok := c.(fixer); !ok {
+			continue
+		}
+		if ft, ok := c.(fixTargeter); ok {
+			for _, n := range ft.fixTargets() {
+				set[n] = true
+			}
+			continue
+		}
+		for _, n := range ruleNamesByChecker[c] {
+			set[n] = true
+		}
+	}
+
+	// Check-time fixers apply fixes during check() rather than via the fixer
+	// interface, so they aren't discoverable by the type assertion above.
+	for _, n := range ideaRuleNames {
+		set[n] = true
+	}
+	for _, n := range entityRuleNames {
+		set[n] = true
+	}
+
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ValidateFixTargets rejects any target that is neither the "all" sentinel nor a
+// known fix-target name. Empty input is valid (no targets).
+func ValidateFixTargets(targets []string) error {
+	valid := map[string]bool{FixTargetAll: true}
+	for _, n := range FixTargetNames() {
+		valid[n] = true
+	}
+	for _, t := range targets {
+		if !valid[t] {
+			return fmt.Errorf("unknown --fix target %q (known targets: %s)",
+				t, strings.Join(FixTargetNames(), ", "))
+		}
+	}
+	return nil
 }
 
 // customCheckerAdapter adapts the public Checker interface to the internal checker interface.

@@ -90,8 +90,31 @@ invalid arguments, 10+ = unexpected error.`,
 	cmd.Flags().String("ignore", "", "disable specified rules (comma-separated)")
 	cmd.Flags().String("severity", "error", "minimum severity: error, warning, info")
 	cmd.Flags().String("format", "text", "output format: text, json, yaml")
-	cmd.Flags().Bool("fix", false, "apply fixes from checkers that support autofix (e.g. adherence-footer, studio-toolbar, idea sync/index/archived-order)")
+	cmd.Flags().String("fix", "", "apply autofixes: bare `--fix` runs the standard fixers (e.g. adherence-footer, studio-toolbar, idea sync/index/archived-order); `--fix=<targets>` (comma-separated) also enables opt-in fixes — currently `no-source` (rewrite a plan with no source line to `**Source:** none`)")
+	// NoOptDefVal lets bare `--fix` (no `=value`) mean "standard fixers only".
+	cmd.Flags().Lookup("fix").NoOptDefVal = fixStandardOnly
 	return cmd
+}
+
+// fixStandardOnly is the value bare `--fix` resolves to (via NoOptDefVal): run
+// the standard fix pass with no opt-in fixes enabled.
+const fixStandardOnly = lint.FixTargetAll
+
+// parseFixTargets splits the raw `--fix` value into target tokens, trimming
+// whitespace and dropping empties. The bare sentinel (`all`) is preserved so the
+// lint layer can treat it as the unscoped pass. Returns nil when no fix was
+// requested.
+func parseFixTargets(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var targets []string
+	for _, tok := range strings.Split(raw, ",") {
+		if tok = strings.TrimSpace(tok); tok != "" {
+			targets = append(targets, tok)
+		}
+	}
+	return targets
 }
 
 // resolveConfigSpecRoot resolves the `spec/` directory of the project that
@@ -178,7 +201,12 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		return exitcode.InvalidArgsError(err.Error())
 	}
 
-	fix, _ := cmd.Flags().GetBool("fix")
+	fixRaw, _ := cmd.Flags().GetString("fix")
+	fix := fixRaw != ""
+	fixTargets := parseFixTargets(fixRaw)
+	if err := lint.ValidateFixTargets(fixTargets); err != nil {
+		return exitcode.InvalidArgsError(err.Error())
+	}
 
 	opts := lint.Options{
 		SpecRoot:   specRoot,
@@ -186,6 +214,7 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		Ignore:     ignore,
 		Severity:   severity,
 		Fix:        fix,
+		FixTargets: fixTargets,
 		CLIVersion: version,
 	}
 
@@ -228,12 +257,43 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		if err := outputLintViolations(w, violations, format); err != nil {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
+		// Advertise opt-in fixes for any remaining fixable violations, once per
+		// distinct fix target. Text format only; structured output already
+		// carries each violation's fix_target field.
+		if format == "text" {
+			writeHowToFix(cmd.ErrOrStderr(), violations)
+		}
 	}
 
 	if len(violations) > 0 {
 		return exitcode.ConflictErrorf("%d violation(s) found", len(violations))
 	}
 	return nil
+}
+
+// writeHowToFix prints a "How to fix" section to w listing, once per distinct
+// fix target, how many remaining violations it would repair and the command to
+// run. Nothing is written when no violation carries a FixTarget.
+func writeHowToFix(w io.Writer, violations []lint.Violation) {
+	counts := map[string]int{}
+	var order []string
+	for _, v := range violations {
+		if v.FixTarget == "" {
+			continue
+		}
+		if counts[v.FixTarget] == 0 {
+			order = append(order, v.FixTarget)
+		}
+		counts[v.FixTarget]++
+	}
+	if len(order) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "\nHow to fix:")
+	for _, target := range order {
+		_, _ = fmt.Fprintf(w, "  %d fixable finding(s) — run: specscore spec lint --fix=%s\n",
+			counts[target], target)
+	}
 }
 
 // lintFixEnvelope is the stdout shape under `--fix --format json|yaml`: a
