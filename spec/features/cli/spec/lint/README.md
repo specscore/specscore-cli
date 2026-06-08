@@ -20,8 +20,9 @@ status: Approved
 
 | Directory | Description |
 |---|---|
-| [plan-rules/](plan-rules/README.md) | Lint rules `P-001`–`P-004` and parser extensions for single-file Plans (`**Mode:**`, `**Status:**`, `**Depends-On:**`, placeholder body token) |
+| [plan-rules/](plan-rules/README.md) | Lint rules `P-001`–`P-005` and parser extensions for single-file Plans (`**Mode:**`, `**Status:**`, `**Depends-On:**`, `**Parent:**`, placeholder body token) |
 | [issue-rules](issue-rules/README.md) | Adds 15 lint rules (`I-001`–`I-015`) and the underlying `issue` artifact parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `issue-artifact-type` Feature in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo. |
+| [feature-rules](feature-rules/README.md) | Adds feature-level lint rules to specscore spec lint — starting with feature-source-ideas-required, which enforces that every Feature carries a **Source Ideas:** line (with an explicit-empty sentinel) and backfills it via --fix. |
 
 ## Synopsis
 
