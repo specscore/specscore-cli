@@ -41,10 +41,12 @@ artifact-frontmatter-convention frontmatter (format:/status:), the
 body-metadata header, the required sections with TODO prompts, and the
 adherence footer.
 
-A plan decomposes exactly one source: pass --feature <feature-slug> or
---idea <idea-slug> (exactly one). A bare scaffold pulls the published
-template from the gallery; on any fetch failure the embedded template is
-used and a warning is printed to stderr.`,
+A plan decomposes at most one source: pass --feature <feature-slug> (a
+Feature-sourced plan), --idea <idea-slug> (an Idea-sourced plan), or
+neither (a source-less plan, recorded as **Source:** none). --feature and
+--idea are mutually exclusive. A bare scaffold pulls the published template
+from the gallery; on any fetch failure the embedded template is used and a
+warning is printed to stderr.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runPlanNew,
 	}
@@ -66,10 +68,11 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 
 	featureSrc, _ := cmd.Flags().GetString("feature")
 	ideaSrc, _ := cmd.Flags().GetString("idea")
-	// Exactly one of --feature / --idea (cli/plan/new#req:source-required).
-	if (featureSrc == "") == (ideaSrc == "") {
+	// At most one of --feature / --idea (cli/plan/new#req:source-optional).
+	// Passing neither produces a source-less plan (`**Source:** none`).
+	if featureSrc != "" && ideaSrc != "" {
 		return exitcode.InvalidArgsError(
-			"exactly one of --feature <feature-slug> or --idea <idea-slug> is required")
+			"--feature <feature-slug> and --idea <idea-slug> are mutually exclusive")
 	}
 
 	// --parent is optional; when supplied it MUST be non-empty
@@ -124,18 +127,22 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 // any fetch failure it falls back to the embedded scaffolder (which emits the
 // same frontmatter, header, sections, and footer). The source line differs by
 // mode: --feature yields `**Source Feature:** <slug>`, --idea yields
-// `**Source:** idea:<slug>`.
+// `**Source:** idea:<slug>`, and neither yields `**Source:** none`.
 func buildPlanBody(cmd *cobra.Command, slug, title, owner, featureSrc, ideaSrc string) ([]byte, error) {
 	repl := map[string]string{
 		"<Plan Name>":   templateTitleOrSlug(title, slug),
 		"YYYY-MM-DD":    templateTodayUTC(),
 		"<your-handle>": templateOwnerOrUnknown(owner),
 	}
-	if featureSrc != "" {
+	switch {
+	case featureSrc != "":
 		repl["<feature-slug>"] = featureSrc
-	} else {
+	case ideaSrc != "":
 		// Rewrite the whole default (feature-sourced) line into the idea form.
 		repl["**Source Feature:** <feature-slug>"] = "**Source:** idea:" + ideaSrc
+	default:
+		// Source-less plan: rewrite the default line into the `none` form.
+		repl["**Source Feature:** <feature-slug>"] = "**Source:** none"
 	}
 
 	// When --parent is supplied, inject a `**Parent:** <value>` line after the

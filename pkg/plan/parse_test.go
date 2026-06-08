@@ -20,6 +20,51 @@ func writePlan(t *testing.T, plansDir, slug, content string) string {
 	return path
 }
 
+func TestParse_SourceIdeaAndNone(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, "plans")
+
+	idea := `# Plan: Idea Sourced
+
+**Status:** Draft
+**Source:** idea:cloud-run-migration
+
+## Summary
+
+x
+`
+	p, err := Parse(writePlan(t, plansDir, "idea", idea))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SourceIdea != "cloud-run-migration" {
+		t.Errorf("SourceIdea = %q, want cloud-run-migration", p.SourceIdea)
+	}
+	if p.SourceFeature != "" || p.SourceNone {
+		t.Errorf("idea plan should not set SourceFeature/SourceNone: %+v", p)
+	}
+
+	none := `# Plan: Source Less
+
+**Status:** Draft
+**Source:** none
+
+## Summary
+
+x
+`
+	p2, err := Parse(writePlan(t, plansDir, "none", none))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p2.SourceNone {
+		t.Errorf("SourceNone = false, want true")
+	}
+	if p2.SourceIdea != "" || p2.SourceFeature != "" {
+		t.Errorf("source-less plan should set neither Feature nor Idea: %+v", p2)
+	}
+}
+
 func TestParse_FullModeMinimal(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, "plans")

@@ -103,25 +103,30 @@ func TestPlanNew_IdeaSourceLine(t *testing.T) {
 	}
 }
 
-func TestPlanNew_SourceRequired(t *testing.T) {
+func TestPlanNew_SourceLess(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{"neither", []string{"new", "p"}},
-		{"both", []string{"new", "p", "--feature", "f", "--idea", "i"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := runPlan(t, tc.args...)
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if got := exitCodeOf(err); got != exitcode.InvalidArgs {
-				t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
-			}
-		})
+	if _, _, err := runPlan(t, "new", "loose-plan"); err != nil {
+		t.Fatalf("source-less plan new: %v", err)
+	}
+	s := readPlan(t, root, "loose-plan")
+	if !strings.Contains(s, "**Source:** none") {
+		t.Errorf("source-less plan missing `**Source:** none` line:\n%s", s)
+	}
+	if strings.Contains(s, "**Source Feature:**") || strings.Contains(s, "idea:") {
+		t.Errorf("source-less plan must not carry a Feature or Idea source line:\n%s", s)
+	}
+}
+
+func TestPlanNew_BothSourcesRejected(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	_, _, err := runPlan(t, "new", "p", "--feature", "f", "--idea", "i")
+	if err == nil {
+		t.Fatal("expected error when both --feature and --idea are passed")
+	}
+	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
 	}
 }
 

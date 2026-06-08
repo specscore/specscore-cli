@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit.
+`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit. `--fix=<targets>` scopes the pass to named fixes (e.g. `--fix=no-source`); some fixes are opt-in and run only when named. When a reported violation is fixable, a `How to fix:` section names the exact `--fix=<target>` command.
 
 ## Contents
 
@@ -27,7 +27,7 @@ status: Approved
 ## Synopsis
 
 ```
-specscore spec lint [--fix] [--severity <error|warning|info>] [--rules <list>] [--ignore <list>] [--format <text|json|yaml>] [--project <path>]
+specscore spec lint [--fix[=<targets>]] [--severity <error|warning|info>] [--rules <list>] [--ignore <list>] [--format <text|json|yaml>] [--project <path>]
 ```
 
 ## Problem
@@ -164,6 +164,22 @@ Default `--severity` MUST be `error`. Warnings and info-level findings are suppr
 ### Autofix
 
 Rules that support autofix declare so in their registration. `--fix` applies only those fixes; rules without autofix still report violations unchanged.
+
+#### REQ: fix-accepts-optional-targets
+
+`--fix` MUST accept an optional comma-separated value: `--fix=<target1,target2,…>`. A bare `--fix` (no `=value`) MUST run the standard fix pass — every fixer that is on by default — and is equivalent to `--fix=all`. The value `all` is always valid. Any target that is neither `all` nor a known fix-target name MUST exit `2` with a message naming the unknown target.
+
+#### REQ: fix-targets-scope-the-pass
+
+When `--fix=<targets>` names one or more targets other than `all`, the fix pass MUST be scoped to exactly those targets: only fixers whose action name is named run; every other fixer (including default-on ones) MUST be skipped. A target's action name defaults to the rule name(s) it is registered under; a fixer MAY declare a distinct action name (e.g. the plan no-source fix answers to `no-source`, not its `P-00x` rule IDs).
+
+#### REQ: fix-opt-in-targets
+
+A fix MAY be declared *opt-in*: never run by the unscoped pass (bare `--fix` / `--fix=all`), only when its target is explicitly named. `no-source` is opt-in — it rewrites a plan that declares no source line at all into `**Source:** none`, and is applied only under `--fix=no-source` (or a list that includes it).
+
+#### REQ: fix-how-to-fix-hint
+
+In text format, after the violation report, `spec lint` MUST print a `How to fix:` section listing — once per distinct fix target among the remaining violations — the count of fixable findings and the exact `specscore spec lint --fix=<target>` command that repairs them. A violation carries a fix target only when a fixer can actually resolve it. The section MUST be written to stderr (leaving stdout as the violation report) and MUST be omitted when no remaining violation is fixable. In `--format json|yaml`, each violation instead carries an optional `fix_target` field.
 
 #### REQ: fix-is-safe-subset
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -2471,6 +2472,97 @@ func TestPlanRules_P002MissingSourceFeature(t *testing.T) {
 	}
 	if !hasP002 {
 		t.Error("expected P-002 violation for missing Source Feature")
+	}
+}
+
+func TestPlanRules_P002IdeaAndNoneAreClean(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "features"))
+	mkdir(t, filepath.Join(root, "plans"))
+	// Idea-sourced and source-less plans carry no Source Feature; the
+	// AC-coverage (P-001) and AC-reference (P-002) rules do not apply.
+	writeFile(t, filepath.Join(root, "plans", "idea.md"),
+		"# Plan: Idea\n\n**Source:** idea:cloud-run-migration\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	writeFile(t, filepath.Join(root, "plans", "loose.md"),
+		"# Plan: Loose\n\n**Source:** none\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+
+	c := newPlanRulesChecker()
+	violations, err := c.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range violations {
+		if v.Rule == "P-001" || v.Rule == "P-002" {
+			t.Errorf("unexpected %s violation for idea/none plan: %s", v.Rule, v.Message)
+		}
+	}
+}
+
+func TestPlanRules_P002UnrecognizedSourceValue(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "features"))
+	mkdir(t, filepath.Join(root, "plans"))
+	writeFile(t, filepath.Join(root, "plans", "bad.md"),
+		"# Plan: Bad\n\n**Source:** whatever\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+
+	c := newPlanRulesChecker()
+	violations, err := c.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasP002 := false
+	for _, v := range violations {
+		if v.Rule == "P-002" && strings.Contains(v.Message, "unrecognized") {
+			hasP002 = true
+		}
+	}
+	if !hasP002 {
+		t.Error("expected P-002 violation for unrecognized **Source:** value")
+	}
+}
+
+func TestPlanRules_P002FixTargetSetOnlyWhenFixable(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "features"))
+	mkdir(t, filepath.Join(root, "plans"))
+	// Missing source line -> fixable -> FixTarget "no-source".
+	writeFile(t, filepath.Join(root, "plans", "missing.md"),
+		"# Plan: Missing\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	// Unrecognized value -> not fixable -> no FixTarget.
+	writeFile(t, filepath.Join(root, "plans", "bad.md"),
+		"# Plan: Bad\n\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+
+	c := newPlanRulesChecker()
+	violations, err := c.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range violations {
+		switch {
+		case strings.Contains(v.File, "missing.md"):
+			if v.FixTarget != FixTargetNoSource {
+				t.Errorf("missing-source violation: FixTarget = %q, want %q", v.FixTarget, FixTargetNoSource)
+			}
+		case strings.Contains(v.File, "bad.md"):
+			if v.FixTarget != "" {
+				t.Errorf("unrecognized-value violation must carry no FixTarget, got %q", v.FixTarget)
+			}
+		}
+	}
+}
+
+func TestValidateFixTargets(t *testing.T) {
+	if err := ValidateFixTargets([]string{FixTargetAll, FixTargetNoSource}); err != nil {
+		t.Errorf("known targets rejected: %v", err)
+	}
+	if err := ValidateFixTargets(nil); err != nil {
+		t.Errorf("empty targets rejected: %v", err)
+	}
+	if err := ValidateFixTargets([]string{"nope"}); err == nil {
+		t.Error("expected error for unknown target")
+	}
+	if !slices.Contains(FixTargetNames(), FixTargetNoSource) {
+		t.Error("FixTargetNames must include no-source")
 	}
 }
 

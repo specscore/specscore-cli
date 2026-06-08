@@ -22,9 +22,16 @@ var parseFeatureACsMaxBuf = 1 << 20
 // dedupes by pointer identity so a single walk produces all findings.
 //
 // See spec/features/cli/spec/lint/plan-rules/README.md for the contract.
-type planRulesChecker struct{}
+type planRulesChecker struct {
+	// fixNoSource, when true, makes the fix pass rewrite a plan that declares
+	// no source line at all into a source-less plan (`**Source:** none`). It is
+	// opt-in (enabled via `--fix=no-source`) because a fully-absent source line
+	// is more often a dropped `**Source Feature:**` than an intentional
+	// source-less plan; the default fix pass leaves it as a P-002 error.
+	fixNoSource bool
+}
 
-func newPlanRulesChecker() checker {
+func newPlanRulesChecker() *planRulesChecker {
 	return &planRulesChecker{}
 }
 
@@ -32,6 +39,11 @@ func newPlanRulesChecker() checker {
 // four rule IDs in linter.go so that --rules / --ignore work per-rule.
 func (c *planRulesChecker) name() string     { return "P-001" }
 func (c *planRulesChecker) severity() string { return "error" }
+
+// fixTargets declares the `--fix=<target>` action this checker answers to. The
+// only fix it performs is the opt-in no-source repair, named "no-source" rather
+// than any of its P-00x rule IDs.
+func (c *planRulesChecker) fixTargets() []string { return []string{FixTargetNoSource} }
 
 func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 	plansDir := filepath.Join(specRoot, "plans")
@@ -84,6 +96,72 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 		return violations[i].Rule < violations[j].Rule
 	})
 	return violations, nil
+}
+
+// fix implements the fixer interface. The only fix this checker performs is the
+// opt-in "no-source" repair: when enabled, every single-file plan that declares
+// no source line at all gains a `**Source:** none` header line. A plan that
+// already declares a source (Feature, Idea, or an unrecognized `**Source:**`
+// value) is left untouched — only a fully-absent source line is repaired, and
+// an unrecognized value stays a hard P-002 error. Idempotent.
+func (c *planRulesChecker) fix(specRoot string) error {
+	if !c.fixNoSource {
+		return nil
+	}
+	plansDir := filepath.Join(specRoot, "plans")
+	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(plansDir)
+	if err != nil {
+		return fmt.Errorf("reading plans dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == "README.md" || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		planPath := filepath.Join(plansDir, name)
+		p, parseErr := plan.Parse(planPath)
+		if parseErr != nil {
+			return fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
+		}
+		// Only a fully-absent source line is fixable: no `**Source Feature:**`
+		// and no `**Source:**` line of any kind.
+		if !p.HasPlanTitle || p.SourceFeature != "" || p.SourceLine != 0 {
+			continue
+		}
+		if err := insertSourceNone(planPath, p); err != nil {
+			return fmt.Errorf("fixing %s: %w", planPath, err)
+		}
+	}
+	return nil
+}
+
+// insertSourceNone writes a `**Source:** none` header line into a plan that
+// lacks any source line. The line is inserted just after `**Status:**` (matching
+// the canonical header order) or, absent that, just after the title.
+func insertSourceNone(path string, p *plan.Plan) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	anchor := p.TitleLine // 1-based line to insert AFTER
+	if p.StatusLine > 0 {
+		anchor = p.StatusLine
+	}
+	if anchor <= 0 || anchor > len(lines) {
+		anchor = len(lines)
+	}
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[:anchor]...)
+	out = append(out, "**Source:** none")
+	out = append(out, lines[anchor:]...)
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
 }
 
 // lintPlan runs all four rules against a single parsed Plan. relPath is the
@@ -328,18 +406,39 @@ func findCycle(tasks []plan.Task) []int {
 func lintP001P002(p *plan.Plan, relPath, featuresDir string) []Violation {
 	var out []Violation
 
+	// Idea-sourced (`**Source:** idea:<slug>`) and source-less
+	// (`**Source:** none`) plans have no source Feature, so the AC-coverage
+	// (P-001) and AC-reference (P-002) rules do not apply.
+	if p.SourceIdea != "" || p.SourceNone {
+		return out
+	}
+
 	// Resolve the source-Feature path. If absent or missing on disk, emit a
 	// single P-002 violation and bail — we cannot validate AC IDs without
 	// the source AC list, and P-001 coverage is moot until the Feature
 	// resolves.
 	if p.SourceFeature == "" {
-		out = append(out, Violation{
-			File:     relPath,
-			Line:     p.TitleLine,
-			Severity: "error",
-			Rule:     "P-002",
-			Message:  "Plan is missing **Source Feature:** body metadata",
-		})
+		// Distinguish "no source line at all" (likely a dropped Source
+		// Feature) from an unrecognized `**Source:**` value. Only the former is
+		// auto-fixable (via --fix=no-source); an unrecognized value needs a
+		// human decision and carries no FixTarget.
+		v := Violation{
+			File:      relPath,
+			Line:      p.TitleLine,
+			Severity:  "error",
+			Rule:      "P-002",
+			Message:   "Plan is missing a source line: declare one of **Source Feature:** <slug>, **Source:** idea:<slug>, or **Source:** none",
+			FixTarget: FixTargetNoSource,
+		}
+		if p.SourceLine != 0 {
+			v.Line = p.SourceLine
+			v.Message = fmt.Sprintf(
+				"unrecognized **Source:** value %q (expected `idea:<slug>` or `none`)",
+				p.SourceRaw,
+			)
+			v.FixTarget = ""
+		}
+		out = append(out, v)
 		return out
 	}
 	featReadme := filepath.Join(featuresDir, filepath.FromSlash(p.SourceFeature), "README.md")

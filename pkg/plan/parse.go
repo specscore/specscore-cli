@@ -51,6 +51,10 @@ type Plan struct {
 
 	SourceFeature     string // value of `**Source Feature:**` (empty when missing)
 	SourceFeatureLine int    // 1-based line of the field; 0 when absent
+	SourceIdea        string // Idea slug from `**Source:** idea:<slug>` (empty when not idea-sourced)
+	SourceNone        bool   // true when the source line is `**Source:** none` (source-less plan)
+	SourceRaw         string // raw value of a `**Source:**` line as written (empty when absent)
+	SourceLine        int    // 1-based line of the `**Source:**` field; 0 when absent
 	Status            string // value of `**Status:**` (empty when missing)
 	StatusLine        int    // 1-based line of the field; 0 when absent
 	Date              string // value of `**Date:**` (empty when missing)
@@ -186,6 +190,14 @@ func Parse(path string) (*Plan, error) {
 			case "Source Feature":
 				p.SourceFeature = val
 				p.SourceFeatureLine = i + 1
+			case "Source":
+				p.SourceRaw = val
+				p.SourceLine = i + 1
+				if rest, ok := strings.CutPrefix(val, "idea:"); ok {
+					p.SourceIdea = strings.TrimSpace(rest)
+				} else if val == "none" {
+					p.SourceNone = true
+				}
 			case "Status":
 				p.Status = val
 				p.StatusLine = i + 1

@@ -17,6 +17,7 @@ type planInfoDoc struct {
 	Slug          string      `yaml:"slug" json:"slug"`
 	Status        string      `yaml:"status" json:"status"`
 	SourceFeature string      `yaml:"source_feature" json:"source_feature"`
+	Source        string      `yaml:"source" json:"source"` // `idea:<slug>` or `none`; empty for Feature-sourced plans
 	Mode          string      `yaml:"mode" json:"mode"`
 	Date          string      `yaml:"date" json:"date"`
 	Owner         string      `yaml:"owner" json:"owner"`
@@ -79,6 +80,7 @@ func runPlanInfo(cmd *cobra.Command, args []string) error {
 		Slug:          p.Slug,
 		Status:        p.Status,
 		SourceFeature: p.SourceFeature,
+		Source:        p.SourceRaw,
 		Mode:          string(p.Mode),
 		Date:          p.Date,
 		Owner:         p.Owner,
@@ -105,6 +107,9 @@ func writePlanInfoText(w io.Writer, doc planInfoDoc) error {
 	_, _ = fmt.Fprintf(bw, "Slug:           %s\n", doc.Slug)
 	_, _ = fmt.Fprintf(bw, "Status:         %s\n", doc.Status)
 	_, _ = fmt.Fprintf(bw, "Source Feature: %s\n", doc.SourceFeature)
+	if doc.Source != "" {
+		_, _ = fmt.Fprintf(bw, "Source:         %s\n", doc.Source)
+	}
 	_, _ = fmt.Fprintf(bw, "Mode:           %s\n", doc.Mode)
 	_, _ = fmt.Fprintf(bw, "Date:           %s\n", doc.Date)
 	_, _ = fmt.Fprintf(bw, "Owner:          %s\n", doc.Owner)
