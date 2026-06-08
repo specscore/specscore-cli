@@ -57,6 +57,8 @@ type Plan struct {
 	DateLine          int    // 1-based line of the field; 0 when absent
 	Owner             string // value of `**Owner:**` (empty when missing)
 	OwnerLine         int    // 1-based line of the field; 0 when absent
+	Parent            string // value of `**Parent:**` (empty when missing) — master/sub-plan composition
+	ParentLine        int    // 1-based line of the field; 0 when absent
 	Mode              Mode   // `full` (default) or `stub`
 	ModeLine          int    // 1-based line of `**Mode:**`; 0 when absent
 	ModeRaw           string // raw value as written (used by P-004 to report invalid tokens)
@@ -193,6 +195,9 @@ func Parse(path string) (*Plan, error) {
 			case "Owner":
 				p.Owner = val
 				p.OwnerLine = i + 1
+			case "Parent":
+				p.Parent = val
+				p.ParentLine = i + 1
 			case "Mode":
 				p.ModeRaw = val
 				p.ModeLine = i + 1

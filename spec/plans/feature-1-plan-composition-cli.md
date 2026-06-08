@@ -24,7 +24,7 @@ The `plan new` verb already exists and its six original ACs are implemented and 
 
 ### Task 1: Add --parent flag and verbatim Parent emission
 
-**Status:** pending
+**Status:** done
 **Depends-On:** —
 **Verifies:** cli/plan/new#ac:parent-recorded-verbatim
 

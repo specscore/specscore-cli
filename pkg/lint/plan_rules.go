@@ -47,6 +47,8 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 	featuresDir := filepath.Join(specRoot, "features")
 
 	var violations []Violation
+	parsedPlans := map[string]*plan.Plan{}
+	relPaths := map[string]string{}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -65,7 +67,12 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 		}
 		relPath, _ := filepath.Rel(specRoot, planPath)
 		violations = append(violations, lintPlan(p, relPath, featuresDir)...)
+		parsedPlans[p.Slug] = p
+		relPaths[p.Slug] = relPath
 	}
+	// P-005 validates **Parent:** references across the full single-file plan
+	// set (resolution + cycle detection need every plan's parent edge).
+	violations = append(violations, lintP005(parsedPlans, relPaths)...)
 	// Stable order: by file, line, rule name.
 	sort.SliceStable(violations, func(i, j int) bool {
 		if violations[i].File != violations[j].File {
@@ -503,4 +510,148 @@ func lintP004StubPlaceholder(p *plan.Plan, relPath string) []Violation {
 		}
 	}
 	return out
+}
+
+// ----- P-005 parent reference validity -----
+
+// crossRepoParentRe matches a cross-repo plan reference `<repo-slug>:<plan-slug>`
+// where both sides are lowercase, hyphen-separated, URL-safe slugs and there is
+// exactly one ':' separator (cli/spec/lint/plan-rules#req:rule-p-005-cross-repo-syntactic-only).
+var crossRepoParentRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// lintP005 validates the optional **Parent:** reference on every single-file
+// Plan. Same-repo parents (no ':') must resolve to another single-file Plan,
+// must not be self-references, and must not form a cycle. Cross-repo parents
+// (`<repo-slug>:<plan-slug>`) are validated syntactically only — never resolved,
+// never scanned for across sibling repos.
+func lintP005(parsedPlans map[string]*plan.Plan, relPaths map[string]string) []Violation {
+	var out []Violation
+
+	slugs := make([]string, 0, len(parsedPlans))
+	for slug := range parsedPlans {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+
+	// sameRepoParent maps slug -> resolvable same-repo parent slug, used for
+	// cycle detection. Only populated for non-self, resolvable, same-repo edges.
+	sameRepoParent := map[string]string{}
+
+	for _, slug := range slugs {
+		p := parsedPlans[slug]
+		parent := strings.TrimSpace(p.Parent)
+		if parent == "" {
+			continue // root plan
+		}
+		relPath := relPaths[slug]
+		line := p.ParentLine
+
+		if strings.Contains(parent, ":") {
+			if !crossRepoParentRe.MatchString(parent) {
+				out = append(out, Violation{
+					File: relPath, Line: line, Severity: "error", Rule: "P-005",
+					Message: fmt.Sprintf("malformed cross-repo **Parent:** %q (expected <repo-slug>:<plan-slug>, each lowercase, hyphen-separated, URL-safe)", parent),
+				})
+			}
+			continue
+		}
+
+		if parent == slug {
+			out = append(out, Violation{
+				File: relPath, Line: line, Severity: "error", Rule: "P-005",
+				Message: fmt.Sprintf("**Parent:** %q references the plan itself", slug),
+			})
+			continue
+		}
+		if _, ok := parsedPlans[parent]; !ok {
+			out = append(out, Violation{
+				File: relPath, Line: line, Severity: "error", Rule: "P-005",
+				Message: fmt.Sprintf("**Parent:** %q does not resolve to a single-file Plan at spec/plans/%s.md", parent, parent),
+			})
+			continue
+		}
+		sameRepoParent[slug] = parent
+	}
+
+	out = append(out, detectParentCycles(sameRepoParent, parsedPlans, relPaths)...)
+	return out
+}
+
+// detectParentCycles finds cycles in the same-repo parent graph and emits one
+// P-005 violation per distinct cycle, reported on the lexicographically
+// smallest member for stable output.
+func detectParentCycles(edges map[string]string, parsedPlans map[string]*plan.Plan, relPaths map[string]string) []Violation {
+	var out []Violation
+	reported := map[string]bool{}
+
+	starts := make([]string, 0, len(edges))
+	for slug := range edges {
+		starts = append(starts, slug)
+	}
+	sort.Strings(starts)
+
+	for _, start := range starts {
+		seen := map[string]int{}
+		var path []string
+		cur := start
+		for {
+			next, ok := edges[cur]
+			if !ok {
+				break
+			}
+			if idx, dup := seen[cur]; dup {
+				cycle := append([]string{}, path[idx:]...)
+				key := canonicalCycleKey(cycle)
+				if !reported[key] {
+					reported[key] = true
+					first := cycleFirst(cycle)
+					p := parsedPlans[first]
+					out = append(out, Violation{
+						File: relPaths[first], Line: p.ParentLine, Severity: "error", Rule: "P-005",
+						Message: fmt.Sprintf("**Parent:** chain forms a cycle: %s", renderCyclePath(cycle)),
+					})
+				}
+				break
+			}
+			seen[cur] = len(path)
+			path = append(path, cur)
+			cur = next
+		}
+	}
+	return out
+}
+
+// canonicalCycleKey returns an order-independent key so each cycle reports once.
+func canonicalCycleKey(cycle []string) string {
+	sorted := append([]string{}, cycle...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, "\x00")
+}
+
+// cycleFirst returns the lexicographically smallest slug in the cycle.
+func cycleFirst(cycle []string) string {
+	first := cycle[0]
+	for _, s := range cycle[1:] {
+		if s < first {
+			first = s
+		}
+	}
+	return first
+}
+
+// renderCyclePath renders a cycle as `a → b → … → a`, rotated to start at the
+// lexicographically smallest member for determinism.
+func renderCyclePath(cycle []string) string {
+	start := 0
+	for i, s := range cycle {
+		if s < cycle[start] {
+			start = i
+		}
+	}
+	rotated := make([]string, 0, len(cycle)+1)
+	for i := range cycle {
+		rotated = append(rotated, cycle[(start+i)%len(cycle)])
+	}
+	rotated = append(rotated, cycle[start])
+	return strings.Join(rotated, " → ")
 }

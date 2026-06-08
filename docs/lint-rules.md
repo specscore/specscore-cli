@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 119
+Total rules: 121
 
 ## capability
 
@@ -85,6 +85,12 @@ Total rules: 119
 | entity-single-file | error | Requires each entity to be a single file, not a directory. |
 | entity-slug-format | error | Requires entity filenames to use kebab-case slugs. |
 | entity-title-format | error | Requires the entity H1 title to follow the canonical format. |
+
+## feature
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| feature-source-ideas-required | error | Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel. |
 
 ## feature-index
 
@@ -170,6 +176,7 @@ Total rules: 119
 | P-002 | error | Requires plan tasks to declare valid dependency references. |
 | P-003 | error | Requires the plan to follow the single-file structure contract. |
 | P-004 | error | Requires plan metadata to be complete and well-formed. |
+| P-005 | error | Validates a plan's **Parent:** reference — same-repo parents resolve, are acyclic, and not self-referential; cross-repo <repo>:<slug> refs are checked syntactically only. |
 
 ## property
 

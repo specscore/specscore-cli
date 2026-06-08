@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
@@ -49,6 +50,7 @@ used and a warning is printed to stderr.`,
 	}
 	cmd.Flags().String("feature", "", "source Feature slug (mutually exclusive with --idea)")
 	cmd.Flags().String("idea", "", "source Idea slug (mutually exclusive with --feature)")
+	cmd.Flags().String("parent", "", "parent (master) plan reference — same-repo slug or <repo-slug>:<slug> cross-repo soft ref")
 	cmd.Flags().String("title", "", "plan title (defaults to title-cased slug)")
 	cmd.Flags().String("owner", "", "owner/author (defaults to $USER)")
 	cmd.Flags().Bool("force", false, "overwrite an existing plan file at that slug")
@@ -68,6 +70,14 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	if (featureSrc == "") == (ideaSrc == "") {
 		return exitcode.InvalidArgsError(
 			"exactly one of --feature <feature-slug> or --idea <idea-slug> is required")
+	}
+
+	// --parent is optional; when supplied it MUST be non-empty
+	// (cli/plan/new#req:parent-ref-optional). An explicit empty value exits 2.
+	if cmd.Flags().Changed("parent") {
+		if p, _ := cmd.Flags().GetString("parent"); strings.TrimSpace(p) == "" {
+			return exitcode.InvalidArgsError("--parent value must not be empty")
+		}
 	}
 
 	title, _ := cmd.Flags().GetString("title")
@@ -128,6 +138,15 @@ func buildPlanBody(cmd *cobra.Command, slug, title, owner, featureSrc, ideaSrc s
 		repl["**Source Feature:** <feature-slug>"] = "**Source:** idea:" + ideaSrc
 	}
 
+	// When --parent is supplied, inject a `**Parent:** <value>` line after the
+	// Supersedes line of the gallery template (cli/plan/new#req:parent-ref-optional).
+	// The embedded scaffolder honors ScaffoldOptions.Parent directly.
+	parent, _ := cmd.Flags().GetString("parent")
+	parent = strings.TrimSpace(parent)
+	if parent != "" {
+		repl["**Supersedes:** —"] = "**Supersedes:** —\n**Parent:** " + parent
+	}
+
 	return bareOrEmbedded(true, "plan", repl, cmd.ErrOrStderr(), func() ([]byte, error) {
 		return planScaffoldFn(plan.ScaffoldOptions{
 			Slug:          slug,
@@ -135,6 +154,7 @@ func buildPlanBody(cmd *cobra.Command, slug, title, owner, featureSrc, ideaSrc s
 			Owner:         owner,
 			SourceFeature: featureSrc,
 			SourceIdea:    ideaSrc,
+			Parent:        parent,
 		})
 	})
 }

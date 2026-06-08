@@ -76,9 +76,14 @@ func newLinter(opts Options) *linter {
 	// The single checker emits violations for all four rules; deduping by
 	// pointer identity in lint() ensures it runs once per pass.
 	pc := newPlanRulesChecker()
-	for _, n := range []string{"P-001", "P-002", "P-003", "P-004"} {
+	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005"} {
 		l.ruleSet[n] = pc
 	}
+
+	// Register the feature-rules checker (feature-source-ideas-required).
+	frc := newFeatureRulesChecker()
+	frc.autofix = opts.Fix
+	l.ruleSet["feature-source-ideas-required"] = frc
 
 	// Register decision-rules checker under all D-* rule IDs.
 	dc := newDecisionRulesChecker()

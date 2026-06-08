@@ -54,7 +54,7 @@ func setupFeatureSpec(t *testing.T, status string) string {
 		t.Fatalf("write features/README.md: %v", err)
 	}
 
-	fBody := "# Feature: Auth\n\n**Status:** " + status + "\n\n## Summary\n\nPlaceholder.\n\n" +
+	fBody := "# Feature: Auth\n\n**Status:** " + status + "\n**Source Ideas:** —\n\n## Summary\n\nPlaceholder.\n\n" +
 		"## Open Questions\n\nNone at this time.\n\n" +
 		"---\n*This document follows the https://specscore.md/feature-specification*\n"
 	if err := os.WriteFile(filepath.Join(featDir, "auth", "README.md"), []byte(fBody), 0o644); err != nil {
