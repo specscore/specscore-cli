@@ -19,3 +19,4 @@ cover*.out
 # Tooling local state
 .claude/
 .specscore/
+.codegraph/
