@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestScaffold_ParentEmittedAndOmitted(t *testing.T) {
+	withParent, err := Scaffold(ScaffoldOptions{Slug: "sub", SourceFeature: "foo", Parent: "specscore:master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(withParent), "**Supersedes:** —\n**Parent:** specscore:master\n") {
+		t.Fatalf("Parent line not emitted after Supersedes:\n%s", withParent)
+	}
+	noParent, err := Scaffold(ScaffoldOptions{Slug: "root", SourceFeature: "foo", Parent: "  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(noParent), "**Parent:**") {
+		t.Fatalf("did not expect a Parent line:\n%s", noParent)
+	}
+}
+
 func TestValidateSlug(t *testing.T) {
 	valid := []string{"a", "my-plan", "add-batch-mode", "x1-y2"}
 	for _, s := range valid {

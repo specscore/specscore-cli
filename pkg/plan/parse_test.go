@@ -125,6 +125,33 @@ func TestParse_PlanMetadataPopulated(t *testing.T) {
 	}
 }
 
+func TestParse_ParentField(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: Sub
+
+**Status:** Draft
+**Source Feature:** foo
+**Supersedes:** —
+**Parent:** specscore:cross-repo-master
+
+## Tasks
+
+### Task 1: One
+
+**Verifies:** foo#ac:x
+`
+	p, err := Parse(writePlan(t, dir, "sub", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Parent != "specscore:cross-repo-master" {
+		t.Fatalf("got parent %q", p.Parent)
+	}
+	if p.ParentLine != 6 {
+		t.Fatalf("got parent line %d, want 6", p.ParentLine)
+	}
+}
+
 // TestParse_MissingStatusIsEmpty covers cli/plan#ac:missing-status-is-empty:
 // a Plan with no `**Status:**` line reports an empty status and Parse succeeds.
 func TestParse_MissingStatusIsEmpty(t *testing.T) {

@@ -140,6 +140,33 @@ func TestPlanNew_InvalidSlug(t *testing.T) {
 	}
 }
 
+func TestPlanNew_ParentEmitted(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	if _, _, err := runPlan(t, "new", "sub", "--feature", "f", "--parent", "specscore:cross-repo-master"); err != nil {
+		t.Fatalf("plan new --parent: %v", err)
+	}
+	s := readPlan(t, root, "sub")
+	if !strings.Contains(s, "**Parent:** specscore:cross-repo-master") {
+		t.Errorf("scaffold missing Parent line:\n%s", s)
+	}
+}
+
+func TestPlanNew_ParentEmptyExits2(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	_, _, err := runPlan(t, "new", "p", "--feature", "f", "--parent", "")
+	if err == nil {
+		t.Fatal("expected error for empty --parent")
+	}
+	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "plans", "p.md")); statErr == nil {
+		t.Error("no file should be created when --parent is empty")
+	}
+}
+
 func TestPlanNew_Collision(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)

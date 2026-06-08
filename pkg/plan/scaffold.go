@@ -36,6 +36,12 @@ type ScaffoldOptions struct {
 	// exactly one Feature or one Idea (cli/plan/new#req:source-required).
 	SourceFeature string
 	SourceIdea    string
+	// Parent, when non-empty, records the master plan this plan is a sub-plan of
+	// (cli/plan/new#req:parent-ref-optional). It is emitted verbatim as a
+	// `**Parent:** <value>` header line after `**Supersedes:**`; resolution is
+	// deferred to lint (P-005). A same-repo slug or a cross-repo
+	// `<repo-slug>:<plan-slug>` soft reference.
+	Parent string
 }
 
 // titleCaseFromSlug turns "add-batch-mode" into "Add Batch Mode".
@@ -88,7 +94,11 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	b.WriteString(sourceLine + "\n")
 	fmt.Fprintf(&b, "**Date:** %s\n", date)
 	fmt.Fprintf(&b, "**Owner:** %s\n", owner)
-	b.WriteString("**Supersedes:** —\n\n")
+	b.WriteString("**Supersedes:** —\n")
+	if parent := strings.TrimSpace(opts.Parent); parent != "" {
+		fmt.Fprintf(&b, "**Parent:** %s\n", parent)
+	}
+	b.WriteString("\n")
 	b.WriteString("## Summary\n\n<!-- TODO: 1–3 sentences — what this plan covers and how it decomposes the source. -->\n\n")
 	b.WriteString("## Approach\n\n<!-- TODO: ≤1 paragraph — what was grouped, what was deferred and why. -->\n\n")
 	b.WriteString("## Tasks\n\n<!-- TODO: add `### Task N:` blocks, each with a **Verifies:** line naming a source-Feature AC (feature-slug#ac:<ac-slug>). -->\n\n")

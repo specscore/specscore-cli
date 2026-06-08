@@ -130,6 +130,10 @@ var builtinRules = []Rule{
 	{ID: "P-002", Family: "plan", Severity: "error", Description: "Requires plan tasks to declare valid dependency references."},
 	{ID: "P-003", Family: "plan", Severity: "error", Description: "Requires the plan to follow the single-file structure contract."},
 	{ID: "P-004", Family: "plan", Severity: "error", Description: "Requires plan metadata to be complete and well-formed."},
+	{ID: "P-005", Family: "plan", Severity: "error", Description: "Validates a plan's **Parent:** reference — same-repo parents resolve, are acyclic, and not self-referential; cross-repo <repo>:<slug> refs are checked syntactically only."},
+
+	// Feature lint rules.
+	{ID: "feature-source-ideas-required", Family: "feature", Severity: "error", Description: "Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel."},
 
 	// Decision lint rules.
 	{ID: "D-title-format", Family: "decision", Severity: "error", Description: "Requires the decision H1 title to follow the canonical format."},
