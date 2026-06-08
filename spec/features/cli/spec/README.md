@@ -10,6 +10,7 @@ status: Implementing
 > **AI skill:** [GitHub](https://github.com/specscore/ai-plugin-specscore/blob/main/skills/spec/SKILL.md) · [local](../../../../../ai-plugin-specscore/skills/spec/SKILL.md) — if this command's CLI signature or behavior changes, update the linked skill to keep agents in sync.
 
 **Status:** Implementing
+**Source Ideas:** —
 
 ## Summary
 
