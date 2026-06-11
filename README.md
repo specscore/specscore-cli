@@ -94,6 +94,10 @@ If you drive `specscore` from inside Claude Code (or any agent host that loads C
 
 Then bootstrap the CLI itself with `/specscore:install`, or install manually with the one-liner above.
 
+## Code exploration & spec ↔ code linkage
+
+We use [Codegrapher](https://codegrapher.dev/) for efficient code exploration and bidirectional linkage between specifications and source code. Codegrapher indexes the codebase into a queryable knowledge graph of symbols and their relationships, letting AI agents navigate and trace code quickly instead of grepping — and connect SpecScore specs to the code that implements them, and back.
+
 ## Test coverage
 
 `specscore-cli` maintains **100% statement coverage** across all packages. This is enforced automatically — the CI pipeline and the local pre-push hook both reject any change that drops below 100%.
