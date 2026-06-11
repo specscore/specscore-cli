@@ -96,7 +96,7 @@ Then bootstrap the CLI itself with `/specscore:install`, or install manually wit
 
 ## Code exploration & spec ↔ code linkage
 
-We use [Codegrapher](https://codegrapher.dev/) for efficient code exploration and bidirectional linkage between specifications and source code. You can [browse this repository's code graph online](https://codegrapher.dev/github.com/specscore/specscore-cli) — the directory tree and quick file search are served from the committed snapshot in [`ingitdb/codegrapher/`](ingitdb/codegrapher/). Codegrapher indexes the codebase into a queryable knowledge graph of symbols and their relationships, letting AI agents navigate and trace code quickly instead of grepping — and connect SpecScore specs to the code that implements them, and back.
+We use [Codegrapher](https://codegrapher.dev/) for efficient code exploration and bidirectional linkage between specifications and source code. You can [browse this repository's code graph online](https://codegrapher.dev/github.com/specscore/specscore-cli) — the directory tree and quick file search are served from the committed snapshot in [`codegrapher/`](codegrapher/). Codegrapher indexes the codebase into a queryable knowledge graph of symbols and their relationships, letting AI agents navigate and trace code quickly instead of grepping — and connect SpecScore specs to the code that implements them, and back.
 
 ## Test coverage
 
