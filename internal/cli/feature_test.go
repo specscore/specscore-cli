@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lint"
 )
 
 // setupFeatureSpec stages a lint-clean spec tree at a fresh t.TempDir,
@@ -1166,6 +1167,45 @@ func TestFeatureNew_Basic(t *testing.T) {
 	}
 	if !strings.Contains(out, "new-feature") {
 		t.Errorf("stdout = %q, want it to contain 'new-feature' (generated slug)", out)
+	}
+}
+
+// TestFeatureNew_LintClean verifies that a freshly scaffolded feature
+// README passes a read-only lint without any follow-up --fix pass — i.e.
+// the scaffolder backfills the project-specific studio-toolbar and the
+// **Source Ideas:** sentinel itself. Regression guard for the
+// scaffolder↔lint mismatch where `feature new` emitted a header the
+// 0.10.0 linter rejected (missing studio-toolbar + Source Ideas lines).
+func TestFeatureNew_LintClean(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+
+	if _, errOut, err := runInitCmd(t, nil,
+		"--project", root,
+		"--host", "github.com",
+		"--org", "acme",
+		"--repo", "widget",
+	); err != nil {
+		t.Fatalf("init failed: %v\nstderr=%s", err, errOut)
+	}
+
+	if _, errOut, err := runFeature(t, "new",
+		"--title", "Billing",
+		"--description", "Billing system",
+	); err != nil {
+		t.Fatalf("feature new failed: %v\nstderr=%s", err, errOut)
+	}
+
+	// Read-only lint (no Fix) — the scaffold must already be clean.
+	violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
+	if err != nil {
+		t.Fatalf("lint invocation failed: %v", err)
+	}
+	for _, v := range violations {
+		if v.Severity == "error" {
+			t.Errorf("scaffolded feature is not lint-clean: %s:%d [%s] %s",
+				v.File, v.Line, v.Rule, v.Message)
+		}
 	}
 }
 

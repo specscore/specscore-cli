@@ -259,6 +259,13 @@ func TestGenerateReadme(t *testing.T) {
 			if !strings.Contains(got, "None at this time.") {
 				t.Error("GenerateReadme() should include 'None at this time.' in Outstanding Questions")
 			}
+			// feature-source-ideas-required: the scaffold must carry a
+			// **Source Ideas:** line with the no-upstream sentinel, emitted
+			// directly after the **Status:** line.
+			wantSourceIdeas := "**Status:** " + tt.status + "\n**Source Ideas:** —\n"
+			if !strings.Contains(got, wantSourceIdeas) {
+				t.Errorf("GenerateReadme() missing **Source Ideas:** sentinel after status\ngot:\n%s", got)
+			}
 		})
 	}
 }

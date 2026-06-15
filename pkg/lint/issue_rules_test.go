@@ -193,6 +193,34 @@ func TestIssueRules_I001_UnknownFrontmatterKey(t *testing.T) {
 	}
 }
 
+// An issue carrying the artifact-frontmatter-convention `format:` field —
+// as emitted by the published `issue new` template — must NOT trip I-001's
+// unknown-frontmatter-key check. Regression guard for the scaffolder↔lint
+// mismatch where the published template's `format:` line was rejected.
+func TestIssueRules_I001_AllowsFormatField(t *testing.T) {
+	root := setupSpecTree(t, map[string]string{
+		"spec/issues/bug-1.md": "---\n" +
+			"format: https://specscore.md/issue-specification\n" +
+			"type: issue\n" +
+			"slug: bug-1\n" +
+			"status: open\n" +
+			"captured_at: 2026-06-15T00:00:00Z\n" +
+			"captured_by: tester\n" +
+			"---\n\n# Issue: Bug\n\n## Description\n\nx\n\n" +
+			"## Steps to Reproduce\n\nx\n\n## Expected vs Actual\n\nx\n\n" +
+			"---\n*This document follows the https://specscore.md/issue-specification*\n",
+	})
+	vs, err := Lint(Options{SpecRoot: filepath.Join(root, "spec")})
+	if err != nil {
+		t.Fatalf("Lint: %v", err)
+	}
+	for _, v := range vs {
+		if v.Rule == "I-001" && strings.Contains(v.Message, "format") {
+			t.Errorf("I-001 must accept the format frontmatter field; got violation: %s", v.Message)
+		}
+	}
+}
+
 // AC: optional-field-shape-violation. A fixture issue with
 // `severity: extreme` trips I-003 under a message listing the five
 // valid `severity` values (`low`, `medium`, `high`, `critical`, `unset`).

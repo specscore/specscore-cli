@@ -737,6 +737,17 @@ func runFeatureNew(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Reconcile the freshly scaffolded README with project-specific lint
+	// rules that a static template cannot satisfy on its own — chiefly
+	// studio-toolbar, whose canonical line is composed from the project's
+	// host/org/repo and so must be backfilled here. Mirrors the
+	// scaffold→--fix pattern used by `idea/decision/issue new`. specSub is
+	// the spec tree root (featuresDir is <specSub>/features).
+	specSub := filepath.Dir(featuresDir)
+	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
+		return exitcode.UnexpectedErrorf("running lint fix: %v", err)
+	}
+
 	if commitFlag {
 		repoRoot := filepath.Dir(filepath.Dir(featuresDir)) // spec/features/ → repo root
 		if !isGitRepo(repoRoot) {

@@ -9,8 +9,32 @@ import (
 	"github.com/specscore/specscore-cli/pkg/decision"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
+
+// ensureDecisionAncestorIndexes materializes spec/README.md and
+// spec/decisions/README.md when they don't already exist, using the same
+// templates as `specscore init`. Existing files are left untouched. Mirrors
+// ensurePlanAncestorIndexes for the decisions tree.
+func ensureDecisionAncestorIndexes(root string) error {
+	cfg, err := projectdef.ReadSpecConfig(root)
+	if err != nil {
+		cfg = projectdef.SpecConfig{}
+	}
+	for _, w := range []struct {
+		path    string
+		content string
+	}{
+		{"spec/README.md", specReadmeContent(cfg)},
+		{"spec/decisions/README.md", decisionsIndexContent(cfg)},
+	} {
+		if err := writeMissingIndex(root, w.path, w.content); err != nil {
+			return fmt.Errorf("writing %s: %w", w.path, err)
+		}
+	}
+	return nil
+}
 
 func decisionCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -81,6 +105,13 @@ func runDecisionNew(cmd *cobra.Command, args []string) error {
 	decisionsDir := filepath.Join(specSub, "decisions")
 	if err := os.MkdirAll(decisionsDir, 0o755); err != nil {
 		return exitcode.UnexpectedErrorf("creating %s: %v", decisionsDir, err)
+	}
+
+	// Materialize the spec/ and spec/decisions/ index READMEs when absent so
+	// the readme-exists rule is satisfied (it has no fixer) and the
+	// post-scaffold `lint --fix` can backfill the new decision's index row.
+	if err := ensureDecisionAncestorIndexes(specRoot); err != nil {
+		return exitcode.UnexpectedErrorf("materializing decision indexes: %v", err)
 	}
 
 	target := filepath.Join(decisionsDir, filename)

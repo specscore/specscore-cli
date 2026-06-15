@@ -79,6 +79,41 @@ func runDecision(t *testing.T, args ...string) (string, string, error) {
 	return out.String(), errOut.String(), err
 }
 
+// TestDecisionNew_LintCleanFromInit verifies that `decision new` produces a
+// lint-clean tree when run against a freshly `init`-ed project that has no
+// pre-seeded decisions index. Regression guard: `decision new` must
+// materialize spec/decisions/README.md itself, otherwise the readme-exists
+// rule fires ("decisions:0 README.md not found"). Unlike setupDecisionRoot,
+// this test does NOT pre-create the index.
+func TestDecisionNew_LintCleanFromInit(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+
+	if _, errOut, err := runInitCmd(t, nil,
+		"--project", root,
+		"--host", "github.com",
+		"--org", "acme",
+		"--repo", "widget",
+	); err != nil {
+		t.Fatalf("init failed: %v\nstderr=%s", err, errOut)
+	}
+
+	if _, errOut, err := runDecision(t, "new", "use-postgres", "--title", "Use Postgres"); err != nil {
+		t.Fatalf("decision new failed: %v\nstderr=%s", err, errOut)
+	}
+
+	violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
+	if err != nil {
+		t.Fatalf("lint invocation failed: %v", err)
+	}
+	for _, v := range violations {
+		if v.Severity == "error" {
+			t.Errorf("scaffolded decision is not lint-clean: %s:%d [%s] %s",
+				v.File, v.Line, v.Rule, v.Message)
+		}
+	}
+}
+
 // =============================================================================
 // runDecisionNew happy path — bare invocation produces a lint-clean Decision.
 // =============================================================================

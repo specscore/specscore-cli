@@ -37,11 +37,17 @@ var issueRequiredKeys = []string{
 	"captured_by",
 }
 
-// issueOptionalKeys names the seven optional frontmatter fields whose
-// presence alone is allowed (shape validation lives in later rules).
-// Together with issueRequiredKeys these form the closed "known keys"
-// set used by I-001's unknown-field check.
+// issueOptionalKeys names the optional frontmatter fields whose presence
+// alone is allowed (shape validation lives in later rules). Together with
+// issueRequiredKeys these form the closed "known keys" set used by I-001's
+// unknown-field check.
+//
+// `format` is the artifact-frontmatter-convention type URL that the
+// published `issue new` template emits; it is accepted here so scaffolded
+// issues lint clean. It is optional (not required) so issues created by the
+// embedded scaffolder, which omits it, also remain valid.
 var issueOptionalKeys = []string{
+	"format",
 	"severity",
 	"affected_component",
 	"first_seen",

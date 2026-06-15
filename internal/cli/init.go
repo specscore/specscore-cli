@@ -329,6 +329,27 @@ None at this time.
 `
 }
 
+func decisionsIndexContent(_ projectdef.SpecConfig) string {
+	return `---
+format: https://specscore.md/decisions-index-specification
+---
+
+# Decisions
+
+## Decisions
+
+| # | Decision | Status | Date | Tags | Affected |
+|---|----------|--------|------|------|----------|
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/decisions-index-specification*
+`
+}
+
 func featuresIndexContent(_ projectdef.SpecConfig) string {
 	return `---
 format: https://specscore.md/features-index-specification

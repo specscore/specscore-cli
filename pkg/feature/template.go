@@ -49,6 +49,11 @@ func GenerateReadme(title, status, description string, deps []string) string {
 	b.WriteString(status)
 	b.WriteByte('\n')
 
+	// feature-source-ideas-required — every Feature README must carry a
+	// **Source Ideas:** line; emit the no-upstream sentinel by default so the
+	// scaffold is lint-clean without relying on a follow-up --fix pass.
+	b.WriteString("**Source Ideas:** —\n")
+
 	b.WriteByte('\n')
 	b.WriteString("## Summary\n")
 	b.WriteByte('\n')
