@@ -104,6 +104,22 @@ We use [Codegrapher](https://codegrapher.dev/) for efficient code exploration an
 
 All contributions are required to maintain 100% coverage. If your change adds or modifies code, include tests that cover every new branch.
 
+## Releasing
+
+> [!IMPORTANT]
+> **Do not bump the version manually.** There is no version string to edit in
+> source — the version is derived from the git tag at build time. Cut releases
+> only through the [Release workflow](.github/workflows/release.yml):
+>
+> - **Actions → Release → Run workflow**, then pick `auto` (next version from
+>   conventional commits since the last tag), `patch` / `minor` / `major`, or an
+>   explicit `vX.Y.Z`; or
+> - push a `vX.Y.Z` tag.
+>
+> Or from the CLI: `gh workflow run release.yml -f release_tag=auto`. The
+> workflow tags, builds, and publishes the GitHub release; afterwards run
+> `specscore self-update` to pull the new binary locally.
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
