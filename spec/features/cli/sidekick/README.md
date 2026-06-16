@@ -18,6 +18,7 @@ status: Approved
 | Child | Description |
 |---|---|
 | [new](new/README.md) | Scaffold a lint-clean sidekick-seed at `spec/ideas/seeds/<slug>.md` from a one-liner, deriving the slug |
+| [change-status](change-status/README.md) | specscore sidekick change-status <slug> --to=<status> transitions a sidekick-seed to a terminal status (Implemented, Rejected, or Archived), relocating it to spec/ideas/archived/ and adding type: sidekick-seed. Implements the lifecycle-transitions shared contract. |
 
 ## Problem
 
