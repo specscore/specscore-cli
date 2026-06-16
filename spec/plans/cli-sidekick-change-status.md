@@ -1,10 +1,10 @@
 ---
 format: https://specscore.md/plan-specification
-status: Approved
+status: Implementing
 ---
 # Plan: Cli Sidekick Change Status
 
-**Status:** Approved
+**Status:** Implementing
 **Source Feature:** cli/sidekick/change-status
 **Date:** 2026-06-16
 **Owner:** alexandertrakhimenok
@@ -24,7 +24,7 @@ Build bottom-up. First the shared plumbing in the lifecycle-transition path (opt
 
 **Verifies:** cli/sidekick/change-status#ac:note-optional-on-implemented
 **Depends-On:** —
-**Status:** pending
+**Status:** done
 
 Add the optional `--note <markdown>` flag to the shared lifecycle-transition path used by the change-status verbs. When non-empty, append a `## Resolution` section to the artifact body verbatim (create it before the footer / at EOF, or append a paragraph to an existing one), as part of the same atomic mutation as the status rewrite, with rollback on any failure. An empty or absent `--note` is a no-op.
 

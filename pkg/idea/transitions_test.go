@@ -547,3 +547,71 @@ func TestLegalChangeStatusTargetNames_Stable(t *testing.T) {
 		t.Errorf("LegalChangeStatusTargetNames = %v; want %v", got, want)
 	}
 }
+
+// Note plumbing: a positive transition with --note writes a `## Resolution`
+// section into the (archived) body verbatim, atomically with the status
+// rewrite. Mirrors the sidekick AC note-optional-on-implemented shape at the
+// Idea-kind layer.
+func TestChangeStatus_NoteWritesResolution(t *testing.T) {
+	root := stageIdeaTree(t, "baz", "Approved")
+
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "baz",
+		To:           lifecycle.IdeaArchived,
+		PostMutation: noopLint,
+		Note:         "Shipped in skills/implement step 4b",
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	body := readArchivedIdea(t, root, "baz")
+	if !strings.Contains(body, "## Resolution") {
+		t.Errorf("archived body missing ## Resolution section:\n%s", body)
+	}
+	if !strings.Contains(body, "Shipped in skills/implement step 4b") {
+		t.Errorf("archived body missing note content verbatim:\n%s", body)
+	}
+}
+
+// Without --note, no `## Resolution` section is written (today's behavior).
+func TestChangeStatus_NoNoteNoResolution(t *testing.T) {
+	root := stageIdeaTree(t, "baz", "Approved")
+
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "baz",
+		To:           lifecycle.IdeaArchived,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if body := readArchivedIdea(t, root, "baz"); strings.Contains(body, "## Resolution") {
+		t.Errorf("unexpected ## Resolution section without --note:\n%s", body)
+	}
+}
+
+// A post-mutation failure after a note write rolls back BOTH the status line
+// and the note body, leaving the active file byte-identical to pre-invocation.
+func TestChangeStatus_NoteRollsBackOnFailure(t *testing.T) {
+	root := stageIdeaTree(t, "baz", "Draft")
+	before := readIdea(t, root, "baz")
+
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "baz",
+		To:           lifecycle.IdeaApproved,
+		PostMutation: failingLint(exitcode.UnexpectedErrorf("lint boom")),
+		Note:         "this note must not survive rollback",
+	})
+	assertExitCode(t, err, 10)
+
+	after := readIdea(t, root, "baz")
+	if after != before {
+		t.Errorf("rollback not byte-identical.\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if strings.Contains(after, "## Resolution") {
+		t.Errorf("## Resolution survived rollback:\n%s", after)
+	}
+}
