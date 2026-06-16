@@ -32,7 +32,7 @@ Add the optional `--note <markdown>` flag to the shared lifecycle-transition pat
 
 **Verifies:** cli/sidekick/change-status#ac:rejected-requires-note
 **Depends-On:** 1
-**Status:** pending
+**Status:** done
 
 Let a verb designate specific transitions as reason-required. For a designated transition, a missing or empty/whitespace-only `--note` MUST exit `2` (InvalidArgs) before any mutation, with a message naming the transition. Non-designated transitions keep `--note` optional.
 
