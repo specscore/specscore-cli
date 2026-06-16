@@ -40,7 +40,7 @@ Let a verb designate specific transitions as reason-required. For a designated t
 
 **Verifies:** cli/sidekick/change-status#ac:slug-not-found
 **Depends-On:** 2
-**Status:** pending
+**Status:** done
 
 Resolve `<slug>` to `spec/ideas/seeds/<slug>.md` within the project root, excluding already-relocated seeds under `spec/ideas/archived/`. Read and line-target-rewrite the frontmatter `status:` value (the seed kind's canonical status surface — no body `**Status:**` line). A missing seed at the canonical path exits `3` (NotFound).
 
