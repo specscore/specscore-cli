@@ -1,8 +1,10 @@
 ---
 captured_by: user
-status: queued
+status: resolved
 ---
 # Bug: lint --fix advances Idea body Status via idea-sync but leaves frontmatter mirror stale, is non-convergent, needs migrate to reconcile
+
+**Resolved 2026-06-16** — `rewriteIdeaHeader` (`pkg/lint/idea.go`) now syncs the leading frontmatter `status:` mirror from the body `**Status:**` whenever the idea-sync auto-advance rewrites it, reusing the canonical `setFrontmatterStatus` helper. A single `lint --fix` pass is convergent again; the body stays canonical and a missing frontmatter block is still left for `migrate`. Regression test: `TestCheckIdeas_SyncFixUpdatesFrontmatterMirror`.
 
 GitHub issue: https://github.com/specscore/specscore-cli/issues/68
 

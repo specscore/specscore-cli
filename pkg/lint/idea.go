@@ -873,7 +873,18 @@ func rewriteIdeaHeader(path string, updates map[string]string) error {
 			lines[i] = fmt.Sprintf("%s**%s:** %s", m[1], name, v)
 		}
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	out := []byte(strings.Join(lines, "\n"))
+	// Keep the leading frontmatter `status:` mirror in sync with the body
+	// **Status:** we just advanced, so a single `lint --fix` pass converges
+	// (issue #68). Without this the body/frontmatter disagree and the next
+	// lint reports a status-mirror drift that --fix itself introduced — a
+	// state only `migrate` could previously repair. setFrontmatterStatus is
+	// the same canonical helper statusMirrorChecker.fix uses: body is
+	// canonical, and a missing frontmatter block is left for `migrate`.
+	if status, ok := updates["Status"]; ok {
+		out = setFrontmatterStatus(out, status)
+	}
+	return os.WriteFile(path, out, 0o644)
 }
 
 var fieldRewriteRe = regexp.MustCompile(`^(\s*)\*\*([^*]+?):\*\*\s*(.*)$`)
