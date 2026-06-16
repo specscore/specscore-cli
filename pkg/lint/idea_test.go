@@ -459,6 +459,54 @@ None at this time.
 	}
 }
 
+// TestCheckIdeas_SyncFixUpdatesFrontmatterMirror guards against issue #68:
+// when the idea-sync auto-advance rewrites the body **Status:**, it must also
+// update the leading frontmatter `status:` mirror so a single `lint --fix`
+// pass converges instead of introducing a status-mirror drift only `migrate`
+// can repair.
+func TestCheckIdeas_SyncFixUpdatesFrontmatterMirror(t *testing.T) {
+	feature := `# Feature: Offline Sync
+
+**Status:** Draft
+**Source Ideas:** offline-mode
+
+## Summary
+Stuff.
+
+## Open Questions
+
+None at this time.
+`
+	// Idea carries a frontmatter `status:` mirror in sync with the body.
+	body := "---\nstatus: Approved\n---\n" + validIdeaBody("Offline Mode", "Approved", nil)
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":                 activeIndexWith("offline-mode"),
+		"ideas/archived/README.md":        archivedIndex,
+		"ideas/offline-mode.md":           body,
+		"features/offline-sync/README.md": feature,
+	})
+
+	// With --fix: body advances Approved -> Specifying.
+	if _, err := CheckIdeas(specRoot, true); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(specRoot, "ideas", "offline-mode.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "**Status:** Specifying") {
+		t.Fatalf("body status not advanced: %s", s)
+	}
+	// The frontmatter mirror MUST advance in lockstep, else the next lint
+	// reports a status-mirror drift that --fix itself introduced.
+	if frontmatterStatus(data) != "Specifying" {
+		t.Errorf("frontmatter status mirror stale: got %q, want %q\n%s",
+			frontmatterStatus(data), "Specifying", s)
+	}
+}
+
 func TestCheckIdeas_FeatureReferencesDraftIdea(t *testing.T) {
 	feature := `# Feature: Offline Sync
 
