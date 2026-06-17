@@ -15,9 +15,11 @@ const (
 	// (cli/sidekick/new#req:one-liner-length).
 	MaxOneLinerChars = 500
 	// MaxBodyChars caps the body region (H1 line through end of optional
-	// content) per the sidekick-seed lint rule
-	// (cli/sidekick/new#req:optional-body).
-	MaxBodyChars = 2000
+	// content) at capture. A freshly captured seed is `status: queued`, so
+	// this matches the sidekick-seed lint rule's OPEN (queued) hard cap
+	// (cli/sidekick/new#req:optional-body). Authors are advised (via a lint
+	// warning) to keep a queued seed under 2500.
+	MaxBodyChars = 3000
 	// MaxSlugChars caps the derived slug length
 	// (cli/sidekick/new#req:slug-derivation).
 	MaxSlugChars = 60

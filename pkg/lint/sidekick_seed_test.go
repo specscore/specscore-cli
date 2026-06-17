@@ -130,17 +130,74 @@ func TestSidekickSeed_BodyMissingH1(t *testing.T) {
 }
 
 func TestSidekickSeed_BodyTooLong(t *testing.T) {
-	// 2001 chars of body after the closing `---`. The H1 takes ~20 chars,
-	// then we pad to push past 2000.
-	pad := strings.Repeat("x", 2001)
+	// A queued (open) seed past the 3000 hard cap → error.
+	pad := strings.Repeat("x", 3001)
 	body := validSeedBody("test", "Test seed", "explicit", pad)
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/seeds/test.md": body,
 	})
 	c := newSidekickSeedChecker()
 	vs, _ := c.check(specRoot)
-	if !violationMessageContains(vs, "body exceeds 2000 characters") {
-		t.Fatalf("expected body-length violation; got %+v", vs)
+	if !violationMessageContains(vs, "body exceeds 3000 characters") {
+		t.Fatalf("expected 3000-cap violation; got %+v", vs)
+	}
+}
+
+func TestSidekickSeed_QueuedAdvisoryWarning(t *testing.T) {
+	// A queued seed in the advisory band (2500 < body ≤ 3000) → warning, no error.
+	body := validSeedBody("test", "Test seed", "explicit", strings.Repeat("x", 2600))
+	specRoot := writeSpec(t, map[string]string{"ideas/seeds/test.md": body})
+	vs, _ := newSidekickSeedChecker().check(specRoot)
+	var warned bool
+	for _, v := range vs {
+		if v.Rule != sidekickSeedRule {
+			continue
+		}
+		if v.Severity == "error" {
+			t.Fatalf("advisory band must not error; got %+v", v)
+		}
+		if v.Severity == "warning" && strings.Contains(v.Message, "keep a queued seed under 2500") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("expected advisory warning; got %+v", vs)
+	}
+}
+
+func TestSidekickSeed_QueuedUnderAdvisoryClean(t *testing.T) {
+	body := validSeedBody("test", "Test seed", "explicit", strings.Repeat("x", 2400))
+	specRoot := writeSpec(t, map[string]string{"ideas/seeds/test.md": body})
+	vs, _ := newSidekickSeedChecker().check(specRoot)
+	for _, v := range vs {
+		if v.Rule == sidekickSeedRule {
+			t.Fatalf("under-advisory queued seed must be clean; got %+v", v)
+		}
+	}
+}
+
+func closedSeedBody(pad int) string {
+	var b strings.Builder
+	b.WriteString("---\ncaptured_by: user\nstatus: Implemented\n---\n\n# Closed seed\n")
+	b.WriteString(strings.Repeat("x", pad) + "\n")
+	return b.String()
+}
+
+func TestSidekickSeed_ClosedSeedLargerCap(t *testing.T) {
+	// A closed (terminal-status) seed up to 5000 chars is clean — it would
+	// have errored under the old 2000 cap.
+	specRoot := writeSpec(t, map[string]string{"ideas/seeds/under.md": closedSeedBody(3500)})
+	vs, _ := newSidekickSeedChecker().check(specRoot)
+	for _, v := range vs {
+		if v.Rule == sidekickSeedRule {
+			t.Fatalf("closed seed under 5000 must be clean; got %+v", v)
+		}
+	}
+	// Past the 5000 hard cap → error.
+	specRoot2 := writeSpec(t, map[string]string{"ideas/seeds/over.md": closedSeedBody(5100)})
+	vs2, _ := newSidekickSeedChecker().check(specRoot2)
+	if !violationMessageContains(vs2, "body exceeds 5000 characters") {
+		t.Fatalf("expected 5000-cap error; got %+v", vs2)
 	}
 }
 
