@@ -143,7 +143,7 @@ Every AC below has a CLI surface (exit code + on-disk effect) and is exercised b
 ## Open Questions
 
 - **Seed status enum (upstream dependency).** Does the `sidekick-seed` lint rule — owned upstream by `specscore/specscore`'s [`artifact-frontmatter-convention`](https://github.com/specscore/specscore/blob/main/spec/features/artifact-frontmatter-convention/README.md) — accept `status ∈ {Implemented, Rejected, Archived}` for archived seeds? `idea promote` already produces lint-clean archived seeds (`status: promoted` + `type: sidekick-seed`), so the rule accepts archived-location seeds with a non-`queued` status and a `type`; confirming/extending the enum to these three values is a tracked `specscore/specscore` dependency, not resolved by this verb.
-- **Body-size cap at terminal states.** The 2000-char seed body cap is a capture-time forcing function for `Queued` seeds. A `## Resolution` note on a terminal seed may exceed it. Proposed: the cap applies only to `Queued` seeds (terminal seeds are exempt). This is a lint-rule change owned upstream; tracked alongside the enum dependency.
+- **Body-size cap at terminal states.** ~~The 2000-char seed body cap is a capture-time forcing function for `Queued` seeds; a `## Resolution` note on a terminal seed may exceed it.~~ **Resolved:** the `sidekick-seed` lint rule is now status-dependent — a queued seed gets a 3000-char hard cap (2500-char advisory warning), and a closed/terminal seed gets a 5000-char cap, leaving room for a `## Resolution` note.
 - **`Rejected` vs `Deprecated`.** This verb's manual `Rejected` coexists with the consilium's `Deprecated`. Reconciling the two into one reject terminal is a deferred follow-up (would touch the consilium feature).
 
 ---

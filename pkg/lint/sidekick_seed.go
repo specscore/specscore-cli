@@ -27,9 +27,18 @@ import (
 )
 
 const (
-	sidekickSeedRule         = "sidekick-seed"
-	sidekickSeedTypeValue    = "sidekick-seed"
-	sidekickSeedMaxBodyChars = 2000
+	sidekickSeedRule      = "sidekick-seed"
+	sidekickSeedTypeValue = "sidekick-seed"
+
+	// Body-size caps are status-dependent. An OPEN (queued) seed is a
+	// quick capture: it gets a generous hard cap with an advisory band that
+	// nudges authors to move deliberation into ideate. A CLOSED (terminal-
+	// status) seed may carry a `## Resolution` note added at close time, so
+	// it gets a larger hard cap.
+	sidekickSeedQueuedStatus       = "queued"
+	sidekickSeedOpenMaxBodyChars   = 3000 // hard cap for a queued seed (error)
+	sidekickSeedOpenAdviseChars    = 2500 // advisory threshold for a queued seed (warning)
+	sidekickSeedClosedMaxBodyChars = 5000 // hard cap for a closed/terminal seed (error)
 )
 
 // sidekickSeedRequiredKeys names the keys that must be present in a seed's
@@ -237,14 +246,36 @@ func checkSidekickSeed(relPath, content string) []Violation {
 		})
 	}
 
-	// (e) body length cap.
-	if len(body) > sidekickSeedMaxBodyChars {
+	// (e) body length cap — status-dependent. A queued (open) seed gets a
+	// hard cap with an advisory band; a closed/terminal seed (which may carry
+	// a `## Resolution` note added at close time) gets a larger hard cap.
+	bodyLen := len(body)
+	if strings.EqualFold(keys["status"], sidekickSeedQueuedStatus) {
+		switch {
+		case bodyLen > sidekickSeedOpenMaxBodyChars:
+			vs = append(vs, Violation{
+				File:     relPath,
+				Line:     0,
+				Severity: "error",
+				Rule:     sidekickSeedRule,
+				Message:  fmt.Sprintf("body exceeds %d characters (got %d)", sidekickSeedOpenMaxBodyChars, bodyLen),
+			})
+		case bodyLen > sidekickSeedOpenAdviseChars:
+			vs = append(vs, Violation{
+				File:     relPath,
+				Line:     0,
+				Severity: "warning",
+				Rule:     sidekickSeedRule,
+				Message:  fmt.Sprintf("body is %d characters; keep a queued seed under %d (hard cap %d) — move deliberation into ideate", bodyLen, sidekickSeedOpenAdviseChars, sidekickSeedOpenMaxBodyChars),
+			})
+		}
+	} else if bodyLen > sidekickSeedClosedMaxBodyChars {
 		vs = append(vs, Violation{
 			File:     relPath,
 			Line:     0,
 			Severity: "error",
 			Rule:     sidekickSeedRule,
-			Message:  fmt.Sprintf("body exceeds %d characters (got %d)", sidekickSeedMaxBodyChars, len(body)),
+			Message:  fmt.Sprintf("body exceeds %d characters (got %d)", sidekickSeedClosedMaxBodyChars, bodyLen),
 		})
 	}
 

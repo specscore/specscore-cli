@@ -213,7 +213,7 @@ func TestSidekickNew_OneLinerTooLong(t *testing.T) {
 func TestSidekickNew_BodyTooLong(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
-	_, _, err := runSidekick(t, "new", "valid one liner", "--body", strings.Repeat("a", 2001))
+	_, _, err := runSidekick(t, "new", "valid one liner", "--body", strings.Repeat("a", 3001))
 	if got := exitCodeOf(err); got != 2 {
 		t.Errorf("exit = %d, want 2", got)
 	}

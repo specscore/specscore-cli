@@ -63,7 +63,7 @@ The scaffold MUST emit a single file `spec/ideas/seeds/<slug>.md` carrying the m
 
 #### REQ: optional-body
 
-When `--body <markdown>` is supplied, the scaffold MUST append a blank line and the markdown after the H1 line. The total body region (the H1 line through the end of the optional content) MUST NOT exceed 2000 characters; exceeding it exits `2` (InvalidArgs) naming the limit.
+When `--body <markdown>` is supplied, the scaffold MUST append a blank line and the markdown after the H1 line. A freshly captured seed is `status: queued`, so the total body region (the H1 line through the end of the optional content) MUST NOT exceed the queued hard cap of 3000 characters; exceeding it exits `2` (InvalidArgs) naming the limit. Authors are advised (via the `sidekick-seed` lint rule's warning band) to keep a queued seed under 2500 characters and move deliberation into ideate.
 
 ### Overwrite behavior
 
