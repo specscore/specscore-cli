@@ -56,7 +56,7 @@ Declare the seed matrix `Queued → {Implemented, Rejected, Archived}`. Validate
 
 **Verifies:** cli/sidekick/change-status#ac:archive-path-collision
 **Depends-On:** 4
-**Status:** pending
+**Status:** done
 
 After the status rewrite, move the seed to `spec/ideas/archived/<slug>.md` (mkdir-p) and add the frontmatter key `type: sidekick-seed`, mirroring the seed→archived move in `internal/cli/idea_promote.go`. A pre-existing file at the archived path exits `1` (Conflict) and restores the source seed; any post-rewrite failure rolls back to the original `seeds/` state (original `status:`, no `type:`, no `## Resolution`).
 
