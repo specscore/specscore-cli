@@ -1,10 +1,10 @@
 ---
 format: https://specscore.md/plan-specification
-status: Implementing
+status: Completed
 ---
 # Plan: Cli Sidekick Change Status
 
-**Status:** Implementing
+**Status:** Completed
 **Source Feature:** cli/sidekick/change-status
 **Date:** 2026-06-16
 **Owner:** alexandertrakhimenok
@@ -64,7 +64,7 @@ After the status rewrite, move the seed to `spec/ideas/archived/<slug>.md` (mkdi
 
 **Verifies:** cli/sidekick/change-status#ac:implemented-relocates-and-tags, cli/sidekick/change-status#ac:rejected-with-note-writes-resolution
 **Depends-On:** 5
-**Status:** pending
+**Status:** done
 
 Register `sidekickChangeStatusCommand` / `runSidekickChangeStatus` in `internal/cli/sidekick.go`, mirroring `runIdeaChangeStatus`. Wire the `spec lint --fix` index sync and the `<slug>: <from> → <to>` success line. Complete and exercise end-to-end the happy path (`--to=implemented` relocates + tags) and the `--to=rejected --note …` path (relocates + writes `## Resolution`).
 

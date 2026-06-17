@@ -44,6 +44,14 @@ type RelocateOptions struct {
 	// surfaced if the primary rollback succeeded.
 	RollbackHook func() error
 
+	// AfterMoveHook, when non-nil, is invoked immediately after the file has
+	// been moved to the archived path and re-written with the `type:` tag.
+	// The change-status verb injects its `spec lint --fix` index sync here so
+	// a lint failure triggers the same full rollback (move back to seeds/,
+	// restore bytes, RollbackHook) as any other post-move failure
+	// (cli/sidekick/change-status#req:rollback-includes-relocation).
+	AfterMoveHook func() error
+
 	// afterMoveHook is a test seam: when non-nil it is invoked immediately
 	// after the file has been moved to the archived path and re-written with
 	// the `type:` tag, simulating a post-relocation failure (e.g. a lint
@@ -111,11 +119,14 @@ func Relocate(opts RelocateOptions) error {
 			"moving seed to archived: %v", err))
 	}
 
-	// Post-move hook (test seam, or a future lint check the command may
-	// inject): a failure here triggers a full rollback that also moves the
-	// file back to seeds/.
-	if opts.afterMoveHook != nil {
-		if err := opts.afterMoveHook(); err != nil {
+	// Post-move hooks: the exported AfterMoveHook (the command's lint sync) and
+	// the unexported afterMoveHook test seam both run here. A failure in either
+	// triggers a full rollback that also moves the file back to seeds/.
+	for _, hook := range []func() error{opts.AfterMoveHook, opts.afterMoveHook} {
+		if hook == nil {
+			continue
+		}
+		if err := hook(); err != nil {
 			// Move back to seeds/ first, then restore bytes + hook.
 			if mvErr := os.Rename(archivedPath, opts.SeedPath); mvErr != nil {
 				return exitcode.UnexpectedErrorf(

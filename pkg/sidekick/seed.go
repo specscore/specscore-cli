@@ -79,6 +79,26 @@ func seedsDir(specRoot string) string {
 	return filepath.Join(specRoot, "spec", "ideas", "seeds")
 }
 
+// ReadFrontmatterStatus returns the verbatim frontmatter `status:` value at
+// seedPath (trimmed of surrounding whitespace), for the strict source-state
+// check the change-status verb runs before any mutation. If the seed has no
+// recognizable frontmatter `status:` line, it returns
+// ErrFrontmatterStatusNotFound.
+func ReadFrontmatterStatus(seedPath string) (string, error) {
+	content, err := os.ReadFile(seedPath)
+	if err != nil {
+		return "", err
+	}
+	lines := splitKeepTerminators(content)
+	idx := findFrontmatterStatusLineIndex(lines)
+	if idx < 0 {
+		return "", ErrFrontmatterStatusNotFound
+	}
+	body, _ := splitTerminator(lines[idx])
+	m := fmStatusLineRe.FindStringSubmatch(body)
+	return strings.TrimSpace(m[2]), nil
+}
+
 // RewriteFrontmatterStatus rewrites the frontmatter `status:` value at
 // seedPath to newStatus in place, replacing only the value text. Every other
 // byte of the file (line ordering, indentation, line endings, trailing
