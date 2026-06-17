@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-Adds five lint rules (`P-001`–`P-005`) and the underlying single-file Plan parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `plan` Feature (`spec/features/skills/plan/README.md` in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo). `P-001`–`P-004` unblock the in-development `specstudio:implement` skill, which depends on machine-checkable validation of `**Mode:**`, `**Status:**`, and `**Depends-On:**` task fields on single-file Plans at `spec/plans/<slug>.md`. `P-005` validates the optional `**Parent:**` body-metadata line that `cli/plan/new --parent` emits — the master/sub-plan composition primitive — resolving same-repo parents and accepting cross-repo `<repo-slug>:<slug>` references syntactically without sibling-repo scanning.
+Adds six lint rules (`P-001`–`P-006`) and the underlying single-file Plan parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `plan` Feature (`spec/features/skills/plan/README.md` in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo). `P-001`–`P-004` unblock the in-development `specstudio:implement` skill, which depends on machine-checkable validation of `**Mode:**`, `**Status:**`, and `**Depends-On:**` task fields on single-file Plans at `spec/plans/<slug>.md`. `P-005` validates the optional `**Parent:**` body-metadata line that `cli/plan/new --parent` emits — the master/sub-plan composition primitive — resolving same-repo parents and accepting cross-repo `<repo-slug>:<slug>` references syntactically without sibling-repo scanning.
 
 ## Problem
 
@@ -196,6 +196,18 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 `P-005` MUST NOT be autofixable in the MVP. Resolving a dangling, self-referential, cyclic, or malformed parent reference requires user intent (rename the parent vs. remove the line vs. fix the cross-repo slug).
 
+### Lint rule P-006 — Plan status vocabulary
+
+`P-006` validates the single-file Plan's own body `**Status:**` document-status line against the canonical Plan status set defined by the upstream [Status Vocabulary](https://github.com/specscore/specscore/blob/main/spec/features/status-vocabulary/README.md) Feature (`REQ:per-artifact-status-sets`, Plan row). This is the Plan's *document* status (the header `**Status:**` line), distinct from a task's `**Status:**` field (the lowercase `pending`/`in-progress`/`done`/`blocked` set validated by `P-004`).
+
+#### REQ: rule-p-006-registered
+
+`P-006` MUST be registered in the lint rule registry under the name `P-006` (uppercase, hyphenated), at severity `error`, MUST execute as part of the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`), and MUST NOT be autofixable (correcting a non-canonical status requires user intent — pick the right lifecycle value).
+
+#### REQ: rule-p-006-plan-status-enum
+
+`P-006` MUST report a violation when a single-file Plan's body `**Status:**` value is not one of the eleven canonical Plan statuses: `Draft`, `In Review`, `Approved`, `Executing`, `Blocked`, `Implemented`, `Failed`, `Rejected`, `Withdrawn`, `Superseded`, `Deprecated` (Title Case, single ASCII space between words, per the upstream `REQ:per-artifact-status-sets`). The comparison is exact and case-sensitive. The violation MUST name the offending value and the legal set, with `File` set to the Plan path and `Line` set to the `**Status:**` line. When the `**Status:**` line is absent, `P-006` MUST emit nothing (presence of the line is governed by other rules); only a present-but-out-of-set value is a `P-006` violation. Directory-form plans at `spec/plans/<slug>/README.md` MUST NOT be inspected by `P-006`.
+
 ### Co-existence with existing plan checkers
 
 #### REQ: directory-plans-untouched
@@ -210,11 +222,11 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 #### REQ: rules-in-default-suite
 
-`P-001`, `P-002`, `P-003`, `P-004`, and `P-005` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
+`P-001`, `P-002`, `P-003`, `P-004`, `P-005`, and `P-006` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
 
 #### REQ: rules-emit-stable-violation-shape
 
-Violations from `P-001`–`P-005` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations).
+Violations from `P-001`–`P-006` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations).
 
 ## Acceptance Criteria
 
@@ -344,6 +356,18 @@ Violations from `P-001`–`P-005` MUST use the existing `lint.Violation` struct 
 **When** `specscore spec lint` runs,
 **Then** a `P-005` violation is emitted citing the malformed `**Parent:**` value.
 
+### AC: plan-status-enum-flagged (verifies REQ:rule-p-006-plan-status-enum, REQ:rule-p-006-registered)
+
+**Given** a single-file Plan whose body `**Status:**` line reads `Completed` (a value outside the canonical Plan status set),
+**When** `specscore spec lint` runs,
+**Then** lint exits non-zero and a single `P-006` violation is emitted naming `Completed` and the legal set, with `File` set to the Plan path and `Line` at the `**Status:**` line.
+
+### AC: plan-status-enum-accepts-canonical (verifies REQ:rule-p-006-plan-status-enum)
+
+**Given** a single-file Plan whose body `**Status:**` line reads `Executing` (a canonical Plan status),
+**When** `specscore spec lint` runs,
+**Then** `P-006` emits zero violations for that Plan.
+
 ### AC: directory-plans-untouched (verifies REQ:directory-plans-untouched, REQ:no-rule-overlap)
 
 **Given** a project containing both a directory-form plan at `spec/plans/legacy/README.md` (with the historical schema this repo uses) and a single-file Plan at `spec/plans/new-plan.md` (with the SpecStudio schema),
@@ -362,6 +386,7 @@ Violations from `P-001`–`P-005` MUST use the existing `lint.Violation` struct 
 |---|---|
 | [Spec Lint](../README.md) | These rules register into the same rule registry and execute under the default rule suite. `--rules` / `--ignore` filtering applies per the parent Feature's contract. |
 | [Feature](../../../feature/README.md) | `P-001` and `P-002` read each source Feature's `## Acceptance Criteria` section to enumerate ACs and validate references. The AC heading grammar (`### AC: <ac-slug>`) is owned by the Feature schema, not this Feature. |
+| [Status Vocabulary](https://github.com/specscore/specscore/blob/main/spec/features/status-vocabulary/README.md) | Owns the canonical Plan status set (`REQ:per-artifact-status-sets`, Plan row) that `P-006` enforces. Any change to the legal Plan statuses MUST land upstream first; `P-006` is the downstream enforcement. |
 | [SpecStudio `plan` Feature](https://github.com/specscore/specstudio-skills/blob/main/spec/features/skills/plan/README.md) | Locks the upstream contract for `P-001`–`P-004`, the `**Mode:**` / `**Status:**` / `**Depends-On:**` task fields, and the placeholder body token. Any change to that contract MUST land in the upstream Feature first; this CLI Feature is the downstream implementation. |
 | [SpecStudio `implement` Idea](https://github.com/specscore/specstudio-skills/blob/main/spec/ideas/specstudio-implement-skill.md) | Hard-blocks on these rules and parser extensions. `specstudio:implement` cannot ship until this Feature ships. |
 

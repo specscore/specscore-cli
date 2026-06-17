@@ -1,6 +1,6 @@
 # Plan: Plan (CLI) — command group
 
-**Status:** Completed
+**Status:** Implemented
 **Source Feature:** cli/plan
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok

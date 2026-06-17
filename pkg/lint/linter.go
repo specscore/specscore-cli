@@ -81,12 +81,12 @@ func newLinter(opts Options) *linter {
 		l.ruleSet[n] = grc
 	}
 
-	// Register plan-rules checker under all four rule IDs (P-001..P-004).
-	// The single checker emits violations for all four rules; deduping by
+	// Register plan-rules checker under all rule IDs (P-001..P-006).
+	// The single checker emits violations for all rules; deduping by
 	// pointer identity in lint() ensures it runs once per pass.
 	pc := newPlanRulesChecker()
 	pc.fixNoSource = slices.Contains(opts.FixTargets, FixTargetNoSource)
-	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005"} {
+	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005", "P-006"} {
 		l.ruleSet[n] = pc
 	}
 

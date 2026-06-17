@@ -183,6 +183,9 @@ func lintPlan(p *plan.Plan, relPath, featuresDir string) []Violation {
 	// P-004 stub-mode placeholder-on-done validation. Depends only on the Plan.
 	v = append(v, lintP004StubPlaceholder(p, relPath)...)
 
+	// P-006 document-status vocabulary validation. Depends only on the Plan.
+	v = append(v, lintP006(p, relPath)...)
+
 	return v
 }
 
@@ -609,6 +612,49 @@ func lintP004StubPlaceholder(p *plan.Plan, relPath string) []Violation {
 		}
 	}
 	return out
+}
+
+// ----- P-006 plan document-status vocabulary -----
+
+// canonicalPlanStatuses is the legal Plan document-status set per the upstream
+// Status Vocabulary Feature (REQ:per-artifact-status-sets, Plan row). Title
+// Case, single ASCII space between words. This is the Plan's own **Status:**
+// line, distinct from a task's lowercase **Status:** (validated by P-004).
+var canonicalPlanStatuses = map[string]bool{
+	"Draft":       true,
+	"In Review":   true,
+	"Approved":    true,
+	"Executing":   true,
+	"Blocked":     true,
+	"Implemented": true,
+	"Failed":      true,
+	"Rejected":    true,
+	"Withdrawn":   true,
+	"Superseded":  true,
+	"Deprecated":  true,
+}
+
+// canonicalPlanStatusList is the legal set rendered for violation messages, in
+// lifecycle order.
+const canonicalPlanStatusList = "Draft, In Review, Approved, Executing, Blocked, Implemented, Failed, Rejected, Withdrawn, Superseded, Deprecated"
+
+// lintP006 validates the single-file Plan's body **Status:** value against the
+// canonical Plan status set. An absent **Status:** line emits nothing (presence
+// is governed by other rules); only a present-but-out-of-set value is flagged.
+func lintP006(p *plan.Plan, relPath string) []Violation {
+	if p.StatusLine == 0 || canonicalPlanStatuses[p.Status] {
+		return nil
+	}
+	return []Violation{{
+		File:     relPath,
+		Line:     p.StatusLine,
+		Severity: "error",
+		Rule:     "P-006",
+		Message: fmt.Sprintf(
+			"invalid plan **Status:** value %q (accepted: %s)",
+			p.Status, canonicalPlanStatusList,
+		),
+	}}
 }
 
 // ----- P-005 parent reference validity -----

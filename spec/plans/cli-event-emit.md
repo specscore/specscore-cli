@@ -1,6 +1,6 @@
 # Plan: Event Emit Verb
 
-**Status:** Completed
+**Status:** Implemented
 **Mode:** full
 **Source Feature:** cli/event/emit
 **Date:** 2026-05-22
