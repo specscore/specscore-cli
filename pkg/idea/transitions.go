@@ -35,6 +35,10 @@ import (
 // collision check. Tests can replace it to inject non-ENOENT errors.
 var osStatFn = os.Stat
 
+// appendNoteFn is a testable indirection for lifecycle.AppendResolutionNote,
+// so tests can exercise the note-write failure rollback branch.
+var appendNoteFn = lifecycle.AppendResolutionNote
+
 // archivedIndexStub is the minimal lint-clean content the verb writes to
 // spec/ideas/archived/README.md when that file does not already exist on
 // the first archive transition. lint --fix will subsequently rewrite the
@@ -114,6 +118,14 @@ type ChangeStatusOptions struct {
 	// PostMutation is the post-rewrite hook (typically a spec-lint
 	// pass). Required; ChangeStatus returns exit 10 if nil.
 	PostMutation PostMutationHook
+
+	// Note is an optional free-form markdown transition note. When non-
+	// empty after trimming, it is written into the artifact body as a
+	// `## Resolution` section, atomically with the status rewrite, per
+	// lifecycle-transitions#REQ:optional-transition-note. An empty or
+	// whitespace-only value is a no-op (today's behavior). The note write
+	// participates in the same rollback guarantee as the status rewrite.
+	Note string
 }
 
 // ChangeStatusResult is the success payload returned by ChangeStatus on
@@ -210,6 +222,30 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		}
 		if !fileAtArchived {
 			_ = lifecycle.Rollback(activePath, origLine)
+		}
+	}
+
+	// (3a) Optional transition note → `## Resolution` section, written
+	// into the still-active file so it travels with any subsequent
+	// archive move. The note write is rolled back together with the
+	// status line on any later failure
+	// (lifecycle-transitions#REQ:optional-transition-note).
+	origBody, noteWritten, err := appendNoteFn(activePath, opts.Note)
+	if err != nil {
+		fullRollback()
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing transition note: %v", err)
+	}
+	if noteWritten {
+		prev := fullRollback
+		fullRollback = func() {
+			// Restore the body first so the status-line rollback in prev()
+			// operates on the original byte content.
+			restorePath := activePath
+			if fileAtArchived {
+				restorePath = archivedPath
+			}
+			_ = lifecycle.RestoreBody(restorePath, origBody)
+			prev()
 		}
 	}
 

@@ -20,7 +20,7 @@ Every lifecycle/state-transition verb has the same skeleton: read the artifact's
 
 ## Behavior
 
-A note on REQ types in this contract: some REQs declare **runtime behavior** (e.g., `status-line-rewrite`, `index-sync-on-success`, `rollback-on-lint-failure`) and are verified by ACs in the verb specs that consume this contract. Others are **scoping or architectural** (e.g., `scope-status-mutation-only`, `no-coordination`, `scope-no-task-lifecycle`, `exit-code-fidelity`) — they constrain what this contract is and isn't, not what a verb does at runtime. Architectural REQs are verified by design adherence and code review rather than by per-verb ACs; per-verb specs MAY but need NOT cite them.
+A note on REQ types in this contract: some REQs declare **runtime behavior** (e.g., `status-line-rewrite`, `index-sync-on-success`, `rollback-on-lint-failure`, `optional-transition-note`) and are verified by ACs in the verb specs that consume this contract. Others are **scoping or architectural** (e.g., `scope-status-mutation-only`, `no-coordination`, `scope-no-task-lifecycle`, `exit-code-fidelity`) — they constrain what this contract is and isn't, not what a verb does at runtime. Architectural REQs are verified by design adherence and code review rather than by per-verb ACs; per-verb specs MAY but need NOT cite them.
 
 ### Scope and applicability
 
@@ -92,12 +92,27 @@ On exit `0`, the verb MUST write exactly one line to stdout: `<id>: <from-status
 
 Non-zero exits write a human-readable explanation to stderr per [CLI#req:error-on-stderr](../README.md#req-error-on-stderr). stdout MUST remain empty on non-zero exits so pipelines consuming the structured success line are not corrupted by error prose.
 
+### Optional transition note
+
+#### REQ: optional-transition-note
+
+Every lifecycle verb MAY accept an optional `--note <markdown>` flag carrying free-form markdown (the actor's reasoning for the transition). When `--note` is supplied and non-empty after trimming, the verb MUST — atomically with the `**Status:**` rewrite and index sync — write the markdown into the target artifact body as a `## Resolution` section, so callers never hand-edit the file (one invocation performs both the status change and the note write):
+
+- If a `## Resolution` H2 section already exists, the markdown is appended as a new trailing paragraph within it; the section is never relocated or reordered.
+- If absent, the verb creates the `## Resolution` section immediately before the artifact's footer line (`*This document follows the …*`) when one is present, else at end-of-file.
+
+The markdown is written verbatim except for trailing-newline normalization; the verb MUST NOT reflow, wrap, truncate, or sanitize it. An empty or whitespace-only `--note` value is treated as absent — no section is written and no error is raised (unless the transition is reason-required; see below). The body write participates in the same atomicity guarantee as the status rewrite: if the note write fails, or any subsequent step (index sync, kind-specific relocation) fails, the verb MUST restore the body to its exact pre-invocation content together with the `**Status:**` line per [REQ: rollback-on-lint-failure](#req-rollback-on-lint-failure), and exit `10`. `--note` does not alter the single-line [success output](#req-success-output-format) — the note is a body mutation, not stdout. Per-verb specs that consume this contract carry the ACs exercising `--note` for their kind.
+
+#### REQ: reason-required-transitions
+
+A verb MAY designate a subset of its legal transitions as **reason-required** — typically negative or terminal-rejection transitions (e.g. a seed `Queued → Rejected`). For a reason-required transition, `--note` is mandatory: if `--note` is absent or empty/whitespace-only, the verb MUST exit `2` (InvalidArgs) BEFORE any mutation, with a stderr message naming the transition and stating that a reason is required. When supplied, the note is written per [REQ: optional-transition-note](#req-optional-transition-note). Transitions a verb does NOT designate reason-required keep `--note` optional; a verb that designates none is unaffected by this REQ.
+
 ### Shared exit-code mapping
 
 | Exit code | Condition |
 |---|---|
 | `0` | Transition succeeded and index synced. |
-| `2` | Missing or malformed positional slug, or an unknown flag. |
+| `2` | Missing or malformed positional slug, an unknown flag, or a missing/empty `--note` on a reason-required transition. |
 | `3` | No artifact file found at the expected path. |
 | `4` | Source status was not in the verb's legal-source set (illegal transition, including re-running on the target status). |
 | `10` | I/O failure during read/write, or `spec lint --fix` failed after a successful file rewrite (rollback applied). |
@@ -120,7 +135,7 @@ A lifecycle verb MUST map errors to the codes above per their declared meanings.
 
 ## Open Questions
 
-- Should `--reason "<text>"` become a shared flag on lifecycle verbs in a future revision, captured in the git commit body or in an audit-trail file? Currently deferred per the source Idea.
+- ~~Should `--reason "<text>"` become a shared flag on lifecycle verbs?~~ **Resolved** by [REQ: optional-transition-note](#req-optional-transition-note) and [REQ: reason-required-transitions](#req-reason-required-transitions): an optional `--note <markdown>` writes a `## Resolution` section atomically with the transition, and is mandatory on transitions a verb designates reason-required. Structured/audit-trail storage of the note (separate file or git trailer) remains deferred.
 - Should `--format yaml|json` be added in a future revision so tooling consumes structured output (returning the artifact's full front-matter)? Currently text-only.
 - Is `spec lint --fix` scope narrowed to only the affected index row (faster on large repos) or kept full-tree (safer)? Today's lint is fast enough that full-tree is acceptable, but measurement on representative consumer repos will decide if a narrow-scope path is worth the complexity.
 - When a new doc kind grows lifecycle verbs (e.g., the planned `entity` and `property` Doc-Kinds from the meta-spec's [entity-and-property-definitions](https://github.com/specscore/specscore/blob/main/spec/ideas/entity-and-property-definitions.md) Idea), does it inherit this contract directly, or does the contract abstract a shared "index sync rule" parameter? Today every supported doc kind uses a `*-index-row-sync` rule, so direct inheritance works.
