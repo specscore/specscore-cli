@@ -45,6 +45,30 @@ var expectedLegal = map[Kind][]transitionRow{
 		{From: FeatureAmending, To: FeatureStable},
 		{From: FeatureStable, To: FeatureDeprecated},
 	},
+	KindPlan: {
+		{From: PlanDraft, To: PlanInReview},
+		{From: PlanInReview, To: PlanDraft},
+		{From: PlanInReview, To: PlanApproved},
+		{From: PlanInReview, To: PlanRejected},
+
+		{From: PlanApproved, To: PlanWithdrawn},
+		{From: PlanExecuting, To: PlanWithdrawn},
+		{From: PlanBlocked, To: PlanWithdrawn},
+		{From: PlanImplemented, To: PlanWithdrawn},
+		{From: PlanFailed, To: PlanWithdrawn},
+
+		{From: PlanApproved, To: PlanSuperseded},
+		{From: PlanExecuting, To: PlanSuperseded},
+		{From: PlanBlocked, To: PlanSuperseded},
+		{From: PlanImplemented, To: PlanSuperseded},
+		{From: PlanFailed, To: PlanSuperseded},
+
+		{From: PlanApproved, To: PlanDeprecated},
+		{From: PlanExecuting, To: PlanDeprecated},
+		{From: PlanBlocked, To: PlanDeprecated},
+		{From: PlanImplemented, To: PlanDeprecated},
+		{From: PlanFailed, To: PlanDeprecated},
+	},
 }
 
 // allKindStatuses lists every status that should appear as either From or To
@@ -71,6 +95,19 @@ var allKindStatuses = map[Kind][]Status{
 		FeatureAmending,
 		FeatureRejected,
 		FeatureDeprecated,
+	},
+	KindPlan: {
+		PlanDraft,
+		PlanInReview,
+		PlanApproved,
+		PlanExecuting,
+		PlanBlocked,
+		PlanImplemented,
+		PlanFailed,
+		PlanRejected,
+		PlanWithdrawn,
+		PlanSuperseded,
+		PlanDeprecated,
 	},
 }
 

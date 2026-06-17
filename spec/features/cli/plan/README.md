@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore plan` commands work with Plan artifacts in `spec/plans/` — listing them, inspecting one plan's metadata and task rollup, and scaffolding a new plan — so agents and humans can answer "what plans exist and what status do they hold?" and create new ones through one stable entry point. The `list` and `info` subcommands are read-only; `new` is the group's only mutating verb and creates a fresh plan without editing or transitioning existing ones.
+`specscore plan` commands work with Plan artifacts in `spec/plans/` — listing them, inspecting one plan's metadata and task rollup, scaffolding a new plan, and transitioning a plan's lifecycle status — so agents and humans can answer "what plans exist and what status do they hold?", create new ones, and advance them through one stable entry point. The `list` and `info` subcommands are read-only; `new` scaffolds a fresh plan; `change-status` transitions an existing plan's `**Status:**` without creating one.
 
 ## Contents
 
@@ -23,6 +23,7 @@ status: Approved
 | [list](list/README.md) | Flat, alphabetically sorted list of plan slugs, with optional `--status` filter and structured output |
 | [info](info/README.md) | Metadata and task rollup for a single plan |
 | [new](new/README.md) | Scaffold a lint-clean plan (body + `format:`/`status:` frontmatter) against a Source Feature or Idea |
+| [change-status](change-status/README.md) | Transition a plan's `**Status:**` through the human-authored prep band and dispositions |
 
 ## Problem
 
@@ -40,7 +41,7 @@ The `plan` group is additive. Its query verbs introduce no changes to how plans 
 
 #### REQ: mutation-scope
 
-The `list` and `info` subcommands MUST NOT create, edit, or transition plan files — they read `spec/plans/*.md` only. The `new` subcommand (see [new](new/README.md)) MAY create a new plan file but MUST NOT edit or transition existing plans. No verb in this group transitions a plan's lifecycle status.
+The `list` and `info` subcommands MUST NOT create, edit, or transition plan files — they read `spec/plans/*.md` only. The `new` subcommand (see [new](new/README.md)) MAY create a new plan file but MUST NOT edit or transition existing plans. The `change-status` subcommand (see [change-status](change-status/README.md)) is the group's only verb that transitions a plan's lifecycle status, and it never creates a plan.
 
 ### Shared flags
 
