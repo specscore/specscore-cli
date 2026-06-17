@@ -35,6 +35,10 @@ import (
 // collision check. Tests can replace it to inject non-ENOENT errors.
 var osStatFn = os.Stat
 
+// appendNoteFn is a testable indirection for lifecycle.AppendResolutionNote,
+// so tests can exercise the note-write failure rollback branch.
+var appendNoteFn = lifecycle.AppendResolutionNote
+
 // archivedIndexStub is the minimal lint-clean content the verb writes to
 // spec/ideas/archived/README.md when that file does not already exist on
 // the first archive transition. lint --fix will subsequently rewrite the
@@ -226,7 +230,7 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	// archive move. The note write is rolled back together with the
 	// status line on any later failure
 	// (lifecycle-transitions#REQ:optional-transition-note).
-	origBody, noteWritten, err := lifecycle.AppendResolutionNote(activePath, opts.Note)
+	origBody, noteWritten, err := appendNoteFn(activePath, opts.Note)
 	if err != nil {
 		fullRollback()
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing transition note: %v", err)

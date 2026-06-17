@@ -42,10 +42,7 @@ func AppendResolutionNote(artifactPath, note string) (original []byte, wrote boo
 	para := strings.TrimRight(note, "\n\r \t")
 
 	lines := splitKeepTerminators(orig)
-	newLines, ok := insertResolutionNote(lines, para)
-	if !ok {
-		return nil, false, nil
-	}
+	newLines := insertResolutionNote(lines, para)
 
 	if err := writeFileAtomic(artifactPath, joinLines(newLines)); err != nil {
 		return nil, false, err
@@ -61,15 +58,14 @@ func RestoreBody(artifactPath string, original []byte) error {
 	return writeFileAtomic(artifactPath, original)
 }
 
-// insertResolutionNote returns the lines with the note inserted, and ok=true
-// when an insertion was made. ok is currently always true for a non-empty
-// note; the bool exists so callers can extend with future skip conditions
-// without changing the signature.
-func insertResolutionNote(lines []string, para string) ([]string, bool) {
+// insertResolutionNote returns the lines with the note inserted: a new
+// paragraph appended to an existing `## Resolution` section, or a freshly
+// created section when none exists.
+func insertResolutionNote(lines []string, para string) []string {
 	if idx := findResolutionHeadingIndex(lines); idx >= 0 {
-		return appendParagraphToSection(lines, idx, para), true
+		return appendParagraphToSection(lines, idx, para)
 	}
-	return createResolutionSection(lines, para), true
+	return createResolutionSection(lines, para)
 }
 
 // findResolutionHeadingIndex returns the index of the `## Resolution` H2

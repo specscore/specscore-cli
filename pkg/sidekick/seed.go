@@ -32,6 +32,15 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
+// Testable os indirections (overridden in coverage tests to exercise
+// otherwise-unreachable I/O error branches, mirroring pkg/idea's osStatFn
+// convention). Production code always uses the real os functions.
+var (
+	statFn     = os.Stat
+	mkdirAllFn = os.MkdirAll
+	renameFn   = os.Rename
+)
+
 // ErrFrontmatterStatusNotFound is returned by RewriteFrontmatterStatus when
 // the seed has no recognizable frontmatter `status:` line.
 var ErrFrontmatterStatusNotFound = fmt.Errorf("sidekick: seed has no frontmatter status: line")
@@ -128,7 +137,7 @@ func RewriteFrontmatterStatus(seedPath string, newStatus string) (string, error)
 	indent, trailing := m[1], m[3]
 	lines[idx] = fmt.Sprintf("%sstatus: %s%s", indent, newStatus, trailing) + terminator
 
-	stat, err := os.Stat(seedPath)
+	stat, err := statFn(seedPath)
 	if err != nil {
 		return "", err
 	}

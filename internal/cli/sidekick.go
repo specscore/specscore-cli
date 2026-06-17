@@ -3,7 +3,6 @@ package cli
 // Features implemented: cli/sidekick, cli/sidekick/new
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,11 +104,9 @@ func runSidekickChangeStatus(cmd *cobra.Command, args []string) error {
 	if err := lifecycle.GuardReason(
 		sidekick.SeedReasonRequiredSet(), sidekick.SeedQueued, to, note,
 	); err != nil {
-		var rre *lifecycle.ReasonRequiredError
-		if errors.As(err, &rre) {
-			return exitcode.InvalidArgsError(err.Error())
-		}
-		return err
+		// GuardReason only ever returns *ReasonRequiredError (or nil), which
+		// maps to exit 2 (InvalidArgs).
+		return exitcode.InvalidArgsError(err.Error())
 	}
 
 	// 6. Mutate. Append the note first (if any), then relocate. The note is

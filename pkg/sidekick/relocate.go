@@ -79,7 +79,7 @@ func Relocate(opts RelocateOptions) error {
 
 	// Step 1: collision pre-check. The source seed is untouched, so on a
 	// collision it stays byte-identical with its original `status:` value.
-	if _, err := os.Stat(archivedPath); err == nil {
+	if _, err := statFn(archivedPath); err == nil {
 		return exitcode.ConflictErrorf(
 			"archive destination %s already exists; refusing to overwrite",
 			filepath.Join("spec", "ideas", "archived", opts.Slug+".md"))
@@ -110,11 +110,11 @@ func Relocate(opts RelocateOptions) error {
 	}
 
 	// Step 4: mkdir-p archived/ and move the seed there.
-	if err := os.MkdirAll(filepath.Dir(archivedPath), 0o755); err != nil {
+	if err := mkdirAllFn(filepath.Dir(archivedPath), 0o755); err != nil {
 		return rollback(opts, originalBytes, exitcode.UnexpectedErrorf(
 			"creating archived dir: %v", err))
 	}
-	if err := os.Rename(opts.SeedPath, archivedPath); err != nil {
+	if err := renameFn(opts.SeedPath, archivedPath); err != nil {
 		return rollback(opts, originalBytes, exitcode.UnexpectedErrorf(
 			"moving seed to archived: %v", err))
 	}
@@ -128,7 +128,7 @@ func Relocate(opts RelocateOptions) error {
 		}
 		if err := hook(); err != nil {
 			// Move back to seeds/ first, then restore bytes + hook.
-			if mvErr := os.Rename(archivedPath, opts.SeedPath); mvErr != nil {
+			if mvErr := renameFn(archivedPath, opts.SeedPath); mvErr != nil {
 				return exitcode.UnexpectedErrorf(
 					"post-move failure (%v) AND rollback move failed: %v", err, mvErr)
 			}
@@ -219,7 +219,7 @@ func frontmatterKeyOf(body string) string {
 
 // writeBack rewrites seedPath with lines, preserving its file mode.
 func writeBack(seedPath string, lines []string) error {
-	stat, err := os.Stat(seedPath)
+	stat, err := statFn(seedPath)
 	if err != nil {
 		return err
 	}
