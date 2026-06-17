@@ -4227,15 +4227,16 @@ func TestCheckIdeas_SyncLintPromotesDrift(t *testing.T) {
 	}
 }
 
-func TestCheckIdeas_ArchiveReasonRequired(t *testing.T) {
-	// Archived idea with empty archive reason should trigger violation.
-	body := validIdeaBody("No Reason", "Archived", map[string]string{
-		"ArchiveReason": "—",
+func TestCheckIdeas_ArchiveNotePresentButEmpty(t *testing.T) {
+	// Archived idea with a present-but-empty Archive Note fires idea-archive-note.
+	body := validIdeaBody("No Note", "Stale", map[string]string{
+		"Archived":     "true",
+		"Archive Note": "—",
 	})
 	root := writeSpec(t, map[string]string{
-		"ideas/README.md":             activeIndex + "\n## Open Questions\n\nNone.\n\n---\n*This document follows the https://specscore.md/ideas-index-specification*\n",
-		"ideas/archived/no-reason.md": body + "\n---\n*This document follows the https://specscore.md/idea-specification*\n",
-		"ideas/archived/README.md":    "# Archived Ideas\n\n- 2026-04-10 — [no-reason](no-reason.md) — —\n",
+		"ideas/README.md":           activeIndex + "\n## Open Questions\n\nNone.\n\n---\n*This document follows the https://specscore.md/ideas-index-specification*\n",
+		"ideas/archived/no-note.md": body + "\n---\n*This document follows the https://specscore.md/idea-specification*\n",
+		"ideas/archived/README.md":  "# Archived Ideas\n\n- 2026-04-10 — [no-note](no-note.md) — —\n",
 	})
 	vs, err := CheckIdeas(root, false)
 	if err != nil {
@@ -4243,12 +4244,12 @@ func TestCheckIdeas_ArchiveReasonRequired(t *testing.T) {
 	}
 	found := false
 	for _, v := range vs {
-		if v.Rule == "idea-archive-reason" {
+		if v.Rule == "idea-archive-note" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected idea-archive-reason violation for dash archive reason")
+		t.Error("expected idea-archive-note violation for em-dash Archive Note")
 	}
 }
 
@@ -4421,8 +4422,9 @@ func TestCheckIdeas_SpecifiedRequiresPromotion(t *testing.T) {
 // =============================================================================
 
 func TestCheckIdeas_ArchivedIdeaLocation(t *testing.T) {
-	body := validIdeaBody("Archived Idea", "Archived", map[string]string{
-		"ArchiveReason": "Superseded by better-idea",
+	body := validIdeaBody("Archived Idea", "Stale", map[string]string{
+		"Archived":     "true",
+		"Archive Note": "Superseded by better-idea",
 	})
 	root := writeSpec(t, map[string]string{
 		"ideas/README.md":        activeIndex + "\n## Open Questions\n\nNone.\n\n---\n*This document follows the https://specscore.md/ideas-index-specification*\n",
@@ -5012,9 +5014,10 @@ func TestCheckIdeas_DiscoveredButNotParsed(t *testing.T) {
 	_ = hasLocation
 }
 
-// Covers L298-304: file under archived/ but status != Archived.
-func TestCheckIdeas_ArchivedDirNonArchivedStatus(t *testing.T) {
-	body := validIdeaBody("In Wrong Place", "Draft", nil)
+// A file under archived/ that lacks **Archived:** true fires
+// idea-archived-location (location says archived, flag says active).
+func TestCheckIdeas_ArchivedDirMissingFlag_Coverage(t *testing.T) {
+	body := validIdeaBody("In Wrong Place", "Stale", nil) // terminal status, no flag
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/README.md":               activeIndex,
 		"ideas/archived/README.md":      archivedIndex,
@@ -5026,12 +5029,12 @@ func TestCheckIdeas_ArchivedDirNonArchivedStatus(t *testing.T) {
 	}
 	hasArchivedLocation := false
 	for _, v := range vs {
-		if v.Rule == "idea-archived-location" && strings.Contains(v.Message, "must have Status: Archived") {
+		if v.Rule == "idea-archived-location" && strings.Contains(v.Message, "must carry **Archived:** true") {
 			hasArchivedLocation = true
 		}
 	}
 	if !hasArchivedLocation {
-		t.Error("expected idea-archived-location violation for non-Archived status in archived/")
+		t.Error("expected idea-archived-location violation for archived/ file without **Archived:** true")
 	}
 }
 

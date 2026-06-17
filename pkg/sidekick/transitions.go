@@ -12,7 +12,7 @@ package sidekick
 //
 //	Queued → Implemented
 //	Queued → Rejected   (reason-required)
-//	Queued → Archived
+//	Queued → Stale
 //
 // Because the matrix is seed-specific and tiny, it lives here rather than as a
 // new Kind in pkg/lifecycle. This file owns three primitives the change-status
@@ -46,7 +46,7 @@ const (
 	SeedQueued      lifecycle.Status = "Queued"
 	SeedImplemented lifecycle.Status = "Implemented"
 	SeedRejected    lifecycle.Status = "Rejected"
-	SeedArchived    lifecycle.Status = "Archived"
+	SeedStale       lifecycle.Status = "Stale"
 )
 
 // seedLegalSource is the single legal source state for every seed transition.
@@ -54,10 +54,10 @@ var seedLegalSource = SeedQueued
 
 // seedTargets is the ordered set of legal `--to` targets — every To column in
 // the seed matrix. Order is the rendering/title order used in messages.
-var seedTargets = []lifecycle.Status{SeedImplemented, SeedRejected, SeedArchived}
+var seedTargets = []lifecycle.Status{SeedImplemented, SeedRejected, SeedStale}
 
 // ParseSeedTarget does case-insensitive parsing of a raw `--to` flag value
-// against the seed terminal set {Implemented, Rejected, Archived}, returning
+// against the seed terminal set {Implemented, Rejected, Stale}, returning
 // the canonical title-case Status on success. Whitespace is trimmed and case
 // is folded ("implemented", "IMPLEMENTED", "  Rejected " all match).
 //
@@ -109,7 +109,7 @@ func CheckSeedSource(current string) error {
 
 // SeedReasonRequiredSet returns the seed verb's reason-required designation:
 // the `Queued → Rejected` arc requires a non-empty `--note`. Implemented and
-// Archived keep `--note` optional. The change-status verb passes this set to
+// Stale keep `--note` optional. The change-status verb passes this set to
 // lifecycle.GuardReason before any mutation
 // (cli/sidekick/change-status#req:reason-required-rejected).
 func SeedReasonRequiredSet() lifecycle.ReasonRequiredSet {

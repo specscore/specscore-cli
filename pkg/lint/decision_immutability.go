@@ -61,8 +61,8 @@ func checkDecisionImmutability(specRoot string) ([]Violation, error) {
 		if f, ok := d.fieldByName["Status"]; ok {
 			status = f.Value
 		}
-		// Only check Accepted decisions
-		if status != "Accepted" {
+		// Only check Approved decisions
+		if status != "Approved" {
 			continue
 		}
 
@@ -93,12 +93,12 @@ func checkDecisionImmutability(specRoot string) ([]Violation, error) {
 			continue
 		}
 
-		// Only enforce if the committed version was also Accepted
+		// Only enforce if the committed version was also Approved
 		committedStatus := ""
 		if f, ok := committedDecision.fieldByName["Status"]; ok {
 			committedStatus = f.Value
 		}
-		if committedStatus != "Accepted" {
+		if committedStatus != "Approved" {
 			continue
 		}
 
@@ -202,7 +202,7 @@ func parseDecisionFromContent(content, relPath string, archived bool) (*parsedDe
 	return d, nil
 }
 
-// frozenSections are immutable once a Decision is Accepted.
+// frozenSections are immutable once a Decision is Approved.
 // "Observed Consequences" is handled separately (append-only).
 var frozenSections = []string{
 	"Context", "Decision", "Rationale", "Declined Alternatives",
@@ -217,7 +217,7 @@ func checkFrozenSections(current, committed *parsedDecision) []Violation {
 		vs = append(vs, Violation{
 			File: current.relPath, Line: current.titleLine, Severity: "error",
 			Rule:    "D-immutability-once-accepted",
-			Message: fmt.Sprintf("Accepted Decision title changed from %q to %q", committed.title, current.title),
+			Message: fmt.Sprintf("Approved Decision title changed from %q to %q", committed.title, current.title),
 		})
 	}
 
@@ -238,7 +238,7 @@ func checkFrozenSections(current, committed *parsedDecision) []Violation {
 			vs = append(vs, Violation{
 				File: current.relPath, Line: f.Line, Severity: "error",
 				Rule:    "D-immutability-once-accepted",
-				Message: fmt.Sprintf("Accepted Decision field **%s:** changed from %q to %q", f.Name, committedField.Value, f.Value),
+				Message: fmt.Sprintf("Approved Decision field **%s:** changed from %q to %q", f.Name, committedField.Value, f.Value),
 			})
 		}
 	}
@@ -256,7 +256,7 @@ func checkFrozenSections(current, committed *parsedDecision) []Violation {
 			vs = append(vs, Violation{
 				File: current.relPath, Line: currSection.StartLine, Severity: "error",
 				Rule:    "D-immutability-once-accepted",
-				Message: fmt.Sprintf("Accepted Decision section %q was modified (body is frozen once Accepted)", name),
+				Message: fmt.Sprintf("Approved Decision section %q was modified (body is frozen once Approved)", name),
 			})
 		}
 	}
@@ -298,7 +298,7 @@ func checkObservedConsequencesAppendOnly(current, committed *parsedDecision) []V
 		vs = append(vs, Violation{
 			File: current.relPath, Line: currSection.StartLine, Severity: "error",
 			Rule:    "D-observed-consequences-append-only",
-			Message: "Observed Consequences entries were removed (append-only after Accepted)",
+			Message: "Observed Consequences entries were removed (append-only after Approved)",
 		})
 		return vs
 	}
@@ -308,7 +308,7 @@ func checkObservedConsequencesAppendOnly(current, committed *parsedDecision) []V
 			vs = append(vs, Violation{
 				File: current.relPath, Line: currSection.StartLine, Severity: "error",
 				Rule:    "D-observed-consequences-append-only",
-				Message: "existing Observed Consequences entries were modified (append-only after Accepted)",
+				Message: "existing Observed Consequences entries were modified (append-only after Approved)",
 			})
 			return vs
 		}

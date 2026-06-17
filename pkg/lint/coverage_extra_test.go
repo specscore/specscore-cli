@@ -775,24 +775,27 @@ func TestCheckIdeas_ParseErrorPermission(t *testing.T) {
 // idea.go — ideaFileRules: archive-reason with **Archive Reason:** line (310-312)
 // =============================================================================
 
-func TestIdeaRules_ArchiveReasonWithField(t *testing.T) {
+// A present-but-empty (em-dash) **Archive Note:** fires idea-archive-note
+// (format-if-present check). The note itself is optional, but when the line
+// exists it must carry content.
+func TestIdeaRules_ArchiveNoteEmptyField(t *testing.T) {
 	root := writeSpec(t, map[string]string{
-		"ideas/README.md":             activeIndex + "\n## Open Questions\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/ideas-index-specification*\n",
-		"ideas/archived/README.md":    "# Archived\n\n_No archived ideas yet._\n\n## Open Questions\n\nNone at this time.\n",
-		"ideas/archived/no-reason.md": "# Idea: No Reason\n\n**Status:** Archived\n**Date:** 2026-05-01\n**Owner:** alice\n**Promotes To:** —\n**Supersedes:** —\n**Related Ideas:** —\n**Archive Reason:** —\n\n## Problem Statement\nHow Might We x.\n\n## Context\nx\n\n## Recommended Direction\nx\n\n## Alternatives Considered\nx\n\n## MVP Scope\nx\n\n## Not Doing (and Why)\n- x — y\n\n## Key Assumptions to Validate\n| Tier | Assumption | How to validate |\n|---|---|---|\n| Must-be-true | x | x |\n\n## SpecScore Integration\n- x\n\n## Open Questions\nNone at this time.\n\n---\n*This document follows the https://specscore.md/idea-specification*\n",
+		"ideas/README.md":           activeIndex + "\n## Open Questions\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/ideas-index-specification*\n",
+		"ideas/archived/README.md":  "# Archived\n\n- 2026-05-01 — [no-note](no-note.md) — —\n\n## Open Questions\n\nNone at this time.\n",
+		"ideas/archived/no-note.md": "# Idea: No Note\n\n**Status:** Stale\n**Archived:** true\n**Date:** 2026-05-01\n**Owner:** alice\n**Promotes To:** —\n**Supersedes:** —\n**Related Ideas:** —\n**Archive Note:** —\n\n## Problem Statement\nHow Might We x.\n\n## Context\nx\n\n## Recommended Direction\nx\n\n## Alternatives Considered\nx\n\n## MVP Scope\nx\n\n## Not Doing (and Why)\n- x — y\n\n## Key Assumptions to Validate\n| Tier | Assumption | How to validate |\n|---|---|---|\n| Must-be-true | x | x |\n\n## SpecScore Integration\n- x\n\n## Open Questions\nNone at this time.\n\n---\n*This document follows the https://specscore.md/idea-specification*\n",
 	})
 	vs, err := CheckIdeas(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hasArchiveReason := false
+	hasArchiveNote := false
 	for _, v := range vs {
-		if v.Rule == "idea-archive-reason" {
-			hasArchiveReason = true
+		if v.Rule == "idea-archive-note" {
+			hasArchiveNote = true
 		}
 	}
-	if !hasArchiveReason {
-		t.Error("expected idea-archive-reason violation for em-dash Archive Reason")
+	if !hasArchiveNote {
+		t.Error("expected idea-archive-note violation for em-dash Archive Note")
 	}
 }
 

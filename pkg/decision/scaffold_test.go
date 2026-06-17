@@ -75,7 +75,7 @@ func TestScaffold(t *testing.T) {
 
 		checks := []string{
 			"# Decision: Test Decision",
-			"**Status:** Proposed",
+			"**Status:** Draft",
 			"**Date:** 2026-05-26",
 			"**Owner:** test@example.com",
 			"**Tags:** —",

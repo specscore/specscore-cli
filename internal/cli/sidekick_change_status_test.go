@@ -213,7 +213,7 @@ func TestSidekickChangeStatus_ArchiveCollision_Exit1(t *testing.T) {
 	before := readFile(t, seedPath(root, "foo"))
 	archivedBefore := readFile(t, archivedPath(root, "foo"))
 
-	_, _, err := runSidekick(t, "change-status", "foo", "--to=archived")
+	_, _, err := runSidekick(t, "change-status", "foo", "--to=stale")
 	if got := exitCodeOf(err); got != 1 {
 		t.Errorf("exit = %d, want 1", got)
 	}

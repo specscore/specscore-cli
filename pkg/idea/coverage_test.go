@@ -11,21 +11,22 @@ import (
 )
 
 // =============================================================================
-// parse.go — ArchiveReason at 0%
+// parse.go — ArchiveNote at 0%
 // =============================================================================
 
-func TestArchiveReason(t *testing.T) {
+func TestArchiveNote(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "archived-idea.md")
 	content := `# Idea: Archived Idea
 
-**Status:** Archived
+**Status:** Stale
+**Archived:** true
 **Date:** 2026-05-01
 **Owner:** tester
 **Promotes To:** —
 **Supersedes:** —
 **Related Ideas:** —
-**Archive Reason:** Superseded by new-idea
+**Archive Note:** Superseded by new-idea
 
 ## Problem Statement
 How Might We test archive reason.
@@ -66,13 +67,13 @@ None at this time.
 		t.Fatal(err)
 	}
 
-	got := idea.ArchiveReason()
+	got := idea.ArchiveNote()
 	if got != "Superseded by new-idea" {
-		t.Errorf("ArchiveReason() = %q, want %q", got, "Superseded by new-idea")
+		t.Errorf("ArchiveNote() = %q, want %q", got, "Superseded by new-idea")
 	}
 }
 
-func TestArchiveReason_Empty(t *testing.T) {
+func TestArchiveNote_Empty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "no-reason.md")
 	content := `# Idea: No Reason
@@ -123,9 +124,9 @@ None at this time.
 		t.Fatal(err)
 	}
 
-	got := idea.ArchiveReason()
+	got := idea.ArchiveNote()
 	if got != "" {
-		t.Errorf("ArchiveReason() = %q, want empty", got)
+		t.Errorf("ArchiveNote() = %q, want empty", got)
 	}
 }
 
@@ -149,7 +150,7 @@ func TestSortedStatuses(t *testing.T) {
 	for _, s := range statuses {
 		found[s] = true
 	}
-	for _, want := range []string{"Draft", "Approved", "Archived"} {
+	for _, want := range []string{"Draft", "Approved", "Stale"} {
 		if !found[want] {
 			t.Errorf("missing status %q in SortedStatuses()", want)
 		}
@@ -414,29 +415,6 @@ func TestChangeStatus_MissingPostMutation(t *testing.T) {
 	assertExitCode(t, err, exitcode.Unexpected)
 }
 
-func TestChangeStatus_ArchiveCreatesArchivedDirAndReadme(t *testing.T) {
-	root := stageIdeaTree(t, "bar", "Approved")
-	// Remove the archived dir to test creation path
-	archivedDir := filepath.Join(root, "spec", "ideas", "archived")
-	_ = os.RemoveAll(archivedDir)
-
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "bar",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err != nil {
-		t.Fatalf("ChangeStatus: %v", err)
-	}
-
-	// The archived directory and README should have been created
-	readmePath := filepath.Join(root, "spec", "ideas", "archived", "README.md")
-	if _, err := os.Stat(readmePath); err != nil {
-		t.Errorf("archived README.md should exist: %v", err)
-	}
-}
-
 func TestChangeStatus_LintFailureRollsBackNonArchive(t *testing.T) {
 	root := stageIdeaTree(t, "baz", "Draft")
 
@@ -481,104 +459,6 @@ func TestChangeStatus_NoStatusLine(t *testing.T) {
 	if !strings.Contains(err.Error(), "Status") {
 		t.Errorf("error should mention Status, got: %v", err)
 	}
-}
-
-func TestChangeStatus_ArchiveRollsBackCreatedReadme(t *testing.T) {
-	root := stageIdeaTree(t, "rollback-test", "Approved")
-	// Remove the archived dir entirely
-	archivedDir := filepath.Join(root, "spec", "ideas", "archived")
-	_ = os.RemoveAll(archivedDir)
-
-	// Archive with failing lint — should rollback the entire archived dir creation
-	simulatedErr := exitcode.UnexpectedErrorf("lint failed")
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "rollback-test",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: failingLint(simulatedErr),
-	})
-	assertExitCode(t, err, exitcode.Unexpected)
-
-	// Active file should be back with original status
-	body := readIdea(t, root, "rollback-test")
-	if !strings.Contains(body, "**Status:** Approved") {
-		t.Errorf("status not rolled back, got:\n%s", body)
-	}
-}
-
-func TestChangeStatus_ArchiveFromDraft(t *testing.T) {
-	// Archive from Draft — exercises the archive path from a different source
-	root := stageIdeaTree(t, "draft-archive", "Draft")
-
-	result, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "draft-archive",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err != nil {
-		t.Fatalf("ChangeStatus: %v", err)
-	}
-	if result.From != lifecycle.IdeaDraft || result.To != lifecycle.IdeaArchived {
-		t.Errorf("result = %+v; want from=Draft to=Archived", result)
-	}
-	// Active file should be gone
-	activePath := filepath.Join(root, "spec", "ideas", "draft-archive.md")
-	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
-		t.Errorf("active file should not exist: err=%v", err)
-	}
-}
-
-func TestChangeStatus_ApprovedToArchived_NoPreexistingArchivedDir(t *testing.T) {
-	// Archive when there's no archived/ dir at all — exercises os.MkdirAll + README creation
-	root := t.TempDir()
-	ideasDir := filepath.Join(root, "spec", "ideas")
-	if err := os.MkdirAll(ideasDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body, err := Scaffold(ScaffoldOptions{Slug: "fresh-archive", Status: "Approved"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ideasDir, "fresh-archive.md"), body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "fresh-archive",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err != nil {
-		t.Fatalf("ChangeStatus: %v", err)
-	}
-	if result.To != lifecycle.IdeaArchived {
-		t.Errorf("result.To = %q, want Archived", result.To)
-	}
-	// Archived README should have been created
-	archivedReadme := filepath.Join(root, "spec", "ideas", "archived", "README.md")
-	if _, err := os.Stat(archivedReadme); err != nil {
-		t.Errorf("archived README should exist: %v", err)
-	}
-}
-
-func TestChangeStatus_ArchiveNoLegalTargets(t *testing.T) {
-	// Archived ideas have no outgoing transitions
-	root := stageIdeaTree(t, "already-done", "Archived")
-	// Move the file from active to where it would be for archived, but keep it active
-	// Actually, ChangeStatus resolves from active path only. Let's use a status
-	// that has no legal targets. In the current matrix, "Archived" has no outgoing
-	// targets, so trying to transition FROM Archived should fail.
-	// But ChangeStatus only works on active path. Let's just verify by checking
-	// what Archived tries to go to.
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "already-done",
-		To:           lifecycle.IdeaApproved,
-		PostMutation: noopLint,
-	})
-	assertExitCode(t, err, exitcode.InvalidState)
 }
 
 // =============================================================================
@@ -822,59 +702,8 @@ func TestDiscover_UnreadableIdeasDir(t *testing.T) {
 	}
 }
 
-func TestChangeStatus_ArchiveFromUnderReview(t *testing.T) {
-	root := stageIdeaTree(t, "review-archive", "Under Review")
-
-	result, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "review-archive",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err != nil {
-		t.Fatalf("ChangeStatus: %v", err)
-	}
-	if result.From != lifecycle.IdeaUnderReview {
-		t.Errorf("result.From = %q, want 'Under Review'", result.From)
-	}
-}
-
-func TestChangeStatus_ImplementingToArchived(t *testing.T) {
-	root := stageIdeaTree(t, "impl-archive", "Implementing")
-
-	result, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "impl-archive",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err != nil {
-		t.Fatalf("ChangeStatus: %v", err)
-	}
-	if result.From != lifecycle.IdeaImplementing || result.To != lifecycle.IdeaArchived {
-		t.Errorf("result = %+v", result)
-	}
-}
-
-func TestChangeStatus_SpecifiedToArchived(t *testing.T) {
-	root := stageIdeaTree(t, "spec-archive", "Specified")
-
-	result, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "spec-archive",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err != nil {
-		t.Fatalf("ChangeStatus: %v", err)
-	}
-	if result.From != lifecycle.IdeaSpecified || result.To != lifecycle.IdeaArchived {
-		t.Errorf("result = %+v", result)
-	}
-}
-
 // =============================================================================
-// discover.go ��� parseSourceIdeas at 85.7%
+// discover.go — parseSourceIdeas at 85.7%
 // =============================================================================
 
 func TestParseSourceIdeas_NoSourceIdeasField(t *testing.T) {
@@ -991,161 +820,6 @@ func TestChangeStatus_RewriteError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for read-only directory (atomic write fails)")
-	}
-	assertExitCode(t, err, exitcode.Unexpected)
-}
-
-// =============================================================================
-// transitions.go — archive: MkdirAll error (lines 182-186)
-// =============================================================================
-
-func TestChangeStatus_ArchiveMkdirError(t *testing.T) {
-	root := t.TempDir()
-	ideasDir := filepath.Join(root, "spec", "ideas")
-	if err := os.MkdirAll(ideasDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body, err := Scaffold(ScaffoldOptions{Slug: "mkdir-err", Status: "Approved"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ideasDir, "mkdir-err.md"), body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Block the archived dir creation by placing a file where the dir should be.
-	if err := os.WriteFile(filepath.Join(ideasDir, "archived"), []byte("file"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "mkdir-err",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err == nil {
-		t.Fatal("expected error for mkdir failure")
-	}
-	assertExitCode(t, err, exitcode.Unexpected)
-
-	// Active file should be rolled back to Approved.
-	b, _ := os.ReadFile(filepath.Join(ideasDir, "mkdir-err.md"))
-	if !strings.Contains(string(b), "**Status:** Approved") {
-		t.Errorf("expected rollback to Approved, got:\n%s", b)
-	}
-}
-
-// =============================================================================
-// transitions.go — archive: WriteFile error for archived README (lines 197-201)
-// =============================================================================
-
-func TestChangeStatus_ArchiveWriteReadmeError(t *testing.T) {
-	root := t.TempDir()
-	ideasDir := filepath.Join(root, "spec", "ideas")
-	archivedDir := filepath.Join(ideasDir, "archived")
-	if err := os.MkdirAll(archivedDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body, err := Scaffold(ScaffoldOptions{Slug: "readme-err", Status: "Approved"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ideasDir, "readme-err.md"), body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Make archived dir read-only so WriteFile for README.md fails.
-	if err := os.Chmod(archivedDir, 0o555); err != nil {
-		t.Skip("cannot change permissions")
-	}
-	t.Cleanup(func() { _ = os.Chmod(archivedDir, 0o755) })
-
-	_, err = ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "readme-err",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err == nil {
-		t.Fatal("expected error for write README failure")
-	}
-	assertExitCode(t, err, exitcode.Unexpected)
-}
-
-// =============================================================================
-// transitions.go — archive: Rename error (lines 231-235)
-// =============================================================================
-
-func TestChangeStatus_ArchiveRenameError(t *testing.T) {
-	root := t.TempDir()
-	ideasDir := filepath.Join(root, "spec", "ideas")
-	archivedDir := filepath.Join(ideasDir, "archived")
-	if err := os.MkdirAll(archivedDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Write an archived README so the WriteFile path is skipped.
-	if err := os.WriteFile(filepath.Join(archivedDir, "README.md"), []byte("# Archived\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	body, err := Scaffold(ScaffoldOptions{Slug: "rename-err", Status: "Approved"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ideasDir, "rename-err.md"), body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Make archived dir read-only so Rename fails (cannot create file in it).
-	if err := os.Chmod(archivedDir, 0o555); err != nil {
-		t.Skip("cannot change permissions")
-	}
-	t.Cleanup(func() { _ = os.Chmod(archivedDir, 0o755) })
-
-	_, err = ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "rename-err",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err == nil {
-		t.Fatal("expected error for rename failure")
-	}
-	assertExitCode(t, err, exitcode.Unexpected)
-
-	// Active file should still exist (rolled back).
-	if _, serr := os.Stat(filepath.Join(ideasDir, "rename-err.md")); serr != nil {
-		t.Errorf("active file should still exist after rollback: %v", serr)
-	}
-}
-
-// =============================================================================
-// transitions.go — osStatFn returning non-ENOENT error (line 229-232)
-//
-// osStatFn is used at the archive-collision check (only when To=Archived).
-// Stub it to return a non-ENOENT error for the archived path so the
-// `else if !os.IsNotExist(err)` branch fires.
-// =============================================================================
-
-func TestChangeStatus_OsStatFnNonEnoentError(t *testing.T) {
-	root := stageIdeaTree(t, "stat-inject", "Draft")
-
-	old := osStatFn
-	osStatFn = func(path string) (os.FileInfo, error) {
-		// The archived path ends with "archived/stat-inject.md".
-		// Return a non-ENOENT error so the collision-check else branch fires.
-		if strings.HasSuffix(path, "archived/stat-inject.md") {
-			return nil, os.ErrPermission
-		}
-		return os.Stat(path)
-	}
-	t.Cleanup(func() { osStatFn = old })
-
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "stat-inject",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err == nil {
-		t.Fatal("expected error for non-ENOENT stat failure on archived path")
 	}
 	assertExitCode(t, err, exitcode.Unexpected)
 }

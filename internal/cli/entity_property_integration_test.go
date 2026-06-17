@@ -139,6 +139,33 @@ func TestEntityAndPropertyMetaSpecIntegration(t *testing.T) {
 		if v.Rule == "sidekick-seed" {
 			continue
 		}
+		// Likewise, the upstream meta-spec's Decision artifacts migrate to the
+		// canonical status-vocabulary (Proposed/Accepted → Draft/Approved) on
+		// their own cadence. This test gates the entity/property CLI surface and
+		// the rule registry against the cloned tree, not upstream Decision-status
+		// hygiene (the decision rules have hermetic coverage in pkg/lint). Ignore
+		// the status-vocabulary-dependent Decision rules so a stricter enum here
+		// cannot be gated on the upstream repo's Decision-migration timing.
+		switch v.Rule {
+		case "D-status-values",
+			"D-archived-location",
+			"D-observed-consequences-placeholder",
+			"D-archived-status-excludes-active",
+			"D-immutability-once-accepted":
+			continue
+		}
+		// Likewise, the upstream meta-spec's Idea artifacts migrate to the
+		// canonical status vocabulary and the orthogonal-archival model
+		// (`Status: Archived` → terminal status + `**Archived:** true`) on
+		// their own cadence. The Idea rules have hermetic coverage in
+		// pkg/lint; ignore the enum/archival-dependent Idea rules so a
+		// stricter enum here is not gated on upstream Idea-migration timing.
+		switch v.Rule {
+		case "idea-status-values",
+			"idea-archived-location",
+			"idea-archive-note":
+			continue
+		}
 		errSev = append(errSev, v)
 	}
 	if len(errSev) != 0 {

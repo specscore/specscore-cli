@@ -45,22 +45,25 @@ type Status string
 // Idea statuses.
 const (
 	IdeaDraft        Status = "Draft"
-	IdeaUnderReview  Status = "Under Review"
+	IdeaInReview     Status = "In Review"
 	IdeaApproved     Status = "Approved"
 	IdeaSpecifying   Status = "Specifying"
 	IdeaSpecified    Status = "Specified"
 	IdeaImplementing Status = "Implementing"
 	IdeaImplemented  Status = "Implemented"
-	IdeaArchived     Status = "Archived"
+	IdeaRejected     Status = "Rejected"
+	IdeaStale        Status = "Stale"
 )
 
 // Feature statuses.
 const (
 	FeatureDraft        Status = "Draft"
-	FeatureUnderReview  Status = "Under Review"
+	FeatureInReview     Status = "In Review"
 	FeatureApproved     Status = "Approved"
 	FeatureImplementing Status = "Implementing"
 	FeatureStable       Status = "Stable"
+	FeatureAmending     Status = "Amending"
+	FeatureRejected     Status = "Rejected"
 	FeatureDeprecated   Status = "Deprecated"
 )
 
@@ -113,25 +116,29 @@ type transitionRow struct {
 // From == To. validateMatrix enforces the invariant at init time.
 var transitionMatrix = map[Kind][]transitionRow{
 	KindIdea: {
+		{From: IdeaDraft, To: IdeaInReview},
 		{From: IdeaDraft, To: IdeaApproved},
-		{From: IdeaDraft, To: IdeaArchived},
-		{From: IdeaUnderReview, To: IdeaArchived},
+		{From: IdeaDraft, To: IdeaStale},
+		{From: IdeaInReview, To: IdeaApproved},
+		{From: IdeaInReview, To: IdeaRejected},
+		{From: IdeaInReview, To: IdeaStale},
 		{From: IdeaApproved, To: IdeaSpecifying},
-		{From: IdeaApproved, To: IdeaArchived},
+		{From: IdeaApproved, To: IdeaStale},
 		{From: IdeaSpecifying, To: IdeaSpecified},
-		{From: IdeaSpecifying, To: IdeaArchived},
+		{From: IdeaSpecifying, To: IdeaStale},
 		{From: IdeaSpecified, To: IdeaImplementing},
-		{From: IdeaSpecified, To: IdeaArchived},
+		{From: IdeaSpecified, To: IdeaStale},
 		{From: IdeaImplementing, To: IdeaImplemented},
-		{From: IdeaImplementing, To: IdeaArchived},
-		{From: IdeaImplemented, To: IdeaArchived},
 	},
 	KindFeature: {
-		{From: FeatureDraft, To: FeatureUnderReview},
+		{From: FeatureDraft, To: FeatureInReview},
 		{From: FeatureDraft, To: FeatureApproved},
-		{From: FeatureUnderReview, To: FeatureApproved},
+		{From: FeatureInReview, To: FeatureApproved},
+		{From: FeatureInReview, To: FeatureRejected},
 		{From: FeatureApproved, To: FeatureImplementing},
 		{From: FeatureImplementing, To: FeatureStable},
+		{From: FeatureStable, To: FeatureAmending},
+		{From: FeatureAmending, To: FeatureStable},
 		{From: FeatureStable, To: FeatureDeprecated},
 	},
 }

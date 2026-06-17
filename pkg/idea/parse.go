@@ -9,16 +9,20 @@ import (
 	"strings"
 )
 
-// Valid statuses for an Idea.
+// Valid statuses for an Idea — the canonical set per the SpecScore-wide
+// status vocabulary. `Archived` is NOT a status: archival is an orthogonal
+// axis carried by the `**Archived:** true` header + relocation to
+// spec/ideas/archived/ (see Archived() and discover.go).
 var ValidStatuses = map[string]bool{
 	"Draft":        true,
-	"Under Review": true,
+	"In Review":    true,
 	"Approved":     true,
 	"Specifying":   true,
 	"Specified":    true,
 	"Implementing": true,
 	"Implemented":  true,
-	"Archived":     true,
+	"Rejected":     true,
+	"Stale":        true,
 }
 
 // ValidIdeaTypes enumerates the allowed values for the **Type:** field.
@@ -132,9 +136,21 @@ func (i *Idea) RelatedIdeas() []string {
 	return splitCSVSlugs(i.FieldByName["Related Ideas"].Value)
 }
 
-// ArchiveReason returns the Archive Reason value or "".
-func (i *Idea) ArchiveReason() string {
-	return strings.TrimSpace(i.FieldByName["Archive Reason"].Value)
+// Archived reports whether the Idea carries `**Archived:** true` in its
+// header. Archival is an orthogonal axis to lifecycle status: an archived
+// Idea keeps its real terminal **Status:** (e.g. Rejected, Stale,
+// Implemented) and is additionally marked archived via this flag plus
+// relocation to spec/ideas/archived/. An absent or non-`true` value means
+// not archived.
+func (i *Idea) Archived() bool {
+	return strings.EqualFold(strings.TrimSpace(i.FieldByName["Archived"].Value), "true")
+}
+
+// ArchiveNote returns the optional **Archive Note:** value or "". The note is
+// tied to the archive action and is OPTIONAL; the disposition reason lives in
+// the terminal status transition's note, not here.
+func (i *Idea) ArchiveNote() string {
+	return strings.TrimSpace(i.FieldByName["Archive Note"].Value)
 }
 
 // IdeaType returns the Type field value or "" if absent.

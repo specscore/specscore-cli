@@ -20,25 +20,29 @@ import (
 
 var expectedLegal = map[Kind][]transitionRow{
 	KindIdea: {
+		{From: IdeaDraft, To: IdeaInReview},
 		{From: IdeaDraft, To: IdeaApproved},
-		{From: IdeaDraft, To: IdeaArchived},
-		{From: IdeaUnderReview, To: IdeaArchived},
+		{From: IdeaDraft, To: IdeaStale},
+		{From: IdeaInReview, To: IdeaApproved},
+		{From: IdeaInReview, To: IdeaRejected},
+		{From: IdeaInReview, To: IdeaStale},
 		{From: IdeaApproved, To: IdeaSpecifying},
-		{From: IdeaApproved, To: IdeaArchived},
+		{From: IdeaApproved, To: IdeaStale},
 		{From: IdeaSpecifying, To: IdeaSpecified},
-		{From: IdeaSpecifying, To: IdeaArchived},
+		{From: IdeaSpecifying, To: IdeaStale},
 		{From: IdeaSpecified, To: IdeaImplementing},
-		{From: IdeaSpecified, To: IdeaArchived},
+		{From: IdeaSpecified, To: IdeaStale},
 		{From: IdeaImplementing, To: IdeaImplemented},
-		{From: IdeaImplementing, To: IdeaArchived},
-		{From: IdeaImplemented, To: IdeaArchived},
 	},
 	KindFeature: {
-		{From: FeatureDraft, To: FeatureUnderReview},
+		{From: FeatureDraft, To: FeatureInReview},
 		{From: FeatureDraft, To: FeatureApproved},
-		{From: FeatureUnderReview, To: FeatureApproved},
+		{From: FeatureInReview, To: FeatureApproved},
+		{From: FeatureInReview, To: FeatureRejected},
 		{From: FeatureApproved, To: FeatureImplementing},
 		{From: FeatureImplementing, To: FeatureStable},
+		{From: FeatureStable, To: FeatureAmending},
+		{From: FeatureAmending, To: FeatureStable},
 		{From: FeatureStable, To: FeatureDeprecated},
 	},
 }
@@ -49,20 +53,23 @@ var expectedLegal = map[Kind][]transitionRow{
 var allKindStatuses = map[Kind][]Status{
 	KindIdea: {
 		IdeaDraft,
-		IdeaUnderReview,
+		IdeaInReview,
 		IdeaApproved,
 		IdeaSpecifying,
 		IdeaSpecified,
 		IdeaImplementing,
 		IdeaImplemented,
-		IdeaArchived,
+		IdeaRejected,
+		IdeaStale,
 	},
 	KindFeature: {
 		FeatureDraft,
-		FeatureUnderReview,
+		FeatureInReview,
 		FeatureApproved,
 		FeatureImplementing,
 		FeatureStable,
+		FeatureAmending,
+		FeatureRejected,
 		FeatureDeprecated,
 	},
 }
@@ -166,7 +173,7 @@ func TestLegalTargets_AllSources(t *testing.T) {
 	}
 }
 
-// Archived for Idea / Deprecated for Feature are terminal: no legal targets
+// Stale for Idea / Deprecated for Feature are terminal: no legal targets
 // exist FROM them. Verify the function returns an empty (non-nil) slice.
 func TestLegalTargets_Terminal(t *testing.T) {
 	t.Parallel()
@@ -174,7 +181,7 @@ func TestLegalTargets_Terminal(t *testing.T) {
 		kind Kind
 		from Status
 	}{
-		{KindIdea, IdeaArchived},
+		{KindIdea, IdeaStale},
 		{KindFeature, FeatureDeprecated},
 	}
 	for _, c := range cases {
@@ -267,10 +274,10 @@ func TestParseStatus_CaseInsensitive(t *testing.T) {
 		// Mixed.
 		{KindIdea, "ApPrOvEd", IdeaApproved, true, "mixed"},
 		// Multi-word.
-		{KindIdea, "under review", IdeaUnderReview, true, "lower multi-word"},
-		{KindIdea, "UNDER REVIEW", IdeaUnderReview, true, "upper multi-word"},
-		{KindIdea, "Under Review", IdeaUnderReview, true, "exact multi-word"},
-		{KindFeature, "Under Review", FeatureUnderReview, true, "feature multi-word"},
+		{KindIdea, "in review", IdeaInReview, true, "lower multi-word"},
+		{KindIdea, "IN REVIEW", IdeaInReview, true, "upper multi-word"},
+		{KindIdea, "In Review", IdeaInReview, true, "exact multi-word"},
+		{KindFeature, "In Review", FeatureInReview, true, "feature multi-word"},
 		// Whitespace tolerance.
 		{KindIdea, "  Draft  ", IdeaDraft, true, "padded"},
 		{KindIdea, "\tApproved\t", IdeaApproved, true, "tab-padded"},
@@ -570,14 +577,14 @@ func TestRewrite_FeatureFixture(t *testing.T) {
 	t.Parallel()
 	content := "# Feature: Sample\n\n**Status:** Draft\n**Deps:** —\n\n## Summary\n"
 	path := writeFixture(t, content)
-	if _, err := Rewrite(path, FeatureUnderReview); err != nil {
+	if _, err := Rewrite(path, FeatureInReview); err != nil {
 		t.Fatalf("Rewrite: %v", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := strings.Replace(content, "**Status:** Draft", "**Status:** Under Review", 1)
+	want := strings.Replace(content, "**Status:** Draft", "**Status:** In Review", 1)
 	if string(got) != want {
 		t.Errorf("Feature Rewrite not byte-clean.\nGot:\n%q\nWant:\n%q", got, want)
 	}
@@ -593,7 +600,7 @@ func TestInvalidTransitionError_ErrorWithTargets(t *testing.T) {
 		Kind:         KindIdea,
 		From:         IdeaDraft,
 		To:           Status("Bogus"),
-		LegalTargets: []Status{IdeaApproved, IdeaArchived},
+		LegalTargets: []Status{IdeaApproved, IdeaStale},
 	}
 	msg := e.Error()
 	if !strings.Contains(msg, "idea") {
@@ -614,7 +621,7 @@ func TestInvalidTransitionError_ErrorNoTargets(t *testing.T) {
 	t.Parallel()
 	e := &InvalidTransitionError{
 		Kind:         KindIdea,
-		From:         IdeaArchived,
+		From:         IdeaStale,
 		To:           Status("Bogus"),
 		LegalTargets: []Status{},
 	}
@@ -622,7 +629,7 @@ func TestInvalidTransitionError_ErrorNoTargets(t *testing.T) {
 	if !strings.Contains(msg, "no legal targets") {
 		t.Errorf("error message should mention 'no legal targets': %s", msg)
 	}
-	if !strings.Contains(msg, "Archived") {
+	if !strings.Contains(msg, "Stale") {
 		t.Errorf("error message should contain from status: %s", msg)
 	}
 }

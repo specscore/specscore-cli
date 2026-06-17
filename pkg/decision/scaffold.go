@@ -147,10 +147,10 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	var out strings.Builder
 	// artifact-frontmatter-convention REQ:scaffold-and-change-status — a Decision
 	// is a status-bearing type, so emit format:/status: frontmatter (status:
-	// mirrors the body **Status:** Proposed below).
-	out.WriteString("---\nformat: " + FormatURL + "\nstatus: Proposed\n---\n\n")
+	// mirrors the body **Status:** Draft below).
+	out.WriteString("---\nformat: " + FormatURL + "\nstatus: Draft\n---\n\n")
 	fmt.Fprintf(&out, "# Decision: %s\n\n", title)
-	fmt.Fprintf(&out, "**Status:** Proposed\n")
+	fmt.Fprintf(&out, "**Status:** Draft\n")
 	fmt.Fprintf(&out, "**Date:** %s\n", date)
 	fmt.Fprintf(&out, "**Owner:** %s\n", owner)
 	fmt.Fprintf(&out, "**Tags:** %s\n", tags)

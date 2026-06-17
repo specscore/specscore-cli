@@ -287,7 +287,7 @@ func ideaFileRules(p *idea.Idea, relPath string, archived bool, isProposal bool,
 		vs = append(vs, Violation{
 			File: relPath, Line: p.FieldByName["Status"].Line, Severity: "error",
 			Rule:    "idea-status-values",
-			Message: fmt.Sprintf("Status %q is not one of Draft, Under Review, Approved, Specifying, Specified, Implementing, Implemented, Archived", status),
+			Message: fmt.Sprintf("Status %q is not one of Draft, In Review, Approved, Specifying, Specified, Implementing, Implemented, Rejected, Stale", status),
 		})
 	}
 
@@ -307,39 +307,64 @@ func ideaFileRules(p *idea.Idea, relPath string, archived bool, isProposal bool,
 	}
 
 	// idea-archived-location
-	// Change-request ideas stay at their feature-scoped path when archived;
-	// only feature-request ideas must move to spec/ideas/archived/.
-	if status == "Archived" && !archived && effectiveType != "change-request" {
-		vs = append(vs, Violation{
-			File: relPath, Line: p.FieldByName["Status"].Line, Severity: "error",
-			Rule:    "idea-archived-location",
-			Message: "Status: Archived requires file to live under spec/ideas/archived/",
-		})
+	// Archival is an orthogonal axis: an archived Idea keeps its real
+	// terminal **Status:** and is marked by `**Archived:** true` PLUS
+	// relocation to spec/ideas/archived/. The flag and the location MUST
+	// agree (for feature-request ideas — change-request ideas stay at their
+	// feature-scoped path and carry only the flag).
+	//
+	//   - archivedFlag is the `**Archived:** true` header axis.
+	//   - archived is the location axis (file lives under archived/).
+	archivedFlag := p.Archived()
+	if effectiveType != "change-request" {
+		if archivedFlag && !archived {
+			vs = append(vs, Violation{
+				File: relPath, Line: p.FieldByName["Archived"].Line, Severity: "error",
+				Rule:    "idea-archived-location",
+				Message: "**Archived:** true requires the file to live under spec/ideas/archived/",
+			})
+		}
+		if archived && !archivedFlag {
+			vs = append(vs, Violation{
+				File: relPath, Line: p.FieldByName["Status"].Line, Severity: "error",
+				Rule:    "idea-archived-location",
+				Message: "files under spec/ideas/archived/ must carry **Archived:** true",
+			})
+		}
 	}
-	if archived && status != "" && status != "Archived" {
-		vs = append(vs, Violation{
-			File: relPath, Line: p.FieldByName["Status"].Line, Severity: "error",
-			Rule:    "idea-archived-location",
-			Message: fmt.Sprintf("files under spec/ideas/archived/ must have Status: Archived; got %q", status),
-		})
+	// An archived Idea must carry a terminal status — not a mid-lifecycle
+	// one. Archival files an Idea away after it reaches a terminal outcome
+	// (shipped, turned down, or decayed).
+	if archivedFlag && status != "" {
+		switch status {
+		case "Implemented", "Rejected", "Stale":
+		default:
+			vs = append(vs, Violation{
+				File: relPath, Line: p.FieldByName["Status"].Line, Severity: "error",
+				Rule:    "idea-archived-location",
+				Message: fmt.Sprintf("archived idea must carry a terminal status (Implemented, Rejected, or Stale); got %q", status),
+			})
+		}
 	}
 
-	// idea-archive-reason
-	if status == "Archived" {
-		if reason := p.ArchiveReason(); reason == "" || reason == "—" || reason == "-" {
-			line := 0
-			if f, ok := p.FieldByName["Archive Reason"]; ok {
-				line = f.Line
-			}
+	// idea-archive-note
+	// The **Archive Note:** is OPTIONAL (the disposition reason lives on the
+	// terminal status transition). Validate format-if-present only: when the
+	// line exists it must be non-empty.
+	if f, ok := p.FieldByName["Archive Note"]; ok {
+		if note := p.ArchiveNote(); note == "" || note == "—" || note == "-" {
 			vs = append(vs, Violation{
-				File: relPath, Line: line, Severity: "error",
-				Rule:    "idea-archive-reason",
-				Message: "Status: Archived requires a non-empty **Archive Reason:**",
+				File: relPath, Line: f.Line, Severity: "error",
+				Rule:    "idea-archive-note",
+				Message: "**Archive Note:** is present but empty; omit the line or give it content",
 			})
 		}
 	}
 
 	// idea-supersedes-target-archived
+	// A superseded predecessor is filed away along the archived axis: it
+	// carries `**Archived:** true` (and lives under archived/) and its
+	// terminal status is Stale (Idea has no `Superseded` status).
 	for _, sup := range p.Supersedes() {
 		tgt, ok := all[sup]
 		if !ok {
@@ -350,11 +375,11 @@ func ideaFileRules(p *idea.Idea, relPath string, archived bool, isProposal bool,
 			})
 			continue
 		}
-		if !archivedMap[sup] || tgt.Status() != "Archived" {
+		if !archivedMap[sup] || !tgt.Archived() {
 			vs = append(vs, Violation{
 				File: relPath, Line: p.FieldByName["Supersedes"].Line, Severity: "error",
 				Rule:    "idea-supersedes-target-archived",
-				Message: fmt.Sprintf("supersedes target %q must be Archived and live under spec/ideas/archived/", sup),
+				Message: fmt.Sprintf("supersedes target %q must be archived (**Archived:** true under spec/ideas/archived/)", sup),
 			})
 		}
 	}
@@ -677,7 +702,7 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 
 	// idea-feature-cross-reference: each feature->idea reference must resolve
 	// and the idea must be Approved, Specifying, Specified, Implementing, or
-	// Implemented (not Draft/Under Review/Archived).
+	// Implemented (not Draft/In Review/Rejected/Stale).
 	validCrossRefStatuses := map[string]bool{
 		"Approved":     true,
 		"Specifying":   true,
@@ -729,11 +754,11 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 	//
 	// Derivation rules (per spec REQ:implementing-derivation +
 	// REQ:specified-derivation):
-	//   - no Feature references                                             -> Approved
-	//   - 1+ refs, any  referenced Feature at Draft or Under Review         -> Specifying
-	//   - 1+ refs, every referenced Feature at Approved                     -> Specified
-	//   - 1+ refs, any  referenced Feature at Implementing                  -> Implementing
-	//   - 1+ refs, every referenced Feature at Stable                       -> Implemented
+	//   - no Feature references                                          -> Approved
+	//   - 1+ refs, any  referenced Feature at Draft or In Review         -> Specifying
+	//   - 1+ refs, every referenced Feature at Approved                  -> Specified
+	//   - 1+ refs, any  referenced Feature at Implementing               -> Implementing
+	//   - 1+ refs, every referenced Feature at Stable                    -> Implemented
 	//
 	// Change-request ideas are author-managed — skip all derivation.
 	for slug, p := range parsed {
@@ -764,7 +789,7 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 			// never drag the Idea backward to Specified.
 			allDone := true
 			anyImplementing := false
-			anyDraftOrUnderReview := false
+			anyDraftOrInReview := false
 			for _, fs := range refs {
 				fst := getFeatureStatus(fs)
 				if fst != "Stable" && fst != "Deprecated" {
@@ -773,18 +798,21 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 				if fst == "Implementing" {
 					anyImplementing = true
 				}
-				if fst == "Draft" || fst == "Under Review" {
-					anyDraftOrUnderReview = true
+				// TODO(integration): switch the "In Review" literal to
+				// lifecycle.FeatureInReview once sp1a's Feature-enum rename
+				// merges (the symbol does not exist on this branch yet).
+				if fst == "Draft" || fst == "In Review" {
+					anyDraftOrInReview = true
 				}
 			}
 			if allDone {
 				expectedStatus = "Implemented"
 			} else if anyImplementing {
 				expectedStatus = "Implementing"
-			} else if anyDraftOrUnderReview {
+			} else if anyDraftOrInReview {
 				expectedStatus = "Specifying"
 			} else {
-				// All features at Approved (none Draft/UnderReview/Implementing/Stable/Deprecated).
+				// All features at Approved (none Draft/In Review/Implementing/Stable/Deprecated).
 				expectedStatus = "Specified"
 			}
 		}

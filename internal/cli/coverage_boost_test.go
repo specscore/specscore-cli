@@ -2536,16 +2536,16 @@ func TestGitCommitAndPush_SuccessWithBareRemote(t *testing.T) {
 
 func TestFeatureChangeStatus_SuccessfulTransition(t *testing.T) {
 	root := setupFeatureSpec(t, "Draft")
-	out, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	out, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "Under Review") {
-		t.Errorf("stdout = %q, want 'Under Review'", out)
+	if !strings.Contains(out, "In Review") {
+		t.Errorf("stdout = %q, want 'In Review'", out)
 	}
 	readme, _ := os.ReadFile(filepath.Join(root, "spec", "features", "auth", "README.md"))
-	if !strings.Contains(string(readme), "Under Review") {
-		t.Errorf("README = %q, want 'Under Review'", readme)
+	if !strings.Contains(string(readme), "In Review") {
+		t.Errorf("README = %q, want 'In Review'", readme)
 	}
 }
 
@@ -3112,12 +3112,12 @@ func TestPromptProjectMetadata_DefaultsDisplayed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// idea.go — runIdeaChangeStatus: archive flow
+// idea.go — runIdeaArchive: archive flow
 // ---------------------------------------------------------------------------
 
-func TestIdeaChangeStatus_ArchiveFlow(t *testing.T) {
-	root := stageActiveIdea(t, "arch2", "Approved", "**Archive Reason:** superseded by another idea")
-	out, _, err := runIdea(t, "change-status", "arch2", "--to=archived")
+func TestIdeaArchive_Flow(t *testing.T) {
+	root := stageActiveIdea(t, "arch2", "Stale", "")
+	out, _, err := runIdea(t, "archive", "arch2", "--note", "superseded by another idea")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3811,7 +3811,7 @@ func TestFeatureChangeStatus_LintFixRollback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(idxBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	// This exercises the lint-fix + verify + rollback paths.
 	// May succeed (if --fix fixes OQ) or fail with rollback.
 	_ = err
@@ -4066,7 +4066,7 @@ func TestFeatureChangeStatus_LintFixWriteError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(featDir, 0o755) })
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	// This should either fail with a lint error or succeed if lint --fix
 	// doesn't need to write. Either way exercises the code path.
 	_ = err
@@ -5175,7 +5175,7 @@ func TestFeatureChangeStatus_LintFixRollbackPath(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(idxPath, 0o644) })
 
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	// If lint --fix fails to write, it should trigger the rollback path.
 	// This exercises lines 904-913 (lint --fix error + rollback).
 	_ = err
@@ -5193,7 +5193,7 @@ func TestFeatureChangeStatus_PostFixLintError(t *testing.T) {
 	}
 	// Remove the features/README.md entirely so post-fix lint can't read it.
 	_ = os.Remove(filepath.Join(root, "spec", "features", "README.md"))
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	// This exercises the post-fix lint error path.
 	_ = err
 }
@@ -5332,7 +5332,7 @@ func TestFeatureChangeStatus_UnfixableViolationsRollback(t *testing.T) {
 	}
 
 	withCwd(t, root)
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err == nil {
 		t.Fatal("expected error from unfixable lint violations after change-status")
 	}
@@ -5344,7 +5344,7 @@ func TestFeatureChangeStatus_UnfixableViolationsRollback(t *testing.T) {
 
 	// Verify rollback: auth should still be Draft.
 	readme, _ := os.ReadFile(filepath.Join(featDir, "auth", "README.md"))
-	if strings.Contains(string(readme), "Under Review") {
+	if strings.Contains(string(readme), "In Review") {
 		t.Error("status was NOT rolled back — should still be Draft")
 	}
 }
@@ -5490,13 +5490,13 @@ func TestExecuteWithPanicRecovery_PanicRecovery(t *testing.T) {
 
 func TestFeatureChangeStatus_LintFixError(t *testing.T) {
 	setupFeatureSpec(t, "Draft")
-	// Transition to Under Review (which is legal from Draft).
-	out, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	// Transition to In Review (which is legal from Draft).
+	out, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err != nil {
 		t.Fatalf("setup transition: %v", err)
 	}
-	if !strings.Contains(out, "Under Review") {
-		t.Errorf("stdout = %q, want 'Under Review'", out)
+	if !strings.Contains(out, "In Review") {
+		t.Errorf("stdout = %q, want 'In Review'", out)
 	}
 }
 
@@ -5902,7 +5902,7 @@ func TestFeatureChangeStatus_LintFixFails(t *testing.T) {
 	}
 	t.Cleanup(func() { lintLintFn = orig })
 
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err == nil {
 		t.Fatal("expected error when lint --fix fails")
 	}
@@ -5930,7 +5930,7 @@ func TestFeatureChangeStatus_LintVerifyFails(t *testing.T) {
 	}
 	t.Cleanup(func() { lintLintFn = orig })
 
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err == nil {
 		t.Fatal("expected error when lint verify fails")
 	}
@@ -5964,7 +5964,7 @@ func TestFeatureChangeStatus_LintVerifyReturnsErrors(t *testing.T) {
 	}
 	t.Cleanup(func() { lintLintFn = orig })
 
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err == nil {
 		t.Fatal("expected error when lint verify returns error violations")
 	}
@@ -6167,7 +6167,7 @@ func TestFeatureChangeStatus_LintFixWithRestoreFail(t *testing.T) {
 		_ = os.Chmod(filepath.Dir(readmePath), 0o755)
 	})
 
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err == nil {
 		t.Fatal("expected error when lint --fix fails")
 	}
@@ -6206,7 +6206,7 @@ func TestFeatureChangeStatus_LintViolationsWithRestoreFail(t *testing.T) {
 		_ = os.Chmod(filepath.Dir(readmePath), 0o755)
 	})
 
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err == nil {
 		t.Fatal("expected error when lint reports violations and rollback fails")
 	}
@@ -6237,7 +6237,7 @@ func TestFeatureChangeStatus_LintVerifyErrorWithRestoreFail(t *testing.T) {
 		_ = os.Chmod(filepath.Dir(readmePath), 0o755)
 	})
 
-	_, _, err := runFeature(t, "change-status", "auth", "--to=Under Review")
+	_, _, err := runFeature(t, "change-status", "auth", "--to=In Review")
 	if err == nil {
 		t.Fatal("expected error when lint verify error + rollback fails")
 	}

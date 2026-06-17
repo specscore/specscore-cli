@@ -1,9 +1,7 @@
 package idea
 
-// Coverage for the optional-transition-note branches in ChangeStatus: the
-// note-write failure rollback, and the archived-path body restore inside the
-// note-rollback wrapper when a post-move lint failure rolls back a
-// note-carrying archive transition.
+// Coverage for the optional-transition-note branch in ChangeStatus: the
+// note-write failure rollback path.
 
 import (
 	"errors"
@@ -14,7 +12,7 @@ import (
 )
 
 func TestChangeStatus_NoteWriteError(t *testing.T) {
-	root := stageIdeaTree(t, "foo", "Approved")
+	root := stageIdeaTree(t, "foo", "In Review")
 	orig := appendNoteFn
 	defer func() { appendNoteFn = orig }()
 	appendNoteFn = func(string, string) ([]byte, bool, error) {
@@ -23,37 +21,15 @@ func TestChangeStatus_NoteWriteError(t *testing.T) {
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot:     root,
 		Slug:         "foo",
-		To:           lifecycle.IdeaArchived,
+		To:           lifecycle.IdeaRejected,
 		Note:         "x",
 		PostMutation: func() error { return nil },
 	})
 	if err == nil {
 		t.Fatal("expected note-write error")
 	}
-	// Rolled back: file restored to the active path with its original status.
-	if body := readIdea(t, root, "foo"); !strings.Contains(body, "**Status:** Approved") {
+	// Rolled back: status restored to its original value.
+	if body := readIdea(t, root, "foo"); !strings.Contains(body, "**Status:** In Review") {
 		t.Errorf("not rolled back:\n%s", body)
-	}
-}
-
-func TestChangeStatus_NoteArchivedLintRollback(t *testing.T) {
-	root := stageIdeaTree(t, "foo", "Approved")
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "foo",
-		To:           lifecycle.IdeaArchived,
-		Note:         "shipped via close",
-		PostMutation: failingLint(errors.New("lint boom")),
-	})
-	if err == nil {
-		t.Fatal("expected lint-failure rollback")
-	}
-	// File restored to active path with original status; note undone.
-	body := readIdea(t, root, "foo")
-	if !strings.Contains(body, "**Status:** Approved") {
-		t.Errorf("status not rolled back:\n%s", body)
-	}
-	if strings.Contains(body, "## Resolution") {
-		t.Errorf("resolution note not rolled back:\n%s", body)
 	}
 }

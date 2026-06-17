@@ -18,16 +18,17 @@ import (
 // table-driven. Per-AC mapping:
 //
 //   TestChangeStatus_DraftToApprovedHappyPath        -> draft-to-approved-happy-path
-//   TestChangeStatus_ArchiveFromApprovedHappyPath    -> archive-from-approved-happy-path
 //   TestChangeStatus_CaseInsensitiveToFlag           -> case-insensitive-to-flag
 //   TestChangeStatus_IllegalTargetRejected           -> illegal-target-rejected
 //   TestChangeStatus_AlreadyApprovedRejected         -> already-approved-rejected
 //   TestChangeStatus_UnrecognizedToValueRejected     -> unrecognized-to-value-rejected
-//   TestChangeStatus_ArchiveCollision                -> archive-collision
 //   TestChangeStatus_MissingSlugRejected             -> missing-slug-rejected           (CLI-level, see internal/cli/idea_test.go)
 //   TestChangeStatus_MissingToFlagRejected           -> missing-to-flag-rejected        (CLI-level, see internal/cli/idea_test.go)
 //   TestChangeStatus_SlugNotFound                    -> slug-not-found
 //   TestChangeStatus_LintFailureRollsBack            -> lint-failure-rolls-back
+//
+// Archival is no longer a change-status target — those ACs live with the
+// `idea archive`/`idea unarchive` verbs (archive_test.go).
 
 // noopLint is a PostMutationHook that always succeeds. Used for ACs
 // that don't exercise the lint-failure path; we test the lint path
@@ -37,7 +38,7 @@ func noopLint() error { return nil }
 
 // failingLint returns a PostMutationHook that always returns the given
 // error. Used to simulate an error-severity lint violation after the
-// status rewrite (and, for archive, the file move).
+// status rewrite.
 func failingLint(e error) PostMutationHook {
 	return func() error { return e }
 }
@@ -90,16 +91,6 @@ func readIdea(t *testing.T, root, slug string) string {
 	return string(b)
 }
 
-// readArchivedIdea returns the file contents at spec/ideas/archived/<slug>.md.
-func readArchivedIdea(t *testing.T, root, slug string) string {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(root, "spec", "ideas", "archived", slug+".md"))
-	if err != nil {
-		t.Fatalf("read archived idea: %v", err)
-	}
-	return string(b)
-}
-
 // assertExitCode unwraps an *exitcode.Error and asserts ExitCode() == want.
 // Fails the test if err is nil or not an *exitcode.Error.
 func assertExitCode(t *testing.T, err error, want int) {
@@ -142,30 +133,30 @@ func TestChangeStatus_DraftToApprovedHappyPath(t *testing.T) {
 	}
 }
 
-// AC: archive-from-approved-happy-path
-func TestChangeStatus_ArchiveFromApprovedHappyPath(t *testing.T) {
-	root := stageIdeaTree(t, "foo", "Approved")
+// AC: in-review-to-rejected-happy-path — change-status writes the terminal
+// status in place; it never relocates a file (that is `idea archive`).
+func TestChangeStatus_InReviewToRejectedHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "foo", "In Review")
 
 	result, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot:     root,
 		Slug:         "foo",
-		To:           lifecycle.IdeaArchived,
+		To:           lifecycle.IdeaRejected,
 		PostMutation: noopLint,
 	})
 	if err != nil {
 		t.Fatalf("ChangeStatus: %v", err)
 	}
-	if result.From != lifecycle.IdeaApproved || result.To != lifecycle.IdeaArchived {
-		t.Errorf("result = %+v; want from=Approved to=Archived", result)
+	if result.From != lifecycle.IdeaInReview || result.To != lifecycle.IdeaRejected {
+		t.Errorf("result = %+v; want from=In Review to=Rejected", result)
 	}
-	// Active file MUST be gone.
-	if _, err := os.Stat(filepath.Join(root, "spec", "ideas", "foo.md")); !os.IsNotExist(err) {
-		t.Errorf("active file should not exist after archive: err=%v", err)
+	// File stays at the active path — change-status does not relocate.
+	body := readIdea(t, root, "foo")
+	if !strings.Contains(body, "**Status:** Rejected") {
+		t.Errorf("status line not rewritten:\n%s", body)
 	}
-	// Archived file MUST exist with the new status line.
-	body := readArchivedIdea(t, root, "foo")
-	if !strings.Contains(body, "**Status:** Archived") {
-		t.Errorf("archived file missing new status line:\n%s", body)
+	if _, err := os.Stat(filepath.Join(root, "spec", "ideas", "archived", "foo.md")); !os.IsNotExist(err) {
+		t.Errorf("change-status must not relocate the file: err=%v", err)
 	}
 }
 
@@ -229,12 +220,12 @@ func TestChangeStatus_IllegalTargetRejected(t *testing.T) {
 	assertExitCode(t, err, exitcode.InvalidState)
 
 	// Stderr message MUST name the current status (Draft) and the
-	// legal targets from Draft (Approved, Archived).
+	// legal targets from Draft (Approved, In Review, Stale).
 	msg := err.Error()
 	if !strings.Contains(msg, "Draft") {
 		t.Errorf("error message missing current status %q: %s", "Draft", msg)
 	}
-	for _, want := range []string{"Approved", "Archived"} {
+	for _, want := range []string{"Approved", "In Review", "Stale"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message missing legal target %q: %s", want, msg)
 		}
@@ -280,9 +271,9 @@ func TestChangeStatus_UnrecognizedToValueRejected(t *testing.T) {
 
 	// Recognized as an Idea status but not a user-facing --to target:
 	// IsLegalChangeStatusTarget rejects so the cobra adapter exits 2.
-	// Only "Draft" and "Under Review" are pure source states with no
-	// incoming arcs (never a To in the matrix).
-	for _, raw := range []string{"draft", "under review"} {
+	// "Draft" is the only pure source state with no incoming arcs (never
+	// a To in the matrix).
+	for _, raw := range []string{"draft"} {
 		s, ok := lifecycle.ParseStatus(lifecycle.KindIdea, raw)
 		if !ok {
 			t.Fatalf("ParseStatus(%q) failed; expected recognition", raw)
@@ -292,7 +283,7 @@ func TestChangeStatus_UnrecognizedToValueRejected(t *testing.T) {
 		}
 	}
 	// Sanity — statuses that appear as To in the matrix are accepted.
-	for _, raw := range []string{"approved", "archived", "specifying", "specified", "implementing", "implemented"} {
+	for _, raw := range []string{"in review", "approved", "rejected", "stale", "specifying", "specified", "implementing", "implemented"} {
 		s, ok := lifecycle.ParseStatus(lifecycle.KindIdea, raw)
 		if !ok {
 			t.Fatalf("ParseStatus(%q) failed", raw)
@@ -300,43 +291,6 @@ func TestChangeStatus_UnrecognizedToValueRejected(t *testing.T) {
 		if !IsLegalChangeStatusTarget(s) {
 			t.Errorf("IsLegalChangeStatusTarget(%q) should be true", s)
 		}
-	}
-}
-
-// AC: archive-collision
-func TestChangeStatus_ArchiveCollision(t *testing.T) {
-	root := stageIdeaTree(t, "foo", "Approved")
-	// Pre-existing stale archived copy.
-	stalePath := filepath.Join(root, "spec", "ideas", "archived", "foo.md")
-	staleBody := "# Stale archived idea — must remain untouched.\n"
-	if err := os.WriteFile(stalePath, []byte(staleBody), 0o644); err != nil {
-		t.Fatalf("write stale: %v", err)
-	}
-
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "foo",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	assertExitCode(t, err, exitcode.Conflict)
-
-	// Error message names both paths.
-	msg := err.Error()
-	if !strings.Contains(msg, stalePath) {
-		t.Errorf("error message missing collision target %q: %s", stalePath, msg)
-	}
-
-	// Active file MUST still exist with ORIGINAL status (rolled back).
-	activeBody := readIdea(t, root, "foo")
-	if !strings.Contains(activeBody, "**Status:** Approved") {
-		t.Errorf("active file status not rolled back; got:\n%s", activeBody)
-	}
-
-	// Stale archived file MUST be untouched (still contains its
-	// distinctive marker).
-	if got := readArchivedIdea(t, root, "foo"); got != staleBody {
-		t.Errorf("stale archived file mutated; got:\n%s\nwant:\n%s", got, staleBody)
 	}
 }
 
@@ -352,7 +306,7 @@ func TestChangeStatus_SlugNotFound(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(archDir, "nonexistent.md"),
-		[]byte("# archived\n**Status:** Archived\n"), 0o644); err != nil {
+		[]byte("# archived\n**Status:** Stale\n**Archived:** true\n"), 0o644); err != nil {
 		t.Fatalf("write archived: %v", err)
 	}
 
@@ -371,37 +325,6 @@ func TestChangeStatus_SlugNotFound(t *testing.T) {
 	}
 }
 
-// AC: lint-failure-rolls-back — archive-path transition with a lint
-// failure simulated via a hook that returns an error AFTER the rewrite
-// + file move. The verb MUST exit 10, restore the file at the active
-// path with its original status, and leave nothing in archived/.
-func TestChangeStatus_LintFailureRollsBack(t *testing.T) {
-	root := stageIdeaTree(t, "foo", "Approved")
-	archivedPath := filepath.Join(root, "spec", "ideas", "archived", "foo.md")
-
-	simulatedErr := exitcode.UnexpectedErrorf(
-		"lint failed: idea-archived-index-chronological: %s",
-		archivedPath)
-
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "foo",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: failingLint(simulatedErr),
-	})
-	assertExitCode(t, err, exitcode.Unexpected)
-
-	// File MUST be back at the active path.
-	body := readIdea(t, root, "foo")
-	if !strings.Contains(body, "**Status:** Approved") {
-		t.Errorf("active file status not rolled back; got:\n%s", body)
-	}
-	// Archived file MUST be gone.
-	if _, statErr := os.Stat(archivedPath); !os.IsNotExist(statErr) {
-		t.Errorf("archived file should not exist after rollback: err=%v", statErr)
-	}
-}
-
 // Sanity tests for the helpers ChangeStatus relies on.
 
 func TestLegalTransitionMatrix_IncludesAllSources(t *testing.T) {
@@ -414,7 +337,7 @@ func TestLegalTransitionMatrix_IncludesAllSources(t *testing.T) {
 		t.Errorf("missing table headers:\n%s", m)
 	}
 	// Every source status with ≥1 outgoing target MUST appear.
-	for _, src := range []string{"Draft", "Under Review", "Approved", "Specifying", "Specified", "Implementing", "Implemented"} {
+	for _, src := range []string{"Draft", "In Review", "Approved", "Specifying", "Specified", "Implementing"} {
 		if !strings.Contains(m, src) {
 			t.Errorf("matrix missing source %q:\n%s", src, m)
 		}
@@ -450,9 +373,10 @@ func TestChangeStatus_NoStatusLineTransitions(t *testing.T) {
 	}
 }
 
-// AC: lint-failure-non-archive — lint failure on non-archive transition
-// covers the fullRollback path without archive side-effects.
-func TestChangeStatus_LintFailureRollsBack_NonArchive(t *testing.T) {
+// AC: lint-failure-rolls-back — a lint failure simulated via a hook that
+// returns an error AFTER the rewrite. The verb MUST exit 10 and restore
+// the file with its original status.
+func TestChangeStatus_LintFailureRollsBack(t *testing.T) {
 	root := stageIdeaTree(t, "lint-fail", "Draft")
 	simulatedErr := exitcode.UnexpectedErrorf("lint failed: oq-section error")
 
@@ -472,13 +396,12 @@ func TestChangeStatus_LintFailureRollsBack_NonArchive(t *testing.T) {
 }
 
 // AC: legal-targets-empty — test state with no outgoing transitions
+// (Stale is terminal: no legal targets).
 func TestChangeStatus_NoLegalTargets(t *testing.T) {
-	root := stageIdeaTree(t, "archived-idea", "Archived")
-	// Move to active path since stageIdeaTree creates at active
-	// Archived has no legal outgoing transitions.
+	root := stageIdeaTree(t, "stale-idea", "Stale")
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot:     root,
-		Slug:         "archived-idea",
+		Slug:         "stale-idea",
 		To:           lifecycle.IdeaApproved,
 		PostMutation: noopLint,
 	})
@@ -488,106 +411,52 @@ func TestChangeStatus_NoLegalTargets(t *testing.T) {
 	}
 }
 
-// AC: stat-archived-readme-non-ENOENT
-func TestChangeStatus_ArchiveStatReadmeNonENOENT(t *testing.T) {
-	root := stageIdeaTree(t, "stat-rm", "Approved")
-	archivedDir := filepath.Join(root, "spec", "ideas", "archived")
-	// Remove the archived README so the code takes the os.IsNotExist branch.
-	// Then make the archived dir non-searchable so WriteFile (line 197) fails
-	// because the parent dir has no execute permission.
-	_ = os.Remove(filepath.Join(archivedDir, "README.md"))
-	_ = os.Chmod(archivedDir, 0o600) // read-write but no execute
-	defer func() { _ = os.Chmod(archivedDir, 0o755) }()
-
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "stat-rm",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err == nil {
-		// On some systems this might succeed. That's OK.
-		return
-	}
-	assertExitCode(t, err, exitcode.Unexpected)
-}
-
-// AC: archive-stat-non-enoent — injected stat error (covers transitions.go:225)
-func TestChangeStatus_ArchiveStatNonENOENT_Injected(t *testing.T) {
-	root := stageIdeaTree(t, "stat-inject", "Approved")
-
-	old := osStatFn
-	osStatFn = func(name string) (os.FileInfo, error) {
-		if strings.HasSuffix(name, "stat-inject.md") {
-			return nil, fmt.Errorf("injected stat error: not ENOENT")
-		}
-		return os.Stat(name)
-	}
-	t.Cleanup(func() { osStatFn = old })
-
-	_, err := ChangeStatus(ChangeStatusOptions{
-		SpecRoot:     root,
-		Slug:         "stat-inject",
-		To:           lifecycle.IdeaArchived,
-		PostMutation: noopLint,
-	})
-	if err == nil {
-		t.Fatal("expected error from injected stat failure")
-	}
-	assertExitCode(t, err, exitcode.Unexpected)
-	if !strings.Contains(err.Error(), "stat archive target") {
-		t.Errorf("expected 'stat archive target' in error, got: %v", err)
-	}
-}
-
 func TestLegalChangeStatusTargetNames_Stable(t *testing.T) {
 	got := LegalChangeStatusTargetNames()
-	want := []string{"Approved", "Archived", "Implemented", "Implementing", "Specified", "Specifying"}
+	want := []string{"Approved", "Implemented", "Implementing", "In Review", "Rejected", "Specified", "Specifying", "Stale"}
 	if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
 		t.Errorf("LegalChangeStatusTargetNames = %v; want %v", got, want)
 	}
 }
 
 // Note plumbing: a positive transition with --note writes a `## Resolution`
-// section into the (archived) body verbatim, atomically with the status
-// rewrite. Mirrors the sidekick AC note-optional-on-implemented shape at the
-// Idea-kind layer.
+// section into the body verbatim, atomically with the status rewrite.
 func TestChangeStatus_NoteWritesResolution(t *testing.T) {
-	root := stageIdeaTree(t, "baz", "Approved")
+	root := stageIdeaTree(t, "baz", "In Review")
 
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot:     root,
 		Slug:         "baz",
-		To:           lifecycle.IdeaArchived,
+		To:           lifecycle.IdeaRejected,
 		PostMutation: noopLint,
-		Note:         "Shipped in skills/implement step 4b",
+		Note:         "Turned down at the v2 review",
 	})
 	if err != nil {
 		t.Fatalf("ChangeStatus: %v", err)
 	}
-	body := readArchivedIdea(t, root, "baz")
+	body := readIdea(t, root, "baz")
 	if !strings.Contains(body, "## Resolution") {
-		t.Errorf("archived body missing ## Resolution section:\n%s", body)
+		t.Errorf("body missing ## Resolution section:\n%s", body)
 	}
-	if !strings.Contains(body, "Shipped in skills/implement step 4b") {
-		t.Errorf("archived body missing note content verbatim:\n%s", body)
+	if !strings.Contains(body, "Turned down at the v2 review") {
+		t.Errorf("body missing note content verbatim:\n%s", body)
 	}
 }
 
 // Without --note, no `## Resolution` section is written (today's behavior).
 func TestChangeStatus_NoNoteNoResolution(t *testing.T) {
-	root := stageIdeaTree(t, "baz", "Approved")
+	root := stageIdeaTree(t, "baz", "In Review")
 
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot:     root,
 		Slug:         "baz",
-		To:           lifecycle.IdeaArchived,
+		To:           lifecycle.IdeaRejected,
 		PostMutation: noopLint,
 	})
 	if err != nil {
 		t.Fatalf("ChangeStatus: %v", err)
 	}
-	if body := readArchivedIdea(t, root, "baz"); strings.Contains(body, "## Resolution") {
+	if body := readIdea(t, root, "baz"); strings.Contains(body, "## Resolution") {
 		t.Errorf("unexpected ## Resolution section without --note:\n%s", body)
 	}
 }

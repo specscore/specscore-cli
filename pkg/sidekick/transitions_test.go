@@ -36,7 +36,7 @@ func TestParseSeedTarget_caseInsensitive_canonical(t *testing.T) {
 		"IMPLEMENTED": SeedImplemented,
 		"Implemented": SeedImplemented,
 		"  rejected ": SeedRejected,
-		"ArChIvEd":    SeedArchived,
+		"StAlE":       SeedStale,
 	}
 	for in, want := range cases {
 		got, err := ParseSeedTarget(in)
@@ -98,7 +98,7 @@ func TestSeedReasonRequiredSet_rejectedRequiresReason(t *testing.T) {
 	if set.RequiresReason(SeedQueued, SeedImplemented) {
 		t.Error("Queued → Implemented MUST NOT be reason-required")
 	}
-	if set.RequiresReason(SeedQueued, SeedArchived) {
-		t.Error("Queued → Archived MUST NOT be reason-required")
+	if set.RequiresReason(SeedQueued, SeedStale) {
+		t.Error("Queued → Stale MUST NOT be reason-required")
 	}
 }

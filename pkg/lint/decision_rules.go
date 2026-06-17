@@ -92,7 +92,8 @@ var decisionRequiredFields = []string{
 }
 
 var decisionValidStatuses = map[string]bool{
-	"Proposed": true, "Accepted": true, "Superseded": true, "Deprecated": true,
+	"Draft": true, "In Review": true, "Approved": true,
+	"Rejected": true, "Superseded": true, "Deprecated": true,
 }
 
 var decisionRequiredSections = []string{
@@ -332,7 +333,7 @@ func checkDecisionFile(d *parsedDecision, specRoot string, bySlug map[string]*pa
 			vs = append(vs, Violation{
 				File: d.relPath, Line: f.Line, Severity: "error",
 				Rule:    "D-status-values",
-				Message: fmt.Sprintf("Status %q must be one of Proposed, Accepted, Superseded, Deprecated", f.Value),
+				Message: fmt.Sprintf("Status %q must be one of Draft, In Review, Approved, Rejected, Superseded, Deprecated", f.Value),
 			})
 		}
 	}
@@ -377,14 +378,14 @@ func checkDecisionFile(d *parsedDecision, specRoot string, bySlug map[string]*pa
 	if f, ok := d.fieldByName["Status"]; ok {
 		status = f.Value
 	}
-	if status == "Proposed" {
+	if status == "Draft" {
 		if s, ok := d.sectionByName["Observed Consequences"]; ok {
 			body := strings.TrimSpace(s.Body)
 			if !strings.Contains(body, "None observed yet.") {
 				vs = append(vs, Violation{
 					File: d.relPath, Line: s.StartLine, Severity: "error",
 					Rule:    "D-observed-consequences-placeholder",
-					Message: "Proposed decisions must contain 'None observed yet.' in Observed Consequences",
+					Message: "Draft decisions must contain 'None observed yet.' in Observed Consequences",
 				})
 			}
 		}
@@ -411,8 +412,8 @@ func checkDecisionFile(d *parsedDecision, specRoot string, bySlug map[string]*pa
 		}
 	}
 
-	// D-archived-location: Superseded/Deprecated must be in archived/
-	if status == "Superseded" || status == "Deprecated" {
+	// D-archived-location: Rejected/Superseded/Deprecated must be in archived/
+	if status == "Rejected" || status == "Superseded" || status == "Deprecated" {
 		if !d.archived {
 			vs = append(vs, Violation{
 				File: d.relPath, Line: d.fieldByName["Status"].Line, Severity: "error",
@@ -422,11 +423,11 @@ func checkDecisionFile(d *parsedDecision, specRoot string, bySlug map[string]*pa
 		}
 	}
 	// Active decisions must NOT be in archived/
-	if d.archived && (status == "Proposed" || status == "Accepted") {
+	if d.archived && (status == "Draft" || status == "In Review" || status == "Approved") {
 		vs = append(vs, Violation{
 			File: d.relPath, Line: d.fieldByName["Status"].Line, Severity: "error",
 			Rule:    "D-archived-location",
-			Message: fmt.Sprintf("files under spec/decisions/archived/ must have Status Superseded or Deprecated; got %q", status),
+			Message: fmt.Sprintf("files under spec/decisions/archived/ must have Status Rejected, Superseded, or Deprecated; got %q", status),
 		})
 	}
 
@@ -448,15 +449,15 @@ func checkDecisionFile(d *parsedDecision, specRoot string, bySlug map[string]*pa
 			})
 		}
 	}
-	// Deprecated must have Superseded By = —
-	if status == "Deprecated" {
+	// Deprecated and Rejected must have Superseded By = —
+	if status == "Deprecated" || status == "Rejected" {
 		if f, ok := d.fieldByName["Superseded By"]; ok {
 			val := strings.TrimSpace(f.Value)
 			if val != "—" && val != "-" && val != "" {
 				vs = append(vs, Violation{
 					File: d.relPath, Line: f.Line, Severity: "error",
 					Rule:    "D-superseded-requires-successor",
-					Message: "Status: Deprecated requires **Superseded By:** to be `—`",
+					Message: fmt.Sprintf("Status: %s requires **Superseded By:** to be `—`", status),
 				})
 			}
 		}

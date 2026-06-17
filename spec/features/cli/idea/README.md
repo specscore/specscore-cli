@@ -24,13 +24,18 @@ Ideas have a strict required-sections contract defined by the [idea](../../idea/
 
 | Directory | Description |
 |---|---|
-| [change-status/](change-status/README.md) | Transition an Idea's status per the legal-transition matrix; `--to=archived` also relocates the file under `spec/ideas/archived/` |
+| [change-status/](change-status/README.md) | Transition an Idea's `**Status:**` in place per the legal-transition matrix (status only — never relocates a file) |
+| [archive/](archive/README.md) | File an Idea out of active view along the orthogonal archived axis (`**Archived:** true` + relocation to `spec/ideas/archived/`), and the inverse `unarchive` |
 | [new/](new/README.md) | Scaffold a new Idea artifact at `spec/ideas/<slug>.md` (or a change-request proposal at `spec/features/<target>/proposals/<slug>.md`) |
 | [relocate/](relocate/README.md) | Move an Idea or sidekick-seed artifact across SpecScore-managed repos, with cross-repo link cleanup and per-repo auto-commit |
 
 ### change-status
 
-Transitions an Idea per the kind's legal-transition matrix: `Draft → Approved`, and any active status → `Archived`. The `--to=archived` path additionally moves the file from `spec/ideas/<slug>.md` to `spec/ideas/archived/<slug>.md` (rollback covers both rewrite and relocation; collision exits `1`). Implements the [lifecycle-transitions](../lifecycle-transitions/README.md) shared contract. Illegal `(from, to)` pairs — including re-running on the target status — exit `4` (InvalidTransition).
+Transitions an Idea's `**Status:**` in place per the kind's legal-transition matrix (the human prep band `Draft → In Review → Approved`, the specification band `Approved → Specifying → Specified → Implementing → Implemented`, and the disposition arcs `→ Rejected`/`→ Stale`). It rewrites only the status line — it never relocates a file. Implements the [lifecycle-transitions](../lifecycle-transitions/README.md) shared contract. Illegal `(from, to)` pairs — including re-running on the target status — exit `4` (InvalidTransition).
+
+### archive / unarchive
+
+Files an Idea out of active view along the axis **orthogonal to status**: `idea archive <slug>` sets `**Archived:** true` (keeping the terminal `**Status:**`) and relocates `spec/ideas/<slug>.md` → `spec/ideas/archived/<slug>.md`; `idea unarchive <slug>` reverses both. Collision on the destination exits `1`; rollback covers the relocation and any index stub the verb materialized. See [archive/](archive/README.md).
 
 ### list
 
