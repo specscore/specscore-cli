@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-Adds six lint rules (`P-001`–`P-006`) and the underlying single-file Plan parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `plan` Feature (`spec/features/skills/plan/README.md` in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo). `P-001`–`P-004` unblock the in-development `specstudio:implement` skill, which depends on machine-checkable validation of `**Mode:**`, `**Status:**`, and `**Depends-On:**` task fields on single-file Plans at `spec/plans/<slug>.md`. `P-005` validates the optional `**Parent:**` body-metadata line that `cli/plan/new --parent` emits — the master/sub-plan composition primitive — resolving same-repo parents and accepting cross-repo `<repo-slug>:<slug>` references syntactically without sibling-repo scanning.
+Adds seven lint rules (`P-001`–`P-007`) and the underlying single-file Plan parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `plan` Feature (`spec/features/skills/plan/README.md` in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo). `P-001`–`P-004` unblock the in-development `specstudio:implement` skill, which depends on machine-checkable validation of `**Mode:**`, `**Status:**`, and `**Depends-On:**` task fields on single-file Plans at `spec/plans/<slug>.md`. `P-005` validates the optional `**Parent:**` body-metadata line that `cli/plan/new --parent` emits — the master/sub-plan composition primitive — resolving same-repo parents and accepting cross-repo `<repo-slug>:<slug>` references syntactically without sibling-repo scanning. `P-006` validates the Plan's body document-status against the canonical Plan status set, and `P-007` derives the Plan's execution-band status (`Executing`/`Blocked`/`Implemented`/`Failed`) from the task-status rollup, reconciling drift via `--fix` (the canonical [plan#req:execution-status-derived](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#req-execution-status-derived) / [#req:status-rollup](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#req-status-rollup) contract).
 
 ## Problem
 
@@ -60,7 +60,7 @@ The parser MUST recognize `**Verifies:** <feature-slug>#ac:<ac-slug>, <feature-s
 
 #### REQ: task-status-field
 
-The parser MUST recognize `**Status:** <pending|in-progress|done|blocked>` as a task body field. The value MUST be exactly one of those four lowercase tokens. When the field is absent, the parser MUST treat the task as `**Status:** pending` (backward-compatible default per upstream `REQ:task-status-field`). When the field is present with any other value, the lint suite MUST report the violation through `P-004` so a single rule covers schema-level posture and status validity.
+The parser MUST recognize `**Status:** <pending|in-progress|done|blocked|failed|aborted>` as a task body field. The value MUST be exactly one of those six lowercase tokens. When the field is absent, the parser MUST treat the task as `**Status:** pending` (backward-compatible default per upstream `REQ:task-status-field`). When the field is present with any other value, the lint suite MUST report the violation through `P-004` so a single rule covers schema-level posture and status validity. The `failed` and `aborted` tokens feed the execution-band rollup that `P-007` derives (a `failed`/`aborted` task rolls the Plan up to `Failed`).
 
 #### REQ: task-depends-on-field
 
@@ -158,7 +158,7 @@ In a Plan with `**Mode:** stub`, a placeholder body on a task whose `**Status:**
 
 #### REQ: rule-p-004-invalid-status-value
 
-`P-004` MUST report a violation when a task's `**Status:**` field is present with a value other than `pending`, `in-progress`, `done`, or `blocked`. The violation message MUST cite the offending task number and the accepted value set.
+`P-004` MUST report a violation when a task's `**Status:**` field is present with a value other than `pending`, `in-progress`, `done`, `blocked`, `failed`, or `aborted`. The violation message MUST cite the offending task number and the accepted value set.
 
 #### REQ: rule-p-004-not-autofixable
 
@@ -208,6 +208,22 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 `P-006` MUST report a violation when a single-file Plan's body `**Status:**` value is not one of the eleven canonical Plan statuses: `Draft`, `In Review`, `Approved`, `Executing`, `Blocked`, `Implemented`, `Failed`, `Rejected`, `Withdrawn`, `Superseded`, `Deprecated` (Title Case, single ASCII space between words, per the upstream `REQ:per-artifact-status-sets`). The comparison is exact and case-sensitive. The violation MUST name the offending value and the legal set, with `File` set to the Plan path and `Line` set to the `**Status:**` line. When the `**Status:**` line is absent, `P-006` MUST emit nothing (presence of the line is governed by other rules); only a present-but-out-of-set value is a `P-006` violation. Directory-form plans at `spec/plans/<slug>/README.md` MUST NOT be inspected by `P-006`.
 
+### Lint rule P-007 — Execution-band derivation
+
+`P-007` derives a single-file Plan's execution-band status (`Executing`, `Blocked`, `Implemented`, `Failed`) from the rollup of its task `**Status:**` values and reconciles drift via `--fix`. It implements the canonical [plan#req:execution-status-derived](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#req-execution-status-derived) and [plan#req:status-rollup](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#req-status-rollup) contract: the execution-band statuses are never hand-authored, and the rule transitions only from `Approved` onward, never overwriting a human-authored prep (`Draft`/`In Review`) or disposition (`Rejected`/`Withdrawn`/`Superseded`/`Deprecated`) status.
+
+#### REQ: rule-p-007-registered
+
+`P-007` MUST be registered in the lint rule registry under the name `P-007` (uppercase, hyphenated), at severity `error`, and MUST execute as part of the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
+
+#### REQ: rule-p-007-execution-band-derivation
+
+`P-007` MUST operate only on single-file Plans (per [plan-detection-single-file](#req-plan-detection-single-file) / [plan-detection-title-prefix](#req-plan-detection-title-prefix)); directory-form plans MUST NOT be inspected. The rule acts only when the Plan's body `**Status:**` is one of the derivation-eligible values `Approved`, `Executing`, `Blocked`, `Implemented`, or `Failed`. For a prep status (`Draft`, `In Review`) or a disposition (`Rejected`, `Withdrawn`, `Superseded`, `Deprecated`), `P-007` MUST emit nothing and change nothing — those are human-authored and MUST NEVER be overwritten. When eligible, `P-007` MUST compute the derived band from the task-status rollup with precedence `Failed` > `Executing` > `Blocked` > `Implemented`: any task `failed`/`aborted` derives `Failed`; else any task `in-progress` derives `Executing`; else any task `blocked` (none in-progress/failed) derives `Blocked`; else when there is at least one task and all tasks are `done`, derives `Implemented`. When there are no tasks, or any task is still `pending` so the set cannot resolve to a single band, the rollup is INDETERMINATE and `P-007` MUST emit nothing and change nothing. When the rollup is determinate and the derived band differs from the current body `**Status:**`, `P-007` MUST report a violation citing the current (stale) status, the derived band, the Plan file path, and the `**Status:**` line. `P-007` MUST read task status only — it MUST NOT write task statuses.
+
+#### REQ: rule-p-007-fixer
+
+`P-007` MUST be autofixable. `specscore spec lint --fix` MUST rewrite ONLY the body `**Status:**` line of a drifting Plan to the derived band, byte-preserving the rest of the file. The fix MUST be idempotent: a second `--fix` pass over a reconciled Plan MUST be a no-op. The fixer MUST honor the same guards as the check (eligible body status + determinate rollup + actual drift); it MUST NEVER move a Plan out of a prep or disposition status, and MUST NEVER write task statuses. The fix runs on the unscoped pass and when `--fix=P-007` names it explicitly.
+
 ### Co-existence with existing plan checkers
 
 #### REQ: directory-plans-untouched
@@ -222,11 +238,11 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 #### REQ: rules-in-default-suite
 
-`P-001`, `P-002`, `P-003`, `P-004`, `P-005`, and `P-006` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
+`P-001`, `P-002`, `P-003`, `P-004`, `P-005`, `P-006`, and `P-007` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
 
 #### REQ: rules-emit-stable-violation-shape
 
-Violations from `P-001`–`P-006` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations).
+Violations from `P-001`–`P-007` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations).
 
 ## Acceptance Criteria
 
@@ -306,7 +322,7 @@ Violations from `P-001`–`P-006` MUST use the existing `lint.Violation` struct 
 
 **Given** a Plan with a task declaring `**Status:** waiting` (an unrecognized value),
 **When** `specscore spec lint` runs,
-**Then** a `P-004` violation is emitted citing the offending task number and the accepted value set (`pending`, `in-progress`, `done`, `blocked`).
+**Then** a `P-004` violation is emitted citing the offending task number and the accepted value set (`pending`, `in-progress`, `done`, `blocked`, `failed`, `aborted`).
 
 ### AC: defaults-when-fields-absent (verifies REQ:plan-mode-field, REQ:task-status-field, REQ:task-depends-on-field)
 
@@ -367,6 +383,48 @@ Violations from `P-001`–`P-006` MUST use the existing `lint.Violation` struct 
 **Given** a single-file Plan whose body `**Status:**` line reads `Executing` (a canonical Plan status),
 **When** `specscore spec lint` runs,
 **Then** `P-006` emits zero violations for that Plan.
+
+### AC: derive-executing-from-in-progress (verifies REQ:rule-p-007-execution-band-derivation, REQ:rule-p-007-registered)
+
+**Given** a single-file Plan whose body `**Status:**` is `Approved` and whose tasks include one `in-progress` task (none `failed`/`aborted`),
+**When** `specscore spec lint` runs,
+**Then** lint exits non-zero and a single `P-007` violation is emitted naming the derived band `Executing` and the stale status `Approved`, at severity `error`, with `File` set to the Plan path and `Line` at the `**Status:**` line.
+
+### AC: derive-blocked (verifies REQ:rule-p-007-execution-band-derivation)
+
+**Given** an `Approved` single-file Plan whose tasks are `done` and `blocked` with none `in-progress`/`failed`,
+**When** `specscore spec lint` runs,
+**Then** a `P-007` violation is emitted naming the derived band `Blocked`.
+
+### AC: derive-implemented-from-all-done (verifies REQ:rule-p-007-execution-band-derivation)
+
+**Given** an `Approved` single-file Plan with at least one task and all tasks `done`,
+**When** `specscore spec lint` runs,
+**Then** a `P-007` violation is emitted naming the derived band `Implemented`.
+
+### AC: derive-failed-from-failed-or-aborted (verifies REQ:rule-p-007-execution-band-derivation, REQ:task-status-field)
+
+**Given** a single-file Plan whose body `**Status:**` is `Executing` and whose tasks include one `failed` (or `aborted`) task alongside an `in-progress` task,
+**When** `specscore spec lint` runs,
+**Then** a `P-007` violation is emitted naming the derived band `Failed` (`Failed` wins the precedence over `Executing`).
+
+### AC: indeterminate-rollup-no-op (verifies REQ:rule-p-007-execution-band-derivation)
+
+**Given** an `Approved` single-file Plan with a `done` task and a `pending` task (or a Plan with no tasks),
+**When** `specscore spec lint` runs,
+**Then** `P-007` emits zero violations — the rollup is indeterminate and the band cannot be derived.
+
+### AC: prep-and-disposition-never-overwritten (verifies REQ:rule-p-007-execution-band-derivation, REQ:rule-p-007-fixer)
+
+**Given** a single-file Plan whose tasks are all `done` (a determinate `Implemented` rollup) but whose body `**Status:**` is a prep status (`Draft` or `In Review`) or a disposition (`Rejected`, `Withdrawn`, `Superseded`, `Deprecated`),
+**When** `specscore spec lint` and `specscore spec lint --fix` run,
+**Then** `P-007` emits zero violations and `--fix` leaves the file byte-for-byte unchanged — human-authored prep/disposition statuses are never overwritten.
+
+### AC: fix-reconciles-and-idempotent (verifies REQ:rule-p-007-fixer)
+
+**Given** an `Approved` single-file Plan with all tasks `done` (derives `Implemented`),
+**When** `specscore spec lint --fix` runs and then `specscore spec lint --fix` runs a second time,
+**Then** the first pass rewrites only the body `**Status:**` line to `Implemented` (byte-preserving the rest of the file), the post-fix lint reports no `P-007` violation, and the second `--fix` pass leaves the file unchanged.
 
 ### AC: directory-plans-untouched (verifies REQ:directory-plans-untouched, REQ:no-rule-overlap)
 

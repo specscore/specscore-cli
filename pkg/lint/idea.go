@@ -10,6 +10,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/idea"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
 // ideaDiscoverFn is the injectable discovery function; tests may replace it.
@@ -798,10 +799,7 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 				if fst == "Implementing" {
 					anyImplementing = true
 				}
-				// TODO(integration): switch the "In Review" literal to
-				// lifecycle.FeatureInReview once sp1a's Feature-enum rename
-				// merges (the symbol does not exist on this branch yet).
-				if fst == "Draft" || fst == "In Review" {
+				if fst == string(lifecycle.FeatureDraft) || fst == string(lifecycle.FeatureInReview) {
 					anyDraftOrInReview = true
 				}
 			}

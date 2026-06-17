@@ -331,6 +331,36 @@ func TestParse_InvalidStatusValue(t *testing.T) {
 	}
 }
 
+// TestParse_FailedAndAbortedStatusesValid covers the extended task-status set:
+// `failed` and `aborted` are accepted alongside the original four.
+func TestParse_FailedAndAbortedStatusesValid(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: Extended
+
+**Source Feature:** foo
+
+## Tasks
+
+### Task 1: F
+**Verifies:** foo#ac:f
+**Status:** failed
+
+### Task 2: A
+**Verifies:** foo#ac:a
+**Status:** aborted
+`
+	p, err := Parse(writePlan(t, dir, "ext", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Tasks[0].Status != StatusFailed || !p.Tasks[0].StatusValueValid {
+		t.Fatalf("task1 status=%v valid=%v", p.Tasks[0].Status, p.Tasks[0].StatusValueValid)
+	}
+	if p.Tasks[1].Status != StatusAborted || !p.Tasks[1].StatusValueValid {
+		t.Fatalf("task2 status=%v valid=%v", p.Tasks[1].Status, p.Tasks[1].StatusValueValid)
+	}
+}
+
 func TestParse_DependsOnVariants(t *testing.T) {
 	dir := t.TempDir()
 	body := `# Plan: Deps

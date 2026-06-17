@@ -109,3 +109,42 @@ func TestTaskRollup_Mixed(t *testing.T) {
 		t.Fatalf("rollup = %+v, want %+v", got, want)
 	}
 }
+
+// TestDeriveExecutionBand covers the canonical plan#req:status-rollup
+// precedence (Failed > Executing > Blocked > Implemented) plus the
+// INDETERMINATE cases (no tasks, any task still pending).
+func TestDeriveExecutionBand(t *testing.T) {
+	mk := func(statuses ...TaskStatus) *Plan {
+		p := &Plan{}
+		for _, s := range statuses {
+			p.Tasks = append(p.Tasks, Task{Status: s})
+		}
+		return p
+	}
+	cases := []struct {
+		name     string
+		plan     *Plan
+		wantBand string
+		wantOK   bool
+	}{
+		{"no-tasks", mk(), "", false},
+		{"all-pending", mk(StatusPending, StatusPending), "", false},
+		{"some-pending-rest-done", mk(StatusDone, StatusPending), "", false},
+		{"all-done", mk(StatusDone, StatusDone), "Implemented", true},
+		{"in-progress", mk(StatusDone, StatusInProgress, StatusPending), "Executing", true},
+		{"blocked-only", mk(StatusDone, StatusBlocked), "Blocked", true},
+		{"blocked-with-pending", mk(StatusBlocked, StatusPending), "Blocked", true},
+		{"failed-wins-over-inprogress", mk(StatusFailed, StatusInProgress), "Failed", true},
+		{"aborted-counts-as-failed", mk(StatusAborted, StatusDone), "Failed", true},
+		{"in-progress-wins-over-blocked", mk(StatusInProgress, StatusBlocked), "Executing", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			band, ok := tc.plan.DeriveExecutionBand()
+			if band != tc.wantBand || ok != tc.wantOK {
+				t.Fatalf("DeriveExecutionBand() = (%q, %v), want (%q, %v)",
+					band, ok, tc.wantBand, tc.wantOK)
+			}
+		})
+	}
+}

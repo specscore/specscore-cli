@@ -38,6 +38,8 @@ const (
 	StatusInProgress TaskStatus = "in-progress"
 	StatusDone       TaskStatus = "done"
 	StatusBlocked    TaskStatus = "blocked"
+	StatusFailed     TaskStatus = "failed"
+	StatusAborted    TaskStatus = "aborted"
 )
 
 // Plan is a parsed single-file Plan artifact.
@@ -343,7 +345,7 @@ func parseTaskBody(t *Task) {
 			t.StatusRaw = val
 			t.StatusLine = absLine
 			switch TaskStatus(val) {
-			case StatusPending, StatusInProgress, StatusDone, StatusBlocked:
+			case StatusPending, StatusInProgress, StatusDone, StatusBlocked, StatusFailed, StatusAborted:
 				t.Status = TaskStatus(val)
 				t.StatusValueValid = true
 			default:

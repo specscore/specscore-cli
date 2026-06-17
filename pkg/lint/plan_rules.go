@@ -29,6 +29,11 @@ type planRulesChecker struct {
 	// is more often a dropped `**Source Feature:**` than an intentional
 	// source-less plan; the default fix pass leaves it as a P-002 error.
 	fixNoSource bool
+
+	// fixP007, when true, makes the fix pass reconcile drifting execution-band
+	// plan statuses (P-007). Unlike no-source, P-007 is a standard fixer: it
+	// runs on the unscoped pass and when `--fix=P-007` names it explicitly.
+	fixP007 bool
 }
 
 func newPlanRulesChecker() *planRulesChecker {
@@ -40,10 +45,10 @@ func newPlanRulesChecker() *planRulesChecker {
 func (c *planRulesChecker) name() string     { return "P-001" }
 func (c *planRulesChecker) severity() string { return "error" }
 
-// fixTargets declares the `--fix=<target>` action this checker answers to. The
-// only fix it performs is the opt-in no-source repair, named "no-source" rather
-// than any of its P-00x rule IDs.
-func (c *planRulesChecker) fixTargets() []string { return []string{FixTargetNoSource} }
+// fixTargets declares the `--fix=<target>` actions this checker answers to: the
+// opt-in no-source repair (named "no-source" rather than a P-00x rule ID) and
+// the standard P-007 execution-band reconciliation (named by its rule ID).
+func (c *planRulesChecker) fixTargets() []string { return []string{FixTargetNoSource, "P-007"} }
 
 func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 	plansDir := filepath.Join(specRoot, "plans")
@@ -98,16 +103,29 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 	return violations, nil
 }
 
-// fix implements the fixer interface. The only fix this checker performs is the
-// opt-in "no-source" repair: when enabled, every single-file plan that declares
-// no source line at all gains a `**Source:** none` header line. A plan that
-// already declares a source (Feature, Idea, or an unrecognized `**Source:**`
-// value) is left untouched — only a fully-absent source line is repaired, and
-// an unrecognized value stays a hard P-002 error. Idempotent.
+// fix implements the fixer interface. It performs two independent repairs,
+// each gated by its own flag: the opt-in "no-source" repair and the standard
+// P-007 execution-band reconciliation. Both are idempotent.
 func (c *planRulesChecker) fix(specRoot string) error {
-	if !c.fixNoSource {
-		return nil
+	if c.fixP007 {
+		if err := fixP007(specRoot); err != nil {
+			return err
+		}
 	}
+	if c.fixNoSource {
+		if err := c.fixNoSourceLines(specRoot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// fixNoSourceLines is the opt-in "no-source" repair: every single-file plan that
+// declares no source line at all gains a `**Source:** none` header line. A plan
+// that already declares a source (Feature, Idea, or an unrecognized `**Source:**`
+// value) is left untouched — only a fully-absent source line is repaired, and an
+// unrecognized value stays a hard P-002 error. Idempotent.
+func (c *planRulesChecker) fixNoSourceLines(specRoot string) error {
 	plansDir := filepath.Join(specRoot, "plans")
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
 		return nil
@@ -186,6 +204,9 @@ func lintPlan(p *plan.Plan, relPath, featuresDir string) []Violation {
 	// P-006 document-status vocabulary validation. Depends only on the Plan.
 	v = append(v, lintP006(p, relPath)...)
 
+	// P-007 execution-band derivation drift. Depends only on the Plan.
+	v = append(v, lintP007(p, relPath)...)
+
 	return v
 }
 
@@ -213,7 +234,7 @@ func lintP004SchemaTokens(p *plan.Plan, relPath string) []Violation {
 				Severity: "error",
 				Rule:     "P-004",
 				Message: fmt.Sprintf(
-					"Task %d: invalid **Status:** value %q (accepted: pending, in-progress, done, blocked)",
+					"Task %d: invalid **Status:** value %q (accepted: pending, in-progress, done, blocked, failed, aborted)",
 					t.Number, t.StatusRaw,
 				),
 			})
@@ -655,6 +676,102 @@ func lintP006(p *plan.Plan, relPath string) []Violation {
 			p.Status, canonicalPlanStatusList,
 		),
 	}}
+}
+
+// ----- P-007 execution-band derivation -----
+
+// derivationEligibleStatuses is the set of body **Status:** values from which
+// `lint --fix` may derive an execution band: the approval gate plus the four
+// execution-band statuses (plan#req:execution-status-derived). Prep states
+// (Draft, In Review) and dispositions (Rejected, Withdrawn, Superseded,
+// Deprecated) are human-authored and MUST NEVER be overwritten.
+var derivationEligibleStatuses = map[string]bool{
+	"Approved":    true,
+	"Executing":   true,
+	"Blocked":     true,
+	"Implemented": true,
+	"Failed":      true,
+}
+
+// lintP007 reports execution-band drift on a single-file Plan: when the body
+// **Status:** is derivation-eligible and the task-status rollup resolves to a
+// determinate band that differs from the current body status, the band is
+// stale. An indeterminate rollup, a prep/disposition body status, or a matching
+// band emits nothing. The rule reads task status only — `--fix` (below) rewrites
+// just the body **Status:** line.
+func lintP007(p *plan.Plan, relPath string) []Violation {
+	if p.StatusLine == 0 || !derivationEligibleStatuses[p.Status] {
+		return nil
+	}
+	band, ok := p.DeriveExecutionBand()
+	if !ok || band == p.Status {
+		return nil
+	}
+	return []Violation{{
+		File:      relPath,
+		Line:      p.StatusLine,
+		Severity:  "error",
+		Rule:      "P-007",
+		FixTarget: "P-007",
+		Message: fmt.Sprintf(
+			"plan **Status:** %q is stale: the task-status rollup derives %q (run --fix to reconcile)",
+			p.Status, band,
+		),
+	}}
+}
+
+// fixP007 rewrites the body **Status:** line of every drifting single-file Plan
+// to its derived execution band. It mirrors lintP007's guards exactly
+// (derivation-eligible body status + determinate rollup + actual drift) so a
+// second pass is a no-op. Only the **Status:** line is rewritten; the rest of
+// the file is byte-preserved.
+func fixP007(specRoot string) error {
+	plansDir := filepath.Join(specRoot, "plans")
+	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(plansDir)
+	if err != nil {
+		return fmt.Errorf("reading plans dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == "README.md" || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		planPath := filepath.Join(plansDir, name)
+		p, parseErr := plan.Parse(planPath)
+		if parseErr != nil {
+			return fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
+		}
+		if !p.HasPlanTitle || p.StatusLine == 0 || !derivationEligibleStatuses[p.Status] {
+			continue
+		}
+		band, ok := p.DeriveExecutionBand()
+		if !ok || band == p.Status {
+			continue
+		}
+		if err := rewritePlanStatusLine(planPath, p.StatusLine, band); err != nil {
+			return fmt.Errorf("fixing %s: %w", planPath, err)
+		}
+	}
+	return nil
+}
+
+// rewritePlanStatusLine rewrites the 1-based statusLine of a plan file to
+// `**Status:** <band>`, preserving every other line verbatim. statusLine comes
+// from the parse pass over the same file, so it is always in range.
+func rewritePlanStatusLine(path string, statusLine int, band string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	lines[statusLine-1] = "**Status:** " + band
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 // ----- P-005 parent reference validity -----
