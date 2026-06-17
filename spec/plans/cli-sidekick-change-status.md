@@ -48,7 +48,7 @@ Resolve `<slug>` to `spec/ideas/seeds/<slug>.md` within the project root, exclud
 
 **Verifies:** cli/sidekick/change-status#ac:unrecognized-target-rejected, cli/sidekick/change-status#ac:non-queued-source-rejected
 **Depends-On:** 3
-**Status:** pending
+**Status:** done
 
 Declare the seed matrix `Queued → {Implemented, Rejected, Archived}`. Validate `--to` (unrecognized value exits `2` before state-machine validation; case-insensitive, canonical title-case persisted). Enforce the strict source check (a non-`Queued` source exits `4`). Designate `Queued → Rejected` as reason-required, consuming Task 2's mechanism.
 
