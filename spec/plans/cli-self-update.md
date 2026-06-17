@@ -1,6 +1,6 @@
 # Plan: CLI Self-Update
 
-**Status:** Completed
+**Status:** Implemented
 **Mode:** full
 **Source Feature:** cli/self-update
 **Date:** 2026-06-01

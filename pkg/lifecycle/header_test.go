@@ -1,0 +1,193 @@
+package lifecycle
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func writeHeaderFixture(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+	return path
+}
+
+// Empty/whitespace successor is a no-op.
+func TestSetSupersededBy_EmptyIsNoOp(t *testing.T) {
+	t.Parallel()
+	body := "# Plan: X\n\n**Status:** Approved\n**Supersedes:** —\n"
+	path := writeHeaderFixture(t, body)
+	orig, wrote, err := SetSupersededBy(path, "   ")
+	if err != nil || wrote || orig != nil {
+		t.Fatalf("expected no-op, got orig=%v wrote=%v err=%v", orig, wrote, err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != body {
+		t.Errorf("file changed:\n%s", got)
+	}
+}
+
+// Insert immediately after the Supersedes line.
+func TestSetSupersededBy_InsertAfterSupersedes(t *testing.T) {
+	t.Parallel()
+	body := "# Plan: X\n\n**Status:** Approved\n**Supersedes:** —\n\n## Summary\n"
+	path := writeHeaderFixture(t, body)
+	orig, wrote, err := SetSupersededBy(path, "auth-v2")
+	if err != nil || !wrote {
+		t.Fatalf("SetSupersededBy: wrote=%v err=%v", wrote, err)
+	}
+	if string(orig) != body {
+		t.Errorf("original bytes mismatch")
+	}
+	got, _ := os.ReadFile(path)
+	want := "# Plan: X\n\n**Status:** Approved\n**Supersedes:** —\n**Superseded By:** auth-v2\n\n## Summary\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// No Supersedes line → insert after the Status line.
+func TestSetSupersededBy_InsertAfterStatus(t *testing.T) {
+	t.Parallel()
+	body := "# Plan: X\n\n**Status:** Approved\n\n## Summary\n"
+	path := writeHeaderFixture(t, body)
+	if _, _, err := SetSupersededBy(path, "auth-v2"); err != nil {
+		t.Fatalf("SetSupersededBy: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "# Plan: X\n\n**Status:** Approved\n**Superseded By:** auth-v2\n\n## Summary\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// An existing **Superseded By:** line is rewritten in place, preserving
+// indentation and trailing whitespace.
+func TestSetSupersededBy_RewriteExisting(t *testing.T) {
+	t.Parallel()
+	body := "**Status:** Approved\n**Superseded By:** old-plan  \n"
+	path := writeHeaderFixture(t, body)
+	if _, _, err := SetSupersededBy(path, "auth-v2"); err != nil {
+		t.Fatalf("SetSupersededBy: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "**Status:** Approved\n**Superseded By:** auth-v2  \n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// CRLF line endings are preserved on insertion.
+func TestSetSupersededBy_CRLFPreserved(t *testing.T) {
+	t.Parallel()
+	body := "**Status:** Approved\r\n**Supersedes:** —\r\n"
+	path := writeHeaderFixture(t, body)
+	if _, _, err := SetSupersededBy(path, "auth-v2"); err != nil {
+		t.Fatalf("SetSupersededBy: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "**Status:** Approved\r\n**Supersedes:** —\r\n**Superseded By:** auth-v2\r\n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// A status line with no terminator (EOF) still gets a sane inserted line.
+func TestSetSupersededBy_NoTerminatorAnchor(t *testing.T) {
+	t.Parallel()
+	body := "**Status:** Approved"
+	path := writeHeaderFixture(t, body)
+	if _, _, err := SetSupersededBy(path, "auth-v2"); err != nil {
+		t.Fatalf("SetSupersededBy: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "**Status:** Approved\n**Superseded By:** auth-v2\n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// No Status and no Supersedes anchor → ErrStatusLineNotFound, file untouched.
+func TestSetSupersededBy_NoAnchor(t *testing.T) {
+	t.Parallel()
+	body := "# Plan: X\n\nNo header fields.\n"
+	path := writeHeaderFixture(t, body)
+	_, wrote, err := SetSupersededBy(path, "auth-v2")
+	if !errors.Is(err, ErrStatusLineNotFound) {
+		t.Fatalf("expected ErrStatusLineNotFound, got %v", err)
+	}
+	if wrote {
+		t.Error("wrote should be false")
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != body {
+		t.Errorf("file changed:\n%s", got)
+	}
+}
+
+// Read failure: a missing file surfaces the os error.
+func TestSetSupersededBy_ReadError(t *testing.T) {
+	t.Parallel()
+	_, _, err := SetSupersededBy(filepath.Join(t.TempDir(), "nope.md"), "auth-v2")
+	if err == nil {
+		t.Fatal("expected read error, got nil")
+	}
+}
+
+// Write failure on the rewrite-in-place path: a read-only directory makes the
+// atomic write fail.
+func TestSetSupersededBy_RewriteWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only directory is not enforced for root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(path, []byte("**Status:** Approved\n**Superseded By:** old\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, _, err := SetSupersededBy(path, "auth-v2"); err == nil {
+		t.Fatal("expected write error, got nil")
+	}
+}
+
+// Write failure on the insertion path: read-only directory.
+func TestSetSupersededBy_InsertWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only directory is not enforced for root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(path, []byte("**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, _, err := SetSupersededBy(path, "auth-v2"); err == nil {
+		t.Fatal("expected write error, got nil")
+	}
+}
+
+// findSupersedesLineIndex returns -1 when absent (covered indirectly by the
+// after-Status case, exercised directly here for clarity).
+func TestFindSupersedesLineIndex(t *testing.T) {
+	t.Parallel()
+	lines := splitKeepTerminators([]byte("**Status:** Approved\n**Supersedes:** —\n"))
+	if got := findSupersedesLineIndex(lines); got != 1 {
+		t.Errorf("got %d, want 1", got)
+	}
+	none := splitKeepTerminators([]byte("**Status:** Approved\n"))
+	if got := findSupersedesLineIndex(none); got != -1 {
+		t.Errorf("got %d, want -1", got)
+	}
+}

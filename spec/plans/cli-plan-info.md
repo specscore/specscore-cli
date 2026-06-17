@@ -1,6 +1,6 @@
 # Plan: Plan Info (CLI)
 
-**Status:** Completed
+**Status:** Implemented
 **Source Feature:** cli/plan/info
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok

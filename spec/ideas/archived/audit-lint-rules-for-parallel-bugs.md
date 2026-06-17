@@ -1,12 +1,13 @@
 # Idea: Audit lint rules for parallel bugs
 
-**Status:** Archived
+**Status:** Stale
+**Archived:** true
 **Date:** 2026-05-18
 **Owner:** alexander.trakhimenok
 **Promotes To:** —
 **Supersedes:** —
 **Related Ideas:** —
-**Archive Reason:** Audit completed — 106 rules audited, findings table committed to this document.
+**Archive Note:** Audit completed — 106 rules audited, findings table committed to this document.
 
 ## Problem Statement
 

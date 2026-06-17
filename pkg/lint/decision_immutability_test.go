@@ -81,13 +81,13 @@ func TestImmutabilityTitleModified(t *testing.T) {
 	}
 }
 
-// Regression: a frontmatter-carrying Accepted decision (post artifact-
+// Regression: a frontmatter-carrying Approved decision (post artifact-
 // frontmatter-convention migration) must not falsely trip immutability. The
 // committed version read via `git show HEAD:` also carries the frontmatter, so
 // the shared parser must skip the leading `---` block to read the real title —
 // otherwise it reads "" and reports a spurious "title changed from ”".
 func TestImmutabilityFrontmatterTolerated(t *testing.T) {
-	fm := "---\nformat: https://specscore.md/decision-specification\nstatus: Accepted\n---\n\n" + acceptedDecisionContent()
+	fm := "---\nformat: https://specscore.md/decision-specification\nstatus: Approved\n---\n\n" + acceptedDecisionContent()
 	root := setupGitRepo(t, map[string]string{
 		"decisions/0001-test.md": fm,
 	})
@@ -128,7 +128,7 @@ func TestImmutabilityStatusChangeAllowed(t *testing.T) {
 	})
 
 	// Change Status and Superseded By — these are allowed
-	modified := strings.Replace(original, "**Status:** Accepted", "**Status:** Superseded", 1)
+	modified := strings.Replace(original, "**Status:** Approved", "**Status:** Superseded", 1)
 	modified = strings.Replace(modified, "**Superseded By:** —", "**Superseded By:** 0002-new", 1)
 	_ = os.WriteFile(filepath.Join(root, "decisions/0001-test.md"), []byte(modified), 0o644)
 
@@ -137,10 +137,10 @@ func TestImmutabilityStatusChangeAllowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Should NOT flag Status or Superseded By changes.
-	// But the status changed FROM Accepted, so the immutability check
-	// skips it (committed version has Accepted, but current has Superseded —
-	// however, we only check files where current status == Accepted).
-	// Actually, the checker only checks current status == Accepted,
+	// But the status changed FROM Approved, so the immutability check
+	// skips it (committed version has Approved, but current has Superseded —
+	// however, we only check files where current status == Approved).
+	// Actually, the checker only checks current status == Approved,
 	// so a transition to Superseded would skip the check entirely.
 	for _, v := range vs {
 		if v.Rule == "D-immutability-once-accepted" && strings.Contains(v.Message, "Status") {
@@ -174,7 +174,7 @@ func TestImmutabilityObservedConsequencesAppendOnly(t *testing.T) {
 	t.Run("modification rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Accepted
+**Status:** Approved
 **Date:** 2026-05-20
 **Owner:** test@example.com
 **Tags:** —
@@ -236,7 +236,7 @@ None at this time.
 	t.Run("removal rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Accepted
+**Status:** Approved
 **Date:** 2026-05-20
 **Owner:** test@example.com
 **Tags:** —
@@ -301,7 +301,7 @@ func TestImmutabilityProposedNotChecked(t *testing.T) {
 		"decisions/0001-test.md": validDecisionContent(),
 	})
 
-	// Modify the Proposed decision — should not trigger immutability
+	// Modify the Draft decision — should not trigger immutability
 	modified := strings.Replace(validDecisionContent(), "Some context here.", "Completely rewritten context.", 1)
 	_ = os.WriteFile(filepath.Join(root, "decisions/0001-test.md"), []byte(modified), 0o644)
 
@@ -310,7 +310,7 @@ func TestImmutabilityProposedNotChecked(t *testing.T) {
 		t.Fatal(err)
 	}
 	if hasDecisionViolation(vs, "D-immutability-once-accepted", "") {
-		t.Error("Proposed decisions should not be checked for immutability")
+		t.Error("Draft decisions should not be checked for immutability")
 	}
 }
 
@@ -345,7 +345,7 @@ func TestImmutabilityUnchangedPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	if hasDecisionViolation(vs, "D-immutability-once-accepted", "") {
-		t.Error("unchanged Accepted decision should not have violations")
+		t.Error("unchanged Approved decision should not have violations")
 	}
 	if hasDecisionViolation(vs, "D-observed-consequences-append-only", "") {
 		t.Error("unchanged Observed Consequences should not have violations")

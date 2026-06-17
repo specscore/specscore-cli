@@ -10,6 +10,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
@@ -26,8 +27,165 @@ func planCommand() *cobra.Command {
 		planListCommand(),
 		planInfoCommand(),
 		planNewCommand(),
+		planChangeStatusCommand(),
 	)
 	return cmd
+}
+
+// planChangeStatusCommand transitions a Plan's **Status:** field via the
+// shared lifecycle state-machine contract. It owns ONLY the human-authored
+// arcs (the prep band plus the dispositions); the execution band
+// (Executing/Blocked/Implemented/Failed) is derived by `spec lint --fix` from
+// the task-status rollup and is NOT settable here.
+// See spec/features/cli/plan/change-status/README.md.
+func planChangeStatusCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "change-status <slug> --to=<status>",
+		Short: "Transition a Plan's Status (human-authored arcs only)",
+		Long: `Transitions spec/plans/<slug>.md (or the directory-form
+spec/plans/<slug>/README.md) from its current **Status:** to the value named
+by --to. The transition is validated against the Plan legal-transition matrix
+below; illegal (from, to) pairs exit 4. On success, the verb runs
+` + "`specscore spec lint --fix`" + ` to keep the plans-index in sync, prints
+"<slug>: <from> → <to>" to stdout, and exits 0.
+
+This verb owns only the human-authored transitions. The execution-band
+statuses (Executing, Blocked, Implemented, Failed) are derived by
+` + "`specscore spec lint --fix`" + ` from the task-status rollup and cannot be
+set here — passing one as --to exits 2.
+
+Both dispositions require a reason: --to=withdrawn and --to=superseded
+require --note. --to=superseded additionally requires --successor naming the
+plan that replaces this one; it is written as a **Superseded By:** reference.
+If anything fails after the status rewrite (lint failure, I/O error), the
+on-disk state is restored to its pre-invocation form before the verb exits.
+
+` + plan.LegalTransitionMatrix() + `
+Examples:
+
+  specscore plan change-status auth --to="In Review"
+  specscore plan change-status auth --to=approved
+  specscore plan change-status auth --to=withdrawn --note "abandoned after the v2 pivot"
+  specscore plan change-status auth --to=superseded --note "replaced" --successor auth-v2
+`,
+		Args:          cobra.ArbitraryArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runPlanChangeStatus,
+	}
+	cmd.Flags().String("to", "", "target status (required). Legal values: "+
+		strings.Join(plan.LegalChangeStatusTargetNames(), ", ")+" (case-insensitive).")
+	cmd.Flags().String("note", "", "markdown appended as a ## Resolution section; required for --to=withdrawn and --to=superseded")
+	cmd.Flags().String("successor", "", "slug of the plan that supersedes this one; required for --to=superseded, rejected otherwise")
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	return cmd
+}
+
+func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return exitcode.InvalidArgsError("missing required positional argument: <slug>")
+	}
+	if len(args) > 1 {
+		return exitcode.InvalidArgsErrorf(
+			"too many positional arguments: change-status accepts exactly one <slug>, got %d", len(args))
+	}
+	slug := args[0]
+	if err := plan.ValidateSlug(slug); err != nil {
+		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
+	}
+
+	toRaw, _ := cmd.Flags().GetString("to")
+	if strings.TrimSpace(toRaw) == "" {
+		return exitcode.InvalidArgsError("missing required flag: --to=<status>")
+	}
+	to, ok := lifecycle.ParseStatus(lifecycle.KindPlan, toRaw)
+	if !ok {
+		return exitcode.InvalidArgsErrorf(
+			"unrecognized --to value %q for plan; legal values: %s",
+			toRaw, strings.Join(plan.LegalChangeStatusTargetNames(), ", "))
+	}
+	// The execution-band statuses are recognized Plan statuses but are
+	// lint-derived, not human-settable. Reject them with a pointed message
+	// (exit 2) BEFORE the state-machine check. Every other recognized Plan
+	// status is a human-settable target (each appears as a To-column in the
+	// KindPlan matrix), so no further target filtering is needed here.
+	if plan.IsExecutionBandStatus(to) {
+		return exitcode.InvalidArgsErrorf(
+			"%s is a lint-derived execution-band status; it is set by `specscore spec lint --fix` from task rollup, not via change-status",
+			string(to))
+	}
+
+	note, _ := cmd.Flags().GetString("note")
+	successor, _ := cmd.Flags().GetString("successor")
+
+	// Reason-required dispositions: Withdrawn and Superseded require --note.
+	if to == lifecycle.PlanWithdrawn && strings.TrimSpace(note) == "" {
+		return exitcode.InvalidArgsError(
+			"transition to Withdrawn requires a reason: pass --note explaining why the plan was abandoned")
+	}
+	if to == lifecycle.PlanSuperseded && strings.TrimSpace(note) == "" {
+		return exitcode.InvalidArgsError(
+			"transition to Superseded requires a reason: pass --note describing what superseded the plan")
+	}
+
+	// Successor handling: required for Superseded (and must resolve to an
+	// existing plan), rejected for every other transition.
+	if to == lifecycle.PlanSuperseded {
+		if strings.TrimSpace(successor) == "" {
+			return exitcode.InvalidArgsError(
+				"transition to Superseded requires --successor naming the plan that replaces this one")
+		}
+	} else if strings.TrimSpace(successor) != "" {
+		return exitcode.InvalidArgsErrorf(
+			"--successor is only valid with --to=superseded (got --to=%s)", string(to))
+	}
+
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	// A Superseded plan MUST reference an existing successor plan.
+	if to == lifecycle.PlanSuperseded {
+		successor = strings.TrimSpace(successor)
+		if _, rerr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), successor); rerr != nil {
+			return exitcode.InvalidArgsErrorf(
+				"successor plan %q does not resolve to an existing plan at spec/plans/%s.md", successor, successor)
+		}
+	}
+
+	result, err := plan.ChangeStatus(plan.ChangeStatusOptions{
+		SpecRoot:     specRoot,
+		Slug:         slug,
+		To:           to,
+		Note:         note,
+		Successor:    successor,
+		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
+	})
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
+		result.Slug, string(result.From), string(result.To))
+	return nil
+}
+
+// resolvePlanFile mirrors plan.resolvePlanFile for the cobra layer's
+// --successor existence check: a successor resolves if either the flat file
+// spec/plans/<slug>.md or the directory-form spec/plans/<slug>/README.md
+// exists.
+func resolvePlanFile(plansDir, slug string) (string, error) {
+	flat := filepath.Join(plansDir, slug+".md")
+	if _, err := os.Stat(flat); err == nil {
+		return flat, nil
+	}
+	dir := filepath.Join(plansDir, slug, "README.md")
+	if _, err := os.Stat(dir); err == nil {
+		return dir, nil
+	}
+	return "", exitcode.NotFoundErrorf("plan not found: %s", slug)
 }
 
 // planNewCommand scaffolds a lint-clean flat Plan artifact at

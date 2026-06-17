@@ -357,7 +357,7 @@ func checkArchivedDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violat
 		}
 
 		// DI-archived-status-excludes-active: the archived index must not list
-		// decisions whose file Status is still active (Proposed/Accepted).
+		// decisions whose file Status is still active (Draft/In Review/Approved).
 		fileStatus := make(map[string]string)
 		for _, d := range decisions {
 			if d.slug != "" {
@@ -367,7 +367,7 @@ func checkArchivedDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violat
 			}
 		}
 		for _, e := range entries {
-			if st, ok := fileStatus[e.slug]; ok && (st == "Proposed" || st == "Accepted") {
+			if st, ok := fileStatus[e.slug]; ok && (st == "Draft" || st == "In Review" || st == "Approved") {
 				vs = append(vs, Violation{
 					File: rel, Line: 0, Severity: "error",
 					Rule:    "DI-archived-status-excludes-active",

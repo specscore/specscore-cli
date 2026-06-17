@@ -21,9 +21,13 @@ func validIdeaBody(title, status string, extraFields map[string]string) string {
 	for k, v := range extraFields {
 		fields[k] = v
 	}
-	order := []string{"Status", "Date", "Owner", "Promotes To", "Supersedes", "Related Ideas"}
-	if _, ok := extraFields["Archive Reason"]; ok {
-		order = append(order, "Archive Reason")
+	order := []string{"Status"}
+	if _, ok := extraFields["Archived"]; ok {
+		order = append(order, "Archived")
+	}
+	order = append(order, "Date", "Owner", "Promotes To", "Supersedes", "Related Ideas")
+	if _, ok := extraFields["Archive Note"]; ok {
+		order = append(order, "Archive Note")
 	}
 	var header strings.Builder
 	header.WriteString("# Idea: " + title + "\n\n")
@@ -83,9 +87,12 @@ func validProposalBody(title, status, targets string, extraFields map[string]str
 	if _, ok := fields["Phase"]; ok {
 		order = append(order, "Phase")
 	}
+	if _, ok := extraFields["Archived"]; ok {
+		order = append(order, "Archived")
+	}
 	order = append(order, "Date", "Owner", "Promotes To", "Supersedes", "Related Ideas")
-	if _, ok := extraFields["Archive Reason"]; ok {
-		order = append(order, "Archive Reason")
+	if _, ok := extraFields["Archive Note"]; ok {
+		order = append(order, "Archive Note")
 	}
 	var header strings.Builder
 	header.WriteString("# Proposal: " + title + "\n\n")
@@ -196,6 +203,20 @@ func activeIndexWith(slugs ...string) string {
 	return b.String()
 }
 
+// archivedIndexWith builds an archived-ideas index listing the given slugs in
+// the chronological `- <date> — [slug](slug.md) — <note>` format the
+// idea-archived-index-chronological rule expects. Dates default to the
+// validIdeaBody date (2026-04-10) and the note column to "—".
+func archivedIndexWith(slugs ...string) string {
+	var b strings.Builder
+	b.WriteString("# Archived Ideas\n\n")
+	for _, s := range slugs {
+		b.WriteString("- 2026-04-10 — [" + s + "](" + s + ".md) — —\n")
+	}
+	b.WriteString("\n## Open Questions\n\nNone at this time.\n")
+	return b.String()
+}
+
 func TestCheckIdeas_InvalidSlug(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/README.md":          activeIndex,
@@ -283,11 +304,13 @@ func TestCheckIdeas_SpecifiedWithoutPromotion(t *testing.T) {
 	}
 }
 
-func TestCheckIdeas_ArchivedOutsideArchivedDir(t *testing.T) {
+// An idea carrying **Archived:** true but living OUTSIDE archived/ fires
+// idea-archived-location: the flag and the location must agree.
+func TestCheckIdeas_ArchivedFlagOutsideArchivedDir(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/README.md":          activeIndexWith("x"),
 		"ideas/archived/README.md": archivedIndex,
-		"ideas/x.md":               validIdeaBody("X", "Archived", map[string]string{"Archive Reason": "abandoned"}),
+		"ideas/x.md":               validIdeaBody("X", "Stale", map[string]string{"Archived": "true"}),
 	})
 	vs, _ := CheckIdeas(specRoot, false)
 	if !hasRule(vs, "idea-archived-location") {
@@ -295,19 +318,66 @@ func TestCheckIdeas_ArchivedOutsideArchivedDir(t *testing.T) {
 	}
 }
 
-func TestCheckIdeas_ArchivedMissingReason(t *testing.T) {
-	body := validIdeaBody("X", "Archived", nil)
+// A file UNDER archived/ that does NOT carry **Archived:** true fires
+// idea-archived-location (the inverse-direction mismatch).
+func TestCheckIdeas_ArchivedDirMissingFlag(t *testing.T) {
+	body := validIdeaBody("X", "Stale", nil) // terminal status, but no flag
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/README.md":          activeIndex,
 		"ideas/archived/README.md": archivedIndex,
 		"ideas/archived/x.md":      body,
 	})
 	vs, _ := CheckIdeas(specRoot, false)
-	if !hasRule(vs, "idea-archive-reason") {
-		t.Errorf("expected idea-archive-reason violation: %+v", vs)
+	if !hasRule(vs, "idea-archived-location") {
+		t.Errorf("expected idea-archived-location violation for archived/ file without **Archived:** true: %+v", vs)
 	}
 }
 
+// The **Archive Note:** is optional: an archived idea (terminal status +
+// flag, under archived/) with no note is lint-clean.
+func TestCheckIdeas_ArchiveNoteOptional(t *testing.T) {
+	body := validIdeaBody("X", "Stale", map[string]string{"Archived": "true"})
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":          activeIndex,
+		"ideas/archived/README.md": archivedIndexWith("x"),
+		"ideas/archived/x.md":      body,
+	})
+	vs, _ := CheckIdeas(specRoot, false)
+	if hasRule(vs, "idea-archive-note") {
+		t.Errorf("archive note is optional; no violation expected: %+v", vs)
+	}
+}
+
+// A present-but-empty **Archive Note:** fires idea-archive-note (format check).
+func TestCheckIdeas_ArchiveNoteEmptyFires(t *testing.T) {
+	body := validIdeaBody("X", "Stale", map[string]string{"Archived": "true", "Archive Note": "—"})
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":          activeIndex,
+		"ideas/archived/README.md": archivedIndexWith("x"),
+		"ideas/archived/x.md":      body,
+	})
+	vs, _ := CheckIdeas(specRoot, false)
+	if !hasRule(vs, "idea-archive-note") {
+		t.Errorf("expected idea-archive-note violation for empty note: %+v", vs)
+	}
+}
+
+// An archived idea carrying a NON-terminal status fires idea-archived-location.
+func TestCheckIdeas_ArchivedNonTerminalStatus(t *testing.T) {
+	body := validIdeaBody("X", "Approved", map[string]string{"Archived": "true"})
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":          activeIndex,
+		"ideas/archived/README.md": archivedIndexWith("x"),
+		"ideas/archived/x.md":      body,
+	})
+	vs, _ := CheckIdeas(specRoot, false)
+	if !hasRule(vs, "idea-archived-location") {
+		t.Errorf("expected idea-archived-location violation for non-terminal archived status: %+v", vs)
+	}
+}
+
+// A supersede target that is NOT archived (active, not **Archived:** true)
+// fires idea-supersedes-target-archived.
 func TestCheckIdeas_SupersedesNonArchived(t *testing.T) {
 	x := validIdeaBody("X", "Approved", nil)
 	y := strings.Replace(validIdeaBody("Y", "Approved", nil), "**Supersedes:** —", "**Supersedes:** x", 1)
@@ -601,8 +671,8 @@ None at this time.
 }
 
 func TestCheckIdeas_ArchivedIndexOutOfOrderAndFixed(t *testing.T) {
-	older := validIdeaBody("Older", "Archived", map[string]string{"Archive Reason": "pivoted", "Date": "2024-11-02"})
-	newer := validIdeaBody("Newer", "Archived", map[string]string{"Archive Reason": "pivoted", "Date": "2025-03-10"})
+	older := validIdeaBody("Older", "Stale", map[string]string{"Archived": "true", "Archive Note": "pivoted", "Date": "2024-11-02"})
+	newer := validIdeaBody("Newer", "Stale", map[string]string{"Archived": "true", "Archive Note": "pivoted", "Date": "2025-03-10"})
 	// Date inside body: need to set Date via extraFields; validIdeaBody uses fixed default.
 	// To override we rewrite the Date line.
 	older = strings.Replace(older, "**Date:** 2026-04-10", "**Date:** 2024-11-02", 1)
@@ -1179,8 +1249,8 @@ func TestCheckIdeas_ArchivedChangeRequestStaysInPlace(t *testing.T) {
 		"ideas/archived/README.md": archivedIndex,
 		"features/auth/README.md":  featureBody("Auth", "Approved", ""),
 		"features/auth/proposals/add-mfa.md": validProposalBody(
-			"Add MFA", "Archived", "auth",
-			map[string]string{"Archive Reason": "superseded by newer proposal"}),
+			"Add MFA", "Stale", "auth",
+			map[string]string{"Archived": "true", "Archive Note": "superseded by newer proposal"}),
 	})
 	vs, err := CheckIdeas(specRoot, false)
 	if err != nil {
@@ -1192,13 +1262,13 @@ func TestCheckIdeas_ArchivedChangeRequestStaysInPlace(t *testing.T) {
 }
 
 // TestCheckIdeas_ArchivedFeatureRequestStillRequiresArchivedDir verifies
-// that an archived feature-request idea NOT in spec/ideas/archived/ still
-// fires idea-archived-location.
+// that a feature-request idea flagged **Archived:** true but NOT in
+// spec/ideas/archived/ still fires idea-archived-location.
 func TestCheckIdeas_ArchivedFeatureRequestStillRequiresArchivedDir(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/README.md":          activeIndexWith("x"),
 		"ideas/archived/README.md": archivedIndex,
-		"ideas/x.md":               validIdeaBody("X", "Archived", map[string]string{"Archive Reason": "abandoned"}),
+		"ideas/x.md":               validIdeaBody("X", "Stale", map[string]string{"Archived": "true", "Archive Note": "abandoned"}),
 	})
 	vs, _ := CheckIdeas(specRoot, false)
 	if !hasRule(vs, "idea-archived-location") {

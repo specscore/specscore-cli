@@ -557,3 +557,202 @@ func TestPlanRulesNoSourceFixSkipsUnrecognizedValue(t *testing.T) {
 		t.Errorf("unrecognized **Source:** value must not be rewritten to none:\n%s", data)
 	}
 }
+
+// ----- P-007 execution-band derivation -----
+
+// p007Plan writes a single-file plan whose body Status is bodyStatus and whose
+// tasks carry the given per-task statuses (one `### Task N:` per status).
+func (e *planRulesEnv) p007Plan(t *testing.T, slug, bodyStatus string, taskStatuses ...string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("# Plan: " + slug + "\n\n")
+	b.WriteString("**Status:** " + bodyStatus + "\n")
+	b.WriteString("**Source:** none\n\n")
+	b.WriteString("## Tasks\n\n")
+	for i, s := range taskStatuses {
+		b.WriteString("### Task " + itoa(i+1) + ": T\n\n")
+		b.WriteString("**Status:** " + s + "\n\n")
+	}
+	return e.writePlan(t, slug, b.String())
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var digits []byte
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	return string(digits)
+}
+
+// AC: derive Executing from an in-progress task when body Status drifts.
+func TestP007_DeriveExecuting(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p007Plan(t, "p", "Approved", "in-progress", "pending")
+	v := hasViolation(runRules(t, e), "P-007", "Executing")
+	if v == nil {
+		t.Fatal("expected a P-007 violation deriving Executing")
+	}
+	if v.Severity != "error" {
+		t.Errorf("severity = %q, want error", v.Severity)
+	}
+}
+
+// AC: derive Blocked when a task is blocked and none in-progress/failed.
+func TestP007_DeriveBlocked(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p007Plan(t, "p", "Approved", "done", "blocked")
+	if hasViolation(runRules(t, e), "P-007", "Blocked") == nil {
+		t.Fatal("expected a P-007 violation deriving Blocked")
+	}
+}
+
+// AC: derive Implemented when all tasks are done.
+func TestP007_DeriveImplemented(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p007Plan(t, "p", "Approved", "done", "done")
+	if hasViolation(runRules(t, e), "P-007", "Implemented") == nil {
+		t.Fatal("expected a P-007 violation deriving Implemented")
+	}
+}
+
+// AC: derive Failed from a failed/aborted task (precedence over all).
+func TestP007_DeriveFailed(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p007Plan(t, "p", "Executing", "failed", "in-progress")
+	if hasViolation(runRules(t, e), "P-007", "Failed") == nil {
+		t.Fatal("expected a P-007 violation deriving Failed")
+	}
+}
+
+// AC: an indeterminate rollup (a pending task) emits nothing even from a
+// derivation-eligible body status.
+func TestP007_IndeterminateNoOp(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p007Plan(t, "p", "Approved", "done", "pending")
+	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
+		t.Fatalf("indeterminate rollup must emit no P-007: %+v", v)
+	}
+}
+
+// AC: no tasks at all is indeterminate.
+func TestP007_NoTasksNoOp(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p007Plan(t, "p", "Approved")
+	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
+		t.Fatalf("a task-less plan must emit no P-007: %+v", v)
+	}
+}
+
+// AC: when the derived band already equals the body status, no drift.
+func TestP007_NoDriftNoOp(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p007Plan(t, "p", "Implemented", "done", "done")
+	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
+		t.Fatalf("matching band must emit no P-007: %+v", v)
+	}
+}
+
+// AC: prep states (Draft, In Review) are human-authored and never overwritten,
+// even when the rollup is determinate.
+func TestP007_PrepStatesNeverDerived(t *testing.T) {
+	for _, st := range []string{"Draft", "In Review"} {
+		e := newPlanRulesEnv(t)
+		e.p007Plan(t, "p", st, "done", "done")
+		if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
+			t.Fatalf("body status %q must not be derived: %+v", st, v)
+		}
+	}
+}
+
+// AC: disposition states are human-authored and never overwritten.
+func TestP007_DispositionStatesNeverDerived(t *testing.T) {
+	for _, st := range []string{"Rejected", "Withdrawn", "Superseded", "Deprecated"} {
+		e := newPlanRulesEnv(t)
+		e.p007Plan(t, "p", st, "done", "done")
+		if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
+			t.Fatalf("body status %q must not be derived: %+v", st, v)
+		}
+	}
+}
+
+// AC: --fix rewrites only the body **Status:** line to the derived band and is
+// idempotent (a second pass is a no-op).
+func TestP007_FixRewritesAndIdempotent(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	path := e.p007Plan(t, "p", "Approved", "done", "done")
+	before, _ := os.ReadFile(path)
+
+	c := newPlanRulesChecker()
+	c.fixP007 = true
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if !strings.Contains(string(after), "**Status:** Implemented\n") {
+		t.Fatalf("expected body status rewritten to Implemented:\n%s", after)
+	}
+	if strings.Contains(string(after), "**Status:** Approved\n") {
+		t.Fatalf("old body status must be gone:\n%s", after)
+	}
+	// Byte-preserving otherwise: only the status word changed.
+	wantAfter := strings.Replace(string(before), "**Status:** Approved\n", "**Status:** Implemented\n", 1)
+	if string(after) != wantAfter {
+		t.Fatalf("fix changed more than the status line:\nwant:\n%q\ngot:\n%q", wantAfter, after)
+	}
+	// No drift now -> no violation.
+	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
+		t.Fatalf("post-fix lint still reports P-007: %+v", v)
+	}
+	// Idempotent: a second fix pass changes nothing.
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix (2nd): %v", err)
+	}
+	after2, _ := os.ReadFile(path)
+	if string(after2) != string(after) {
+		t.Fatalf("fix not idempotent:\n%s", after2)
+	}
+}
+
+// AC: --fix never touches a prep/disposition body status even with a
+// determinate rollup.
+func TestP007_FixSkipsPrepAndDisposition(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	path := e.p007Plan(t, "p", "Draft", "done", "done")
+	before, _ := os.ReadFile(path)
+	c := newPlanRulesChecker()
+	c.fixP007 = true
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Fatalf("fix must not touch a Draft plan:\n%s", after)
+	}
+}
+
+// AC: --fix on an indeterminate plan changes nothing.
+func TestP007_FixIndeterminateNoOp(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	path := e.p007Plan(t, "p", "Approved", "done", "pending")
+	before, _ := os.ReadFile(path)
+	c := newPlanRulesChecker()
+	c.fixP007 = true
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Fatalf("fix must not touch an indeterminate plan:\n%s", after)
+	}
+}
+
+// AC: P-007 is registered in the canonical rule-name set and is filterable.
+func TestP007_RegisteredAndFilterable(t *testing.T) {
+	if !AllRuleNames()["P-007"] {
+		t.Fatal("P-007 missing from AllRuleNames()")
+	}
+}

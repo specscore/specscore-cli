@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore sidekick change-status <slug> --to=<status>` transitions a sidekick-seed from `Queued` to a terminal status (`Implemented`, `Rejected`, or `Archived`), relocating it to `spec/ideas/archived/<slug>.md` and tagging it `type: sidekick-seed`. Implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract; extends it with a seed-kind relocation side effect and a reason-required `Rejected` transition.
+`specscore sidekick change-status <slug> --to=<status>` transitions a sidekick-seed from `Queued` to a terminal status (`Implemented`, `Rejected`, or `Stale`), relocating it to `spec/ideas/archived/<slug>.md` and tagging it `type: sidekick-seed`. Implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract; extends it with a seed-kind relocation side effect and a reason-required `Rejected` transition.
 
 ## Synopsis
 
@@ -35,7 +35,7 @@ This verb inherits every cross-cutting rule from [lifecycle-transitions](../../l
 |---|---|---|
 | `Queued` | `Implemented` | Status rewrite + relocate to `spec/ideas/archived/` + add `type: sidekick-seed` + index sync |
 | `Queued` | `Rejected` | Same side effects (**reason required** — `--note` mandatory) |
-| `Queued` | `Archived` | Same side effects |
+| `Queued` | `Stale` | Same side effects |
 
 #### REQ: legal-transition-matrix
 
@@ -43,7 +43,7 @@ The verb MUST accept only the `(from, to)` pairs in the matrix above; any other 
 
 #### REQ: target-status-flag
 
-The verb MUST accept the target via a required `--to=<status>` flag whose value is one of `Implemented`, `Rejected`, `Archived`. Matching is case-insensitive on input; the canonical title-case value is what gets written to the file and the success line. An unrecognized value MUST exit `2` (InvalidArgs) BEFORE state-machine validation. Mirrors [`idea change-status` target-status-flag](../../idea/change-status/README.md#req-target-status-flag).
+The verb MUST accept the target via a required `--to=<status>` flag whose value is one of `Implemented`, `Rejected`, `Stale`. Matching is case-insensitive on input; the canonical title-case value is what gets written to the file and the success line. An unrecognized value MUST exit `2` (InvalidArgs) BEFORE state-machine validation. Mirrors [`idea change-status` target-status-flag](../../idea/change-status/README.md#req-target-status-flag).
 
 #### REQ: seed-slug-resolution
 
@@ -63,7 +63,7 @@ Extends the Meta's [rollback-on-lint-failure](../../lifecycle-transitions/README
 
 #### REQ: reason-required-rejected
 
-The `Queued → Rejected` transition is **reason-required** per [lifecycle-transitions#req:reason-required-transitions](../../lifecycle-transitions/README.md#req-reason-required-transitions): `--note <markdown>` is mandatory. A missing or empty/whitespace-only `--note` on `--to=Rejected` MUST exit `2` (InvalidArgs) before any mutation, with a stderr message naming the `Rejected` transition and stating that a reason is required. The `Implemented` and `Archived` transitions keep `--note` optional; when supplied, the note is written per [lifecycle-transitions#req:optional-transition-note](../../lifecycle-transitions/README.md#req-optional-transition-note) (a `## Resolution` section in the relocated seed).
+The `Queued → Rejected` transition is **reason-required** per [lifecycle-transitions#req:reason-required-transitions](../../lifecycle-transitions/README.md#req-reason-required-transitions): `--note <markdown>` is mandatory. A missing or empty/whitespace-only `--note` on `--to=Rejected` MUST exit `2` (InvalidArgs) before any mutation, with a stderr message naming the `Rejected` transition and stating that a reason is required. The `Implemented` and `Stale` transitions keep `--note` optional; when supplied, the note is written per [lifecycle-transitions#req:optional-transition-note](../../lifecycle-transitions/README.md#req-optional-transition-note) (a `## Resolution` section in the relocated seed).
 
 ## Rehearse Integration
 
@@ -75,7 +75,7 @@ Every AC below has a CLI surface (exit code + on-disk effect) and is exercised b
 |---|---|
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies; this verb extends `status-line-rewrite` with relocation and consumes the `reason-required-transitions` mechanism for `Rejected`. |
 | [`idea/change-status`](../../idea/change-status/README.md) | Sibling verb; the archive-relocation + collision pattern is mirrored from it. |
-| [`idea/promote`](../../idea/promote/README.md) | Precedent for moving a seed to `spec/ideas/archived/` and adding `type: sidekick-seed`. Sets `status: promoted`; this verb sets `Implemented`/`Rejected`/`Archived`. Neither sets the consilium-owned `deprecated`. |
+| [`idea/promote`](../../idea/promote/README.md) | Precedent for moving a seed to `spec/ideas/archived/` and adding `type: sidekick-seed`. Sets `status: promoted`; this verb sets `Implemented`/`Rejected`/`Stale`. Neither sets the consilium-owned `deprecated`. |
 | [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; also owns the `sidekick-seed` rule whose status enum must accept the new terminal values (see Open Questions). |
 
 ## Dependencies
@@ -130,7 +130,7 @@ Every AC below has a CLI surface (exit code + on-disk effect) and is exercised b
 
 **Scenario:** a file already occupies the archive destination
 **Given** a seed at `spec/ideas/seeds/foo.md` with `status: queued` AND an existing file at `spec/ideas/archived/foo.md`
-**When** `specscore sidekick change-status foo --to=archived` runs
+**When** `specscore sidekick change-status foo --to=stale` runs
 **Then** the verb exits `1` (Conflict), `spec/ideas/seeds/foo.md` still has `status: queued`, and `spec/ideas/archived/foo.md` is untouched.
 
 ### AC: slug-not-found
@@ -142,7 +142,7 @@ Every AC below has a CLI surface (exit code + on-disk effect) and is exercised b
 
 ## Open Questions
 
-- **Seed status enum (upstream dependency).** Does the `sidekick-seed` lint rule — owned upstream by `specscore/specscore`'s [`artifact-frontmatter-convention`](https://github.com/specscore/specscore/blob/main/spec/features/artifact-frontmatter-convention/README.md) — accept `status ∈ {Implemented, Rejected, Archived}` for archived seeds? `idea promote` already produces lint-clean archived seeds (`status: promoted` + `type: sidekick-seed`), so the rule accepts archived-location seeds with a non-`queued` status and a `type`; confirming/extending the enum to these three values is a tracked `specscore/specscore` dependency, not resolved by this verb.
+- **Seed status enum (upstream dependency).** Does the `sidekick-seed` lint rule — owned upstream by `specscore/specscore`'s [`artifact-frontmatter-convention`](https://github.com/specscore/specscore/blob/main/spec/features/artifact-frontmatter-convention/README.md) — accept `status ∈ {Implemented, Rejected, Stale}` for archived seeds? `idea promote` already produces lint-clean archived seeds (`status: promoted` + `type: sidekick-seed`), so the rule accepts archived-location seeds with a non-`queued` status and a `type`; confirming/extending the enum to these three values is a tracked `specscore/specscore` dependency, not resolved by this verb.
 - **Body-size cap at terminal states.** ~~The 2000-char seed body cap is a capture-time forcing function for `Queued` seeds; a `## Resolution` note on a terminal seed may exceed it.~~ **Resolved:** the `sidekick-seed` lint rule is now status-dependent — a queued seed gets a 3000-char hard cap (2500-char advisory warning), and a closed/terminal seed gets a 5000-char cap, leaving room for a `## Resolution` note.
 - **`Rejected` vs `Deprecated`.** This verb's manual `Rejected` coexists with the consilium's `Deprecated`. Reconciling the two into one reject terminal is a deferred follow-up (would touch the consilium feature).
 

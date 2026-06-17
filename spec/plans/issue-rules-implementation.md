@@ -1,6 +1,6 @@
 # Plan: Issue Rules Implementation
 
-**Status:** Completed
+**Status:** Implemented
 **Source Feature:** cli/spec/lint/issue-rules
 **Date:** 2026-05-22
 **Owner:** alexandertrakhimenok

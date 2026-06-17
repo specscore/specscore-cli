@@ -1,6 +1,6 @@
 # Plan: Events (CLI) — pkg/event Library + Dispatcher
 
-**Status:** Completed
+**Status:** Implemented
 **Mode:** full
 **Source Feature:** cli/event
 **Date:** 2026-05-22

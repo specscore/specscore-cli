@@ -146,11 +146,14 @@ func TestChangeStatus_HappyPaths(t *testing.T) {
 		to   string
 		want string
 	}{
-		{"draft → under review", "Draft", "under review", "Under Review"},
+		{"draft → in review", "Draft", "in review", "In Review"},
 		{"draft → approved (direct)", "Draft", "approved", "Approved"},
-		{"under review → approved", "Under Review", "approved", "Approved"},
+		{"in review → approved", "In Review", "approved", "Approved"},
+		{"in review → rejected", "In Review", "rejected", "Rejected"},
 		{"approved → implementing", "Approved", "implementing", "Implementing"},
 		{"implementing → stable", "Implementing", "stable", "Stable"},
+		{"stable → amending", "Stable", "amending", "Amending"},
+		{"amending → stable", "Amending", "stable", "Stable"},
 		{"stable → deprecated", "Stable", "deprecated", "Deprecated"},
 	}
 	for _, tc := range cases {

@@ -434,7 +434,7 @@ func rewriteArchivedIndex(path string, archived []idea.Discovered, parsed map[st
 		rows = append(rows, rowT{
 			date:   strings.TrimSpace(p.FieldByName["Date"].Value),
 			slug:   d.Slug,
-			reason: p.ArchiveReason(),
+			reason: p.ArchiveNote(),
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {

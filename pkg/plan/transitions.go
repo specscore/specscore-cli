@@ -1,0 +1,333 @@
+// Package plan — lifecycle transition orchestration for the Plan kind.
+//
+// This file hosts ChangeStatus, the kind-specific orchestrator invoked by
+// `specscore plan change-status`. It composes pkg/lifecycle/ primitives
+// (state-machine validation, status-line rewrite, rollback) and adds the
+// Plan-specific structured `**Superseded By:**` successor reference.
+//
+// `plan change-status` owns ONLY the human-authored arcs: the prep band
+// (Draft/In Review/Approved) plus the dispositions (Rejected/Withdrawn/
+// Superseded/Deprecated). The execution band (Executing/Blocked/Implemented/
+// Failed) is LINT-DERIVED from the task-status rollup (rule P-007) and MUST
+// NOT be settable here — the lifecycle KindPlan matrix encodes that by
+// omitting every execution-band-entering arc. Plans are flat single files
+// (or the optional directory form); change-status NEVER relocates a file.
+//
+// LINT INVOCATION lives in the cobra adapter (internal/cli/plan.go), NOT
+// here, to avoid an import cycle: pkg/lint imports pkg/plan for the plan-*
+// lint rules, so pkg/plan cannot depend back on pkg/lint. The adapter passes
+// a PostMutationHook callback into ChangeStatus; this package only knows
+// "run the post-mutation hook, and roll back if it fails".
+//
+// Cross-references:
+//
+//   - Verb spec: spec/features/cli/plan/change-status/README.md
+//   - Meta contract: spec/features/cli/lifecycle-transitions/README.md
+//   - Canonical lifecycle: spec/features/plan/README.md#req-status-transitions
+package plan
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
+)
+
+// appendNoteFn / setSupersededByFn are testable indirections for the lifecycle
+// body-mutation helpers, so tests can exercise the failure-rollback branches.
+var (
+	appendNoteFn      = lifecycle.AppendResolutionNote
+	setSupersededByFn = lifecycle.SetSupersededBy
+)
+
+// PostMutationHook is the callback the cobra adapter wires to
+// `specscore spec lint --fix` (plus a verify pass). It MUST return nil on
+// success; a non-nil return triggers full rollback of every on-disk mutation
+// and the error is returned by ChangeStatus.
+type PostMutationHook func() error
+
+// ChangeStatusOptions packages the inputs to ChangeStatus.
+type ChangeStatusOptions struct {
+	// SpecRoot is the project root that contains the `spec/` subtree
+	// (NOT the `spec/` directory itself). The Plan is resolved at
+	// SpecRoot/spec/plans/<slug>.md (flat) or .../spec/plans/<slug>/README.md
+	// (the optional directory form).
+	SpecRoot string
+
+	// Slug is the Plan slug, e.g. "user-auth". Caller is expected to have
+	// validated it via plan.ValidateSlug.
+	Slug string
+
+	// To is the canonical (title-case) target status. The cobra adapter parses
+	// the raw --to value via lifecycle.ParseStatus and rejects execution-band /
+	// unrecognized values BEFORE reaching this function.
+	To lifecycle.Status
+
+	// Note is the optional free-form markdown transition note. When non-empty
+	// it is written as a `## Resolution` section, atomically with the status
+	// rewrite. REQUIRED (enforced by the cobra adapter) for the Withdrawn and
+	// Superseded dispositions.
+	Note string
+
+	// Successor is the slug of the plan that supersedes this one. REQUIRED
+	// (enforced by the cobra adapter) for --to=Superseded, rejected otherwise.
+	// It is written as a `**Superseded By:** <slug>` header line.
+	Successor string
+
+	// PostMutation is the post-rewrite hook (typically a spec-lint pass).
+	// Required; ChangeStatus returns exit 10 if nil.
+	PostMutation PostMutationHook
+}
+
+// ChangeStatusResult is the success payload returned on exit 0. The cobra
+// adapter formats it as the `<slug>: <from> → <to>` success line.
+type ChangeStatusResult struct {
+	Slug string
+	From lifecycle.Status
+	To   lifecycle.Status
+}
+
+// ChangeStatus performs a Plan-kind lifecycle transition end-to-end.
+//
+// Flow:
+//
+//  1. Resolve <slug> to an existing Plan file (flat or directory form). A
+//     missing file returns exit 3.
+//  2. lifecycle.Validate against the KindPlan matrix. Illegal transitions
+//     return exit 4.
+//  3. lifecycle.Rewrite the **Status:** line; capture original for rollback.
+//  4. Optionally write the `**Superseded By:**` successor reference and the
+//     `## Resolution` note, each rolled back together with the status line.
+//  5. Invoke the PostMutation hook. Failure → full rollback + exit 10.
+//
+// ChangeStatus performs all rollback internally — by the time it returns an
+// error, the on-disk state is byte-identical to its pre-invocation shape.
+func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
+	if opts.SpecRoot == "" {
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
+	}
+	if opts.Slug == "" {
+		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: slug required")
+	}
+	if opts.To == "" {
+		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: target status required")
+	}
+	if opts.PostMutation == nil {
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: PostMutation hook required")
+	}
+
+	// (1) Slug resolution — flat file first, then the optional directory form.
+	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
+	path, err := resolvePlanFile(plansDir, opts.Slug)
+	if err != nil {
+		return ChangeStatusResult{}, err
+	}
+
+	// (2) State-machine validation.
+	from, err := lifecycle.Validate(lifecycle.KindPlan, path, opts.To)
+	if err != nil {
+		var ite *lifecycle.InvalidTransitionError
+		if errors.As(err, &ite) {
+			targets := statusNames(ite.LegalTargets)
+			if len(targets) == 0 {
+				return ChangeStatusResult{}, exitcode.InvalidStateErrorf(
+					"invalid transition: plan %q is in status %q; no legal targets from this state",
+					opts.Slug, string(ite.From))
+			}
+			return ChangeStatusResult{}, exitcode.InvalidStateErrorf(
+				"invalid transition: plan %q is in status %q; legal targets: %s",
+				opts.Slug, string(ite.From), strings.Join(targets, ", "))
+		}
+		if errors.Is(err, lifecycle.ErrStatusLineNotFound) {
+			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
+				"plan %s has no **Status:** line", path)
+		}
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading plan status: %v", err)
+	}
+
+	// (3) Status line rewrite.
+	origLine, err := lifecycle.Rewrite(path, opts.To)
+	if err != nil {
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("rewriting status line: %v", err)
+	}
+	fullRollback := func() {
+		_ = lifecycle.Rollback(path, origLine)
+	}
+
+	// (4a) Optional structured `**Superseded By:**` successor reference.
+	origSucc, succWritten, err := setSupersededByFn(path, opts.Successor)
+	if err != nil {
+		fullRollback()
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing successor reference: %v", err)
+	}
+	if succWritten {
+		prev := fullRollback
+		fullRollback = func() {
+			_ = lifecycle.RestoreBody(path, origSucc)
+			prev()
+		}
+	}
+
+	// (4b) Optional transition note → `## Resolution` section.
+	origBody, noteWritten, err := appendNoteFn(path, opts.Note)
+	if err != nil {
+		fullRollback()
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing transition note: %v", err)
+	}
+	if noteWritten {
+		prev := fullRollback
+		fullRollback = func() {
+			_ = lifecycle.RestoreBody(path, origBody)
+			prev()
+		}
+	}
+
+	// (5) PostMutation hook — typically `spec lint --fix` + verify.
+	if err := opts.PostMutation(); err != nil {
+		fullRollback()
+		return ChangeStatusResult{}, err
+	}
+
+	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil
+}
+
+// resolvePlanFile resolves <slug> to an existing Plan file under plansDir,
+// supporting both the flat form (spec/plans/<slug>.md) and the optional
+// directory form (spec/plans/<slug>/README.md). The flat form takes
+// precedence. A slug that resolves to neither returns exit 3 (NotFound),
+// naming the canonical flat path.
+func resolvePlanFile(plansDir, slug string) (string, error) {
+	flat := filepath.Join(plansDir, slug+".md")
+	if _, err := os.Stat(flat); err == nil {
+		return flat, nil
+	} else if !os.IsNotExist(err) {
+		return "", exitcode.UnexpectedErrorf("stat %s: %v", flat, err)
+	}
+
+	dir := filepath.Join(plansDir, slug, "README.md")
+	if _, err := os.Stat(dir); err == nil {
+		return dir, nil
+	} else if !os.IsNotExist(err) {
+		return "", exitcode.UnexpectedErrorf("stat %s: %v", dir, err)
+	}
+
+	return "", exitcode.NotFoundErrorf("plan not found at %s", flat)
+}
+
+// statusNames converts a slice of Status values to plain strings, for
+// rendering in error messages.
+func statusNames(s []lifecycle.Status) []string {
+	out := make([]string, len(s))
+	for i, st := range s {
+		out[i] = string(st)
+	}
+	return out
+}
+
+// IsLegalChangeStatusTarget reports whether status is one of the human-
+// settable --to values for `specscore plan change-status`. This is the union
+// of every To column in the KindPlan matrix MINUS the execution-band values
+// (which appear in the matrix only as disposition From-states, never as a
+// human-settable target). The cobra adapter uses this for the exit-2 early
+// flag check BEFORE the state-machine check.
+func IsLegalChangeStatusTarget(s lifecycle.Status) bool {
+	for _, t := range legalChangeStatusTargets() {
+		if t == s {
+			return true
+		}
+	}
+	return false
+}
+
+// IsExecutionBandStatus reports whether s is one of the lint-derived
+// execution-band statuses. The cobra adapter rejects these as --to values
+// with a dedicated message that points the user at `spec lint --fix`.
+func IsExecutionBandStatus(s lifecycle.Status) bool {
+	switch s {
+	case lifecycle.PlanExecuting, lifecycle.PlanBlocked,
+		lifecycle.PlanImplemented, lifecycle.PlanFailed:
+		return true
+	}
+	return false
+}
+
+// LegalChangeStatusTargetNames returns the canonical-titled names of the legal
+// --to values, for stderr rendering and help text.
+func LegalChangeStatusTargetNames() []string {
+	targets := legalChangeStatusTargets()
+	out := make([]string, len(targets))
+	for i, t := range targets {
+		out[i] = string(t)
+	}
+	return out
+}
+
+// legalChangeStatusTargets returns every To column in the KindPlan matrix that
+// is human-settable — i.e., excluding the execution-band states. Computed from
+// the lifecycle matrix so it stays in sync if the matrix grows, sorted
+// alphabetically for deterministic output.
+func legalChangeStatusTargets() []lifecycle.Status {
+	seen := map[lifecycle.Status]struct{}{}
+	for _, s := range lifecycle.LegalStatuses(lifecycle.KindPlan) {
+		if IsExecutionBandStatus(s) {
+			continue
+		}
+		if sources := lifecycle.LegalSources(lifecycle.KindPlan, s); len(sources) > 0 {
+			seen[s] = struct{}{}
+		}
+	}
+	out := make([]lifecycle.Status, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if string(out[j]) < string(out[i]) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
+}
+
+// LegalTransitionMatrix returns a human-readable, ANSI-free rendering of the
+// Plan legal-transition matrix, suitable for cobra `Long` help text. Built
+// from lifecycle.LegalTargets so the help stays current as the matrix grows.
+func LegalTransitionMatrix() string {
+	statuses := lifecycle.LegalStatuses(lifecycle.KindPlan)
+
+	type row struct {
+		from    string
+		targets string
+	}
+	var rows []row
+	maxFrom := len("From")
+	for _, s := range statuses {
+		targets := lifecycle.LegalTargets(lifecycle.KindPlan, s)
+		if len(targets) == 0 {
+			continue
+		}
+		r := row{from: string(s), targets: strings.Join(statusNames(targets), ", ")}
+		if len(r.from) > maxFrom {
+			maxFrom = len(r.from)
+		}
+		rows = append(rows, r)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Legal transitions (human-authored only; the execution band\n")
+	sb.WriteString("Executing/Blocked/Implemented/Failed is derived by `spec lint --fix`):\n\n")
+	sb.WriteString("  From")
+	sb.WriteString(strings.Repeat(" ", maxFrom-len("From")))
+	sb.WriteString("  To\n")
+	sb.WriteString("  " + strings.Repeat("-", maxFrom) + "  --\n")
+	for _, r := range rows {
+		sb.WriteString("  " + r.from)
+		sb.WriteString(strings.Repeat(" ", maxFrom-len(r.from)))
+		sb.WriteString("  " + r.targets + "\n")
+	}
+	return sb.String()
+}

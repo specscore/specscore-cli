@@ -152,15 +152,15 @@ func TestValidate_FileNotFound(t *testing.T) {
 func TestValidate_InvalidTransition(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "idea.md")
-	if err := os.WriteFile(path, []byte("# Title\n\n**Status:** Archived\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# Title\n\n**Status:** Stale\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	from, err := Validate(KindIdea, path, IdeaDraft)
 	if err == nil {
 		t.Fatal("expected error for illegal transition")
 	}
-	if from != IdeaArchived {
-		t.Errorf("from = %q, want %q", from, IdeaArchived)
+	if from != IdeaStale {
+		t.Errorf("from = %q, want %q", from, IdeaStale)
 	}
 }
 

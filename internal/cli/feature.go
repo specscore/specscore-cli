@@ -661,7 +661,7 @@ commit, or --push for atomic commit-and-push.`,
 	cmd.Flags().String("title", "", "human-readable feature title (required)")
 	cmd.Flags().String("slug", "", "feature slug (directory name); auto-generated from title if omitted")
 	cmd.Flags().String("parent", "", "parent feature ID for creating a sub-feature")
-	cmd.Flags().String("status", "Draft", "initial feature status: Draft, Under Review, Approved, Implementing, Stable, Deprecated")
+	cmd.Flags().String("status", "Draft", "initial feature status: Draft, In Review, Approved, Implementing, Stable, Amending, Rejected, Deprecated")
 	cmd.Flags().String("description", "", "short description placed in the Summary section")
 	cmd.Flags().String("depends-on", "", "comma-separated list of feature IDs this feature depends on")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
@@ -816,10 +816,11 @@ func buildFeatureChangeStatusMatrix() string {
 	// surrounding rows by hand-defined progression for readability.
 	froms := []lifecycle.Status{
 		lifecycle.FeatureDraft,
-		lifecycle.FeatureUnderReview,
+		lifecycle.FeatureInReview,
 		lifecycle.FeatureApproved,
 		lifecycle.FeatureImplementing,
 		lifecycle.FeatureStable,
+		lifecycle.FeatureAmending,
 	}
 	const fromWidth = 14
 	var b strings.Builder

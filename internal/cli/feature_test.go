@@ -132,21 +132,21 @@ func readIndexStatus(t *testing.T, repoRoot string) string {
 }
 
 // AC: draft-to-under-review-happy-path
-func TestFeatureChangeStatus_DraftToUnderReview(t *testing.T) {
+func TestFeatureChangeStatus_DraftToInReview(t *testing.T) {
 	root := setupFeatureSpec(t, "Draft")
 
-	out, errOut, err := runFeature(t, "change-status", "auth", "--to=under review")
+	out, errOut, err := runFeature(t, "change-status", "auth", "--to=in review")
 	if err != nil {
 		t.Fatalf("unexpected err: %v\nstderr=%s", err, errOut)
 	}
-	if got, want := out, "auth: Draft → Under Review\n"; got != want {
+	if got, want := out, "auth: Draft → In Review\n"; got != want {
 		t.Errorf("stdout = %q, want %q", got, want)
 	}
-	if got := readAuthStatus(t, root); got != "Under Review" {
-		t.Errorf("README Status = %q, want Under Review", got)
+	if got := readAuthStatus(t, root); got != "In Review" {
+		t.Errorf("README Status = %q, want In Review", got)
 	}
-	if got := readIndexStatus(t, root); got != "Under Review" {
-		t.Errorf("index Status = %q, want Under Review (feature-index-row-sync)", got)
+	if got := readIndexStatus(t, root); got != "In Review" {
+		t.Errorf("index Status = %q, want In Review (feature-index-row-sync)", got)
 	}
 }
 
@@ -167,14 +167,14 @@ func TestFeatureChangeStatus_DraftDirectToApproved(t *testing.T) {
 }
 
 // AC: under-review-to-approved-happy-path
-func TestFeatureChangeStatus_UnderReviewToApproved(t *testing.T) {
-	root := setupFeatureSpec(t, "Under Review")
+func TestFeatureChangeStatus_InReviewToApproved(t *testing.T) {
+	root := setupFeatureSpec(t, "In Review")
 
 	out, errOut, err := runFeature(t, "change-status", "auth", "--to=approved")
 	if err != nil {
 		t.Fatalf("unexpected err: %v\nstderr=%s", err, errOut)
 	}
-	if got, want := out, "auth: Under Review → Approved\n"; got != want {
+	if got, want := out, "auth: In Review → Approved\n"; got != want {
 		t.Errorf("stdout = %q, want %q", got, want)
 	}
 	if got := readAuthStatus(t, root); got != "Approved" {

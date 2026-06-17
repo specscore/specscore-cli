@@ -16,7 +16,7 @@ Some intro text.
 
 | # | Decision | Status | Date | Tags | Affected |
 |---|----------|--------|------|------|----------|
-| [0001](0001-test.md) | Test Decision | Accepted | 2026-05-20 | — | — |
+| [0001](0001-test.md) | Test Decision | Approved | 2026-05-20 | — | — |
 
 ## Open Questions
 
@@ -127,8 +127,8 @@ func TestDecisionsIndexNumericOrdering(t *testing.T) {
 
 | # | Decision | Status | Date | Tags | Affected |
 |---|----------|--------|------|------|----------|
-| [0002](0002-second.md) | Second | Proposed | 2026-05-26 | — | — |
-| [0001](0001-first.md) | First | Accepted | 2026-05-20 | — | — |
+| [0002](0002-second.md) | Second | Draft | 2026-05-26 | — | — |
+| [0001](0001-first.md) | First | Approved | 2026-05-20 | — | — |
 
 ## Open Questions
 
@@ -155,8 +155,8 @@ None.
 
 | # | Decision | Status | Date | Tags | Affected |
 |---|----------|--------|------|------|----------|
-| [0002](0002-second.md) | Second | Proposed | 2026-05-26 | — | — |
-| [0001](0001-first.md) | First | Accepted | 2026-05-20 | — | — |
+| [0002](0002-second.md) | Second | Draft | 2026-05-26 | — | — |
+| [0001](0001-first.md) | First | Approved | 2026-05-20 | — | — |
 
 ## Open Questions
 
@@ -287,7 +287,7 @@ None at this time.
 func TestDecisionsIndexArchivedCompleteness(t *testing.T) {
 	// An archived decision file with no row in the archived index.
 	archivedIndex := "# Archived Decisions\n\n"
-	decision := strings.Replace(acceptedDecisionContent(), "**Status:** Accepted", "**Status:** Superseded", 1)
+	decision := strings.Replace(acceptedDecisionContent(), "**Status:** Approved", "**Status:** Superseded", 1)
 	root := setupDecisionTestTree(t, map[string]string{
 		"decisions/archived/README.md":   archivedIndex,
 		"decisions/archived/0001-old.md": decision,
@@ -302,9 +302,9 @@ func TestDecisionsIndexArchivedCompleteness(t *testing.T) {
 }
 
 func TestDecisionsIndexArchivedStatusExcludesActive(t *testing.T) {
-	// An active (Accepted) decision wrongly listed in the archived index.
+	// An active (Approved) decision wrongly listed in the archived index.
 	archivedIndex := "# Archived Decisions\n\n" +
-		"- 2026-05-20 — [0001-active](0001-active.md) — Accepted — listed by mistake\n"
+		"- 2026-05-20 — [0001-active](0001-active.md) — Approved — listed by mistake\n"
 	root := setupDecisionTestTree(t, map[string]string{
 		"decisions/archived/README.md": archivedIndex,
 		"decisions/0001-active.md":     acceptedDecisionContent(),
@@ -313,7 +313,7 @@ func TestDecisionsIndexArchivedStatusExcludesActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasDecisionViolation(vs, "DI-archived-status-excludes-active", "Accepted") {
+	if !hasDecisionViolation(vs, "DI-archived-status-excludes-active", "Approved") {
 		t.Errorf("expected DI-archived-status-excludes-active violation, got: %+v", vs)
 	}
 }

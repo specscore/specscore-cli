@@ -24,7 +24,7 @@ specscore feature change-status <feature_id> --to=<status> [--project <path>]
 
 ## Problem
 
-Today, transitioning a Feature through its lifecycle (Draft → Under Review → Approved → Implementing → Stable → Deprecated) is a sequence of hand-edits with no validation. A hand-edit can drop a Stable feature to Draft, skip the review phase, or implement an unapproved feature with no warning. This verb closes the gap with a single command per kind, enforcing the legal-transition matrix.
+Today, transitioning a Feature through its lifecycle (Draft → In Review → Approved → Implementing → Stable → Deprecated) is a sequence of hand-edits with no validation. A hand-edit can drop a Stable feature to Draft, skip the review phase, or implement an unapproved feature with no warning. This verb closes the gap with a single command per kind, enforcing the legal-transition matrix.
 
 ## Behavior
 
@@ -36,11 +36,14 @@ Only the transitions in the table below are accepted. Any other `(from, to)` pai
 
 | From | To | Side effects |
 |---|---|---|
-| `Draft` | `Under Review` | Status rewrite + features-index sync |
+| `Draft` | `In Review` | Status rewrite + features-index sync |
 | `Draft` | `Approved` | Status rewrite + features-index sync |
-| `Under Review` | `Approved` | Status rewrite + features-index sync |
+| `In Review` | `Approved` | Status rewrite + features-index sync |
+| `In Review` | `Rejected` | Status rewrite + features-index sync |
 | `Approved` | `Implementing` | Status rewrite + features-index sync |
 | `Implementing` | `Stable` | Status rewrite + features-index sync |
+| `Stable` | `Amending` | Status rewrite + features-index sync |
+| `Amending` | `Stable` | Status rewrite + features-index sync |
 | `Stable` | `Deprecated` | Status rewrite + features-index sync |
 
 The `Draft → Approved` direct path is permitted: not every Feature requires a review phase. Reverse transitions (e.g., `Approved → Draft`, `Deprecated → Stable`) are NOT in the matrix and exit `4`. They MAY land in a follow-on revision once concrete reuse patterns surface.
@@ -53,7 +56,7 @@ The verb MUST accept only `(from, to)` pairs listed above. Any other pair MUST e
 
 #### REQ: target-status-flag
 
-The verb MUST accept the target status via a required `--to=<status>` flag. The flag value MUST be a recognized Feature status (`Draft`, `Under Review`, `Approved`, `Implementing`, `Stable`, `Deprecated`); unrecognized values exit `2` (InvalidArgs). Flag value matching is case-insensitive; the canonical title-case value is what gets written. Multi-word values use shell quoting: `--to="Under Review"`.
+The verb MUST accept the target status via a required `--to=<status>` flag. The flag value MUST be a recognized Feature status (`Draft`, `In Review`, `Approved`, `Implementing`, `Stable`, `Amending`, `Rejected`, `Deprecated`); unrecognized values exit `2` (InvalidArgs). Flag value matching is case-insensitive; the canonical title-case value is what gets written. Multi-word values use shell quoting: `--to="In Review"`.
 
 ### Kind-specific identifier resolution
 
@@ -77,7 +80,7 @@ The post-mutation `specscore spec lint --fix` invocation MUST rely on the `featu
 
 | Flag | Required | Description |
 |---|---|---|
-| `--to` | Yes | Target status. Legal values: `under review`, `approved`, `implementing`, `stable`, `deprecated` (case-insensitive; `draft` is not a legal target — there is no transition INTO `Draft`). |
+| `--to` | Yes | Target status. Legal values: `in review`, `approved`, `implementing`, `stable`, `amending`, `rejected`, `deprecated` (case-insensitive; `draft` is not a legal target — there is no transition INTO `Draft`). |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
 
 ## Exit codes
@@ -107,7 +110,7 @@ The post-mutation `specscore spec lint --fix` invocation MUST rely on the `featu
 
 **Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [cli/feature/change-status#req:target-status-flag](#req-target-status-flag), [lifecycle-transitions#req:status-line-rewrite](../../lifecycle-transitions/README.md#req-status-line-rewrite), [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success), [lifecycle-transitions#req:success-output-format](../../lifecycle-transitions/README.md#req-success-output-format)
 
-Given `spec/features/auth/README.md` containing `**Status:** Draft`, running `specscore feature change-status auth --to="under review"` exits `0`, writes exactly `auth: Draft → Under Review\n` to stdout, rewrites the Status line, and syncs the features-index row.
+Given `spec/features/auth/README.md` containing `**Status:** Draft`, running `specscore feature change-status auth --to="in review"` exits `0`, writes exactly `auth: Draft → In Review\n` to stdout, rewrites the Status line, and syncs the features-index row.
 
 ### AC: draft-direct-to-approved-happy-path
 
@@ -119,7 +122,7 @@ Given `spec/features/auth/README.md` containing `**Status:** Draft`, running `sp
 
 **Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
 
-Given `spec/features/auth/README.md` containing `**Status:** Under Review`, running `specscore feature change-status auth --to=approved` exits `0`, with stdout `auth: Under Review → Approved\n`.
+Given `spec/features/auth/README.md` containing `**Status:** In Review`, running `specscore feature change-status auth --to=approved` exits `0`, with stdout `auth: In Review → Approved\n`.
 
 ### AC: implementing-to-stable-happy-path
 
@@ -149,7 +152,7 @@ Given `spec/features/cli/idea/change-status/README.md` in `**Status:** Draft`, r
 
 **Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [lifecycle-transitions#req:state-machine-strictness](../../lifecycle-transitions/README.md#req-state-machine-strictness)
 
-Given `spec/features/auth/README.md` in `**Status:** Draft`, running `specscore feature change-status auth --to=implementing` (skipping `Approved`) exits `4` with a stderr message naming `Draft` as the current status and `Under Review`, `Approved` as the legal targets. No file change. The same applies to `Draft → Stable`, `Approved → Stable`, `Stable → Approved`, and other illegal pairs.
+Given `spec/features/auth/README.md` in `**Status:** Draft`, running `specscore feature change-status auth --to=implementing` (skipping `Approved`) exits `4` with a stderr message naming `Draft` as the current status and `In Review`, `Approved` as the legal targets. No file change. The same applies to `Draft → Stable`, `Approved → Stable`, `Stable → Approved`, and other illegal pairs.
 
 ### AC: reverse-transition-rejected
 
@@ -195,7 +198,7 @@ A `feature-index-row-sync` failure after a successful rewrite triggers rollback 
 
 ## Open Questions
 
-- Should `feature change-status --to=approved` enforce a prior `Under Review` for projects that nominally require review, via a `--require-review` flag or repo-config? Deferred; today both `Draft → Approved` and `Under Review → Approved` are unconditionally accepted.
+- Should `feature change-status --to=approved` enforce a prior `In Review` for projects that nominally require review, via a `--require-review` flag or repo-config? Deferred; today both `Draft → Approved` and `In Review → Approved` are unconditionally accepted.
 - Should `feature change-status --to=deprecated` require `--reason "<text>"` and/or `--successor <feature_id>` to record why and what supersedes? The source Idea Open Question. Lean: defer to a follow-on revision once usage demands it.
 - Should reverse transitions (`feature undeprecate`, `feature unstabilize`) be added as legal pairs in a future revision, or remain hand-edit territory? Lean: defer.
 - `change-status --help` rendering of the legal-transition matrix: same UX question as the Idea sibling's Outstanding Question. Lean: render it.

@@ -145,7 +145,7 @@ func TestParseDecisionFile_PlainHashTitle(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "decisions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	content := "\n\n# Plain Heading Without Prefix\n\n**Status:** Proposed\n"
+	content := "\n\n# Plain Heading Without Prefix\n\n**Status:** Draft\n"
 	path := filepath.Join(root, "decisions", "0001-x.md")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestCheckDecisions_EmptyDecisionsDir(t *testing.T) {
 func TestDecisionRequiredSections_OutOfOrder(t *testing.T) {
 	content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -312,7 +312,7 @@ None at this time.
 func TestDecisionRequiredSections_ExtraSectionIsSkipped(t *testing.T) {
 	content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -544,7 +544,7 @@ func TestWalkDecisionsIndex_AbsentNoCall(t *testing.T) {
 // =============================================================================
 
 func TestParseDecisionFromContent_PlainHashTitle(t *testing.T) {
-	content := "\n\n# Plain Heading\n\n**Status:** Accepted\n"
+	content := "\n\n# Plain Heading\n\n**Status:** Approved\n"
 	d, err := parseDecisionFromContent(content, "decisions/0001-x.md", false)
 	if err != nil {
 		t.Fatal(err)
@@ -558,18 +558,18 @@ func TestParseDecisionFromContent_PlainHashTitle(t *testing.T) {
 }
 
 // =============================================================================
-// decision_immutability.go:41 — checkDecisionImmutability committedStatus != Accepted
+// decision_immutability.go:41 — checkDecisionImmutability committedStatus != Approved
 // (line 94-96 continue)
 // =============================================================================
 
 func TestCheckDecisionImmutability_CommittedWasProposed(t *testing.T) {
-	// Initial commit is Proposed; later modify and flip to Accepted —
-	// the immutability check must skip because committed != Accepted.
+	// Initial commit is Draft; later modify and flip to Approved —
+	// the immutability check must skip because committed != Approved.
 	root := setupGitRepo(t, map[string]string{
 		"decisions/0001-test.md": validDecisionContent(),
 	})
-	// Modify the file so status is now Accepted and the body has changed.
-	modified := strings.Replace(validDecisionContent(), "**Status:** Proposed", "**Status:** Accepted", 1)
+	// Modify the file so status is now Approved and the body has changed.
+	modified := strings.Replace(validDecisionContent(), "**Status:** Draft", "**Status:** Approved", 1)
 	modified = strings.Replace(modified, "Some context here.", "Completely rewritten.", 1)
 	if err := os.WriteFile(filepath.Join(root, "decisions/0001-test.md"), []byte(modified), 0o644); err != nil {
 		t.Fatal(err)
@@ -578,14 +578,14 @@ func TestCheckDecisionImmutability_CommittedWasProposed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Committed was Proposed, so checks are skipped entirely.
+	// Committed was Draft, so checks are skipped entirely.
 	if hasDecisionViolation(vs, "D-immutability-once-accepted", "") {
-		t.Errorf("immutability must not be enforced when committed status was Proposed; got %+v", vs)
+		t.Errorf("immutability must not be enforced when committed status was Draft; got %+v", vs)
 	}
 }
 
 // =============================================================================
-// decision_immutability.go:41 — checkDecisionImmutability current != Accepted skipped
+// decision_immutability.go:41 — checkDecisionImmutability current != Approved skipped
 // (line 65-67 continue)
 // =============================================================================
 
@@ -593,13 +593,13 @@ func TestCheckDecisionImmutability_CurrentNotAccepted(t *testing.T) {
 	root := setupGitRepo(t, map[string]string{
 		"decisions/0001-test.md": validDecisionContent(),
 	})
-	// Leave status as Proposed — check should skip.
+	// Leave status as Draft — check should skip.
 	vs, err := checkDecisionImmutability(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hasDecisionViolation(vs, "D-immutability-once-accepted", "") {
-		t.Errorf("immutability must not be enforced when current status is Proposed; got %+v", vs)
+		t.Errorf("immutability must not be enforced when current status is Draft; got %+v", vs)
 	}
 }
 
@@ -748,7 +748,7 @@ func TestActiveDecisionsIndex_CleanPasses(t *testing.T) {
 
 | # | Decision | Status | Date | Tags | Affected |
 |---|----------|--------|------|------|----------|
-| [0001](0001-test.md) | Test Decision | Accepted | 2026-05-20 | — | — |
+| [0001](0001-test.md) | Test Decision | Approved | 2026-05-20 | — | — |
 
 ## Open Questions
 
@@ -1044,7 +1044,7 @@ func TestParseDecisionFile_NoTitleAtAll(t *testing.T) {
 	// No `# ...` heading at all — d.titleLine stays 0; the field loop's
 	// inHeader (computed from titleLine > 0) is false; the `if !inHeader
 	// { continue }` branch fires for every line until EOF.
-	content := "**Status:** Proposed\n**Date:** 2026-05-26\n"
+	content := "**Status:** Draft\n**Date:** 2026-05-26\n"
 	path := filepath.Join(root, "decisions", "0001-x.md")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -1193,7 +1193,7 @@ func TestDiscoverDecisionFiles_SkipsUnreadable(t *testing.T) {
 func TestObservedConsequencesAppendOnly_StrictAppendSucceeds(t *testing.T) {
 	content := `# Decision: Test
 
-**Status:** Accepted
+**Status:** Approved
 **Date:** 2026-05-20
 **Owner:** test@example.com
 **Tags:** —
@@ -1364,9 +1364,9 @@ func TestActiveDecisionsIndex_ExtraSeparatorRowSkipped(t *testing.T) {
 
 | # | Decision | Status | Date | Tags | Affected |
 |---|----------|--------|------|------|----------|
-| [0001](0001-test.md) | Test Decision | Accepted | 2026-05-20 | — | — |
+| [0001](0001-test.md) | Test Decision | Approved | 2026-05-20 | — | — |
 |---|---|---|---|---|---|
-| [0002](0002-second.md) | Second | Accepted | 2026-05-26 | — | — |
+| [0002](0002-second.md) | Second | Approved | 2026-05-26 | — | — |
 
 ## Open Questions
 
@@ -1403,8 +1403,8 @@ func TestActiveDecisionsIndex_NumericOrderingFixFailed(t *testing.T) {
 
 | # | Decision | Status | Date | Tags | Affected |
 |---|----------|--------|------|------|----------|
-| [0002](0002-second.md) | Second | Accepted | 2026-05-26 | — | — |
-| [0001](0001-first.md) | First | Accepted | 2026-05-20 | — | — |
+| [0002](0002-second.md) | Second | Approved | 2026-05-26 | — | — |
+| [0001](0001-first.md) | First | Approved | 2026-05-20 | — | — |
 
 ## Open Questions
 
@@ -1490,7 +1490,7 @@ None.
 	// Decision missing the Date field — drives the line 264-267 absent-branch.
 	decision := `# Decision: Test
 
-**Status:** Accepted
+**Status:** Approved
 **Owner:** test
 **Tags:** —
 **Source Idea:** —

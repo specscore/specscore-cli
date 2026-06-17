@@ -10,7 +10,7 @@ import (
 func validDecisionContent() string {
 	return `# Decision: Test Decision
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test@example.com
 **Tags:** —
@@ -56,7 +56,7 @@ None at this time.
 func acceptedDecisionContent() string {
 	return `# Decision: Accepted Decision
 
-**Status:** Accepted
+**Status:** Approved
 **Date:** 2026-05-20
 **Owner:** test@example.com
 **Tags:** tag1, tag2
@@ -123,7 +123,7 @@ func TestDecisionReverseCheckSkipsDecisionWithoutSupersededByField(t *testing.T)
 // check is driven by Supersedes and does not cover these.
 func TestDecisionSupersededByReverse(t *testing.T) {
 	t.Run("orphan Superseded By rejected", func(t *testing.T) {
-		content := strings.Replace(validDecisionContent(), "**Status:** Proposed", "**Status:** Superseded", 1)
+		content := strings.Replace(validDecisionContent(), "**Status:** Draft", "**Status:** Superseded", 1)
 		content = strings.Replace(content, "**Superseded By:** —", "**Superseded By:** 0099-ghost", 1)
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/archived/0001-a.md": content,
@@ -139,7 +139,7 @@ func TestDecisionSupersededByReverse(t *testing.T) {
 
 	t.Run("back-reference mismatch rejected", func(t *testing.T) {
 		// A claims it was superseded by B, but B's Supersedes does not point back.
-		a := strings.Replace(validDecisionContent(), "**Status:** Proposed", "**Status:** Superseded", 1)
+		a := strings.Replace(validDecisionContent(), "**Status:** Draft", "**Status:** Superseded", 1)
 		a = strings.Replace(a, "**Superseded By:** —", "**Superseded By:** 0002-b", 1)
 		b := validDecisionContent() // B.Supersedes stays "—" — does not point back to A.
 		root := setupDecisionTestTree(t, map[string]string{
@@ -208,7 +208,7 @@ func TestDecisionTitleFormat(t *testing.T) {
 	})
 
 	t.Run("missing Decision prefix rejected", func(t *testing.T) {
-		content := "# Some Title Without Prefix\n\n**Status:** Proposed\n**Date:** 2026-05-26\n**Owner:** test\n**Tags:** —\n**Source Idea:** —\n**Supersedes:** —\n**Superseded By:** —\n\n## Context\n\nCtx.\n\n## Decision\n\nD.\n\n## Rationale\n\nR.\n\n## Declined Alternatives\n\n### Alt\n\nNo.\n\n## Consequences at Decision Time\n\nC.\n\n## Observed Consequences\n\nNone observed yet.\n\n## Affected Features\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/decision-specification*\n"
+		content := "# Some Title Without Prefix\n\n**Status:** Draft\n**Date:** 2026-05-26\n**Owner:** test\n**Tags:** —\n**Source Idea:** —\n**Supersedes:** —\n**Superseded By:** —\n\n## Context\n\nCtx.\n\n## Decision\n\nD.\n\n## Rationale\n\nR.\n\n## Declined Alternatives\n\n### Alt\n\nNo.\n\n## Consequences at Decision Time\n\nC.\n\n## Observed Consequences\n\nNone observed yet.\n\n## Affected Features\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/decision-specification*\n"
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/0001-test.md": content,
 		})
@@ -239,7 +239,7 @@ func TestDecisionHeaderFields(t *testing.T) {
 	t.Run("missing Tags field rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Source Idea:** —
@@ -295,7 +295,7 @@ None at this time.
 		content := `# Decision: Test
 
 **Date:** 2026-05-26
-**Status:** Proposed
+**Status:** Draft
 **Owner:** test
 **Tags:** —
 **Source Idea:** —
@@ -365,7 +365,7 @@ func TestDecisionStatusValues(t *testing.T) {
 	t.Run("invalid status rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Draft
+**Status:** Bogus
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -413,8 +413,8 @@ None at this time.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !hasDecisionViolation(vs, "D-status-values", "Draft") {
-			t.Error("expected D-status-values violation for Draft")
+		if !hasDecisionViolation(vs, "D-status-values", "Bogus") {
+			t.Error("expected D-status-values violation for Bogus")
 		}
 	})
 }
@@ -479,7 +479,7 @@ func TestDecisionRequiredSections(t *testing.T) {
 	t.Run("missing Rationale rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -533,7 +533,7 @@ func TestDecisionDeclinedAlternatives(t *testing.T) {
 	t.Run("no h3 entries rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -586,7 +586,7 @@ None at this time.
 }
 
 func TestDecisionObservedConsequencesPlaceholder(t *testing.T) {
-	t.Run("Proposed with placeholder passes", func(t *testing.T) {
+	t.Run("Draft with placeholder passes", func(t *testing.T) {
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/0001-test.md": validDecisionContent(),
 		})
@@ -599,10 +599,10 @@ func TestDecisionObservedConsequencesPlaceholder(t *testing.T) {
 		}
 	})
 
-	t.Run("Proposed without placeholder rejected", func(t *testing.T) {
+	t.Run("Draft without placeholder rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -655,7 +655,7 @@ None at this time.
 		}
 	})
 
-	t.Run("Accepted without placeholder is fine", func(t *testing.T) {
+	t.Run("Approved without placeholder is fine", func(t *testing.T) {
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/0001-test.md": acceptedDecisionContent(),
 		})
@@ -664,7 +664,7 @@ None at this time.
 			t.Fatal(err)
 		}
 		if hasDecisionViolation(vs, "D-observed-consequences-placeholder", "") {
-			t.Error("Accepted decisions should not require the placeholder")
+			t.Error("Approved decisions should not require the placeholder")
 		}
 	})
 }
@@ -726,7 +726,7 @@ None at this time.
 		}
 	})
 
-	t.Run("Proposed in archived rejected", func(t *testing.T) {
+	t.Run("Draft in archived rejected", func(t *testing.T) {
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/archived/0001-test.md": validDecisionContent(),
 		})
@@ -735,7 +735,7 @@ None at this time.
 			t.Fatal(err)
 		}
 		if !hasDecisionViolation(vs, "D-archived-location", "") {
-			t.Error("expected D-archived-location violation for Proposed in archived dir")
+			t.Error("expected D-archived-location violation for Draft in archived dir")
 		}
 	})
 }
@@ -802,7 +802,7 @@ func TestDecisionSupersedesTargetExists(t *testing.T) {
 	t.Run("missing target rejected", func(t *testing.T) {
 		content := `# Decision: Replacement
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -903,7 +903,7 @@ None at this time.
 `
 		new := `# Decision: New
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -961,7 +961,7 @@ None at this time.
 	t.Run("drift detected", func(t *testing.T) {
 		old := `# Decision: Old
 
-**Status:** Accepted
+**Status:** Approved
 **Date:** 2026-05-20
 **Owner:** test
 **Tags:** —
@@ -1004,7 +1004,7 @@ None at this time.
 `
 		new := `# Decision: New
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -1063,7 +1063,7 @@ func TestDecisionAffectedFeaturesTargetExists(t *testing.T) {
 	t.Run("nonexistent feature slug rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -1119,7 +1119,7 @@ None observed yet.
 	t.Run("existing feature passes", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -1204,7 +1204,7 @@ func TestDecisionSourceIdeaOptional(t *testing.T) {
 	t.Run("nonexistent idea rejected", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -1260,7 +1260,7 @@ None at this time.
 	t.Run("existing idea passes", func(t *testing.T) {
 		content := `# Decision: Test
 
-**Status:** Proposed
+**Status:** Draft
 **Date:** 2026-05-26
 **Owner:** test
 **Tags:** —
@@ -1416,7 +1416,7 @@ None at this time.
 func TestDecisionCrossRepoAffectedFeaturesSkipped(t *testing.T) {
 	content := `# Decision: Test
 
-**Status:** Accepted
+**Status:** Approved
 **Date:** 2026-05-22
 **Owner:** test
 **Tags:** —

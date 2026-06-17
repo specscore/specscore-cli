@@ -35,6 +35,7 @@ type Kind string
 const (
 	KindIdea    Kind = "idea"
 	KindFeature Kind = "feature"
+	KindPlan    Kind = "plan"
 )
 
 // Status is a domain-scoped status value. The set of legal Status values is
@@ -45,23 +46,47 @@ type Status string
 // Idea statuses.
 const (
 	IdeaDraft        Status = "Draft"
-	IdeaUnderReview  Status = "Under Review"
+	IdeaInReview     Status = "In Review"
 	IdeaApproved     Status = "Approved"
 	IdeaSpecifying   Status = "Specifying"
 	IdeaSpecified    Status = "Specified"
 	IdeaImplementing Status = "Implementing"
 	IdeaImplemented  Status = "Implemented"
-	IdeaArchived     Status = "Archived"
+	IdeaRejected     Status = "Rejected"
+	IdeaStale        Status = "Stale"
 )
 
 // Feature statuses.
 const (
 	FeatureDraft        Status = "Draft"
-	FeatureUnderReview  Status = "Under Review"
+	FeatureInReview     Status = "In Review"
 	FeatureApproved     Status = "Approved"
 	FeatureImplementing Status = "Implementing"
 	FeatureStable       Status = "Stable"
+	FeatureAmending     Status = "Amending"
+	FeatureRejected     Status = "Rejected"
 	FeatureDeprecated   Status = "Deprecated"
+)
+
+// Plan statuses. The status models a plan's full lifecycle in three bands
+// (prep / execution / disposition); see spec/features/plan/README.md. Only
+// the prep band and the dispositions are human-authored — `plan change-status`
+// owns those arcs. The execution band (Executing/Blocked/Implemented/Failed)
+// is LINT-DERIVED from the task-status rollup (rule P-007) and MUST NOT be
+// settable via change-status; those values appear in this matrix only as
+// From-states for dispositions.
+const (
+	PlanDraft       Status = "Draft"
+	PlanInReview    Status = "In Review"
+	PlanApproved    Status = "Approved"
+	PlanExecuting   Status = "Executing"
+	PlanBlocked     Status = "Blocked"
+	PlanImplemented Status = "Implemented"
+	PlanFailed      Status = "Failed"
+	PlanRejected    Status = "Rejected"
+	PlanWithdrawn   Status = "Withdrawn"
+	PlanSuperseded  Status = "Superseded"
+	PlanDeprecated  Status = "Deprecated"
 )
 
 // ErrInvalidTransition is returned by Transition (and Validate) when the
@@ -113,26 +138,61 @@ type transitionRow struct {
 // From == To. validateMatrix enforces the invariant at init time.
 var transitionMatrix = map[Kind][]transitionRow{
 	KindIdea: {
+		{From: IdeaDraft, To: IdeaInReview},
 		{From: IdeaDraft, To: IdeaApproved},
-		{From: IdeaDraft, To: IdeaArchived},
-		{From: IdeaUnderReview, To: IdeaArchived},
+		{From: IdeaDraft, To: IdeaStale},
+		{From: IdeaInReview, To: IdeaApproved},
+		{From: IdeaInReview, To: IdeaRejected},
+		{From: IdeaInReview, To: IdeaStale},
 		{From: IdeaApproved, To: IdeaSpecifying},
-		{From: IdeaApproved, To: IdeaArchived},
+		{From: IdeaApproved, To: IdeaStale},
 		{From: IdeaSpecifying, To: IdeaSpecified},
-		{From: IdeaSpecifying, To: IdeaArchived},
+		{From: IdeaSpecifying, To: IdeaStale},
 		{From: IdeaSpecified, To: IdeaImplementing},
-		{From: IdeaSpecified, To: IdeaArchived},
+		{From: IdeaSpecified, To: IdeaStale},
 		{From: IdeaImplementing, To: IdeaImplemented},
-		{From: IdeaImplementing, To: IdeaArchived},
-		{From: IdeaImplemented, To: IdeaArchived},
 	},
 	KindFeature: {
-		{From: FeatureDraft, To: FeatureUnderReview},
+		{From: FeatureDraft, To: FeatureInReview},
 		{From: FeatureDraft, To: FeatureApproved},
-		{From: FeatureUnderReview, To: FeatureApproved},
+		{From: FeatureInReview, To: FeatureApproved},
+		{From: FeatureInReview, To: FeatureRejected},
 		{From: FeatureApproved, To: FeatureImplementing},
 		{From: FeatureImplementing, To: FeatureStable},
+		{From: FeatureStable, To: FeatureAmending},
+		{From: FeatureAmending, To: FeatureStable},
 		{From: FeatureStable, To: FeatureDeprecated},
+	},
+	// KindPlan carries ONLY the human-authored arcs: the prep band and the
+	// dispositions. The execution band (Executing/Blocked/Implemented/Failed)
+	// is lint-derived (P-007) and is NOT enterable via change-status, so there
+	// is deliberately no Approved→Executing arc. Execution-band states appear
+	// here only as From-states for the dispositions, so a plan that lint has
+	// advanced into the execution band can still be Withdrawn/Superseded/
+	// Deprecated by a human.
+	KindPlan: {
+		{From: PlanDraft, To: PlanInReview},
+		{From: PlanInReview, To: PlanDraft}, // revisions requested
+		{From: PlanInReview, To: PlanApproved},
+		{From: PlanInReview, To: PlanRejected},
+
+		{From: PlanApproved, To: PlanWithdrawn},
+		{From: PlanExecuting, To: PlanWithdrawn},
+		{From: PlanBlocked, To: PlanWithdrawn},
+		{From: PlanImplemented, To: PlanWithdrawn},
+		{From: PlanFailed, To: PlanWithdrawn},
+
+		{From: PlanApproved, To: PlanSuperseded},
+		{From: PlanExecuting, To: PlanSuperseded},
+		{From: PlanBlocked, To: PlanSuperseded},
+		{From: PlanImplemented, To: PlanSuperseded},
+		{From: PlanFailed, To: PlanSuperseded},
+
+		{From: PlanApproved, To: PlanDeprecated},
+		{From: PlanExecuting, To: PlanDeprecated},
+		{From: PlanBlocked, To: PlanDeprecated},
+		{From: PlanImplemented, To: PlanDeprecated},
+		{From: PlanFailed, To: PlanDeprecated},
 	},
 }
 

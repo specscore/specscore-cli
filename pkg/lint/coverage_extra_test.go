@@ -775,24 +775,27 @@ func TestCheckIdeas_ParseErrorPermission(t *testing.T) {
 // idea.go — ideaFileRules: archive-reason with **Archive Reason:** line (310-312)
 // =============================================================================
 
-func TestIdeaRules_ArchiveReasonWithField(t *testing.T) {
+// A present-but-empty (em-dash) **Archive Note:** fires idea-archive-note
+// (format-if-present check). The note itself is optional, but when the line
+// exists it must carry content.
+func TestIdeaRules_ArchiveNoteEmptyField(t *testing.T) {
 	root := writeSpec(t, map[string]string{
-		"ideas/README.md":             activeIndex + "\n## Open Questions\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/ideas-index-specification*\n",
-		"ideas/archived/README.md":    "# Archived\n\n_No archived ideas yet._\n\n## Open Questions\n\nNone at this time.\n",
-		"ideas/archived/no-reason.md": "# Idea: No Reason\n\n**Status:** Archived\n**Date:** 2026-05-01\n**Owner:** alice\n**Promotes To:** —\n**Supersedes:** —\n**Related Ideas:** —\n**Archive Reason:** —\n\n## Problem Statement\nHow Might We x.\n\n## Context\nx\n\n## Recommended Direction\nx\n\n## Alternatives Considered\nx\n\n## MVP Scope\nx\n\n## Not Doing (and Why)\n- x — y\n\n## Key Assumptions to Validate\n| Tier | Assumption | How to validate |\n|---|---|---|\n| Must-be-true | x | x |\n\n## SpecScore Integration\n- x\n\n## Open Questions\nNone at this time.\n\n---\n*This document follows the https://specscore.md/idea-specification*\n",
+		"ideas/README.md":           activeIndex + "\n## Open Questions\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/ideas-index-specification*\n",
+		"ideas/archived/README.md":  "# Archived\n\n- 2026-05-01 — [no-note](no-note.md) — —\n\n## Open Questions\n\nNone at this time.\n",
+		"ideas/archived/no-note.md": "# Idea: No Note\n\n**Status:** Stale\n**Archived:** true\n**Date:** 2026-05-01\n**Owner:** alice\n**Promotes To:** —\n**Supersedes:** —\n**Related Ideas:** —\n**Archive Note:** —\n\n## Problem Statement\nHow Might We x.\n\n## Context\nx\n\n## Recommended Direction\nx\n\n## Alternatives Considered\nx\n\n## MVP Scope\nx\n\n## Not Doing (and Why)\n- x — y\n\n## Key Assumptions to Validate\n| Tier | Assumption | How to validate |\n|---|---|---|\n| Must-be-true | x | x |\n\n## SpecScore Integration\n- x\n\n## Open Questions\nNone at this time.\n\n---\n*This document follows the https://specscore.md/idea-specification*\n",
 	})
 	vs, err := CheckIdeas(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hasArchiveReason := false
+	hasArchiveNote := false
 	for _, v := range vs {
-		if v.Rule == "idea-archive-reason" {
-			hasArchiveReason = true
+		if v.Rule == "idea-archive-note" {
+			hasArchiveNote = true
 		}
 	}
-	if !hasArchiveReason {
-		t.Error("expected idea-archive-reason violation for em-dash Archive Reason")
+	if !hasArchiveNote {
+		t.Error("expected idea-archive-note violation for em-dash Archive Note")
 	}
 }
 
@@ -1481,5 +1484,97 @@ func TestIdeaRules_IdeaMissingMustBeTrue(t *testing.T) {
 	}
 	if !hasMBT {
 		t.Error("expected idea-must-be-true-present violation")
+	}
+}
+
+// =============================================================================
+// plan_rules.go — P-007 fix-path error coverage
+// =============================================================================
+
+// driftingP007Plan returns plan bytes whose body Status is Approved but whose
+// two tasks are both done, so the rollup derives Implemented (a P-007 drift).
+const driftingP007Plan = "# Plan: P\n\n**Status:** Approved\n**Source:** none\n\n" +
+	"## Tasks\n\n### Task 1: A\n\n**Status:** done\n\n### Task 2: B\n\n**Status:** done\n"
+
+func TestP007Fix_NonExistentRoot(t *testing.T) {
+	c := newPlanRulesChecker()
+	c.fixP007 = true
+	if err := c.fix("/nonexistent/path"); err != nil {
+		t.Errorf("fix should silently skip nonexistent path, got: %v", err)
+	}
+}
+
+func TestP007Fix_ReadDirError(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(plansDir, 0o000); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(plansDir, 0o755) }()
+
+	c := newPlanRulesChecker()
+	c.fixP007 = true
+	if err := c.fix(root); err == nil {
+		t.Error("expected error for unreadable plans dir")
+	}
+}
+
+func TestP007Fix_ParseError(t *testing.T) {
+	root := setupSpecTree(t, map[string]string{
+		"plans/p.md": driftingP007Plan,
+	})
+	planPath := filepath.Join(root, "plans", "p.md")
+	if err := os.Chmod(planPath, 0o000); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(planPath, 0o644) }()
+
+	c := newPlanRulesChecker()
+	c.fixP007 = true
+	if err := c.fix(root); err == nil {
+		t.Error("expected error when a plan file cannot be parsed")
+	}
+}
+
+// Covers fixP007's error-wrapping branch: a drifting plan whose file is
+// read-only fails the rewrite, and fix() propagates the wrapped error.
+func TestP007Fix_RewriteError(t *testing.T) {
+	root := setupSpecTree(t, map[string]string{
+		"plans/p.md": driftingP007Plan,
+	})
+	planPath := filepath.Join(root, "plans", "p.md")
+	if err := os.Chmod(planPath, 0o444); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(planPath, 0o644) }()
+
+	c := newPlanRulesChecker()
+	c.fixP007 = true
+	if err := c.fix(root); err == nil {
+		t.Skip("write to read-only file unexpectedly succeeded (likely running as root)")
+	}
+}
+
+// Covers rewritePlanStatusLine's ReadFile and WriteFile error paths directly.
+func TestRewritePlanStatusLine_Errors(t *testing.T) {
+	// ReadFile error: a path that does not exist.
+	if err := rewritePlanStatusLine(filepath.Join(t.TempDir(), "missing.md"), 1, "Implemented"); err == nil {
+		t.Error("expected a read error for a missing file")
+	}
+
+	// WriteFile error: a read-only file (ReadFile succeeds, WriteFile fails).
+	f := filepath.Join(t.TempDir(), "p.md")
+	if err := os.WriteFile(f, []byte("**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f, 0o444); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(f, 0o644) }()
+	if err := rewritePlanStatusLine(f, 1, "Implemented"); err == nil {
+		t.Skip("write to read-only file unexpectedly succeeded (likely running as root)")
 	}
 }

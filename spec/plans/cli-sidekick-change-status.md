@@ -4,7 +4,7 @@ status: Completed
 ---
 # Plan: Cli Sidekick Change Status
 
-**Status:** Completed
+**Status:** Implemented
 **Source Feature:** cli/sidekick/change-status
 **Date:** 2026-06-16
 **Owner:** alexandertrakhimenok

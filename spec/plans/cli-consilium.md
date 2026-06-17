@@ -1,6 +1,6 @@
 # Plan: Consilium Engine (CLI) — pkg/consilium
 
-**Status:** Completed
+**Status:** Implemented
 **Mode:** full
 **Source Feature:** cli/consilium
 **Date:** 2026-06-03

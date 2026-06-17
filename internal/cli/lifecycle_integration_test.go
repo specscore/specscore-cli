@@ -171,37 +171,35 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Errorf("idea file mutated by rejected re-run")
 	}
 
-	// Idea needs an Archive Reason header field before --to=archived,
-	// per idea-archive-reason. Real users set this via a separate edit;
-	// the verb itself does not synthesize one. Mirror the production
-	// pattern.
-	rawIdea, _ := os.ReadFile(ideaActive)
-	patched := strings.Replace(string(rawIdea),
-		"**Status:** Approved",
-		"**Status:** Approved\n**Archive Reason:** integration test — superseded.",
-		1)
-	if err := os.WriteFile(ideaActive, []byte(patched), 0o644); err != nil {
-		t.Fatalf("inject archive reason: %v", err)
-	}
-
-	// Step 4: idea change-status foo --to=archived — moves to
-	// archived/ and syncs both indexes.
-	out, _, err = runIdea(t, "change-status", "foo", "--to=archived")
+	// Step 4a: idea change-status foo --to=stale — a terminal disposition.
+	// Archival is orthogonal to status and is the next step.
+	out, _, err = runIdea(t, "change-status", "foo", "--to=stale")
 	if err != nil {
-		t.Fatalf("step 4: idea change-status archived failed: %v", err)
+		t.Fatalf("step 4a: idea change-status stale failed: %v", err)
 	}
-	if want := "foo: Approved → Archived\n"; out != want {
-		t.Errorf("step 4: stdout = %q, want %q", out, want)
+	if want := "foo: Approved → Stale\n"; out != want {
+		t.Errorf("step 4a: stdout = %q, want %q", out, want)
+	}
+	assertLintClean(t, root, "after idea→stale")
+
+	// Step 4b: idea archive foo — keeps the terminal **Status:** (Stale),
+	// adds **Archived:** true, relocates to archived/, and syncs both
+	// indexes.
+	if _, _, err = runIdea(t, "archive", "foo"); err != nil {
+		t.Fatalf("step 4b: idea archive failed: %v", err)
 	}
 	if _, err := os.Stat(ideaActive); !os.IsNotExist(err) {
-		t.Errorf("step 4: active idea file should be gone, err=%v", err)
+		t.Errorf("step 4b: active idea file should be gone, err=%v", err)
 	}
 	ideaArchived := filepath.Join(root, "spec", "ideas", "archived", "foo.md")
-	if got := readFileStatus(t, ideaArchived); got != "Archived" {
-		t.Errorf("step 4: archived idea status = %q, want Archived", got)
+	if got := readFileStatus(t, ideaArchived); got != "Stale" {
+		t.Errorf("step 4b: archived idea status = %q, want Stale (terminal status preserved)", got)
+	}
+	if !fileContains(t, ideaArchived, "**Archived:** true") {
+		t.Errorf("step 4b: archived idea missing **Archived:** true axis")
 	}
 	if !fileContains(t, filepath.Join(root, "spec", "ideas", "archived", "README.md"), "foo") {
-		t.Errorf("step 4: archived index not synced to list foo")
+		t.Errorf("step 4b: archived index not synced to list foo")
 	}
 	assertLintClean(t, root, "after idea→archived")
 
@@ -234,26 +232,26 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Errorf("feature file mutated by rejected Draft→Stable")
 	}
 
-	// Step 6: feature change-status bar --to="under review".
-	out, _, err = runFeature(t, "change-status", "bar", "--to=under review")
+	// Step 6: feature change-status bar --to="in review".
+	out, _, err = runFeature(t, "change-status", "bar", "--to=in review")
 	if err != nil {
-		t.Fatalf("step 6: feature change-status under review failed: %v", err)
+		t.Fatalf("step 6: feature change-status in review failed: %v", err)
 	}
-	if want := "bar: Draft → Under Review\n"; out != want {
+	if want := "bar: Draft → In Review\n"; out != want {
 		t.Errorf("step 6: stdout = %q, want %q", out, want)
 	}
-	if got := readFileStatus(t, featPath); got != "Under Review" {
-		t.Errorf("step 6: feature status = %q, want Under Review", got)
+	if got := readFileStatus(t, featPath); got != "In Review" {
+		t.Errorf("step 6: feature status = %q, want In Review", got)
 	}
-	if !fileContains(t, featuresIdx, "| [bar](bar/README.md) | Under Review | integration test feature |") {
-		t.Errorf("step 6: features index Status cell not synced to Under Review")
+	if !fileContains(t, featuresIdx, "| [bar](bar/README.md) | In Review | integration test feature |") {
+		t.Errorf("step 6: features index Status cell not synced to In Review")
 	}
-	assertLintClean(t, root, "after feature→under review")
+	assertLintClean(t, root, "after feature→in review")
 
 	// Illegal transition 3: same-target re-run (exit 4).
 	preBytes = snapshotFile(t, featPath)
-	_, _, err = runFeature(t, "change-status", "bar", "--to=under review")
-	assertExitCode(t, err, exitcode.InvalidState, "feature Under Review→Under Review re-run")
+	_, _, err = runFeature(t, "change-status", "bar", "--to=in review")
+	assertExitCode(t, err, exitcode.InvalidState, "feature In Review→In Review re-run")
 	if got := snapshotFile(t, featPath); !bytes.Equal(preBytes, got) {
 		t.Errorf("feature file mutated by rejected same-target re-run")
 	}
@@ -263,7 +261,7 @@ func TestLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("step 7: feature change-status approved failed: %v", err)
 	}
-	if want := "bar: Under Review → Approved\n"; out != want {
+	if want := "bar: In Review → Approved\n"; out != want {
 		t.Errorf("step 7: stdout = %q, want %q", out, want)
 	}
 	if got := readFileStatus(t, featPath); got != "Approved" {

@@ -383,35 +383,119 @@ func TestIdeaChangeStatus_DraftToApprovedHappyPath_CLI(t *testing.T) {
 	}
 }
 
-// AC: archive-from-approved-happy-path (CLI level).
-//
-// idea-archive-reason (the existing Idea lint rule) requires a non-empty
-// **Archive Reason:** for Status: Archived files. Real users will set
-// the field via a separate edit before invoking change-status (or, in a
-// later iteration, via a --reason flag — currently OQ). For this test
-// we pre-stage the field; the verb itself doesn't synthesize one.
-func TestIdeaChangeStatus_ArchiveHappyPath_CLI(t *testing.T) {
-	extra := "**Archive Reason:** test scenario — superseded by follow-up idea."
-	root := stageActiveIdea(t, "foo", "Approved", extra)
+// AC: archive-happy-path (CLI level — exercises the full cobra →
+// idea.Archive → lint --fix path). Archival is orthogonal to status: the
+// archived file keeps its terminal **Status:** and gains **Archived:** true.
+func TestIdeaArchive_HappyPath_CLI(t *testing.T) {
+	root := stageActiveIdea(t, "foo", "Stale", "")
 
-	stdout, stderr, err := runIdea(t, "change-status", "foo", "--to=archived")
+	stdout, stderr, err := runIdea(t, "archive", "foo", "--note", "superseded by follow-up idea")
 	if err != nil {
-		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
+		t.Fatalf("archive: %v (stderr=%s)", err, stderr)
 	}
-	want := "foo: Approved → Archived\n"
-	if stdout != want {
-		t.Errorf("stdout = %q; want %q", stdout, want)
+	activePath := filepath.Join(root, "spec", "ideas", "foo.md")
+	archivedPath := filepath.Join(root, "spec", "ideas", "archived", "foo.md")
+	// macOS resolves t.TempDir() through /private; assert on the structure
+	// rather than the exact OS-resolved absolute path.
+	if !strings.HasPrefix(stdout, "foo: ") ||
+		!strings.Contains(stdout, "ideas/foo.md → ") ||
+		!strings.Contains(stdout, "ideas/archived/foo.md") {
+		t.Errorf("stdout = %q; want 'foo: <active> → <archived>'", stdout)
 	}
 	// File moved.
-	if _, err := os.Stat(filepath.Join(root, "spec", "ideas", "foo.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
 		t.Errorf("active file should be gone: err=%v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(root, "spec", "ideas", "archived", "foo.md"))
+	body, err := os.ReadFile(archivedPath)
 	if err != nil {
 		t.Fatalf("archived file missing: %v", err)
 	}
-	if !strings.Contains(string(body), "**Status:** Archived") {
-		t.Errorf("archived file missing status line:\n%s", body)
+	if !strings.Contains(string(body), "**Status:** Stale") {
+		t.Errorf("archived file must keep terminal status:\n%s", body)
+	}
+	if !strings.Contains(string(body), "**Archived:** true") {
+		t.Errorf("archived file missing **Archived:** true:\n%s", body)
+	}
+}
+
+// AC: unarchive-happy-path (CLI level).
+func TestIdeaUnarchive_HappyPath_CLI(t *testing.T) {
+	root := stageActiveIdea(t, "foo", "Stale", "")
+	if _, stderr, err := runIdea(t, "archive", "foo"); err != nil {
+		t.Fatalf("archive: %v (stderr=%s)", err, stderr)
+	}
+
+	stdout, stderr, err := runIdea(t, "unarchive", "foo")
+	if err != nil {
+		t.Fatalf("unarchive: %v (stderr=%s)", err, stderr)
+	}
+	activePath := filepath.Join(root, "spec", "ideas", "foo.md")
+	archivedPath := filepath.Join(root, "spec", "ideas", "archived", "foo.md")
+	if !strings.HasPrefix(stdout, "foo: ") ||
+		!strings.Contains(stdout, "ideas/archived/foo.md → ") ||
+		!strings.HasSuffix(strings.TrimSpace(stdout), "ideas/foo.md") {
+		t.Errorf("stdout = %q; want 'foo: <archived> → <active>'", stdout)
+	}
+	if _, err := os.Stat(archivedPath); !os.IsNotExist(err) {
+		t.Errorf("archived file should be gone: err=%v", err)
+	}
+	body, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("active file missing: %v", err)
+	}
+	if strings.Contains(string(body), "**Archived:**") {
+		t.Errorf("**Archived:** line should be cleared:\n%s", body)
+	}
+}
+
+// An invalid slug is rejected (exit 2) by both archive and unarchive before
+// any filesystem work.
+func TestIdeaArchiveUnarchive_InvalidSlug_CLI(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+
+	for _, verb := range []string{"archive", "unarchive"} {
+		_, _, err := runIdea(t, verb, "Bad_Slug")
+		if err == nil {
+			t.Fatalf("%s: expected error for invalid slug", verb)
+		}
+		type exitCoder interface{ ExitCode() int }
+		var ec exitCoder
+		if !errors.As(err, &ec) || ec.ExitCode() != 2 {
+			t.Errorf("%s: want exit 2 for invalid slug, got %v", verb, err)
+		}
+	}
+}
+
+// A missing target (no active file to archive / no archived file to
+// unarchive) surfaces the underlying NotFound (exit 3).
+func TestIdeaArchiveUnarchive_NotFound_CLI(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+
+	for _, verb := range []string{"archive", "unarchive"} {
+		_, _, err := runIdea(t, verb, "ghost")
+		if err == nil {
+			t.Fatalf("%s: expected error for missing target", verb)
+		}
+		type exitCoder interface{ ExitCode() int }
+		var ec exitCoder
+		if !errors.As(err, &ec) || ec.ExitCode() != 3 {
+			t.Errorf("%s: want exit 3 for missing target, got %v", verb, err)
+		}
+	}
+}
+
+// When the project root cannot be resolved (no spec repo at the given
+// --project path), both verbs surface the resolveSpecRoot error.
+func TestIdeaArchiveUnarchive_UnresolvableProject_CLI(t *testing.T) {
+	// A bare temp dir with no specscore.yaml / spec tree and no git repo.
+	bare := t.TempDir()
+	for _, verb := range []string{"archive", "unarchive"} {
+		_, _, err := runIdea(t, verb, "foo", "--project", bare)
+		if err == nil {
+			t.Fatalf("%s: expected error for unresolvable project root", verb)
+		}
 	}
 }
 

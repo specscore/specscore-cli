@@ -14,7 +14,7 @@ status: Stable
 
 ## Summary
 
-`specscore idea change-status <slug> --to=<status>` transitions an Idea artifact from its current `**Status:**` to the target status named by `--to`. Implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract; extends it with a kind-specific file-relocation side effect when `--to=archived`.
+`specscore idea change-status <slug> --to=<status>` transitions an Idea artifact from its current `**Status:**` to the target status named by `--to`. Implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract. Archival is **not** a status: filing an Idea out of active view is the separate, orthogonal [`idea archive`](../archive/README.md) verb, which keeps the Idea's terminal `**Status:**` and adds an `**Archived:** true` axis. `change-status` never relocates a file.
 
 ## Synopsis
 
@@ -24,32 +24,33 @@ specscore idea change-status <slug> --to=<status> [--project <path>]
 
 ## Problem
 
-Today, transitioning an Idea's status is a hand-edit of the `**Status:**` line in `spec/ideas/<slug>.md` plus `specscore spec lint --fix` for index sync. Archiving is the same plus a `git mv` to `spec/ideas/archived/`. Hand-edits skip state-machine validation (a hand-edit can drop `Specified` back to `Draft` with no warning), forget the lint sync (leaving the index stale), and have no machine-readable contract. This verb closes the gap with a single command per kind.
+Today, transitioning an Idea's status is a hand-edit of the `**Status:**` line in `spec/ideas/<slug>.md` plus `specscore spec lint --fix` for index sync. Hand-edits skip state-machine validation (a hand-edit can drop `Specified` back to `Draft` with no warning), forget the lint sync (leaving the index stale), and have no machine-readable contract. This verb closes the gap with a single command per kind. (Archival — moving an Idea out of active view — is a separate orthogonal concern handled by [`idea archive`](../archive/README.md), not a status transition.)
 
 ## Behavior
 
-This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md). The REQs below are the verb-specific declarations: the Idea legal-transition matrix, the `--to` flag, the kind-specific slug resolution, the `--to=archived` file-relocation side effect, and the two index-sync rules that fire on archive.
+This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md). The REQs below are the verb-specific declarations: the Idea legal-transition matrix, the `--to` flag, the kind-specific slug resolution, and the index-sync behavior. The verb performs an in-place `**Status:**` rewrite only — it never relocates a file (archival is the orthogonal [`idea archive`](../archive/README.md) verb).
 
 ### Legal-transition matrix
 
-Only the transitions in the table below are accepted. Any other `(from, to)` pair exits `4` (InvalidTransition) per [lifecycle-transitions#req:state-machine-strictness](../../lifecycle-transitions/README.md#req-state-machine-strictness).
+Only the transitions in the table below are accepted. Any other `(from, to)` pair exits `4` (InvalidTransition) per [lifecycle-transitions#req:state-machine-strictness](../../lifecycle-transitions/README.md#req-state-machine-strictness). Status values are governed by [status-vocabulary#req:per-artifact-status-sets](https://github.com/specscore/specscore/blob/main/spec/features/status-vocabulary/README.md#req-per-artifact-status-sets): the Idea legal set is `Draft, In Review, Approved, Specifying, Specified, Implementing, Implemented, Rejected, Stale` (no `Archived` — archival is not a status).
 
 | From | To | Side effects |
 |---|---|---|
+| `Draft` | `In Review` | Status rewrite + ideas-index sync |
 | `Draft` | `Approved` | Status rewrite + ideas-index sync |
-| `Draft` | `Archived` | Status rewrite + file move + active-index + archived-index sync |
-| `Under Review` | `Archived` | Status rewrite + file move + active-index + archived-index sync |
+| `Draft` | `Stale` | Status rewrite + ideas-index sync |
+| `In Review` | `Approved` | Status rewrite + ideas-index sync |
+| `In Review` | `Rejected` | Status rewrite + ideas-index sync |
+| `In Review` | `Stale` | Status rewrite + ideas-index sync |
 | `Approved` | `Specifying` | Status rewrite + ideas-index sync |
-| `Approved` | `Archived` | Status rewrite + file move + active-index + archived-index sync |
+| `Approved` | `Stale` | Status rewrite + ideas-index sync |
 | `Specifying` | `Specified` | Status rewrite + ideas-index sync |
-| `Specifying` | `Archived` | Status rewrite + file move + active-index + archived-index sync |
+| `Specifying` | `Stale` | Status rewrite + ideas-index sync |
 | `Specified` | `Implementing` | Status rewrite + ideas-index sync |
-| `Specified` | `Archived` | Status rewrite + file move + active-index + archived-index sync |
+| `Specified` | `Stale` | Status rewrite + ideas-index sync |
 | `Implementing` | `Implemented` | Status rewrite + ideas-index sync |
-| `Implementing` | `Archived` | Status rewrite + file move + active-index + archived-index sync |
-| `Implemented` | `Archived` | Status rewrite + file move + active-index + archived-index sync |
 
-For **feature-request** ideas, the forward transitions (`Approved → Specifying → Specified → Implementing → Implemented`) are derived from Feature status by the `idea-sync-lint-strict` lint rule. The `change-status` verb is the user-facing surface for manual override or when a transition is needed ahead of the derivation rule. For **change-request** ideas, all transitions are author-managed (not derived) — the lint derivation rules skip change-request ideas entirely.
+The human-authored prep band (`Draft → In Review → Approved`) and the disposition transitions (`→ Rejected` from review, `→ Stale` from any pre-terminal state) are author-managed. For **feature-request** ideas, the forward specification band (`Approved → Specifying → Specified → Implementing → Implemented`) is derived from Feature status by the `idea-sync-lint-strict` lint rule; the `change-status` verb is the user-facing surface for manual override or when a transition is needed ahead of the derivation rule. For **change-request** ideas, all transitions are author-managed (not derived) — the lint derivation rules skip change-request ideas entirely.
 
 #### REQ: legal-transition-matrix
 
@@ -59,7 +60,7 @@ The verb MUST accept only `(from, to)` pairs listed in the legal-transition matr
 
 #### REQ: target-status-flag
 
-The verb MUST accept the target status via a required `--to=<status>` flag. The flag value MUST be a recognized Idea status; unrecognized values exit `2` (InvalidArgs) BEFORE state-machine validation. Flag value matching is case-insensitive on input (`--to=approved`, `--to=Approved`, `--to=APPROVED` all parse identically); the canonical title-case value is what gets written to the file and to the success-output line. A multi-word value MUST be supplied with shell quoting or hyphenation per cobra conventions (`--to="Under Review"` or `--to='Under Review'`).
+The verb MUST accept the target status via a required `--to=<status>` flag. The flag value MUST be a recognized Idea status; unrecognized values exit `2` (InvalidArgs) BEFORE state-machine validation. Flag value matching is case-insensitive on input (`--to=approved`, `--to=Approved`, `--to=APPROVED` all parse identically); the canonical title-case value is what gets written to the file and to the success-output line. A multi-word value MUST be supplied with shell quoting or hyphenation per cobra conventions (`--to="In Review"` or `--to='In Review'`).
 
 ### Kind-specific slug resolution
 
@@ -67,28 +68,15 @@ The verb MUST accept the target status via a required `--to=<status>` flag. The 
 
 The `<slug>` positional argument MUST resolve to a file at `spec/ideas/<slug>.md` within the project root. Already-archived files at `spec/ideas/archived/<slug>.md` MUST NOT be matched per [lifecycle-transitions#req:slug-resolves-to-existing-artifact](../../lifecycle-transitions/README.md#req-slug-resolves-to-existing-artifact). A missing file at the active path MUST exit `3` (NotFound).
 
-### Archive side effect
+#### REQ: no-relocation
 
-When `--to=archived` is supplied, the verb extends the Meta's [`status-line-rewrite`](../../lifecycle-transitions/README.md#req-status-line-rewrite) with a filesystem effect.
-
-#### REQ: archive-relocation
-
-For `--to=archived` only, after a successful `**Status:** ... → **Status:** Archived` rewrite, the verb MUST move the file from `spec/ideas/<slug>.md` to `spec/ideas/archived/<slug>.md` (creating the `archived/` directory if absent — mkdir-p semantics). If `spec/ideas/archived/<slug>.md` already exists, the verb MUST exit `1` (Conflict) and restore the original status line at the source path before returning.
-
-#### REQ: rollback-includes-relocation
-
-The Meta's [REQ: rollback-on-lint-failure](../../lifecycle-transitions/README.md#req-rollback-on-lint-failure) applies and is extended for archive transitions: on any failure after the status rewrite (collision, file-move failure, lint failure, I/O error), the verb MUST restore the on-disk state to its pre-invocation form — file at `spec/ideas/<slug>.md`, original `**Status:**` value. Partial state MUST NOT be observable after the command returns. Exit codes: `1` for collision, `10` for I/O or post-relocation lint failure.
+`change-status` MUST mutate only the `**Status:**` line in place (per the Meta's [`status-line-rewrite`](../../lifecycle-transitions/README.md#req-status-line-rewrite)); it MUST NOT relocate the file, set the `**Archived:**` axis, or otherwise touch the archival state. Filing an Idea out of active view is the orthogonal [`idea archive`](../archive/README.md) verb. A terminal status (`Rejected`, `Stale`, `Implemented`) is written in place at the active path; the Idea is archived — if at all — by a subsequent `idea archive` call.
 
 ### Index sync targets
 
 #### REQ: index-sync-by-target
 
-The post-mutation `specscore spec lint --fix` invocation (per [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success)) MUST cause:
-
-- For `--to=approved`: `idea-index-row-sync` rewrites the row's Status cell in `spec/ideas/README.md` from the prior value to `Approved`.
-- For `--to=archived`: `idea-index-row-sync` removes the row from `spec/ideas/README.md` (per [ideas-index#req:status-excludes-archived](https://github.com/specscore/specscore/blob/main/spec/features/ideas-index/README.md#req-status-excludes-archived)), AND `idea-archived-index-chronological` adds the row to `spec/ideas/archived/README.md` in chronological order by `**Date:**`.
-
-Both rules already exist in `pkg/lint/`; no new lint rule is required for the Idea kind.
+The post-mutation `specscore spec lint --fix` invocation (per [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success)) MUST cause `idea-index-row-sync` to rewrite the row's Status cell in `spec/ideas/README.md` from the prior value to the new status. The active-vs-archived index split keys off the archived axis (location/flag), not status, so a terminal status written here keeps the row in the active index until `idea archive` relocates it. The rule already exists in `pkg/lint/`; no new lint rule is required for the Idea kind.
 
 ## Parameters
 
@@ -100,30 +88,31 @@ Both rules already exist in `pkg/lint/`; no new lint rule is required for the Id
 
 | Flag | Required | Description |
 |---|---|---|
-| `--to` | Yes | Target status. Legal values: `approved`, `archived` (case-insensitive). |
+| `--to` | Yes | Target status. Legal values (case-insensitive): `In Review`, `Approved`, `Specifying`, `Specified`, `Implementing`, `Implemented`, `Rejected`, `Stale`. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
 
 ## Exit codes
 
 | Code | Condition |
 |---|---|
-| `0` | Transition succeeded; file rewritten (and, for archive, relocated); indexes synced. |
-| `1` | Archive collision: `spec/ideas/archived/<slug>.md` already exists. |
+| `0` | Transition succeeded; `**Status:**` rewritten in place; index synced. |
 | `2` | Missing or malformed `<slug>`, missing `--to`, or unrecognized `--to` value. |
 | `3` | No Idea file at `spec/ideas/<slug>.md`. |
 | `4` | `(current_status, --to)` is not a legal transition per the matrix above. |
-| `10` | I/O failure during rewrite, file move, or `spec lint --fix` (rollback applied). |
+| `10` | I/O failure during rewrite or `spec lint --fix` (rollback applied). |
 
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. The verb extends the Meta's `status-line-rewrite` with a relocation side effect for `--to=archived` (see [REQ: archive-relocation](#req-archive-relocation)). |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. The verb performs the Meta's `status-line-rewrite` in place, with no relocation side effect. |
+| [cli/idea/archive](../archive/README.md) | The orthogonal verb that files an Idea out of active view (`**Archived:** true` + relocation). `change-status` writes the terminal status; `archive` files it away. |
 | [idea (CLI group)](../README.md) | Parent group. Contents table includes this sub-feature. |
-| [cli/feature/change-status](../../feature/change-status/README.md) | Sibling verb for the Feature kind. Same shared contract; the differences are the legal-transition matrix, the identifier name (`<feature_id>` vs `<slug>`), the kind-specific path, and the archive side effect (Feature has none). |
-| [spec lint](../../spec/lint/README.md) | Invoked internally by the shared contract. For Idea, `idea-index-row-sync` and (for archive) `idea-archived-index-chronological` fire after the mutation. |
-| [idea](../../../idea/README.md), [ideas-index](https://github.com/specscore/specscore/blob/main/spec/features/ideas-index/README.md) | Sources of truth for the Idea document structure, the legal status enumeration, and the active-vs-archived index split. |
-| Source Idea: [lifecycle-verbs-for-idea-and-feature](../../../../ideas/lifecycle-verbs-for-idea-and-feature.md) | Specifies `change-status` as the single Idea-kind lifecycle verb. |
+| [cli/feature/change-status](../../feature/change-status/README.md) | Sibling verb for the Feature kind. Same shared contract; the differences are the legal-transition matrix, the identifier name (`<feature_id>` vs `<slug>`), and the kind-specific path. |
+| [spec lint](../../spec/lint/README.md) | Invoked internally by the shared contract. For Idea, `idea-index-row-sync` fires after the mutation. |
+| [status-vocabulary](https://github.com/specscore/specscore/blob/main/spec/features/status-vocabulary/README.md) | Source of truth for the Idea legal status set and the archival-not-a-status rule. |
+| [idea](../../../idea/README.md), [ideas-index](https://github.com/specscore/specscore/blob/main/spec/features/ideas-index/README.md) | Sources of truth for the Idea document structure and the active-vs-archived index split. |
+| Source Idea: [lifecycle-verbs-for-idea-and-feature](../../../../ideas/lifecycle-verbs-for-idea-and-feature.md) | Specifies `change-status` as the single Idea-kind status-transition verb. |
 
 ## Acceptance Criteria
 
@@ -133,11 +122,11 @@ Both rules already exist in `pkg/lint/`; no new lint rule is required for the Id
 
 Given `spec/ideas/foo.md` containing `**Status:** Draft`, running `specscore idea change-status foo --to=approved` exits `0`, writes exactly `foo: Draft → Approved\n` to stdout, rewrites the Status line to `Approved`, and syncs the ideas-index row.
 
-### AC: archive-from-approved-happy-path
+### AC: terminal-status-written-in-place
 
-**Requirements:** [cli/idea/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [cli/idea/change-status#req:archive-relocation](#req-archive-relocation), [cli/idea/change-status#req:index-sync-by-target](#req-index-sync-by-target)
+**Requirements:** [cli/idea/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [cli/idea/change-status#req:no-relocation](#req-no-relocation), [cli/idea/change-status#req:index-sync-by-target](#req-index-sync-by-target)
 
-Given `spec/ideas/foo.md` containing `**Status:** Approved`, running `specscore idea change-status foo --to=archived` exits `0`, writes `foo: Approved → Archived\n` to stdout, rewrites the Status line to `Archived`, moves the file to `spec/ideas/archived/foo.md`, removes the row from `spec/ideas/README.md`, and inserts a chronologically-ordered row in `spec/ideas/archived/README.md`.
+Given `spec/ideas/foo.md` containing `**Status:** In Review`, running `specscore idea change-status foo --to=rejected` exits `0`, writes `foo: In Review → Rejected\n` to stdout, rewrites the Status line to `Rejected` **in place** (the file remains at `spec/ideas/foo.md` — no relocation, no `**Archived:**` axis), and syncs the ideas-index row. Filing it away is a separate `specscore idea archive foo`.
 
 ### AC: case-insensitive-to-flag
 
@@ -149,7 +138,7 @@ Given `spec/ideas/foo.md` containing `**Status:** Approved`, running `specscore 
 
 **Requirements:** [cli/idea/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [lifecycle-transitions#req:state-machine-strictness](../../lifecycle-transitions/README.md#req-state-machine-strictness)
 
-Given `spec/ideas/foo.md` containing `**Status:** Draft`, running `specscore idea change-status foo --to=implementing` exits `4` with a stderr message naming `Draft` as the current status and `Approved`, `Archived` as the legal targets from `Draft`. No file change.
+Given `spec/ideas/foo.md` containing `**Status:** Draft`, running `specscore idea change-status foo --to=implementing` exits `4` with a stderr message naming `Draft` as the current status and `Approved`, `In Review`, `Stale` as the legal targets from `Draft`. No file change.
 
 ### AC: already-approved-rejected
 
@@ -162,12 +151,6 @@ Given the Idea is already in `**Status:** Approved`, running `specscore idea cha
 **Requirements:** [cli/idea/change-status#req:target-status-flag](#req-target-status-flag)
 
 `specscore idea change-status foo --to=banana` exits `2` (InvalidArgs) BEFORE any state-machine check, with a stderr message that `banana` is not a recognized Idea status.
-
-### AC: archive-collision
-
-**Requirements:** [cli/idea/change-status#req:archive-relocation](#req-archive-relocation), [cli/idea/change-status#req:rollback-includes-relocation](#req-rollback-includes-relocation)
-
-Given both `spec/ideas/foo.md` (active, any source status) and `spec/ideas/archived/foo.md` (stale archived from a prior slug reuse), running `specscore idea change-status foo --to=archived` exits `1` with a stderr message naming the collision target, leaves `spec/ideas/foo.md` with its original status (status rewrite rolled back), and leaves `spec/ideas/archived/foo.md` untouched.
 
 ### AC: missing-slug-rejected
 
@@ -189,14 +172,13 @@ Running `specscore idea change-status nonexistent --to=approved` where `spec/ide
 
 ### AC: lint-failure-rolls-back
 
-**Requirements:** [cli/idea/change-status#req:rollback-includes-relocation](#req-rollback-includes-relocation), [lifecycle-transitions#req:rollback-on-lint-failure](../../lifecycle-transitions/README.md#req-rollback-on-lint-failure)
+**Requirements:** [lifecycle-transitions#req:rollback-on-lint-failure](../../lifecycle-transitions/README.md#req-rollback-on-lint-failure)
 
-Given a transition that exercises the archive path and a corrupted `spec/ideas/archived/README.md` that fails `idea-archived-index-chronological`, the verb exits `10`, restores `spec/ideas/foo.md` at the active path with the original status line, and leaves no file at `spec/ideas/archived/foo.md`.
+Given a transition whose post-mutation `spec lint --fix` surfaces an error-severity violation, the verb exits `10` and restores `spec/ideas/foo.md` with its original `**Status:**` line (byte-identical to pre-invocation).
 
 ## Open Questions
 
-- Should `change-status` accept `--reason "<text>"` to capture the rationale (especially valuable when archiving)? Deferred per the source Idea.
-- When the Idea status enumeration grows beyond `Draft`/`Approved`/`Archived` to first-class `Specified`/`Implementing` values (today they're managed externally by lint and plan tools), is the legal-transition matrix updated? Lock down at the time the new statuses become user-facing.
+- Should `change-status` accept `--note "<text>"` to capture the disposition rationale on a `→ Rejected`/`→ Stale` transition? (The archive action has its own optional `--note`; see [idea/archive](../archive/README.md).) The note plumbing exists at the lifecycle layer; surfacing a flag here is deferred.
 - Should `change-status --help` render the legal-transition matrix as a table? Lean: yes. Validation of the "discoverability via `--help`" assumption depends on it.
 
 ---

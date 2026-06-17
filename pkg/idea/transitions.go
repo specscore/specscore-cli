@@ -2,8 +2,9 @@
 //
 // This file hosts ChangeStatus, the kind-specific orchestrator invoked by
 // `specscore idea change-status`. It composes pkg/lifecycle/ primitives
-// (state-machine validation, status-line rewrite, rollback) with the
-// Idea-specific archive file-relocation side effect.
+// (state-machine validation, status-line rewrite, rollback). Archival is a
+// separate, orthogonal axis handled by the `idea archive`/`idea unarchive`
+// verbs in archive.go — change-status no longer relocates any file.
 //
 // LINT INVOCATION lives in the cobra adapter (internal/cli/idea.go), NOT
 // here, to avoid an import cycle: pkg/lint already imports pkg/idea for
@@ -87,13 +88,13 @@ func EnsureArchivedIndexStub(specRoot string) (created bool, err error) {
 	return false, nil
 }
 
-// PostMutationHook is the callback ChangeStatus invokes after a successful
-// status rewrite (and, for archive transitions, file move). It is the
+// PostMutationHook is the callback the lifecycle verbs (ChangeStatus,
+// Archive, Unarchive) invoke after a successful on-disk mutation. It is the
 // integration point for `specscore spec lint --fix` plus the verify pass.
 //
 // The hook MUST return nil on success. A non-nil return triggers full
-// rollback (status line restored AND, for archive transitions, file moved
-// back) and the error is wrapped and returned by ChangeStatus.
+// rollback (status/flag rewrite restored AND, for archive/unarchive, the
+// file moved back) and the error is wrapped and returned by the caller.
 //
 // The cobra adapter is responsible for wiring this to pkg/lint; tests can
 // supply a fake to exercise the rollback paths without invoking lint.
@@ -111,8 +112,9 @@ type ChangeStatusOptions struct {
 	Slug string
 
 	// To is the canonical (title-case) target status, e.g. "Approved"
-	// or "Archived". The cobra adapter parses the raw --to value via
-	// lifecycle.ParseStatus before reaching this function.
+	// or "Stale". The cobra adapter parses the raw --to value via
+	// lifecycle.ParseStatus before reaching this function. (Archival is
+	// not a status — see the `idea archive` verb.)
 	To lifecycle.Status
 
 	// PostMutation is the post-rewrite hook (typically a spec-lint
@@ -146,14 +148,16 @@ type ChangeStatusResult struct {
 //     return exit 4.
 //  3. lifecycle.Rewrite the **Status:** line; capture original for
 //     rollback.
-//  4. If To == Archived: check collision, mkdir-p + os.Rename. Collision
-//     returns exit 1; mkdir/rename failure rolls back and returns exit 10.
-//  5. Invoke the PostMutation hook. Failure → full rollback + exit 10.
+//  4. Invoke the PostMutation hook. Failure → full rollback + exit 10.
+//
+// Archival is NOT a status transition — `change-status` never relocates a
+// file. Filing an Idea out of active view is the separate, orthogonal
+// `idea archive` verb (see archive.go), which keeps the Idea's real terminal
+// **Status:** and adds the `**Archived:** true` axis.
 //
 // ChangeStatus performs all rollback internally — by the time it returns
 // an error, the on-disk state is byte-identical to its pre-invocation
-// shape per lifecycle-transitions#REQ:rollback-on-lint-failure and
-// cli/idea/change-status#REQ:rollback-includes-relocation.
+// shape per lifecycle-transitions#REQ:rollback-on-lint-failure.
 func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	if opts.SpecRoot == "" {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
@@ -169,7 +173,6 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	}
 
 	activePath := filepath.Join(opts.SpecRoot, "spec", "ideas", opts.Slug+".md")
-	archivedPath := filepath.Join(opts.SpecRoot, "spec", "ideas", "archived", opts.Slug+".md")
 
 	// (1) Slug resolution — active path only. The archived path is NEVER
 	// a fallback per REQ:slug-resolves-to-active-idea.
@@ -208,28 +211,15 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("rewriting status line: %v", err)
 	}
 
-	// fileAtArchived tracks whether the rename to archived/ succeeded.
-	var fileAtArchived bool
-
 	// fullRollback restores the pre-invocation state. Safe to call multiple
-	// times (idempotent) and best-effort: if move-back fails we still try
-	// to restore the status line so callers see the most-recoverable state.
+	// times (idempotent).
 	fullRollback := func() {
-		if fileAtArchived {
-			if err := os.Rename(archivedPath, activePath); err == nil {
-				fileAtArchived = false
-			}
-		}
-		if !fileAtArchived {
-			_ = lifecycle.Rollback(activePath, origLine)
-		}
+		_ = lifecycle.Rollback(activePath, origLine)
 	}
 
-	// (3a) Optional transition note → `## Resolution` section, written
-	// into the still-active file so it travels with any subsequent
-	// archive move. The note write is rolled back together with the
-	// status line on any later failure
-	// (lifecycle-transitions#REQ:optional-transition-note).
+	// (3a) Optional transition note → `## Resolution` section. The note
+	// write is rolled back together with the status line on any later
+	// failure (lifecycle-transitions#REQ:optional-transition-note).
 	origBody, noteWritten, err := appendNoteFn(activePath, opts.Note)
 	if err != nil {
 		fullRollback()
@@ -240,63 +230,12 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		fullRollback = func() {
 			// Restore the body first so the status-line rollback in prev()
 			// operates on the original byte content.
-			restorePath := activePath
-			if fileAtArchived {
-				restorePath = archivedPath
-			}
-			_ = lifecycle.RestoreBody(restorePath, origBody)
+			_ = lifecycle.RestoreBody(activePath, origBody)
 			prev()
 		}
 	}
 
-	// (4) Archive side effect — only for --to=archived.
-	if opts.To == lifecycle.IdeaArchived {
-		// Materialize a lint-clean archived-index stub on first archive
-		// (also ensures spec/ideas/archived/ exists). `specscore init`
-		// does not create that directory — it comes into existence here,
-		// and a directory without README.md fires the readme-exists rule
-		// (error severity), which would in turn fire the post-mutation
-		// rollback. Writing the stub keeps the verb's atomic-mutation
-		// contract: the verb itself does not leave the spec tree in a
-		// lint-failing state.
-		archivedReadme := filepath.Join(filepath.Dir(archivedPath), "README.md")
-		archivedReadmeCreated, err := EnsureArchivedIndexStub(opts.SpecRoot)
-		if err != nil {
-			fullRollback()
-			return ChangeStatusResult{}, err
-		}
-		// Augment fullRollback to also remove the stub if WE created it.
-		// (If it pre-existed, leave it alone.)
-		if archivedReadmeCreated {
-			prev := fullRollback
-			fullRollback = func() {
-				prev()
-				_ = os.Remove(archivedReadme)
-			}
-		}
-
-		// Collision check. If a stale archived file already exists,
-		// exit 1 without overwriting and roll back the status rewrite.
-		if _, err := osStatFn(archivedPath); err == nil {
-			fullRollback()
-			return ChangeStatusResult{}, exitcode.ConflictErrorf(
-				"archive collision: %s already exists; aborted move from %s",
-				archivedPath, activePath)
-		} else if !os.IsNotExist(err) {
-			fullRollback()
-			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
-				"stat archive target %s: %v", archivedPath, err)
-		}
-
-		if err := os.Rename(activePath, archivedPath); err != nil {
-			fullRollback()
-			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
-				"moving %s → %s: %v", activePath, archivedPath, err)
-		}
-		fileAtArchived = true
-	}
-
-	// (5) PostMutation hook — typically `spec lint --fix` + verify.
+	// (4) PostMutation hook — typically `spec lint --fix` + verify.
 	if err := opts.PostMutation(); err != nil {
 		fullRollback()
 		return ChangeStatusResult{}, err
@@ -393,7 +332,8 @@ func LegalChangeStatusTargetNames() []string {
 // --to and ever produce a legal transition. Computed from the lifecycle
 // package's matrix so it stays in sync if the matrix grows.
 //
-// Today: {Approved, Archived}.
+// Today: {Approved, Implemented, Implementing, In Review, Rejected,
+// Specified, Specifying, Stale} — every To column in the Idea matrix.
 func legalChangeStatusTargets() []lifecycle.Status {
 	seen := map[lifecycle.Status]struct{}{}
 	for _, s := range lifecycle.LegalStatuses(lifecycle.KindIdea) {

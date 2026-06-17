@@ -23,40 +23,36 @@ func ideaCommand() *cobra.Command {
 		Use:   "idea",
 		Short: "Idea management — list, scaffold, and transition Idea artifacts",
 	}
-	cmd.AddCommand(ideaListCommand(), ideaChangeStatusCommand(), ideaNewCommand(), ideaRelocateCommand(), ideaPromoteCommand())
+	cmd.AddCommand(ideaListCommand(), ideaChangeStatusCommand(), ideaArchiveCommand(), ideaUnarchiveCommand(), ideaNewCommand(), ideaRelocateCommand(), ideaPromoteCommand())
 	return cmd
 }
 
 // ideaChangeStatusCommand transitions an Idea's **Status:** field via the
-// shared lifecycle state-machine contract. The verb extends the Meta with
-// a kind-specific archive file-relocation side effect when --to=archived.
+// shared lifecycle state-machine contract. Archival is a separate axis —
+// see `idea archive`/`idea unarchive`; change-status never relocates a file.
 // See spec/features/cli/idea/change-status/README.md.
 func ideaChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "change-status <slug> --to=<status>",
-		Short: "Transition an Idea's Status (and, for --to=archived, move the file)",
+		Short: "Transition an Idea's Status",
 		Long: `Transitions spec/ideas/<slug>.md from its current **Status:** to the value
 named by --to. The transition is validated against the Idea legal-transition
 matrix below; illegal (from, to) pairs exit 4. On success, the verb runs
 ` + "`specscore spec lint --fix`" + ` to keep the ideas-index README in sync,
 prints "<slug>: <from> → <to>" to stdout, and exits 0.
 
-When --to=archived, the file is additionally moved from
-spec/ideas/<slug>.md to spec/ideas/archived/<slug>.md. A pre-existing file
-at the archived path is a collision (exit 1) — the source file's status
-line is restored to its original value before exiting.
-
-If anything fails after the status rewrite (collision, file-move failure,
-lint failure, I/O error), the on-disk state is restored to its pre-
-invocation form (status line restored AND, if the file was moved, moved
-back) before the verb exits.
+Archival is NOT a status. To file an Idea out of active view, use
+` + "`specscore idea archive <slug>`" + ` (it keeps the Idea's terminal status
+and adds the **Archived:** axis). If anything fails after the status rewrite
+(lint failure, I/O error), the status line is restored to its pre-invocation
+value before the verb exits.
 
 ` + idea.LegalTransitionMatrix() + `
 Examples:
 
   specscore idea change-status foo --to=approved
-  specscore idea change-status foo --to=archived
-  specscore idea change-status foo --to=Archived   (case-insensitive)
+  specscore idea change-status foo --to=rejected
+  specscore idea change-status foo --to="In Review"   (case-insensitive)
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: runIdeaChangeStatus,
@@ -111,6 +107,116 @@ func runIdeaChangeStatus(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
+	return nil
+}
+
+// ideaArchiveCommand files an Idea out of active view along the orthogonal
+// archived axis: it sets **Archived:** true (plus an optional --note) and
+// relocates the file to spec/ideas/archived/<slug>.md, preserving the
+// Idea's terminal **Status:**. See spec/features/cli/idea/archive/README.md.
+func ideaArchiveCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "archive <slug>",
+		Short: "File an Idea out of active view (sets **Archived:** true and relocates)",
+		Long: `Marks spec/ideas/<slug>.md with **Archived:** true and moves it to
+spec/ideas/archived/<slug>.md, keeping the Idea's terminal **Status:**
+(e.g. Rejected, Stale, Implemented) unchanged — archival is orthogonal to
+status. A pre-existing file at the archived path is a collision (exit 1).
+On success the verb runs ` + "`specscore spec lint --fix`" + ` to sync the
+indexes, prints "<slug>: <active-path> → <archived-path>", and exits 0.
+
+If anything fails after the move (collision, lint failure, I/O error), the
+on-disk state is restored to its pre-invocation form (file back at the
+active path, original content) before the verb exits.
+
+Examples:
+
+  specscore idea archive foo
+  specscore idea archive foo --note "abandoned after the v2 pivot"
+`,
+		Args: cobra.ExactArgs(1),
+		RunE: runIdeaArchive,
+	}
+	cmd.Flags().String("note", "", "optional **Archive Note:** tied to the archive action")
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	return cmd
+}
+
+func runIdeaArchive(cmd *cobra.Command, args []string) error {
+	slug := args[0]
+	if err := idea.ValidateSlug(slug); err != nil {
+		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
+	}
+
+	note, _ := cmd.Flags().GetString("note")
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	result, err := idea.Archive(idea.ArchiveOptions{
+		SpecRoot:     specRoot,
+		Slug:         slug,
+		Note:         note,
+		PostMutation: lintPostMutationHook(filepath.Join(specRoot, "spec")),
+	})
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", result.Slug, result.From, result.To)
+	return nil
+}
+
+// ideaUnarchiveCommand reverses `idea archive`: it clears the **Archived:**
+// axis and relocates the file from spec/ideas/archived/<slug>.md back to
+// spec/ideas/<slug>.md, preserving the **Status:**.
+func ideaUnarchiveCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unarchive <slug>",
+		Short: "Return an archived Idea to active view (clears **Archived:** and relocates)",
+		Long: `Removes the **Archived:** (and **Archive Note:**) header lines from
+spec/ideas/archived/<slug>.md and moves it back to spec/ideas/<slug>.md,
+keeping the Idea's **Status:** unchanged. A pre-existing file at the active
+path is a collision (exit 1). On success the verb runs
+` + "`specscore spec lint --fix`" + `, prints "<slug>: <archived-path> →
+<active-path>", and exits 0. Failures after the move roll back to the
+pre-invocation form.
+
+Example:
+
+  specscore idea unarchive foo
+`,
+		Args: cobra.ExactArgs(1),
+		RunE: runIdeaUnarchive,
+	}
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	return cmd
+}
+
+func runIdeaUnarchive(cmd *cobra.Command, args []string) error {
+	slug := args[0]
+	if err := idea.ValidateSlug(slug); err != nil {
+		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
+	}
+
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	result, err := idea.Unarchive(idea.UnarchiveOptions{
+		SpecRoot:     specRoot,
+		Slug:         slug,
+		PostMutation: lintPostMutationHook(filepath.Join(specRoot, "spec")),
+	})
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", result.Slug, result.From, result.To)
 	return nil
 }
 

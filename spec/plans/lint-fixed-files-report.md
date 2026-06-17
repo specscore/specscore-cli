@@ -1,6 +1,6 @@
 # Plan: Lint fixed-files report
 
-**Status:** Completed
+**Status:** Implemented
 **Mode:** full
 **Source Feature:** cli/spec/lint
 **Date:** 2026-06-02
