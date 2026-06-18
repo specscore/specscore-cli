@@ -34,6 +34,11 @@ type planRulesChecker struct {
 	// plan statuses (P-007). Unlike no-source, P-007 is a standard fixer: it
 	// runs on the unscoped pass and when `--fix=P-007` names it explicitly.
 	fixP007 bool
+
+	// fixP006Legacy, when true, makes the fix pass rewrite the closed set of
+	// legacy plan **Status:** tokens (Completed→Implemented, Under Review→In
+	// Review) to canonical. Standard fixer: unscoped pass or `--fix=P-006`.
+	fixP006Legacy bool
 }
 
 func newPlanRulesChecker() *planRulesChecker {
@@ -48,7 +53,9 @@ func (c *planRulesChecker) severity() string { return "error" }
 // fixTargets declares the `--fix=<target>` actions this checker answers to: the
 // opt-in no-source repair (named "no-source" rather than a P-00x rule ID) and
 // the standard P-007 execution-band reconciliation (named by its rule ID).
-func (c *planRulesChecker) fixTargets() []string { return []string{FixTargetNoSource, "P-007"} }
+func (c *planRulesChecker) fixTargets() []string {
+	return []string{FixTargetNoSource, "P-006", "P-007"}
+}
 
 func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 	plansDir := filepath.Join(specRoot, "plans")
@@ -107,6 +114,11 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 // each gated by its own flag: the opt-in "no-source" repair and the standard
 // P-007 execution-band reconciliation. Both are idempotent.
 func (c *planRulesChecker) fix(specRoot string) error {
+	if c.fixP006Legacy {
+		if err := fixLegacyStatusesInTree(filepath.Join(specRoot, "plans"), legacyPlanStatusMap, false); err != nil {
+			return err
+		}
+	}
 	if c.fixP007 {
 		if err := fixP007(specRoot); err != nil {
 			return err

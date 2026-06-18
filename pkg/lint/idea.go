@@ -78,6 +78,15 @@ func CheckIdeas(specRoot string, fix bool) ([]Violation, error) {
 		return nil, nil
 	}
 
+	// Legacy status autofix: rewrite the closed set of legacy idea **Status:**
+	// tokens (Archived→Stale) before the checks run, so a single pass converges.
+	// The Archived rewrite also sets the orthogonal `**Archived:** true` flag.
+	if fix {
+		if err := fixLegacyStatusesInTree(ideasDir, legacyIdeaStatusMap, true); err != nil {
+			return nil, err
+		}
+	}
+
 	// 1. Detect directories (REQ: single-file).
 	dirs, err := idea.FindIdeaDirectories(specRoot)
 	if err != nil {

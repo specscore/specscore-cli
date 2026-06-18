@@ -87,6 +87,7 @@ func newLinter(opts Options) *linter {
 	pc := newPlanRulesChecker()
 	pc.fixNoSource = slices.Contains(opts.FixTargets, FixTargetNoSource)
 	pc.fixP007 = opts.fixRequested("P-007")
+	pc.fixP006Legacy = opts.fixRequested("P-006")
 	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005", "P-006", "P-007"} {
 		l.ruleSet[n] = pc
 	}
@@ -98,6 +99,7 @@ func newLinter(opts Options) *linter {
 
 	// Register decision-rules checker under all D-* rule IDs.
 	dc := newDecisionRulesChecker()
+	dc.fixLegacy = opts.fixRequested("D-status-values")
 	for _, n := range decisionRuleIDs {
 		l.ruleSet[n] = dc
 	}

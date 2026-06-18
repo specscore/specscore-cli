@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 121
+Total rules: 123
 
 ## capability
 
@@ -177,6 +177,8 @@ Total rules: 121
 | P-003 | error | Requires the plan to follow the single-file structure contract. |
 | P-004 | error | Requires plan metadata to be complete and well-formed. |
 | P-005 | error | Validates a plan's **Parent:** reference — same-repo parents resolve, are acyclic, and not self-referential; cross-repo <repo>:<slug> refs are checked syntactically only. |
+| P-006 | error | Requires a single-file plan's body **Status:** value to be one of the canonical Plan statuses (Draft, In Review, Approved, Executing, Blocked, Implemented, Failed, Rejected, Withdrawn, Superseded, Deprecated). |
+| P-007 | error | Derives a single-file plan's execution-band **Status:** (Executing/Blocked/Implemented/Failed) from its task-status rollup when the body status is Approved or an execution band; --fix reconciles drift. Prep and disposition statuses are never overwritten. |
 
 ## property
 
