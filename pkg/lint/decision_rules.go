@@ -30,7 +30,12 @@ var decisionRuleIDs = []string{
 	"D-affected-features-target-exists",
 }
 
-type decisionRulesChecker struct{}
+type decisionRulesChecker struct {
+	// fixLegacy, when true, makes the fix pass rewrite the closed set of legacy
+	// decision **Status:** tokens (Accepted→Approved, Proposed→In Review) to
+	// canonical. Standard fixer: unscoped pass or `--fix=D-status-values`.
+	fixLegacy bool
+}
 
 func newDecisionRulesChecker() *decisionRulesChecker {
 	return &decisionRulesChecker{}
@@ -41,6 +46,16 @@ func (c *decisionRulesChecker) severity() string { return "error" }
 
 func (c *decisionRulesChecker) check(specRoot string) ([]Violation, error) {
 	return checkDecisions(specRoot)
+}
+
+// fix rewrites the closed set of legacy decision **Status:** tokens to canonical
+// (see legacy_status_fix.go). Gated by fixLegacy so it runs only on the unscoped
+// `--fix` pass or when `--fix=D-status-values` names it. Idempotent.
+func (c *decisionRulesChecker) fix(specRoot string) error {
+	if !c.fixLegacy {
+		return nil
+	}
+	return fixLegacyStatusesInTree(filepath.Join(specRoot, "decisions"), legacyDecisionStatusMap, false)
 }
 
 // parsedDecision holds the parsed metadata and structure of a single decision file.

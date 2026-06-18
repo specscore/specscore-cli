@@ -202,7 +202,7 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 #### REQ: rule-p-006-registered
 
-`P-006` MUST be registered in the lint rule registry under the name `P-006` (uppercase, hyphenated), at severity `error`, MUST execute as part of the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`), and MUST NOT be autofixable (correcting a non-canonical status requires user intent — pick the right lifecycle value).
+`P-006` MUST be registered in the lint rule registry under the name `P-006` (uppercase, hyphenated), at severity `error`, MUST execute as part of the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`), and MUST NOT be autofixable — **except** for the closed, documented legacy-rename set defined by [`cli/spec/lint/legacy-status-autofix`](../legacy-status-autofix/README.md) (e.g. `Completed` → `Implemented`, `Under Review` → `In Review`). Correcting any *other* non-canonical status remains non-autofixable because it requires user intent (pick the right lifecycle value); the legacy renames are excepted only because each maps 1:1 to a single documented successor with no judgment required.
 
 #### REQ: rule-p-006-plan-status-enum
 
