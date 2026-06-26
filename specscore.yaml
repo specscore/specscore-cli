@@ -11,6 +11,9 @@ project:
 gates:
   specify:
     reviewers:
+      - name: ai-spec-reviewer
+        type: ai
+        prompt: .specscore/reviewers/specify-feature-reviewer.md
       - name: human-approval
         type: human
   implementation:

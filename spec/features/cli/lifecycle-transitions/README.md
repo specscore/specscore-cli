@@ -40,7 +40,7 @@ Lifecycle verbs MUST NOT acquire locks (advisory or mandatory), push to remote g
 
 #### REQ: scope-no-task-lifecycle
 
-Lifecycle verbs governed by this contract MUST NOT target the `task` doc kind. The `task` kind's lifecycle requires concurrency and claim/release semantics outside this contract's scope; it is owned by external workflow orchestrators. Whether `specscore` should later mirror a thin `task status` primitive for standalone-OSS users is a separate Idea per the source Idea's Not Doing list.
+Lifecycle verbs governed by this contract MUST NOT target the `task` doc kind for any **coordination-bearing** transition — concurrency, claim/release, contention-resolved or conflict-aware semantics — which remains owned by external workflow orchestrators. The single permitted exception is a **single-actor** task status transition that performs pure file mutation with none of those coordination concerns: the [`cli/task/change-status`](../task/change-status/README.md) verb, governed by [cli/task/change-status#req:single-actor-task-lifecycle-permitted](../task/change-status/README.md#req-single-actor-task-lifecycle-permitted). That verb exists to provide the implementation-commit provenance capture point; it does not reopen the broader coordination lane this contract keeps out.
 
 ### State-machine semantics
 

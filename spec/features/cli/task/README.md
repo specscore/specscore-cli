@@ -14,7 +14,7 @@ status: Implementing
 
 ## Summary
 
-`specscore task` commands read and create entries on the project task board. The MVP surface covers listing, inspecting, and creating tasks. Status transitions (claim, release, status updates) are intentionally out of scope for this group today.
+`specscore task` commands read and create entries on the project task board. The MVP surface covers listing, inspecting, and creating tasks. **Coordination-bearing** status transitions (claim, release, contention-resolved updates) remain out of scope for this group; the single exception is the single-actor [`change-status`](change-status/README.md) verb, which performs a pure status rewrite (plus optional implementation-commit provenance) with no claim/release semantics.
 
 ## Problem
 
@@ -39,6 +39,7 @@ Reads the `tasks/README.md` board. Returns all rows or those matching `--status`
 ### new
 
 Writes a new `tasks/<slug>/README.md` and appends the row to the board. New tasks are always created with status `planning`.
+| [change-status](change-status/README.md) | specscore task change-status transitions a Task's status (the human/agent-authored task lifecycle) and, on completion, optionally records implementation-commit provenance (--repo/--commit/--branch) onto the task. Single-actor file mutation; no claim/release/concurrency. Targets both the tasks/ board and plan-inline tasks. |
 
 ## Behavior
 
@@ -48,7 +49,7 @@ Today the group covers the **read and seed** operations on the task board — no
 
 #### REQ: no-lifecycle-in-mvp
 
-No subcommand in this group may mutate an existing task's status field. `new` only creates tasks in `planning`; it MUST NOT accept a `--status` argument for other values. Future lifecycle commands (e.g., `task claim`, `task status`) land under new subcommands with their own feature specs.
+No subcommand in this group may mutate an existing task's status field **except** the single-actor [`change-status`](change-status/README.md) verb (see [cli/task/change-status#req:single-actor-task-lifecycle-permitted](change-status/README.md#req-single-actor-task-lifecycle-permitted)). `new` only creates tasks in `planning`; it MUST NOT accept a `--status` argument for other values. Coordination-bearing lifecycle commands (e.g., `task claim`, `task release`) remain out of scope and orchestrator-owned; they would land under new subcommands with their own feature specs.
 
 ### Task slug argument
 
