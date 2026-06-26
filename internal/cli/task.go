@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/task"
 	"github.com/spf13/cobra"
 )
@@ -20,8 +23,111 @@ func taskCommand() *cobra.Command {
 		taskListCommand(),
 		taskInfoCommand(),
 		taskNewCommand(),
+		taskChangeStatusCommand(),
 	)
 	return cmd
+}
+
+// --- task change-status ---
+
+// taskChangeStatusCommand transitions a task's **Status:** field via the shared
+// lifecycle state-machine contract (KindTask). It is a pure single-actor
+// mutation: read the task file, validate the (from, to) arc against the strict
+// task legal-transition matrix, and rewrite the **Status:** line. There is no
+// claim/release, lock acquisition, or conflict-resolution step
+// (cli/task/change-status#ac:single-actor-no-coordination).
+//
+// Only board-mode resolution (tasks/<task>/README.md) is wired here; the
+// plan-inline (--plan) source and the provenance flags are later tasks.
+func taskChangeStatusCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "change-status <task> --to=<status>",
+		Short: "Transition a task's Status (single-actor, no coordination)",
+		Long: `Transitions tasks/<task>/README.md from its current **Status:** to the
+value named by --to. The transition is validated against the strict task
+legal-transition matrix:
+
+  planning    → queued, aborted
+  queued      → in_progress, aborted
+  in_progress → blocked, complete, failed, aborted
+  blocked     → in_progress, aborted
+  complete, failed, aborted are terminal (no outgoing transitions)
+
+--to is case-insensitive and must name one of the seven task statuses
+(planning, queued, in_progress, blocked, complete, failed, aborted); a missing
+or unrecognized value exits 2. An illegal (from, to) pair — including re-running
+on the current status — exits 4. On success the verb performs a pure file
+rewrite of the **Status:** line and prints "<task>: <from> → <to>".`,
+		Args:          cobra.ArbitraryArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runTaskChangeStatus,
+	}
+	cmd.Flags().String("to", "", "target status (required), case-insensitive. One of: "+
+		strings.Join(taskStatusNames(), ", "))
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	return cmd
+}
+
+// taskStatusNames returns the recognized task status names for help/error text.
+func taskStatusNames() []string {
+	statuses := lifecycle.LegalStatuses(lifecycle.KindTask)
+	names := make([]string, len(statuses))
+	for i, s := range statuses {
+		names[i] = string(s)
+	}
+	return names
+}
+
+func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return exitcode.InvalidArgsError("missing required positional argument: <task>")
+	}
+	if len(args) > 1 {
+		return exitcode.InvalidArgsErrorf(
+			"too many positional arguments: change-status accepts exactly one <task>, got %d", len(args))
+	}
+	taskSlug := args[0]
+
+	toRaw, _ := cmd.Flags().GetString("to")
+	if strings.TrimSpace(toRaw) == "" {
+		return exitcode.InvalidArgsError("missing required flag: --to=<status>")
+	}
+	to, ok := lifecycle.ParseStatus(lifecycle.KindTask, toRaw)
+	if !ok {
+		return exitcode.InvalidArgsErrorf(
+			"unrecognized --to value %q for task; legal values: %s",
+			toRaw, strings.Join(taskStatusNames(), ", "))
+	}
+
+	projectFlag, _ := cmd.Flags().GetString("project")
+	tasksDir, err := resolveTasksDir(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
+	from, err := lifecycle.Validate(lifecycle.KindTask, taskFilePath, to)
+	if err != nil {
+		switch {
+		case errors.Is(err, lifecycle.ErrInvalidTransition):
+			return exitcode.InvalidStateErrorf("%v", err)
+		case errors.Is(err, lifecycle.ErrStatusLineNotFound):
+			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
+		default:
+			return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
+		}
+	}
+
+	// Pure single-actor mutation: rewrite the **Status:** line (and the
+	// frontmatter status: mirror if present). No claim/release, lock, or
+	// conflict-resolution step (cli/task/change-status#ac:single-actor-no-coordination).
+	if _, err := lifecycle.Rewrite(taskFilePath, to); err != nil {
+		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
+	return nil
 }
 
 // resolveTasksDir resolves the tasks directory from a --project flag or CWD.

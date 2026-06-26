@@ -25,7 +25,7 @@ Linear. **Task 1** stands up the command and the strict single-actor transition 
 
 **Verifies:** cli/task/change-status#ac:to-flag-validation, cli/task/change-status#ac:illegal-transition-rejected, cli/task/change-status#ac:single-actor-no-coordination
 **Depends-On:** —
-**Status:** pending
+**Status:** done
 
 Add the `task change-status` cobra command wired to the shared `lifecycle-transitions` contract: required `--to` flag (case-insensitive; missing/unknown exits `2`), the strict task legal-transition matrix (illegal pairs exit `4`, non-idempotent), and pure single-actor status-field rewrite with no claim/release/locking.
 

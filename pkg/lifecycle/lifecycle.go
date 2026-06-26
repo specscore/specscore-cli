@@ -36,6 +36,7 @@ const (
 	KindIdea    Kind = "idea"
 	KindFeature Kind = "feature"
 	KindPlan    Kind = "plan"
+	KindTask    Kind = "task"
 )
 
 // Status is a domain-scoped status value. The set of legal Status values is
@@ -87,6 +88,20 @@ const (
 	PlanWithdrawn   Status = "Withdrawn"
 	PlanSuperseded  Status = "Superseded"
 	PlanDeprecated  Status = "Deprecated"
+)
+
+// Task statuses. A task moves through seven lifecycle states; the legal arcs
+// are declared in the KindTask matrix below. The terminal states (Complete,
+// Failed, Aborted) have no outgoing arcs. Values are lowercase to match the
+// on-disk task-file **Status:** convention.
+const (
+	TaskPlanning   Status = "planning"
+	TaskQueued     Status = "queued"
+	TaskInProgress Status = "in_progress"
+	TaskBlocked    Status = "blocked"
+	TaskComplete   Status = "complete"
+	TaskFailed     Status = "failed"
+	TaskAborted    Status = "aborted"
 )
 
 // ErrInvalidTransition is returned by Transition (and Validate) when the
@@ -193,6 +208,25 @@ var transitionMatrix = map[Kind][]transitionRow{
 		{From: PlanBlocked, To: PlanDeprecated},
 		{From: PlanImplemented, To: PlanDeprecated},
 		{From: PlanFailed, To: PlanDeprecated},
+	},
+	// KindTask is the strict single-actor task lifecycle. Complete, Failed, and
+	// Aborted are terminal (no outgoing arcs); the matrix carries no self-loops,
+	// so re-running change-status on the current status is rejected
+	// (REQ: not-idempotent → exit 4).
+	KindTask: {
+		{From: TaskPlanning, To: TaskQueued},
+		{From: TaskPlanning, To: TaskAborted},
+
+		{From: TaskQueued, To: TaskInProgress},
+		{From: TaskQueued, To: TaskAborted},
+
+		{From: TaskInProgress, To: TaskBlocked},
+		{From: TaskInProgress, To: TaskComplete},
+		{From: TaskInProgress, To: TaskFailed},
+		{From: TaskInProgress, To: TaskAborted},
+
+		{From: TaskBlocked, To: TaskInProgress},
+		{From: TaskBlocked, To: TaskAborted},
 	},
 }
 
