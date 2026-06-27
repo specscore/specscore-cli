@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 123
+Total rules: 124
 
 ## capability
 
@@ -179,6 +179,7 @@ Total rules: 123
 | P-005 | error | Validates a plan's **Parent:** reference — same-repo parents resolve, are acyclic, and not self-referential; cross-repo <repo>:<slug> refs are checked syntactically only. |
 | P-006 | error | Requires a single-file plan's body **Status:** value to be one of the canonical Plan statuses (Draft, In Review, Approved, Executing, Blocked, Implemented, Failed, Rejected, Withdrawn, Superseded, Deprecated). |
 | P-007 | error | Derives a single-file plan's execution-band **Status:** (Executing/Blocked/Implemented/Failed) from its task-status rollup when the body status is Approved or an execution band; --fix reconciles drift. Prep and disposition statuses are never overwritten. |
+| P-008 | error | Validates a task's optional **Implemented-by:** implementation-commit provenance value against the provenance-ref-format (<repo>@<sha> or bare <sha>, optional trailing branch; <sha> = 7-40 hex chars) — syntactic only, never scans the referenced repo. |
 
 ## property
 
