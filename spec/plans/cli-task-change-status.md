@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: Cli Task Change Status
 
-**Status:** Approved
+**Status:** Implemented
 **Source Feature:** cli/task/change-status
 **Date:** 2026-06-26
 **Owner:** alex
@@ -57,7 +57,7 @@ Reject (exit `2`) any provenance flag supplied with a non-`complete` `--to`, and
 
 **Verifies:** cli/task/change-status#ac:corrective-restamp
 **Depends-On:** 3
-**Status:** pending
+**Status:** done
 
 Implement `--amend-provenance` to overwrite (or clear) `implementation_commit` on a task already in `complete` without a status transition — mutually exclusive with `--to` (exit `2`), requiring `complete` (else exit `4`), and following the same `--commit`-required and syntactic-only rules. Emit `<task>: provenance amended`.
 

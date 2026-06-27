@@ -75,6 +75,7 @@ rewrite of the **Status:** line and prints "<task>: <from> → <to>".`,
 	cmd.Flags().String("commit", "", "provenance: implementing commit SHA (written as **Implemented-by:** on --to=complete)")
 	cmd.Flags().String("repo", "", "provenance: implementing repo slug or clone URL (omitted for same-repo bare sha)")
 	cmd.Flags().String("branch", "", "provenance: implementing branch (optional trailing \"(<branch>)\")")
+	cmd.Flags().Bool("amend-provenance", false, "re-stamp **Implemented-by:** on an already-complete task WITHOUT a status transition (mutually exclusive with --to)")
 	return cmd
 }
 
@@ -98,8 +99,29 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 	}
 	taskSlug := args[0]
 
+	// --amend-provenance corrects/clears the **Implemented-by:** field on an
+	// already-complete task WITHOUT a status transition. It is mutually exclusive
+	// with --to, and the command requires exactly one of the two.
+	amend, _ := cmd.Flags().GetBool("amend-provenance")
 	toRaw, _ := cmd.Flags().GetString("to")
-	if strings.TrimSpace(toRaw) == "" {
+	toRaw = strings.TrimSpace(toRaw)
+	if amend {
+		if toRaw != "" {
+			return exitcode.InvalidArgsError(
+				"--amend-provenance is mutually exclusive with --to")
+		}
+		// Reuse the shared provenance-flag validation: when any provenance flag is
+		// present an explicit --commit is required (the "complete" predicate is
+		// trivially satisfied here, so only the --commit rule applies).
+		if err := validateProvenanceFlags(cmd, lifecycle.TaskComplete); err != nil {
+			return err
+		}
+		if planSlug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(planSlug) != "" {
+			return runTaskAmendProvenancePlanInline(cmd, taskSlug, strings.TrimSpace(planSlug))
+		}
+		return runTaskAmendProvenanceBoard(cmd, taskSlug)
+	}
+	if toRaw == "" {
 		return exitcode.InvalidArgsError("missing required flag: --to=<status>")
 	}
 	to, ok := lifecycle.ParseStatus(lifecycle.KindTask, toRaw)
@@ -343,6 +365,153 @@ func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status,
 	if implementedByRef != "" {
 		lines = withImplementedByLine(lines, statusLine-1, implementedByRef)
 	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// isImplementedByLine reports whether ln is an `**Implemented-by:**` field line.
+func isImplementedByLine(ln string) bool {
+	return strings.HasPrefix(strings.TrimSpace(ln), "**Implemented-by:**")
+}
+
+// withAmendedImplementedBy re-stamps the provenance field anchored to
+// lines[statusIdx]: it drops an existing `**Implemented-by:**` line sitting
+// immediately after the status line (where both the board and plan-inline
+// completion paths write it), then inserts `**Implemented-by:** ref` when ref is
+// non-empty. An empty ref therefore CLEARS the field.
+func withAmendedImplementedBy(lines []string, statusIdx int, ref string) []string {
+	if statusIdx+1 < len(lines) && isImplementedByLine(lines[statusIdx+1]) {
+		out := make([]string, 0, len(lines)-1)
+		out = append(out, lines[:statusIdx+1]...)
+		out = append(out, lines[statusIdx+2:]...)
+		lines = out
+	}
+	if ref != "" {
+		lines = withImplementedByLine(lines, statusIdx, ref)
+	}
+	return lines
+}
+
+// boardTaskStatus returns the value text of the board task file's first
+// `**Status:**` line. A read error is returned verbatim; a file with no status
+// line returns errNoStatusForProvenance.
+func boardTaskStatus(path string) (string, error) {
+	data, err := osReadFileFn(path)
+	if err != nil {
+		return "", err
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		s := strings.TrimSpace(ln)
+		if strings.HasPrefix(s, "**Status:**") {
+			return strings.TrimSpace(strings.TrimPrefix(s, "**Status:**")), nil
+		}
+	}
+	return "", errNoStatusForProvenance
+}
+
+// amendBoardImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
+// in the board task file at path, anchored to its `**Status:**` line.
+func amendBoardImplementedBy(path, ref string) error {
+	data, err := osReadFileFn(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	idx := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "**Status:**") {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return errNoStatusForProvenance
+	}
+	lines = withAmendedImplementedBy(lines, idx, ref)
+	return osWriteFileFn(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// runTaskAmendProvenanceBoard re-stamps provenance on a board task that is
+// ALREADY complete, without a status transition. The task must be in complete
+// (else exit 4); the ref is assembled from the same flags as the completion
+// path, and an empty ref clears the field. Prints "<task>: provenance amended".
+func runTaskAmendProvenanceBoard(cmd *cobra.Command, taskSlug string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	tasksDir, err := resolveTasksDir(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
+	status, err := boardTaskStatus(taskFilePath)
+	if err != nil {
+		if errors.Is(err, errNoStatusForProvenance) {
+			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
+		}
+		return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
+	}
+	if status != string(lifecycle.TaskComplete) {
+		return exitcode.InvalidStateErrorf(
+			"--amend-provenance requires task %s to be complete, but it is %s", taskSlug, status)
+	}
+
+	if err := amendBoardImplementedBy(taskFilePath, implementedByRefFromFlags(cmd)); err != nil {
+		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
+	return nil
+}
+
+// runTaskAmendProvenancePlanInline re-stamps provenance on the plan-inline task
+// block whose **Id:** equals taskSlug, without a status transition. The block
+// must be in complete (else exit 4); an empty assembled ref clears the field.
+func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
+	p, err := plan.Parse(planPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
+		}
+		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
+	}
+
+	var target *plan.Task
+	for i := range p.Tasks {
+		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
+			target = &p.Tasks[i]
+			break
+		}
+	}
+	if target == nil {
+		return exitcode.NotFoundErrorf("task %q not found by **Id:** in plan %s", taskSlug, planSlug)
+	}
+
+	if string(target.Status) != string(lifecycle.TaskComplete) {
+		return exitcode.InvalidStateErrorf(
+			"--amend-provenance requires task %q to be complete, but it is %s", taskSlug, string(target.Status))
+	}
+
+	if err := amendPlanImplementedBy(planPath, target.StatusLine, implementedByRefFromFlags(cmd)); err != nil {
+		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
+	return nil
+}
+
+// amendPlanImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
+// adjacent to the 1-based statusLine of a plan file, preserving every other line.
+func amendPlanImplementedBy(path string, statusLine int, ref string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	lines = withAmendedImplementedBy(lines, statusLine-1, ref)
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
