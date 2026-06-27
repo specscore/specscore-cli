@@ -38,8 +38,9 @@ func taskCommand() *cobra.Command {
 // claim/release, lock acquisition, or conflict-resolution step
 // (cli/task/change-status#ac:single-actor-no-coordination).
 //
-// Only board-mode resolution (tasks/<task>/README.md) is wired here; the
-// plan-inline (--plan) source and the provenance flags are later tasks.
+// Both board-mode (tasks/<task>/README.md) and plan-inline (--plan) resolution
+// are wired here. On --to=complete the --repo/--commit/--branch flags assemble
+// an **Implemented-by:** provenance field written alongside the status.
 func taskChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "change-status <task> --to=<status>",
@@ -68,11 +69,12 @@ rewrite of the **Status:** line and prints "<task>: <from> → <to>".`,
 		strings.Join(taskStatusNames(), ", "))
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().String("plan", "", "resolve <task> as a plan-inline task by its **Id:** inside spec/plans/<plan>.md (instead of the tasks board)")
-	// Provenance flags are accepted here so the AC command parses cleanly; the
-	// provenance write itself is a later task and these are not read yet.
-	cmd.Flags().String("commit", "", "provenance: implementing commit SHA (reserved; written by a later task)")
-	cmd.Flags().String("repo", "", "provenance: implementing repo (reserved; written by a later task)")
-	cmd.Flags().String("branch", "", "provenance: implementing branch (reserved; written by a later task)")
+	// Provenance flags: on --to=complete these are assembled into an
+	// **Implemented-by:** field on the task. Values come ONLY from these flags;
+	// the verb never reads ambient git HEAD.
+	cmd.Flags().String("commit", "", "provenance: implementing commit SHA (written as **Implemented-by:** on --to=complete)")
+	cmd.Flags().String("repo", "", "provenance: implementing repo slug or clone URL (omitted for same-repo bare sha)")
+	cmd.Flags().String("branch", "", "provenance: implementing branch (optional trailing \"(<branch>)\")")
 	return cmd
 }
 
@@ -140,8 +142,92 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
 	}
 
+	// Implementation-commit provenance is written ONLY when completing, and only
+	// from explicit flags — the verb NEVER reads ambient git HEAD
+	// (cli/task/change-status#ac:provenance-not-derived-from-head).
+	if to == lifecycle.TaskComplete {
+		if ref := implementedByRefFromFlags(cmd); ref != "" {
+			if err := writeBoardImplementedBy(taskFilePath, ref); err != nil {
+				return exitcode.UnexpectedErrorf("writing provenance: %v", err)
+			}
+		}
+	}
+
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
 	return nil
+}
+
+// implementedByRefFromFlags assembles the **Implemented-by:** reference from the
+// --repo/--commit/--branch flags. It returns "" when no reference can be formed
+// (i.e. --commit is absent), so the caller writes no provenance. Values come
+// ONLY from these flags; ambient git state is never consulted.
+func implementedByRefFromFlags(cmd *cobra.Command) string {
+	repo, _ := cmd.Flags().GetString("repo")
+	commit, _ := cmd.Flags().GetString("commit")
+	branch, _ := cmd.Flags().GetString("branch")
+	return assembleImplementedByRef(repo, commit, branch)
+}
+
+// assembleImplementedByRef builds the implementation-commit reference written as
+// the value of `**Implemented-by:**`. The shape is `<repo>@<sha> (<branch>)`,
+// where `<repo>` (a slug OR a full clone URL) is omitted for a same-repo commit
+// (a bare `<sha>`), and the trailing ` (<branch>)` is omitted when no branch is
+// given. A reference requires a commit: with no --commit this returns "" (Task
+// 4 turns provenance-without-commit into a hard rejection).
+func assembleImplementedByRef(repo, commit, branch string) string {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return ""
+	}
+	ref := commit
+	if repo = strings.TrimSpace(repo); repo != "" {
+		ref = repo + "@" + commit
+	}
+	if branch = strings.TrimSpace(branch); branch != "" {
+		ref += " (" + branch + ")"
+	}
+	return ref
+}
+
+// errNoStatusForProvenance is returned by writeBoardImplementedBy when the file
+// has no `**Status:**` line to anchor the provenance field to. This is
+// defensive: board mode always runs lifecycle.Rewrite first, which guarantees a
+// status line.
+var errNoStatusForProvenance = errors.New("task file has no **Status:** line for provenance placement")
+
+// writeBoardImplementedBy inserts an `**Implemented-by:** <ref>` line into the
+// board task file at path, immediately after its `**Status:**` line. Every other
+// byte is preserved.
+func writeBoardImplementedBy(path, ref string) error {
+	data, err := osReadFileFn(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	idx := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "**Status:**") {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return errNoStatusForProvenance
+	}
+	lines = withImplementedByLine(lines, idx, ref)
+	return osWriteFileFn(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// withImplementedByLine returns lines with `**Implemented-by:** ref` inserted
+// immediately after lines[statusIdx], keeping it adjacent to the `**Status:**`
+// line in both board files and plan-inline task blocks.
+func withImplementedByLine(lines []string, statusIdx int, ref string) []string {
+	field := "**Implemented-by:** " + ref
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[:statusIdx+1]...)
+	out = append(out, field)
+	out = append(out, lines[statusIdx+1:]...)
+	return out
 }
 
 // runTaskChangeStatusPlanInline resolves <task> to the `### Task N:` block in
@@ -150,9 +236,9 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 // rewrites that block's **Status:** line in place — every other line is
 // preserved byte-for-byte. A missing plan file or no matching **Id:** exits 3.
 //
-// Provenance writing (--repo/--commit/--branch) is the next task; this function
-// returns the resolved block as the rewrite target so that follow-up can hang
-// the provenance write off the same StatusLine locator.
+// On --to=complete the provenance flags (--repo/--commit/--branch) are
+// assembled into an **Implemented-by:** line written adjacent to the block's
+// **Status:** in the same atomic write.
 func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string, to lifecycle.Status) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
 	specRoot, err := resolveSpecRoot(projectFlag)
@@ -190,7 +276,13 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 	if target.StatusLine == 0 {
 		return exitcode.UnexpectedErrorf("task %q in plan %s has no **Status:** line", taskSlug, planSlug)
 	}
-	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to); err != nil {
+	// Provenance is written ONLY when completing, in the same atomic write that
+	// sets the status; values come ONLY from flags (never ambient git HEAD).
+	implementedBy := ""
+	if to == lifecycle.TaskComplete {
+		implementedBy = implementedByRefFromFlags(cmd)
+	}
+	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to, implementedBy); err != nil {
 		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
 	}
 
@@ -202,13 +294,20 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 // `**Status:** <to>`, preserving every other line verbatim. The line number
 // comes from the parse pass over the same file, so it is always in range. This
 // mirrors the per-block status rewrite in pkg/lint (rewriteTaskStatusLines).
-func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status) error {
+//
+// When implementedByRef is non-empty an `**Implemented-by:** <ref>` line is
+// inserted immediately after the status line, in the same atomic write, so the
+// status flip and provenance write land together.
+func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status, implementedByRef string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	lines := strings.Split(string(data), "\n")
 	lines[statusLine-1] = "**Status:** " + string(to)
+	if implementedByRef != "" {
+		lines = withImplementedByLine(lines, statusLine-1, implementedByRef)
+	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 

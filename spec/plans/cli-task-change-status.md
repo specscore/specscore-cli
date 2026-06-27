@@ -41,7 +41,7 @@ Resolve `<task>` in board mode (`tasks/<task>/README.md`, default) and plan-inli
 
 **Verifies:** cli/task/change-status#ac:complete-with-provenance, cli/task/change-status#ac:complete-without-provenance-is-valid, cli/task/change-status#ac:bare-sha-same-repo-assembly, cli/task/change-status#ac:provenance-not-derived-from-head
 **Depends-On:** 2
-**Status:** pending
+**Status:** done
 
 Assemble `<repo>@<sha> (<branch>)` from the optional flags (bare `<sha>` when `--repo` omitted), write it to the resolved task's `implementation_commit` property on `--to=complete`, treat a flagless completion as valid, and never read ambient `HEAD` for values.
 
