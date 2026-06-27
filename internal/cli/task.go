@@ -109,6 +109,16 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 			toRaw, strings.Join(taskStatusNames(), ", "))
 	}
 
+	// Provenance flags (--repo/--commit/--branch) are valid only when completing
+	// and only alongside an explicit --commit. Reject invalid combinations up
+	// front — before any file mutation in either board or plan-inline mode — so a
+	// rejected task is left UNCHANGED
+	// (cli/task/change-status#ac:provenance-flag-without-complete-rejected,
+	// cli/task/change-status#ac:provenance-flag-without-commit-rejected).
+	if err := validateProvenanceFlags(cmd, to); err != nil {
+		return err
+	}
+
 	// --plan selects plan-inline mode: the task is addressed by its **Id:**
 	// field on a `### Task N:` block inside spec/plans/<plan>.md. Without --plan
 	// the verb stays in board mode (tasks/<task>/README.md), unchanged.
@@ -154,6 +164,31 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
+	return nil
+}
+
+// validateProvenanceFlags rejects invalid provenance-flag combinations before
+// any file is touched. When any of --repo/--commit/--branch is supplied, the
+// transition must target complete and an explicit --commit must be present;
+// otherwise it returns an InvalidArgs (exit 2) error and the task is left
+// unchanged. With no provenance flags it is a no-op.
+func validateProvenanceFlags(cmd *cobra.Command, to lifecycle.Status) error {
+	repo, _ := cmd.Flags().GetString("repo")
+	commit, _ := cmd.Flags().GetString("commit")
+	branch, _ := cmd.Flags().GetString("branch")
+	repo, commit, branch = strings.TrimSpace(repo), strings.TrimSpace(commit), strings.TrimSpace(branch)
+
+	if repo == "" && commit == "" && branch == "" {
+		return nil
+	}
+	if to != lifecycle.TaskComplete {
+		return exitcode.InvalidArgsError(
+			"provenance flags (--repo/--commit/--branch) are valid only with --to=complete")
+	}
+	if commit == "" {
+		return exitcode.InvalidArgsError(
+			"--commit is required when provenance flags (--repo/--branch) are supplied")
+	}
 	return nil
 }
 

@@ -49,7 +49,7 @@ Assemble `<repo>@<sha> (<branch>)` from the optional flags (bare `<sha>` when `-
 
 **Verifies:** cli/task/change-status#ac:provenance-flag-without-complete-rejected, cli/task/change-status#ac:provenance-flag-without-commit-rejected
 **Depends-On:** 3
-**Status:** pending
+**Status:** done
 
 Reject (exit `2`) any provenance flag supplied with a non-`complete` `--to`, and any provenance flag set without `--commit`, leaving the task unchanged in both cases.
 

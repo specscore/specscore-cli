@@ -113,30 +113,42 @@ func TestTaskChangeStatus_Board_CompleteNoProvenance(t *testing.T) {
 	}
 }
 
-// Provenance is written ONLY on --to=complete: a non-complete transition with
-// provenance flags writes no field (rejection wiring is Task 4).
-func TestTaskChangeStatus_Board_ProvenanceIgnoredOnNonComplete(t *testing.T) {
+// AC provenance-flag-without-complete-rejected (board): a provenance flag on a
+// non-complete transition exits 2 (InvalidArgs), names --to=complete, and leaves
+// the task UNCHANGED.
+func TestTaskChangeStatus_Board_ProvenanceWithoutCompleteRejected(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "queued")
-	_, _, err := runTask(t, "change-status", "auth", "--to=in_progress",
-		"--repo", "backstage", "--commit", "a1b2c3d")
-	if err != nil {
-		t.Fatalf("change-status: %v", err)
+	_, _, err := runTask(t, "change-status", "auth", "--to=in_progress", "--commit", "a1b2c3d")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+	}
+	if !strings.Contains(err.Error(), "--to=complete") {
+		t.Errorf("error should name --to=complete: %v", err)
+	}
+	if got := taskFileStatus(t, taskFile); got != "queued" {
+		t.Errorf("task changed: status = %q; want queued (unchanged)", got)
 	}
 	if got := implementedByField(t, taskFile); got != "" {
-		t.Errorf("implemented-by = %q; want none on non-complete", got)
+		t.Errorf("implemented-by = %q; want none (unchanged)", got)
 	}
 }
 
-// Provenance flags without --commit assemble nothing (Task 4 rejects this); for
-// now no field is written even on complete.
-func TestTaskChangeStatus_Board_NoCommitNoProvenance(t *testing.T) {
+// AC provenance-flag-without-commit-rejected (board): provenance flags without
+// --commit exit 2 (InvalidArgs), name --commit, and leave the task UNCHANGED.
+func TestTaskChangeStatus_Board_ProvenanceWithoutCommitRejected(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	_, _, err := runTask(t, "change-status", "auth", "--to=complete", "--repo", "backstage")
-	if err != nil {
-		t.Fatalf("change-status: %v", err)
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+	}
+	if !strings.Contains(err.Error(), "--commit") {
+		t.Errorf("error should name --commit: %v", err)
+	}
+	if got := taskFileStatus(t, taskFile); got != "in_progress" {
+		t.Errorf("task changed: status = %q; want in_progress (unchanged)", got)
 	}
 	if got := implementedByField(t, taskFile); got != "" {
-		t.Errorf("implemented-by = %q; want none without --commit", got)
+		t.Errorf("implemented-by = %q; want none (unchanged)", got)
 	}
 }
 
@@ -254,6 +266,46 @@ func TestTaskChangeStatus_PlanInline_CompleteNoProvenance(t *testing.T) {
 	}
 	if got := implementedByField(t, planPath); got != "" {
 		t.Errorf("implemented-by = %q; want none", got)
+	}
+}
+
+// AC provenance-flag-without-complete-rejected (plan-inline): exit 2, name
+// --to=complete, block UNCHANGED.
+func TestTaskChangeStatus_PlanInline_ProvenanceWithoutCompleteRejected(t *testing.T) {
+	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
+	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth",
+		"--to=blocked", "--commit", "a1b2c3d")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+	}
+	if !strings.Contains(err.Error(), "--to=complete") {
+		t.Errorf("error should name --to=complete: %v", err)
+	}
+	if got := planTaskStatus(t, planPath, "setup"); got != "in_progress" {
+		t.Errorf("setup changed: %q; want in_progress (unchanged)", got)
+	}
+	if got := implementedByField(t, planPath); got != "" {
+		t.Errorf("implemented-by = %q; want none (unchanged)", got)
+	}
+}
+
+// AC provenance-flag-without-commit-rejected (plan-inline): exit 2, name
+// --commit, block UNCHANGED.
+func TestTaskChangeStatus_PlanInline_ProvenanceWithoutCommitRejected(t *testing.T) {
+	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
+	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth",
+		"--to=complete", "--repo", "backstage")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+	}
+	if !strings.Contains(err.Error(), "--commit") {
+		t.Errorf("error should name --commit: %v", err)
+	}
+	if got := planTaskStatus(t, planPath, "setup"); got != "in_progress" {
+		t.Errorf("setup changed: %q; want in_progress (unchanged)", got)
+	}
+	if got := implementedByField(t, planPath); got != "" {
+		t.Errorf("implemented-by = %q; want none (unchanged)", got)
 	}
 }
 
