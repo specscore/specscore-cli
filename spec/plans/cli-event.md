@@ -23,7 +23,7 @@ No ACs are deferred. All 16 ACs in `cli/event` are covered by exactly one task.
 
 ### Task 1: Bootstrap `pkg/event` package with Subscriber interface and Event struct
 
-**Status:** done
+**Status:** complete
 **Depends-On:** —
 **Verifies:** cli/event#ac:subscriber-interface-shape
 
@@ -31,7 +31,7 @@ Create `pkg/event/` with `subscriber.go` defining the `Subscriber` interface (`D
 
 ### Task 2: Implement `JsonlWriter` subscriber with project-root path resolution
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/event#ac:jsonl-writer-appends-line, cli/event#ac:jsonl-writer-resolves-against-project-root
 
@@ -39,7 +39,7 @@ Add `pkg/event/jsonl.go` implementing `JsonlWriter`. `Deliver` serializes the `E
 
 ### Task 3: Implement `NoOp` subscriber
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/event#ac:noop-discards
 
@@ -47,7 +47,7 @@ Add `pkg/event/noop.go` implementing `NoOp`. `Deliver` returns nil with no side 
 
 ### Task 4: Implement `Exec` subscriber with timeout + SIGTERM/SIGKILL
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/event#ac:exec-pipes-event-to-stdin, cli/event#ac:exec-timeout-kills-hung-process
 
@@ -55,7 +55,7 @@ Add `pkg/event/exec.go` implementing `Exec`. Build `os/exec.Cmd` from the config
 
 ### Task 5: Implement envelope validator
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/event#ac:envelope-validation-rejects-bad-name, cli/event#ac:envelope-validation-rejects-bad-actor-kind, cli/event#ac:payload-is-opaque-passthrough
 
@@ -63,7 +63,7 @@ Add `pkg/event/envelope.go` with a pure `Validate(Event) error` function coverin
 
 ### Task 6: Implement `events:` config schema loader
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2, 3, 4
 **Verifies:** cli/event#ac:events-config-default-when-absent, cli/event#ac:events-config-explicit-empty-is-noop, cli/event#ac:events-config-unknown-type-rejected
 
@@ -71,7 +71,7 @@ Add `pkg/event/config.go` parsing the `events:` block from `specscore.yaml`. Ext
 
 ### Task 7: Implement fan-out dispatcher with stderr failure log + exit-code mapping
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 5, 6
 **Verifies:** cli/event#ac:fan-out-continues-after-failure, cli/event#ac:per-subscriber-failure-stderr-format, cli/event#ac:dispatch-exit-code-when-all-fail
 
@@ -79,7 +79,7 @@ Add `pkg/event/dispatcher.go` exposing `Dispatch(ctx, Event, []Subscriber) Dispa
 
 ### Task 8: Author `docs/events.md` skeleton
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 7
 **Verifies:** cli/event#ac:docs-events-md-skeleton-present
 

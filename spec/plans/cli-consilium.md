@@ -19,7 +19,7 @@ Bottom-up library decomposition, foundation → consumers. The package's pure da
 
 ### Task 1: Scaffold `pkg/consilium` and implement the Vote schema + validator
 
-**Status:** done
+**Status:** complete
 **Depends-On:** —
 **Verifies:** cli/consilium#ac:pkg-consilium-package-shape, cli/consilium#ac:vote-bundle-valid-parses, cli/consilium#ac:vote-bundle-malformed-rejected
 
@@ -27,7 +27,7 @@ Create the `pkg/consilium` package (singular, at the repo's `pkg/` layout). Defi
 
 ### Task 2: Gate-knob config loader — strict baseline, override merge, enum validation
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/consilium#ac:gate-knobs-default-to-strict-baseline, cli/consilium#ac:gate-knob-invalid-enum-rejected
 
@@ -35,7 +35,7 @@ Implement the `consilium.gate` loader: parse the six knobs from `specscore.yaml`
 
 ### Task 3: Default roster, roster config schema, and resolution
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/consilium#ac:roster-resolves-defaults-minus-exclude-plus-custom
 
@@ -43,7 +43,7 @@ Embed the 9 default slug→group pairs (builders/customers/adversaries). Parse t
 
 ### Task 4: Custom-role markdown parser + roster validation
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 3
 **Verifies:** cli/consilium#ac:roster-group-floor-violation-rejected, cli/consilium#ac:custom-role-missing-field-rejected
 
@@ -51,7 +51,7 @@ Parse a custom-role markdown file (`**Name:**` matching filename, `**Group:**` i
 
 ### Task 5: Gate engine core — ordered rule evaluation and the three terminal verdicts
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1, 2, 3
 **Verifies:** cli/consilium#ac:gate-engine-applies-rules-in-order
 
@@ -59,7 +59,7 @@ Implement the gate algorithm steps in exact order, producing `verdict`, `rule_tr
 
 ### Task 6: Abstain semantics and adversary veto
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 5
 **Verifies:** cli/consilium#ac:high-confidence-abstain-excluded-from-denominator, cli/consilium#ac:low-confidence-abstain-caps-verdict, cli/consilium#ac:adversary-veto-blocks
 
@@ -67,7 +67,7 @@ Extend the engine with the early-exit branches that precede the approval count: 
 
 ### Task 7: Determinism guarantee + snapshot-test harness
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 5, 6
 **Verifies:** cli/consilium#ac:gate-engine-deterministic
 
@@ -75,7 +75,7 @@ Guarantee the engine is a pure function of its inputs — no clock, no randomnes
 
 ### Task 8: Parent `consilium` cobra command
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/consilium#ac:consilium-parent-prints-help
 

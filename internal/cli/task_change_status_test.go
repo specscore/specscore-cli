@@ -100,8 +100,8 @@ func TestTaskChangeStatus_IllegalTransitions(t *testing.T) {
 		{"planning", "planning"},    // non-idempotent (self)
 		{"queued", "complete"},
 		{"queued", "blocked"},
-		{"in_progress", "queued"},  // backwards
-		{"blocked", "complete"},    // blocked only reaches in_progress/aborted
+		{"in_progress", "queued"},   // backwards
+		{"blocked", "complete"},     // blocked only reaches in_progress/aborted
 		{"complete", "in_progress"}, // terminal
 		{"failed", "in_progress"},   // terminal
 		{"aborted", "planning"},     // terminal

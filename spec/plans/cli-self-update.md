@@ -21,7 +21,7 @@ No ACs are deferred. All 20 ACs in `cli/self-update` are covered (tasks 1–11 d
 
 ### Task 1: Register `self-update` command with `update` alias and flags
 
-**Status:** done
+**Status:** complete
 **Depends-On:** —
 **Verifies:** cli/self-update#ac:canonical-and-alias
 
@@ -29,7 +29,7 @@ Add `internal/cli/self_update.go` registering the `self-update` cobra command wi
 
 ### Task 2: Resolve latest stable release and compare against build version
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/self-update#ac:latest-stable-only, cli/self-update#ac:dev-build-is-undetermined
 
@@ -37,7 +37,7 @@ Implement latest-version resolution from the GitHub releases of `specscore/specs
 
 ### Task 3: Install-method detection from the resolved executable path
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/self-update#ac:manual-is-eligible
 
@@ -45,7 +45,7 @@ Add a pure-function detector that resolves the running executable's path and cla
 
 ### Task 4: Package-managed redirect path
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 3
 **Verifies:** cli/self-update#ac:managed-is-redirected
 
@@ -53,7 +53,7 @@ When detection returns `managed`, print the detected manager and its exact upgra
 
 ### Task 5: Ambiguous-detection safe fallback
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 3
 **Verifies:** cli/self-update#ac:ambiguous-falls-back-safe
 
@@ -61,7 +61,7 @@ When detection returns `ambiguous`, refuse to self-replace, print that the insta
 
 ### Task 6: `--check` read-only mode and exit-code contract
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2, 3, 4, 5
 **Verifies:** cli/self-update#ac:check-is-readonly, cli/self-update#ac:check-exit-code-contract
 
@@ -69,7 +69,7 @@ Implement `--check`: run detection (Task 3) and release resolution (Task 2), rep
 
 ### Task 7: Download matching asset and verify sha256 against `checksums.txt`
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2
 **Verifies:** cli/self-update#ac:checksum-mismatch-aborts
 
@@ -77,7 +77,7 @@ For the manual path, download the release asset matching host OS/arch from the l
 
 ### Task 8: Atomic self-replace of the running executable
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 7
 **Verifies:** cli/self-update#ac:replace-is-atomic
 
@@ -85,7 +85,7 @@ Swap the verified binary into the executable's location atomically (stage + rena
 
 ### Task 9: Confirmation prompt with `--yes` and non-interactive guard
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 8
 **Verifies:** cli/self-update#ac:confirm-prompt-and-yes, cli/self-update#ac:noninteractive-without-yes-refuses
 
@@ -93,7 +93,7 @@ Before invoking the swap (Task 8) on a manual install, print the `<current> → 
 
 ### Task 10: Already-current no-op short-circuit
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2
 **Verifies:** cli/self-update#ac:already-current-noop
 
@@ -101,7 +101,7 @@ When the resolved comparison (Task 2) reports the running version already equals
 
 ### Task 11: Network and permission failure modes
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 7, 8
 **Verifies:** cli/self-update#ac:network-failure-is-safe, cli/self-update#ac:permission-denied-is-safe
 
@@ -109,7 +109,7 @@ Handle the two write-path failure modes explicitly: a release lookup / asset dow
 
 ### Task 12: `--version <tag>` flag with exact-tag resolution
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1, 2, 7, 9
 **Verifies:** cli/self-update#ac:version-flag-selects-tag, cli/self-update#ac:pinned-tag-allows-prerelease
 
@@ -117,7 +117,7 @@ Add a `--version <tag>` flag to the command and a resolver path that fetches a s
 
 ### Task 13: `--allow-downgrade` guard
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 12
 **Verifies:** cli/self-update#ac:downgrade-requires-flag
 
@@ -125,7 +125,7 @@ When the pinned target is strictly lower than the running version, refuse unless
 
 ### Task 14: Pinned unknown-tag error handling
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 12
 **Verifies:** cli/self-update#ac:pinned-unknown-tag-errors
 
@@ -133,7 +133,7 @@ When the pinned tag has no published release or no asset matching the host OS/ar
 
 ### Task 15: Pinned-version managed redirect
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 4, 12
 **Verifies:** cli/self-update#ac:pinned-managed-still-redirects
 

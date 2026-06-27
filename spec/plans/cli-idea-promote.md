@@ -19,7 +19,7 @@ Foundation → branches → presentation. Task 1 lands the command, argument/fla
 
 ### Task 1: Scaffold `idea promote` command + pre-mutation guards
 
-**Status:** done
+**Status:** complete
 **Depends-On:** —
 **Verifies:** cli/idea/promote#ac:seed-not-found, cli/idea/promote#ac:collision-without-force, cli/idea/promote#ac:dirty-tree-rejected
 
@@ -27,7 +27,7 @@ Add the `promote` cobra subcommand under `idea` with `<slug>`, `--force`, `--ver
 
 ### Task 2: Same-repo move + seed→Idea transform
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/idea/promote#ac:same-repo-promote-happy-path
 
@@ -35,7 +35,7 @@ Implement the same-repo path: `git mv` the seed to `spec/ideas/<slug>.md`, then 
 
 ### Task 3: Back-link discovery, classification, and same-repo reconcile
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2
 **Verifies:** cli/idea/promote#ac:same-repo-backlinks-reconciled
 
@@ -43,7 +43,7 @@ Discover `## Sidekick Seeds Generated` entries referencing the seed (reusing `id
 
 ### Task 4: Cross-repo archive branch
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 3
 **Verifies:** cli/idea/promote#ac:cross-repo-archive, cli/idea/promote#ac:never-deprecated
 
@@ -51,7 +51,7 @@ When the classifier finds any cross-repo reference, take the no-move-of-content 
 
 ### Task 5: Verdict carry-forward
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2
 **Verifies:** cli/idea/promote#ac:verdict-carry-forward-modes
 
@@ -59,7 +59,7 @@ Implement the three carry-forward modes — `pointer` (default, single line), `f
 
 ### Task 6: stdout summary + structured output
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2
 **Verifies:** cli/idea/promote#ac:stdout-summary
 

@@ -23,7 +23,7 @@ No ACs are deferred. All 12 ACs in `cli/event/emit` are covered.
 
 ### Task 1: Register `event` cobra parent and `event emit` subcommand with `--help`
 
-**Status:** done
+**Status:** complete
 **Depends-On:** —
 **Verifies:** cli/event/emit#ac:verb-registers-and-helps
 
@@ -31,7 +31,7 @@ Add `internal/cli/event.go` registering the `event` cobra parent (prints help on
 
 ### Task 2: Implement envelope flag set with required-flag validation
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/event/emit#ac:required-flag-missing-fails-2
 
@@ -39,7 +39,7 @@ Add the seven envelope flags to the `emit` subcommand: `--name`, `--actor-kind`,
 
 ### Task 3: Implement envelope auto-fill (version, uuid, timestamp, artifact.revision)
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2
 **Verifies:** cli/event/emit#ac:envelope-auto-fill-fields, cli/event/emit#ac:envelope-auto-fill-revision-no-git, cli/event/emit#ac:envelope-artifact-revision-override
 
@@ -47,7 +47,7 @@ In the verb's `RunE`, after flag parsing, populate the envelope bookkeeping fiel
 
 ### Task 4: Implement payload input modes — read bytes from `--payload-json` / `--payload-file` / stdin
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 2
 **Verifies:** cli/event/emit#ac:payload-json-flag-shape, cli/event/emit#ac:payload-file-flag-shape, cli/event/emit#ac:payload-stdin-shape
 
@@ -55,7 +55,7 @@ Add `--payload-json '<json>'` and `--payload-file <path>` flags. Implement paylo
 
 ### Task 5: Implement payload mode arbitration + JSON parse pre-check (exit-2 paths)
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 4
 **Verifies:** cli/event/emit#ac:payload-mode-conflict-fails-2, cli/event/emit#ac:payload-tty-stdin-fails-2, cli/event/emit#ac:payload-bad-json-fails-2
 
@@ -63,7 +63,7 @@ Layer the exit-`2` paths over task 4's reader: reject when both `--payload-json`
 
 ### Task 6: Implement dispatch handoff + exit code adoption
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 3, 4, 5
 **Verifies:** cli/event/emit#ac:dispatch-exit-code-handoff
 

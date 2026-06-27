@@ -25,7 +25,7 @@ Linear. **Task 1** stands up the command and the strict single-actor transition 
 
 **Verifies:** cli/task/change-status#ac:to-flag-validation, cli/task/change-status#ac:illegal-transition-rejected, cli/task/change-status#ac:single-actor-no-coordination
 **Depends-On:** —
-**Status:** done
+**Status:** complete
 
 Add the `task change-status` cobra command wired to the shared `lifecycle-transitions` contract: required `--to` flag (case-insensitive; missing/unknown exits `2`), the strict task legal-transition matrix (illegal pairs exit `4`, non-idempotent), and pure single-actor status-field rewrite with no claim/release/locking.
 
@@ -33,7 +33,7 @@ Add the `task change-status` cobra command wired to the shared `lifecycle-transi
 
 **Verifies:** cli/task/change-status#ac:plan-inline-target-resolves
 **Depends-On:** 1
-**Status:** done
+**Status:** complete
 
 Resolve `<task>` in board mode (`tasks/<task>/README.md`, default) and plan-inline mode (`--plan <slug>` → the task block whose `**Id:**` equals `<task>` in `spec/plans/<slug>.md`), exiting `3` when neither resolves (plan-inline: no block with a matching `**Id:**`). Addressing is by the stable `**Id:**` field (resolved upstream).
 
@@ -41,7 +41,7 @@ Resolve `<task>` in board mode (`tasks/<task>/README.md`, default) and plan-inli
 
 **Verifies:** cli/task/change-status#ac:complete-with-provenance, cli/task/change-status#ac:complete-without-provenance-is-valid, cli/task/change-status#ac:bare-sha-same-repo-assembly, cli/task/change-status#ac:provenance-not-derived-from-head
 **Depends-On:** 2
-**Status:** done
+**Status:** complete
 
 Assemble `<repo>@<sha> (<branch>)` from the optional flags (bare `<sha>` when `--repo` omitted), write it to the resolved task's `implementation_commit` property on `--to=complete`, treat a flagless completion as valid, and never read ambient `HEAD` for values.
 
@@ -49,7 +49,7 @@ Assemble `<repo>@<sha> (<branch>)` from the optional flags (bare `<sha>` when `-
 
 **Verifies:** cli/task/change-status#ac:provenance-flag-without-complete-rejected, cli/task/change-status#ac:provenance-flag-without-commit-rejected
 **Depends-On:** 3
-**Status:** done
+**Status:** complete
 
 Reject (exit `2`) any provenance flag supplied with a non-`complete` `--to`, and any provenance flag set without `--commit`, leaving the task unchanged in both cases.
 
@@ -57,7 +57,7 @@ Reject (exit `2`) any provenance flag supplied with a non-`complete` `--to`, and
 
 **Verifies:** cli/task/change-status#ac:corrective-restamp
 **Depends-On:** 3
-**Status:** done
+**Status:** complete
 
 Implement `--amend-provenance` to overwrite (or clear) `implementation_commit` on a task already in `complete` without a status transition — mutually exclusive with `--to` (exit `2`), requiring `complete` (else exit `4`), and following the same `--commit`-required and syntactic-only rules. Emit `<task>: provenance amended`.
 
