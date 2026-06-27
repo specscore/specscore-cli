@@ -33,7 +33,7 @@ Add the `task change-status` cobra command wired to the shared `lifecycle-transi
 
 **Verifies:** cli/task/change-status#ac:plan-inline-target-resolves
 **Depends-On:** 1
-**Status:** pending
+**Status:** done
 
 Resolve `<task>` in board mode (`tasks/<task>/README.md`, default) and plan-inline mode (`--plan <slug>` → the task block whose `**Id:**` equals `<task>` in `spec/plans/<slug>.md`), exiting `3` when neither resolves (plan-inline: no block with a matching `**Id:**`). Addressing is by the stable `**Id:**` field (resolved upstream).
 

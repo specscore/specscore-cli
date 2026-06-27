@@ -65,6 +65,52 @@ x
 	}
 }
 
+func TestParse_TaskIdField(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, "plans")
+	body := `# Plan: Sample
+
+**Status:** Draft
+**Source Feature:** sample
+
+## Tasks
+
+### Task 1: First task
+
+**Id:** setup
+**Status:** in_progress
+
+Body prose.
+
+### Task 2: Second task
+
+**Status:** planning
+
+No id here.
+`
+	p, err := Parse(writePlan(t, plansDir, "ids", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Tasks) != 2 {
+		t.Fatalf("got %d tasks", len(p.Tasks))
+	}
+	t1 := p.Tasks[0]
+	if !t1.IdPresent || t1.Id != "setup" {
+		t.Fatalf("task1 id present=%v id=%q", t1.IdPresent, t1.Id)
+	}
+	if t1.IdLine == 0 {
+		t.Fatal("task1 IdLine should be set")
+	}
+	t2 := p.Tasks[1]
+	if t2.IdPresent || t2.Id != "" {
+		t.Fatalf("task2 id present=%v id=%q", t2.IdPresent, t2.Id)
+	}
+	if t2.IdLine != 0 {
+		t.Fatalf("task2 IdLine should be 0, got %d", t2.IdLine)
+	}
+}
+
 func TestParse_FullModeMinimal(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, "plans")

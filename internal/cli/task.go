@@ -10,6 +10,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
+	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/specscore/specscore-cli/pkg/task"
 	"github.com/spf13/cobra"
 )
@@ -66,6 +67,12 @@ rewrite of the **Status:** line and prints "<task>: <from> → <to>".`,
 	cmd.Flags().String("to", "", "target status (required), case-insensitive. One of: "+
 		strings.Join(taskStatusNames(), ", "))
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().String("plan", "", "resolve <task> as a plan-inline task by its **Id:** inside spec/plans/<plan>.md (instead of the tasks board)")
+	// Provenance flags are accepted here so the AC command parses cleanly; the
+	// provenance write itself is a later task and these are not read yet.
+	cmd.Flags().String("commit", "", "provenance: implementing commit SHA (reserved; written by a later task)")
+	cmd.Flags().String("repo", "", "provenance: implementing repo (reserved; written by a later task)")
+	cmd.Flags().String("branch", "", "provenance: implementing branch (reserved; written by a later task)")
 	return cmd
 }
 
@@ -100,6 +107,13 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 			toRaw, strings.Join(taskStatusNames(), ", "))
 	}
 
+	// --plan selects plan-inline mode: the task is addressed by its **Id:**
+	// field on a `### Task N:` block inside spec/plans/<plan>.md. Without --plan
+	// the verb stays in board mode (tasks/<task>/README.md), unchanged.
+	if planSlug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(planSlug) != "" {
+		return runTaskChangeStatusPlanInline(cmd, taskSlug, strings.TrimSpace(planSlug), to)
+	}
+
 	projectFlag, _ := cmd.Flags().GetString("project")
 	tasksDir, err := resolveTasksDir(projectFlag)
 	if err != nil {
@@ -128,6 +142,74 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
 	return nil
+}
+
+// runTaskChangeStatusPlanInline resolves <task> to the `### Task N:` block in
+// spec/plans/<planSlug>.md whose **Id:** equals taskSlug, validates the
+// (from, to) arc against the single KindTask matrix (illegal arcs exit 4), and
+// rewrites that block's **Status:** line in place — every other line is
+// preserved byte-for-byte. A missing plan file or no matching **Id:** exits 3.
+//
+// Provenance writing (--repo/--commit/--branch) is the next task; this function
+// returns the resolved block as the rewrite target so that follow-up can hang
+// the provenance write off the same StatusLine locator.
+func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string, to lifecycle.Status) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
+	p, err := plan.Parse(planPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
+		}
+		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
+	}
+
+	// Resolve the task block by its stable **Id:** field.
+	var target *plan.Task
+	for i := range p.Tasks {
+		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
+			target = &p.Tasks[i]
+			break
+		}
+	}
+	if target == nil {
+		return exitcode.NotFoundErrorf("task %q not found by **Id:** in plan %s", taskSlug, planSlug)
+	}
+
+	// Validate through the same single-actor KindTask matrix as board mode.
+	from := lifecycle.Status(string(target.Status))
+	if err := lifecycle.Transition(lifecycle.KindTask, from, to); err != nil {
+		return exitcode.InvalidStateErrorf("%v", err)
+	}
+
+	if target.StatusLine == 0 {
+		return exitcode.UnexpectedErrorf("task %q in plan %s has no **Status:** line", taskSlug, planSlug)
+	}
+	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to); err != nil {
+		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
+	return nil
+}
+
+// rewritePlanTaskStatusLine rewrites the 1-based statusLine of a plan file to
+// `**Status:** <to>`, preserving every other line verbatim. The line number
+// comes from the parse pass over the same file, so it is always in range. This
+// mirrors the per-block status rewrite in pkg/lint (rewriteTaskStatusLines).
+func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	lines[statusLine-1] = "**Status:** " + string(to)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 // resolveTasksDir resolves the tasks directory from a --project flag or CWD.

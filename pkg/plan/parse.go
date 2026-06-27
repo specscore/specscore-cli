@@ -89,6 +89,9 @@ type Task struct {
 	Verifies         []string // AC IDs from `**Verifies:**`, in source order
 	VerifiesLine     int      // 1-based line of `**Verifies:**`; 0 when absent
 	VerifiesPresent  bool     // true when the field was present
+	Id               string   // stable task identifier from `**Id:**`; empty when absent
+	IdLine           int      // 1-based line of `**Id:**`; 0 when absent
+	IdPresent        bool     // true when the field was present
 	Status           TaskStatus
 	StatusLine       int    // 1-based line of `**Status:**`; 0 when absent
 	StatusRaw        string // raw value as written
@@ -341,6 +344,10 @@ func parseTaskBody(t *Task) {
 			t.VerifiesPresent = true
 			t.VerifiesLine = absLine
 			t.Verifies = append(t.Verifies, splitCommaList(val)...)
+		case "Id":
+			t.IdPresent = true
+			t.IdLine = absLine
+			t.Id = val
 		case "Status":
 			t.StatusPresent = true
 			t.StatusRaw = val
