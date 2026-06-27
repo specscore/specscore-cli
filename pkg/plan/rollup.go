@@ -1,5 +1,40 @@
 package plan
 
+import "sort"
+
+// EvidenceEntry is one task's implementation-commit reference, surfaced as a
+// distinct record from any plan-level Snapshots Git Hash.
+type EvidenceEntry struct {
+	Task int    `yaml:"task" json:"task"`                 // task number carrying the ref
+	Id   string `yaml:"id,omitempty" json:"id,omitempty"` // task **Id:** when present
+	Ref  string `yaml:"ref" json:"ref"`                   // the `**Implemented-by:**` value
+}
+
+// ImplementationEvidence derives the deduplicated SET of implementation-commit
+// refs carried by p's tasks (via each task's `**Implemented-by:**` field), in a
+// stable order by task number. It is query-only: it reads task provenance and
+// never reads or writes any plan-body/frontmatter "evidence" field, nor the
+// `## Snapshots` Git Hash (which records spec-document state, a distinct axis).
+// Tasks without provenance — or with an empty ref — contribute nothing, so a
+// plan with no provenance yields an empty slice.
+func (p *Plan) ImplementationEvidence() []EvidenceEntry {
+	tasks := make([]Task, len(p.Tasks))
+	copy(tasks, p.Tasks)
+	sort.SliceStable(tasks, func(i, j int) bool { return tasks[i].Number < tasks[j].Number })
+
+	out := []EvidenceEntry{}
+	seen := map[string]bool{}
+	for _, t := range tasks {
+		ref := t.ImplementationCommit
+		if ref == "" || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, EvidenceEntry{Task: t.Number, Id: t.Id, Ref: ref})
+	}
+	return out
+}
+
 // Rollup counts a plan's tasks by their parsed task **Status:** value.
 type Rollup struct {
 	Total      int `yaml:"total" json:"total"`

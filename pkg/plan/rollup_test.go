@@ -154,3 +154,134 @@ func TestDeriveExecutionBand(t *testing.T) {
 		})
 	}
 }
+
+// TestImplementationEvidence_TwoTasks verifies
+// implementation-commit-provenance#ac:plan-evidence-rolls-up: a plan with two
+// provenance-carrying tasks derives the SET of both refs, ordered by task
+// number, with no plan-level evidence hand-authored.
+func TestImplementationEvidence_TwoTasks(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: Evidence
+
+**Source Feature:** foo
+
+## Tasks
+
+### Task 2: B
+**Status:** complete
+**Implemented-by:** abc222
+
+### Task 1: A
+**Status:** complete
+**Implemented-by:** abc111
+`
+	p, err := Parse(writePlan(t, dir, "evidence", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := p.ImplementationEvidence()
+	want := []EvidenceEntry{
+		{Task: 1, Ref: "abc111"},
+		{Task: 2, Ref: "abc222"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("evidence = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("evidence[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestImplementationEvidence_Dedup confirms duplicate refs collapse to a SET,
+// keeping the lowest task number's entry.
+func TestImplementationEvidence_Dedup(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: Dedup
+
+**Source Feature:** foo
+
+## Tasks
+
+### Task 1: A
+**Id:** alpha
+**Status:** complete
+**Implemented-by:** same
+
+### Task 2: B
+**Status:** complete
+**Implemented-by:** same
+`
+	p, err := Parse(writePlan(t, dir, "dedup", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := p.ImplementationEvidence()
+	want := []EvidenceEntry{{Task: 1, Id: "alpha", Ref: "same"}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("evidence = %+v, want %+v", got, want)
+	}
+}
+
+// TestImplementationEvidence_None: tasks without provenance contribute nothing,
+// yielding an empty (non-nil) set.
+func TestImplementationEvidence_None(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: None
+
+**Source Feature:** foo
+
+## Tasks
+
+### Task 1: A
+**Status:** complete
+`
+	p, err := Parse(writePlan(t, dir, "none", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := p.ImplementationEvidence()
+	if len(got) != 0 {
+		t.Fatalf("evidence = %+v, want empty", got)
+	}
+}
+
+// TestImplementationEvidence_SnapshotsStayDistinct verifies
+// implementation-commit-provenance#ac:snapshots-stay-distinct: a plan carrying
+// BOTH a `## Snapshots` table Git Hash and task implementation provenance keeps
+// the two as distinct records — the snapshot hash never appears in the derived
+// evidence set.
+func TestImplementationEvidence_SnapshotsStayDistinct(t *testing.T) {
+	dir := t.TempDir()
+	const snapshotHash = "deadbeefspecstate"
+	body := `# Plan: Distinct
+
+**Source Feature:** foo
+
+## Snapshots
+
+| Date | Git Hash |
+| ---- | -------- |
+| 2026-06-25 | ` + snapshotHash + ` |
+
+## Tasks
+
+### Task 1: A
+**Status:** complete
+**Implemented-by:** codecommit111
+`
+	p, err := Parse(writePlan(t, dir, "distinct", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := p.ImplementationEvidence()
+	if len(got) != 1 || got[0].Ref != "codecommit111" {
+		t.Fatalf("evidence = %+v, want single codecommit111 entry", got)
+	}
+	for _, e := range got {
+		if e.Ref == snapshotHash {
+			t.Fatalf("snapshot Git Hash %q leaked into implementation evidence", snapshotHash)
+		}
+	}
+}
