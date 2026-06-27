@@ -24,7 +24,7 @@ Build bottom-up. First the shared plumbing in the lifecycle-transition path (opt
 
 **Verifies:** cli/sidekick/change-status#ac:note-optional-on-implemented
 **Depends-On:** —
-**Status:** done
+**Status:** complete
 
 Add the optional `--note <markdown>` flag to the shared lifecycle-transition path used by the change-status verbs. When non-empty, append a `## Resolution` section to the artifact body verbatim (create it before the footer / at EOF, or append a paragraph to an existing one), as part of the same atomic mutation as the status rewrite, with rollback on any failure. An empty or absent `--note` is a no-op.
 
@@ -32,7 +32,7 @@ Add the optional `--note <markdown>` flag to the shared lifecycle-transition pat
 
 **Verifies:** cli/sidekick/change-status#ac:rejected-requires-note
 **Depends-On:** 1
-**Status:** done
+**Status:** complete
 
 Let a verb designate specific transitions as reason-required. For a designated transition, a missing or empty/whitespace-only `--note` MUST exit `2` (InvalidArgs) before any mutation, with a message naming the transition. Non-designated transitions keep `--note` optional.
 
@@ -40,7 +40,7 @@ Let a verb designate specific transitions as reason-required. For a designated t
 
 **Verifies:** cli/sidekick/change-status#ac:slug-not-found
 **Depends-On:** 2
-**Status:** done
+**Status:** complete
 
 Resolve `<slug>` to `spec/ideas/seeds/<slug>.md` within the project root, excluding already-relocated seeds under `spec/ideas/archived/`. Read and line-target-rewrite the frontmatter `status:` value (the seed kind's canonical status surface — no body `**Status:**` line). A missing seed at the canonical path exits `3` (NotFound).
 
@@ -48,7 +48,7 @@ Resolve `<slug>` to `spec/ideas/seeds/<slug>.md` within the project root, exclud
 
 **Verifies:** cli/sidekick/change-status#ac:unrecognized-target-rejected, cli/sidekick/change-status#ac:non-queued-source-rejected
 **Depends-On:** 3
-**Status:** done
+**Status:** complete
 
 Declare the seed matrix `Queued → {Implemented, Rejected, Archived}`. Validate `--to` (unrecognized value exits `2` before state-machine validation; case-insensitive, canonical title-case persisted). Enforce the strict source check (a non-`Queued` source exits `4`). Designate `Queued → Rejected` as reason-required, consuming Task 2's mechanism.
 
@@ -56,7 +56,7 @@ Declare the seed matrix `Queued → {Implemented, Rejected, Archived}`. Validate
 
 **Verifies:** cli/sidekick/change-status#ac:archive-path-collision
 **Depends-On:** 4
-**Status:** done
+**Status:** complete
 
 After the status rewrite, move the seed to `spec/ideas/archived/<slug>.md` (mkdir-p) and add the frontmatter key `type: sidekick-seed`, mirroring the seed→archived move in `internal/cli/idea_promote.go`. A pre-existing file at the archived path exits `1` (Conflict) and restores the source seed; any post-rewrite failure rolls back to the original `seeds/` state (original `status:`, no `type:`, no `## Resolution`).
 
@@ -64,7 +64,7 @@ After the status rewrite, move the seed to `spec/ideas/archived/<slug>.md` (mkdi
 
 **Verifies:** cli/sidekick/change-status#ac:implemented-relocates-and-tags, cli/sidekick/change-status#ac:rejected-with-note-writes-resolution
 **Depends-On:** 5
-**Status:** done
+**Status:** complete
 
 Register `sidekickChangeStatusCommand` / `runSidekickChangeStatus` in `internal/cli/sidekick.go`, mirroring `runIdeaChangeStatus`. Wire the `spec lint --fix` index sync and the `<slug>: <from> → <to>` success line. Complete and exercise end-to-end the happy path (`--to=implemented` relocates + tags) and the `--to=rejected --note …` path (relocates + writes `## Resolution`).
 

@@ -308,19 +308,19 @@ func TestP004_StubDonePlaceholder(t *testing.T) {
 
 ### Task 1: A
 **Verifies:** f#ac:a
-**Status:** pending
+**Status:** planning
 
 <!-- implement: pending -->
 
 ### Task 2: B
 **Verifies:** f#ac:b
-**Status:** done
+**Status:** complete
 
 <!-- implement: pending -->
 
 ### Task 3: C
 **Verifies:** f#ac:c
-**Status:** pending
+**Status:** planning
 
 <!-- implement: pending -->
 `)
@@ -350,7 +350,7 @@ func TestP004_StubPendingPermitted(t *testing.T) {
 
 ### Task 1: A
 **Verifies:** f#ac:a
-**Status:** pending
+**Status:** planning
 
 <!-- implement: pending -->
 `)
@@ -403,8 +403,171 @@ func TestP004_InvalidStatusValue(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected invalid-status P-004; got: %+v", v)
 	}
-	if !strings.Contains(got.Message, "pending") || !strings.Contains(got.Message, "in-progress") {
-		t.Fatalf("message must cite accepted set; got: %s", got.Message)
+	if !strings.Contains(got.Message, "in_progress") || !strings.Contains(got.Message, "planning") {
+		t.Fatalf("message must cite the canonical enum; got: %s", got.Message)
+	}
+}
+
+// AC enum-is-sole-vocabulary: a non-enum, non-legacy token (`shipped`) is
+// rejected as not a valid task status, with no canonical mapping offered.
+func TestP004_NonEnumStatusRejectedNoMapping(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.writeFeature(t, "f", "a")
+	e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** shipped
+`)
+	got := hasViolation(runRules(t, e), "P-004", `"shipped"`)
+	if got == nil {
+		t.Fatal("expected P-004 for non-enum status `shipped`")
+	}
+	if !strings.Contains(got.Message, "not a valid task status") {
+		t.Fatalf("message must state value is not valid; got: %s", got.Message)
+	}
+	if got.FixTarget != "" {
+		t.Fatalf("non-legacy token must offer no fix target; got: %q", got.FixTarget)
+	}
+	// No canonical mapping should be offered (no "use canonical").
+	if strings.Contains(got.Message, "use canonical") {
+		t.Fatalf("non-legacy token must not offer a mapping; got: %s", got.Message)
+	}
+}
+
+// AC lint-flags-legacy: each legacy token is flagged with its canonical
+// replacement, and a fix target is offered.
+func TestP004_LegacyStatusFlaggedWithReplacement(t *testing.T) {
+	cases := []struct{ legacy, canonical string }{
+		{"pending", "planning"},
+		{"done", "complete"},
+		{"in-progress", "in_progress"},
+	}
+	for _, tc := range cases {
+		e := newPlanRulesEnv(t)
+		e.writeFeature(t, "f", "a")
+		e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** `+tc.legacy+`
+`)
+		got := hasViolation(runRules(t, e), "P-004", `"`+tc.legacy+`"`)
+		if got == nil {
+			t.Fatalf("expected P-004 for legacy token %q", tc.legacy)
+		}
+		if !strings.Contains(got.Message, `"`+tc.canonical+`"`) {
+			t.Fatalf("message must name canonical %q; got: %s", tc.canonical, got.Message)
+		}
+		if got.FixTarget != "P-004" {
+			t.Fatalf("legacy token must offer P-004 fix target; got: %q", got.FixTarget)
+		}
+	}
+}
+
+// AC enum-is-sole-vocabulary: every canonical enum value is accepted with no
+// P-004 status violation.
+func TestP004_CanonicalStatusAccepted(t *testing.T) {
+	for _, st := range []string{"planning", "queued", "in_progress", "blocked", "complete", "failed", "aborted"} {
+		e := newPlanRulesEnv(t)
+		e.writeFeature(t, "f", "a")
+		e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** `+st+`
+`)
+		if got := hasViolation(runRules(t, e), "P-004", "Status"); got != nil {
+			t.Fatalf("canonical status %q must not be flagged; got: %+v", st, got)
+		}
+	}
+}
+
+// AC lint-fix-migrates-legacy: --fix rewrites each legacy task **Status:**
+// value-for-value to canonical, leaving all other content untouched, and is
+// idempotent.
+func TestP004_FixMigratesLegacyTokens(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.writeFeature(t, "f", "a", "b")
+	path := e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** done
+
+### Task 2: B
+**Verifies:** f#ac:b
+**Depends-On:** 1
+**Status:** pending
+`)
+	before, _ := os.ReadFile(path)
+
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+
+	want := strings.Replace(string(before), "**Status:** done", "**Status:** complete", 1)
+	want = strings.Replace(want, "**Status:** pending", "**Status:** planning", 1)
+	if string(after) != want {
+		t.Fatalf("fix changed more than the status values:\nwant:\n%q\ngot:\n%q", want, after)
+	}
+
+	// Post-fix: no legacy P-004 violations remain.
+	if got := hasViolation(runRules(t, e), "P-004", "Status"); got != nil {
+		t.Fatalf("post-fix lint still reports a status P-004: %+v", got)
+	}
+	// Idempotent: a second pass changes nothing.
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix (2nd): %v", err)
+	}
+	after2, _ := os.ReadFile(path)
+	if string(after2) != string(after) {
+		t.Fatalf("fix not idempotent:\n%s", after2)
+	}
+}
+
+// AC enum-is-sole-vocabulary: --fix leaves a non-legacy invalid token alone.
+func TestP004_FixSkipsNonLegacyToken(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.writeFeature(t, "f", "a")
+	path := e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** shipped
+`)
+	before, _ := os.ReadFile(path)
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Fatalf("fix must not touch a non-legacy token:\n%s", after)
 	}
 }
 
@@ -501,7 +664,7 @@ func TestPlanRulesNoSourceFixIsOptIn(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "plans"))
 	planPath := filepath.Join(root, "plans", "p.md")
-	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker() // fixNoSource defaults to false
 	if err := c.fix(root); err != nil {
@@ -519,7 +682,7 @@ func TestPlanRulesNoSourceFixOptIn(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "plans"))
 	planPath := filepath.Join(root, "plans", "p.md")
-	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker()
 	c.fixNoSource = true
@@ -545,7 +708,7 @@ func TestPlanRulesNoSourceFixSkipsUnrecognizedValue(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "plans"))
 	planPath := filepath.Join(root, "plans", "p.md")
-	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker()
 	c.fixNoSource = true
@@ -591,7 +754,7 @@ func itoa(n int) string {
 // AC: derive Executing from an in-progress task when body Status drifts.
 func TestP007_DeriveExecuting(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "in-progress", "pending")
+	e.p007Plan(t, "p", "Approved", "in_progress", "planning")
 	v := hasViolation(runRules(t, e), "P-007", "Executing")
 	if v == nil {
 		t.Fatal("expected a P-007 violation deriving Executing")
@@ -604,7 +767,7 @@ func TestP007_DeriveExecuting(t *testing.T) {
 // AC: derive Blocked when a task is blocked and none in-progress/failed.
 func TestP007_DeriveBlocked(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "done", "blocked")
+	e.p007Plan(t, "p", "Approved", "complete", "blocked")
 	if hasViolation(runRules(t, e), "P-007", "Blocked") == nil {
 		t.Fatal("expected a P-007 violation deriving Blocked")
 	}
@@ -613,7 +776,7 @@ func TestP007_DeriveBlocked(t *testing.T) {
 // AC: derive Implemented when all tasks are done.
 func TestP007_DeriveImplemented(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "done", "done")
+	e.p007Plan(t, "p", "Approved", "complete", "complete")
 	if hasViolation(runRules(t, e), "P-007", "Implemented") == nil {
 		t.Fatal("expected a P-007 violation deriving Implemented")
 	}
@@ -622,7 +785,7 @@ func TestP007_DeriveImplemented(t *testing.T) {
 // AC: derive Failed from a failed/aborted task (precedence over all).
 func TestP007_DeriveFailed(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Executing", "failed", "in-progress")
+	e.p007Plan(t, "p", "Executing", "failed", "in_progress")
 	if hasViolation(runRules(t, e), "P-007", "Failed") == nil {
 		t.Fatal("expected a P-007 violation deriving Failed")
 	}
@@ -632,7 +795,7 @@ func TestP007_DeriveFailed(t *testing.T) {
 // derivation-eligible body status.
 func TestP007_IndeterminateNoOp(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "done", "pending")
+	e.p007Plan(t, "p", "Approved", "complete", "planning")
 	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 		t.Fatalf("indeterminate rollup must emit no P-007: %+v", v)
 	}
@@ -650,7 +813,7 @@ func TestP007_NoTasksNoOp(t *testing.T) {
 // AC: when the derived band already equals the body status, no drift.
 func TestP007_NoDriftNoOp(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Implemented", "done", "done")
+	e.p007Plan(t, "p", "Implemented", "complete", "complete")
 	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 		t.Fatalf("matching band must emit no P-007: %+v", v)
 	}
@@ -661,7 +824,7 @@ func TestP007_NoDriftNoOp(t *testing.T) {
 func TestP007_PrepStatesNeverDerived(t *testing.T) {
 	for _, st := range []string{"Draft", "In Review"} {
 		e := newPlanRulesEnv(t)
-		e.p007Plan(t, "p", st, "done", "done")
+		e.p007Plan(t, "p", st, "complete", "complete")
 		if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 			t.Fatalf("body status %q must not be derived: %+v", st, v)
 		}
@@ -672,7 +835,7 @@ func TestP007_PrepStatesNeverDerived(t *testing.T) {
 func TestP007_DispositionStatesNeverDerived(t *testing.T) {
 	for _, st := range []string{"Rejected", "Withdrawn", "Superseded", "Deprecated"} {
 		e := newPlanRulesEnv(t)
-		e.p007Plan(t, "p", st, "done", "done")
+		e.p007Plan(t, "p", st, "complete", "complete")
 		if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 			t.Fatalf("body status %q must not be derived: %+v", st, v)
 		}
@@ -683,7 +846,7 @@ func TestP007_DispositionStatesNeverDerived(t *testing.T) {
 // idempotent (a second pass is a no-op).
 func TestP007_FixRewritesAndIdempotent(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	path := e.p007Plan(t, "p", "Approved", "done", "done")
+	path := e.p007Plan(t, "p", "Approved", "complete", "complete")
 	before, _ := os.ReadFile(path)
 
 	c := newPlanRulesChecker()
@@ -721,7 +884,7 @@ func TestP007_FixRewritesAndIdempotent(t *testing.T) {
 // determinate rollup.
 func TestP007_FixSkipsPrepAndDisposition(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	path := e.p007Plan(t, "p", "Draft", "done", "done")
+	path := e.p007Plan(t, "p", "Draft", "complete", "complete")
 	before, _ := os.ReadFile(path)
 	c := newPlanRulesChecker()
 	c.fixP007 = true
@@ -737,7 +900,7 @@ func TestP007_FixSkipsPrepAndDisposition(t *testing.T) {
 // AC: --fix on an indeterminate plan changes nothing.
 func TestP007_FixIndeterminateNoOp(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	path := e.p007Plan(t, "p", "Approved", "done", "pending")
+	path := e.p007Plan(t, "p", "Approved", "complete", "planning")
 	before, _ := os.ReadFile(path)
 	c := newPlanRulesChecker()
 	c.fixP007 = true
@@ -754,5 +917,117 @@ func TestP007_FixIndeterminateNoOp(t *testing.T) {
 func TestP007_RegisteredAndFilterable(t *testing.T) {
 	if !AllRuleNames()["P-007"] {
 		t.Fatal("P-007 missing from AllRuleNames()")
+	}
+}
+
+// p008Plan writes a minimal, otherwise-clean single-file plan whose sole task
+// carries the given **Implemented-by:** value (omitted entirely when impl == "").
+func (e *planRulesEnv) p008Plan(t *testing.T, impl string) {
+	t.Helper()
+	e.writeFeature(t, "sample", "alpha")
+	var b strings.Builder
+	b.WriteString("# Plan: Sample\n\n**Source Feature:** sample\n**Mode:** full\n\n## Tasks\n\n### Task 1: First\n**Verifies:** sample#ac:alpha\n**Status:** complete\n")
+	if impl != "" {
+		b.WriteString("**Implemented-by:** " + impl + "\n")
+	}
+	e.writePlan(t, "sample", b.String())
+}
+
+// AC: well-formed-ref-accepted — a `<repo>@<sha> (<branch>)` ref is accepted on
+// shape alone and the linter does NOT scan the referenced repo.
+func TestP008_WellFormedRefAccepted(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "backstage@a1b2c3d (feature/foo)")
+	// No `backstage` repo exists anywhere under the env; acceptance must rely on
+	// shape alone, never a filesystem/git scan.
+	if _, err := os.Stat(filepath.Join(e.specRoot, "backstage")); !os.IsNotExist(err) {
+		t.Fatalf("test setup: backstage path should not exist")
+	}
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got != nil {
+		t.Fatalf("unexpected P-008 violation: %+v", got)
+	}
+}
+
+// AC: malformed-ref-rejected — `not a commit ref` is reported citing the
+// provenance-ref-format requirement and naming the offending value.
+func TestP008_MalformedRefRejected(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "not a commit ref")
+	v := runRules(t, e)
+	got := hasViolation(v, "P-008", "not a commit ref")
+	if got == nil {
+		t.Fatalf("expected P-008 violation naming the value, got %d violations: %+v", len(v), v)
+	}
+	if !strings.Contains(got.Message, "provenance-ref-format") {
+		t.Fatalf("violation should cite provenance-ref-format, got: %q", got.Message)
+	}
+}
+
+// AC: same-repo-bare-sha — a bare `<sha>` with no repo prefix is accepted.
+func TestP008_SameRepoBareSha(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "a1b2c3d")
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got != nil {
+		t.Fatalf("unexpected P-008 violation for bare sha: %+v", got)
+	}
+}
+
+func TestP008_AbsentFieldNoViolation(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "") // no **Implemented-by:** line at all
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got != nil {
+		t.Fatalf("absent provenance must not violate, got: %+v", got)
+	}
+}
+
+func TestP008_EmptyAfterLabelRejected(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	// `**Implemented-by:**` present with an empty value.
+	e.writeFeature(t, "sample", "alpha")
+	e.writePlan(t, "sample", "# Plan: Sample\n\n**Source Feature:** sample\n**Mode:** full\n\n## Tasks\n\n### Task 1: First\n**Verifies:** sample#ac:alpha\n**Status:** complete\n**Implemented-by:**\n")
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got == nil {
+		t.Fatalf("empty-after-label must violate, got %d violations: %+v", len(v), v)
+	}
+}
+
+// TestValidImplementedByRef exercises the purely-syntactic ref validator over
+// every accepted and malformed shape. The validator takes only a string and
+// touches no filesystem/git, which is the structural guarantee that P-008 never
+// scans the referenced repo.
+func TestValidImplementedByRef(t *testing.T) {
+	accepted := []string{
+		"a1b2c3d",                                  // bare sha (min length)
+		"a1b2c3d (feature/foo)",                    // bare sha + branch
+		"backstage@a1b2c3d",                        // repo slug + sha
+		"backstage@a1b2c3d (feature/foo)",          // repo slug + sha + branch
+		"https://github.com/org/repo@a1b2c3d",      // https clone URL + sha
+		"git@host:org/repo.git@a1b2c3d (main)",     // ssh clone URL + sha + branch
+		"abcdefabcdefabcdefabcdefabcdefabcdef0123", // 40-char sha
+	}
+	for _, ref := range accepted {
+		if !validImplementedByRef(ref) {
+			t.Errorf("expected accepted: %q", ref)
+		}
+	}
+	malformed := []string{
+		"",                 // empty after label
+		"   ",              // whitespace only
+		"not a commit ref", // free text
+		"a1b2c3",           // too short (6 hex)
+		"abcdefabcdefabcdefabcdefabcdefabcdef01234", // too long (41 hex)
+		"ghijklm",           // non-hex
+		"backstage@",        // repo, missing sha
+		"@a1b2c3d",          // missing repo before sha
+		"backstage@xyz123g", // repo + non-hex sha
+		"a1b2c3d ()",        // empty branch parens
+	}
+	for _, ref := range malformed {
+		if validImplementedByRef(ref) {
+			t.Errorf("expected malformed: %q", ref)
+		}
 	}
 }

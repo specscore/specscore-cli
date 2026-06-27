@@ -19,14 +19,14 @@ Two tasks, linear. Task 1 delivers the default text listing and the `--status` f
 ### Task 1: Text default and `--status` filter
 
 **Verifies:** cli/plan/list#ac:default-listing-pipeable, cli/plan/list#ac:status-filter-selects, cli/plan/list#ac:empty-match-exits-zero
-**Status:** done
+**Status:** complete
 
 Implement `plan list` default output: one plan slug per line, alphabetically sorted, no headers or trailing blank, exit `0` even when the result is empty. Add `--status <value>` as a case-insensitive exact match against each plan's parsed `**Status:**`, including only matching plans and still exiting `0` on an empty match.
 
 ### Task 2: Structured `--fields` output
 
 **Verifies:** cli/plan/list#ac:fields-returns-yaml, cli/plan/list#ac:unknown-field-exits-2
-**Status:** done
+**Status:** complete
 
 Add `--fields` support: a comma-separated selector over the recognized set (`status`, `source-feature`, `mode`, `date`, `owner`) producing a YAML (default) or JSON list of `{slug, …fields}` entries. `--format text` alongside `--fields` auto-upgrades to YAML rather than erroring; an unrecognized field name exits `2` naming the offending field.
 

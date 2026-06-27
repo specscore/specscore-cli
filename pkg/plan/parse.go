@@ -34,10 +34,11 @@ const (
 type TaskStatus string
 
 const (
-	StatusPending    TaskStatus = "pending"
-	StatusInProgress TaskStatus = "in-progress"
-	StatusDone       TaskStatus = "done"
+	StatusPlanning   TaskStatus = "planning"
+	StatusQueued     TaskStatus = "queued"
+	StatusInProgress TaskStatus = "in_progress"
 	StatusBlocked    TaskStatus = "blocked"
+	StatusComplete   TaskStatus = "complete"
 	StatusFailed     TaskStatus = "failed"
 	StatusAborted    TaskStatus = "aborted"
 )
@@ -88,6 +89,9 @@ type Task struct {
 	Verifies         []string // AC IDs from `**Verifies:**`, in source order
 	VerifiesLine     int      // 1-based line of `**Verifies:**`; 0 when absent
 	VerifiesPresent  bool     // true when the field was present
+	Id               string   // stable task identifier from `**Id:**`; empty when absent
+	IdLine           int      // 1-based line of `**Id:**`; 0 when absent
+	IdPresent        bool     // true when the field was present
 	Status           TaskStatus
 	StatusLine       int    // 1-based line of `**Status:**`; 0 when absent
 	StatusRaw        string // raw value as written
@@ -100,6 +104,12 @@ type Task struct {
 	DependsOnValid   bool // true when raw value parsed cleanly (em-dash or list of ints)
 	HasPlaceholder   bool // true when the body contains the placeholder token on its own line
 	PlaceholderLine  int  // 1-based line of the placeholder; 0 when absent
+
+	// Implementation-commit provenance, written by `task change-status` as an
+	// `**Implemented-by:** <ref>` field adjacent to the task's **Status:**.
+	ImplementationCommit string // raw value of `**Implemented-by:**`; empty when absent or empty
+	ImplementedByLine    int    // 1-based line of `**Implemented-by:**`; 0 when absent
+	ImplementedByPresent bool   // true when the field was present (even with an empty value)
 }
 
 // DeferredAC is a single `- <feature-slug>#ac:<ac-slug> — <reason>` line.
@@ -310,7 +320,7 @@ func parseTasks(lines []string, start, end int) []Task {
 			HeadingLine: r.headLine + 1,
 			BodyStart:   r.bodyFrom + 1,
 			BodyLines:   append([]string(nil), body...),
-			Status:      StatusPending,
+			Status:      StatusPlanning,
 		}
 		parseTaskBody(&t)
 		tasks = append(tasks, t)
@@ -340,12 +350,16 @@ func parseTaskBody(t *Task) {
 			t.VerifiesPresent = true
 			t.VerifiesLine = absLine
 			t.Verifies = append(t.Verifies, splitCommaList(val)...)
+		case "Id":
+			t.IdPresent = true
+			t.IdLine = absLine
+			t.Id = val
 		case "Status":
 			t.StatusPresent = true
 			t.StatusRaw = val
 			t.StatusLine = absLine
 			switch TaskStatus(val) {
-			case StatusPending, StatusInProgress, StatusDone, StatusBlocked, StatusFailed, StatusAborted:
+			case StatusPlanning, StatusQueued, StatusInProgress, StatusBlocked, StatusComplete, StatusFailed, StatusAborted:
 				t.Status = TaskStatus(val)
 				t.StatusValueValid = true
 			default:
@@ -358,6 +372,10 @@ func parseTaskBody(t *Task) {
 			deps, ok := parseDependsOn(val)
 			t.DependsOnValid = ok
 			t.DependsOn = deps
+		case "Implemented-by":
+			t.ImplementedByPresent = true
+			t.ImplementedByLine = absLine
+			t.ImplementationCommit = val
 		}
 	}
 }

@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
+	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/specscore/specscore-cli/pkg/task"
 	"github.com/spf13/cobra"
 )
@@ -20,8 +24,495 @@ func taskCommand() *cobra.Command {
 		taskListCommand(),
 		taskInfoCommand(),
 		taskNewCommand(),
+		taskChangeStatusCommand(),
 	)
 	return cmd
+}
+
+// --- task change-status ---
+
+// taskChangeStatusCommand transitions a task's **Status:** field via the shared
+// lifecycle state-machine contract (KindTask). It is a pure single-actor
+// mutation: read the task file, validate the (from, to) arc against the strict
+// task legal-transition matrix, and rewrite the **Status:** line. There is no
+// claim/release, lock acquisition, or conflict-resolution step
+// (cli/task/change-status#ac:single-actor-no-coordination).
+//
+// Both board-mode (tasks/<task>/README.md) and plan-inline (--plan) resolution
+// are wired here. On --to=complete the --repo/--commit/--branch flags assemble
+// an **Implemented-by:** provenance field written alongside the status.
+func taskChangeStatusCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "change-status <task> --to=<status>",
+		Short: "Transition a task's Status (single-actor, no coordination)",
+		Long: `Transitions tasks/<task>/README.md from its current **Status:** to the
+value named by --to. The transition is validated against the strict task
+legal-transition matrix:
+
+  planning    → queued, aborted
+  queued      → in_progress, aborted
+  in_progress → blocked, complete, failed, aborted
+  blocked     → in_progress, aborted
+  complete, failed, aborted are terminal (no outgoing transitions)
+
+--to is case-insensitive and must name one of the seven task statuses
+(planning, queued, in_progress, blocked, complete, failed, aborted); a missing
+or unrecognized value exits 2. An illegal (from, to) pair — including re-running
+on the current status — exits 4. On success the verb performs a pure file
+rewrite of the **Status:** line and prints "<task>: <from> → <to>".`,
+		Args:          cobra.ArbitraryArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runTaskChangeStatus,
+	}
+	cmd.Flags().String("to", "", "target status (required), case-insensitive. One of: "+
+		strings.Join(taskStatusNames(), ", "))
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().String("plan", "", "resolve <task> as a plan-inline task by its **Id:** inside spec/plans/<plan>.md (instead of the tasks board)")
+	// Provenance flags: on --to=complete these are assembled into an
+	// **Implemented-by:** field on the task. Values come ONLY from these flags;
+	// the verb never reads ambient git HEAD.
+	cmd.Flags().String("commit", "", "provenance: implementing commit SHA (written as **Implemented-by:** on --to=complete)")
+	cmd.Flags().String("repo", "", "provenance: implementing repo slug or clone URL (omitted for same-repo bare sha)")
+	cmd.Flags().String("branch", "", "provenance: implementing branch (optional trailing \"(<branch>)\")")
+	cmd.Flags().Bool("amend-provenance", false, "re-stamp **Implemented-by:** on an already-complete task WITHOUT a status transition (mutually exclusive with --to)")
+	return cmd
+}
+
+// taskStatusNames returns the recognized task status names for help/error text.
+func taskStatusNames() []string {
+	statuses := lifecycle.LegalStatuses(lifecycle.KindTask)
+	names := make([]string, len(statuses))
+	for i, s := range statuses {
+		names[i] = string(s)
+	}
+	return names
+}
+
+func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return exitcode.InvalidArgsError("missing required positional argument: <task>")
+	}
+	if len(args) > 1 {
+		return exitcode.InvalidArgsErrorf(
+			"too many positional arguments: change-status accepts exactly one <task>, got %d", len(args))
+	}
+	taskSlug := args[0]
+
+	// --amend-provenance corrects/clears the **Implemented-by:** field on an
+	// already-complete task WITHOUT a status transition. It is mutually exclusive
+	// with --to, and the command requires exactly one of the two.
+	amend, _ := cmd.Flags().GetBool("amend-provenance")
+	toRaw, _ := cmd.Flags().GetString("to")
+	toRaw = strings.TrimSpace(toRaw)
+	if amend {
+		if toRaw != "" {
+			return exitcode.InvalidArgsError(
+				"--amend-provenance is mutually exclusive with --to")
+		}
+		// Reuse the shared provenance-flag validation: when any provenance flag is
+		// present an explicit --commit is required (the "complete" predicate is
+		// trivially satisfied here, so only the --commit rule applies).
+		if err := validateProvenanceFlags(cmd, lifecycle.TaskComplete); err != nil {
+			return err
+		}
+		if planSlug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(planSlug) != "" {
+			return runTaskAmendProvenancePlanInline(cmd, taskSlug, strings.TrimSpace(planSlug))
+		}
+		return runTaskAmendProvenanceBoard(cmd, taskSlug)
+	}
+	if toRaw == "" {
+		return exitcode.InvalidArgsError("missing required flag: --to=<status>")
+	}
+	to, ok := lifecycle.ParseStatus(lifecycle.KindTask, toRaw)
+	if !ok {
+		return exitcode.InvalidArgsErrorf(
+			"unrecognized --to value %q for task; legal values: %s",
+			toRaw, strings.Join(taskStatusNames(), ", "))
+	}
+
+	// Provenance flags (--repo/--commit/--branch) are valid only when completing
+	// and only alongside an explicit --commit. Reject invalid combinations up
+	// front — before any file mutation in either board or plan-inline mode — so a
+	// rejected task is left UNCHANGED
+	// (cli/task/change-status#ac:provenance-flag-without-complete-rejected,
+	// cli/task/change-status#ac:provenance-flag-without-commit-rejected).
+	if err := validateProvenanceFlags(cmd, to); err != nil {
+		return err
+	}
+
+	// --plan selects plan-inline mode: the task is addressed by its **Id:**
+	// field on a `### Task N:` block inside spec/plans/<plan>.md. Without --plan
+	// the verb stays in board mode (tasks/<task>/README.md), unchanged.
+	if planSlug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(planSlug) != "" {
+		return runTaskChangeStatusPlanInline(cmd, taskSlug, strings.TrimSpace(planSlug), to)
+	}
+
+	projectFlag, _ := cmd.Flags().GetString("project")
+	tasksDir, err := resolveTasksDir(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
+	from, err := lifecycle.Validate(lifecycle.KindTask, taskFilePath, to)
+	if err != nil {
+		switch {
+		case errors.Is(err, lifecycle.ErrInvalidTransition):
+			return exitcode.InvalidStateErrorf("%v", err)
+		case errors.Is(err, lifecycle.ErrStatusLineNotFound):
+			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
+		default:
+			return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
+		}
+	}
+
+	// Pure single-actor mutation: rewrite the **Status:** line (and the
+	// frontmatter status: mirror if present). No claim/release, lock, or
+	// conflict-resolution step (cli/task/change-status#ac:single-actor-no-coordination).
+	if _, err := lifecycle.Rewrite(taskFilePath, to); err != nil {
+		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
+	}
+
+	// Implementation-commit provenance is written ONLY when completing, and only
+	// from explicit flags — the verb NEVER reads ambient git HEAD
+	// (cli/task/change-status#ac:provenance-not-derived-from-head).
+	if to == lifecycle.TaskComplete {
+		if ref := implementedByRefFromFlags(cmd); ref != "" {
+			if err := writeBoardImplementedBy(taskFilePath, ref); err != nil {
+				return exitcode.UnexpectedErrorf("writing provenance: %v", err)
+			}
+		}
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
+	return nil
+}
+
+// validateProvenanceFlags rejects invalid provenance-flag combinations before
+// any file is touched. When any of --repo/--commit/--branch is supplied, the
+// transition must target complete and an explicit --commit must be present;
+// otherwise it returns an InvalidArgs (exit 2) error and the task is left
+// unchanged. With no provenance flags it is a no-op.
+func validateProvenanceFlags(cmd *cobra.Command, to lifecycle.Status) error {
+	repo, _ := cmd.Flags().GetString("repo")
+	commit, _ := cmd.Flags().GetString("commit")
+	branch, _ := cmd.Flags().GetString("branch")
+	repo, commit, branch = strings.TrimSpace(repo), strings.TrimSpace(commit), strings.TrimSpace(branch)
+
+	if repo == "" && commit == "" && branch == "" {
+		return nil
+	}
+	if to != lifecycle.TaskComplete {
+		return exitcode.InvalidArgsError(
+			"provenance flags (--repo/--commit/--branch) are valid only with --to=complete")
+	}
+	if commit == "" {
+		return exitcode.InvalidArgsError(
+			"--commit is required when provenance flags (--repo/--branch) are supplied")
+	}
+	return nil
+}
+
+// implementedByRefFromFlags assembles the **Implemented-by:** reference from the
+// --repo/--commit/--branch flags. It returns "" when no reference can be formed
+// (i.e. --commit is absent), so the caller writes no provenance. Values come
+// ONLY from these flags; ambient git state is never consulted.
+func implementedByRefFromFlags(cmd *cobra.Command) string {
+	repo, _ := cmd.Flags().GetString("repo")
+	commit, _ := cmd.Flags().GetString("commit")
+	branch, _ := cmd.Flags().GetString("branch")
+	return assembleImplementedByRef(repo, commit, branch)
+}
+
+// assembleImplementedByRef builds the implementation-commit reference written as
+// the value of `**Implemented-by:**`. The shape is `<repo>@<sha> (<branch>)`,
+// where `<repo>` (a slug OR a full clone URL) is omitted for a same-repo commit
+// (a bare `<sha>`), and the trailing ` (<branch>)` is omitted when no branch is
+// given. A reference requires a commit: with no --commit this returns "" (Task
+// 4 turns provenance-without-commit into a hard rejection).
+func assembleImplementedByRef(repo, commit, branch string) string {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return ""
+	}
+	ref := commit
+	if repo = strings.TrimSpace(repo); repo != "" {
+		ref = repo + "@" + commit
+	}
+	if branch = strings.TrimSpace(branch); branch != "" {
+		ref += " (" + branch + ")"
+	}
+	return ref
+}
+
+// errNoStatusForProvenance is returned by writeBoardImplementedBy when the file
+// has no `**Status:**` line to anchor the provenance field to. This is
+// defensive: board mode always runs lifecycle.Rewrite first, which guarantees a
+// status line.
+var errNoStatusForProvenance = errors.New("task file has no **Status:** line for provenance placement")
+
+// writeBoardImplementedBy inserts an `**Implemented-by:** <ref>` line into the
+// board task file at path, immediately after its `**Status:**` line. Every other
+// byte is preserved.
+func writeBoardImplementedBy(path, ref string) error {
+	data, err := osReadFileFn(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	idx := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "**Status:**") {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return errNoStatusForProvenance
+	}
+	lines = withImplementedByLine(lines, idx, ref)
+	return osWriteFileFn(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// withImplementedByLine returns lines with `**Implemented-by:** ref` inserted
+// immediately after lines[statusIdx], keeping it adjacent to the `**Status:**`
+// line in both board files and plan-inline task blocks.
+func withImplementedByLine(lines []string, statusIdx int, ref string) []string {
+	field := "**Implemented-by:** " + ref
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[:statusIdx+1]...)
+	out = append(out, field)
+	out = append(out, lines[statusIdx+1:]...)
+	return out
+}
+
+// runTaskChangeStatusPlanInline resolves <task> to the `### Task N:` block in
+// spec/plans/<planSlug>.md whose **Id:** equals taskSlug, validates the
+// (from, to) arc against the single KindTask matrix (illegal arcs exit 4), and
+// rewrites that block's **Status:** line in place — every other line is
+// preserved byte-for-byte. A missing plan file or no matching **Id:** exits 3.
+//
+// On --to=complete the provenance flags (--repo/--commit/--branch) are
+// assembled into an **Implemented-by:** line written adjacent to the block's
+// **Status:** in the same atomic write.
+func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string, to lifecycle.Status) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
+	p, err := plan.Parse(planPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
+		}
+		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
+	}
+
+	// Resolve the task block by its stable **Id:** field.
+	var target *plan.Task
+	for i := range p.Tasks {
+		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
+			target = &p.Tasks[i]
+			break
+		}
+	}
+	if target == nil {
+		return exitcode.NotFoundErrorf("task %q not found by **Id:** in plan %s", taskSlug, planSlug)
+	}
+
+	// Validate through the same single-actor KindTask matrix as board mode.
+	from := lifecycle.Status(string(target.Status))
+	if err := lifecycle.Transition(lifecycle.KindTask, from, to); err != nil {
+		return exitcode.InvalidStateErrorf("%v", err)
+	}
+
+	if target.StatusLine == 0 {
+		return exitcode.UnexpectedErrorf("task %q in plan %s has no **Status:** line", taskSlug, planSlug)
+	}
+	// Provenance is written ONLY when completing, in the same atomic write that
+	// sets the status; values come ONLY from flags (never ambient git HEAD).
+	implementedBy := ""
+	if to == lifecycle.TaskComplete {
+		implementedBy = implementedByRefFromFlags(cmd)
+	}
+	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to, implementedBy); err != nil {
+		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
+	return nil
+}
+
+// rewritePlanTaskStatusLine rewrites the 1-based statusLine of a plan file to
+// `**Status:** <to>`, preserving every other line verbatim. The line number
+// comes from the parse pass over the same file, so it is always in range. This
+// mirrors the per-block status rewrite in pkg/lint (rewriteTaskStatusLines).
+//
+// When implementedByRef is non-empty an `**Implemented-by:** <ref>` line is
+// inserted immediately after the status line, in the same atomic write, so the
+// status flip and provenance write land together.
+func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status, implementedByRef string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	lines[statusLine-1] = "**Status:** " + string(to)
+	if implementedByRef != "" {
+		lines = withImplementedByLine(lines, statusLine-1, implementedByRef)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// isImplementedByLine reports whether ln is an `**Implemented-by:**` field line.
+func isImplementedByLine(ln string) bool {
+	return strings.HasPrefix(strings.TrimSpace(ln), "**Implemented-by:**")
+}
+
+// withAmendedImplementedBy re-stamps the provenance field anchored to
+// lines[statusIdx]: it drops an existing `**Implemented-by:**` line sitting
+// immediately after the status line (where both the board and plan-inline
+// completion paths write it), then inserts `**Implemented-by:** ref` when ref is
+// non-empty. An empty ref therefore CLEARS the field.
+func withAmendedImplementedBy(lines []string, statusIdx int, ref string) []string {
+	if statusIdx+1 < len(lines) && isImplementedByLine(lines[statusIdx+1]) {
+		out := make([]string, 0, len(lines)-1)
+		out = append(out, lines[:statusIdx+1]...)
+		out = append(out, lines[statusIdx+2:]...)
+		lines = out
+	}
+	if ref != "" {
+		lines = withImplementedByLine(lines, statusIdx, ref)
+	}
+	return lines
+}
+
+// boardTaskStatus returns the value text of the board task file's first
+// `**Status:**` line. A read error is returned verbatim; a file with no status
+// line returns errNoStatusForProvenance.
+func boardTaskStatus(path string) (string, error) {
+	data, err := osReadFileFn(path)
+	if err != nil {
+		return "", err
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		s := strings.TrimSpace(ln)
+		if strings.HasPrefix(s, "**Status:**") {
+			return strings.TrimSpace(strings.TrimPrefix(s, "**Status:**")), nil
+		}
+	}
+	return "", errNoStatusForProvenance
+}
+
+// amendBoardImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
+// in the board task file at path, anchored to its `**Status:**` line.
+func amendBoardImplementedBy(path, ref string) error {
+	data, err := osReadFileFn(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	idx := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "**Status:**") {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return errNoStatusForProvenance
+	}
+	lines = withAmendedImplementedBy(lines, idx, ref)
+	return osWriteFileFn(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// runTaskAmendProvenanceBoard re-stamps provenance on a board task that is
+// ALREADY complete, without a status transition. The task must be in complete
+// (else exit 4); the ref is assembled from the same flags as the completion
+// path, and an empty ref clears the field. Prints "<task>: provenance amended".
+func runTaskAmendProvenanceBoard(cmd *cobra.Command, taskSlug string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	tasksDir, err := resolveTasksDir(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
+	status, err := boardTaskStatus(taskFilePath)
+	if err != nil {
+		if errors.Is(err, errNoStatusForProvenance) {
+			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
+		}
+		return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
+	}
+	if status != string(lifecycle.TaskComplete) {
+		return exitcode.InvalidStateErrorf(
+			"--amend-provenance requires task %s to be complete, but it is %s", taskSlug, status)
+	}
+
+	if err := amendBoardImplementedBy(taskFilePath, implementedByRefFromFlags(cmd)); err != nil {
+		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
+	return nil
+}
+
+// runTaskAmendProvenancePlanInline re-stamps provenance on the plan-inline task
+// block whose **Id:** equals taskSlug, without a status transition. The block
+// must be in complete (else exit 4); an empty assembled ref clears the field.
+func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+
+	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
+	p, err := plan.Parse(planPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
+		}
+		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
+	}
+
+	var target *plan.Task
+	for i := range p.Tasks {
+		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
+			target = &p.Tasks[i]
+			break
+		}
+	}
+	if target == nil {
+		return exitcode.NotFoundErrorf("task %q not found by **Id:** in plan %s", taskSlug, planSlug)
+	}
+
+	if string(target.Status) != string(lifecycle.TaskComplete) {
+		return exitcode.InvalidStateErrorf(
+			"--amend-provenance requires task %q to be complete, but it is %s", taskSlug, string(target.Status))
+	}
+
+	if err := amendPlanImplementedBy(planPath, target.StatusLine, implementedByRefFromFlags(cmd)); err != nil {
+		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
+	return nil
+}
+
+// amendPlanImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
+// adjacent to the 1-based statusLine of a plan file, preserving every other line.
+func amendPlanImplementedBy(path string, statusLine int, ref string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	lines = withAmendedImplementedBy(lines, statusLine-1, ref)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 // resolveTasksDir resolves the tasks directory from a --project flag or CWD.

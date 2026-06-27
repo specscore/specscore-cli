@@ -65,6 +65,52 @@ x
 	}
 }
 
+func TestParse_TaskIdField(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, "plans")
+	body := `# Plan: Sample
+
+**Status:** Draft
+**Source Feature:** sample
+
+## Tasks
+
+### Task 1: First task
+
+**Id:** setup
+**Status:** in_progress
+
+Body prose.
+
+### Task 2: Second task
+
+**Status:** planning
+
+No id here.
+`
+	p, err := Parse(writePlan(t, plansDir, "ids", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Tasks) != 2 {
+		t.Fatalf("got %d tasks", len(p.Tasks))
+	}
+	t1 := p.Tasks[0]
+	if !t1.IdPresent || t1.Id != "setup" {
+		t.Fatalf("task1 id present=%v id=%q", t1.IdPresent, t1.Id)
+	}
+	if t1.IdLine == 0 {
+		t.Fatal("task1 IdLine should be set")
+	}
+	t2 := p.Tasks[1]
+	if t2.IdPresent || t2.Id != "" {
+		t.Fatalf("task2 id present=%v id=%q", t2.IdPresent, t2.Id)
+	}
+	if t2.IdLine != 0 {
+		t.Fatalf("task2 IdLine should be 0, got %d", t2.IdLine)
+	}
+}
+
 func TestParse_FullModeMinimal(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, "plans")
@@ -83,7 +129,7 @@ Sample plan.
 ### Task 1: First task
 
 **Verifies:** sample#ac:one
-**Status:** pending
+**Status:** planning
 **Depends-On:** —
 
 Body prose.
@@ -121,15 +167,15 @@ Some prose.
 	if len(t1.Verifies) != 1 || t1.Verifies[0] != "sample#ac:one" {
 		t.Fatalf("task1 verifies = %v", t1.Verifies)
 	}
-	if t1.Status != StatusPending || !t1.StatusValueValid {
+	if t1.Status != StatusPlanning || !t1.StatusValueValid {
 		t.Fatalf("task1 status = %v valid=%v", t1.Status, t1.StatusValueValid)
 	}
 	if len(t1.DependsOn) != 0 || !t1.DependsOnValid {
 		t.Fatalf("task1 depends-on = %v valid=%v", t1.DependsOn, t1.DependsOnValid)
 	}
 	t2 := p.Tasks[1]
-	// Status absent → default pending.
-	if t2.Status != StatusPending {
+	// Status absent → default planning.
+	if t2.Status != StatusPlanning {
 		t.Fatalf("task2 default status = %v", t2.Status)
 	}
 	if t2.StatusPresent {
@@ -259,7 +305,7 @@ func TestParse_StubModeValid(t *testing.T) {
 ### Task 1: Pending stub task
 
 **Verifies:** foo#ac:x
-**Status:** pending
+**Status:** planning
 **Depends-On:** —
 
 <!-- implement: pending -->
@@ -518,7 +564,7 @@ func TestParse_PlaceholderByteExact(t *testing.T) {
 
 ### Task 1: X
 **Verifies:** foo#ac:a
-**Status:** pending
+**Status:** planning
 
 ` + tc.body + "\n"
 		p, err := Parse(writePlan(t, dir, "t", body))
@@ -634,7 +680,7 @@ func TestParse_PlaceholderBodyTokenAfterFields(t *testing.T) {
 
 ### Task 1: Pending
 **Verifies:** foo#ac:a
-**Status:** pending
+**Status:** planning
 **Depends-On:** —
 
 <!-- implement: pending -->
@@ -649,5 +695,46 @@ func TestParse_PlaceholderBodyTokenAfterFields(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(p.Tasks[0].BodyLines, "\n"), PlaceholderBodyToken) {
 		t.Fatal("placeholder line missing from body lines")
+	}
+}
+
+func TestParse_ImplementedByField(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, "plans")
+	body := `# Plan: Sample
+
+**Status:** Draft
+**Source Feature:** sample
+
+## Tasks
+
+### Task 1: First task
+
+**Status:** complete
+**Implemented-by:** backstage@a1b2c3d (feature/foo)
+
+### Task 2: Second task
+
+**Status:** planning
+
+No provenance here.
+`
+	p, err := Parse(writePlan(t, plansDir, "prov", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Tasks) != 2 {
+		t.Fatalf("got %d tasks", len(p.Tasks))
+	}
+	t1 := p.Tasks[0]
+	if !t1.ImplementedByPresent || t1.ImplementationCommit != "backstage@a1b2c3d (feature/foo)" {
+		t.Fatalf("task1 implemented-by present=%v value=%q", t1.ImplementedByPresent, t1.ImplementationCommit)
+	}
+	if t1.ImplementedByLine == 0 {
+		t.Fatal("task1 ImplementedByLine should be set")
+	}
+	t2 := p.Tasks[1]
+	if t2.ImplementedByPresent || t2.ImplementationCommit != "" || t2.ImplementedByLine != 0 {
+		t.Fatalf("task2 implemented-by should be absent: present=%v value=%q line=%d", t2.ImplementedByPresent, t2.ImplementationCommit, t2.ImplementedByLine)
 	}
 }

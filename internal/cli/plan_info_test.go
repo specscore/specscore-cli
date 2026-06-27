@@ -43,23 +43,24 @@ func TestPlanInfo_ReturnsTaskRollup(t *testing.T) {
 	plansDir := setupPlansSpec(t)
 
 	var b strings.Builder
-	b.WriteString("# Plan: eight-done\n\n**Status:** Implementing\n\n## Tasks\n\n")
+	b.WriteString("# Plan: eight-complete\n\n**Status:** Implementing\n\n## Tasks\n\n")
 	for i := 1; i <= 8; i++ {
 		b.WriteString("### Task ")
 		b.WriteString(itoa(i))
-		b.WriteString(": work\n\n**Status:** done\n\nBody.\n\n")
+		b.WriteString(": work\n\n**Status:** complete\n\nBody.\n\n")
 	}
-	writePlanRaw(t, plansDir, "eight-done", b.String())
+	writePlanRaw(t, plansDir, "eight-complete", b.String())
 
-	stdout, _, err := runPlan(t, "info", "eight-done")
+	stdout, _, err := runPlan(t, "info", "eight-complete")
 	if err != nil {
-		t.Fatalf("plan info eight-done: %v", err)
+		t.Fatalf("plan info eight-complete: %v", err)
 	}
 	for _, want := range []string{
 		"total: 8",
-		"done: 8",
-		"in-progress: 0",
-		"pending: 0",
+		"complete: 8",
+		"in_progress: 0",
+		"planning: 0",
+		"queued: 0",
 		"blocked: 0",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -144,4 +145,103 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// TestPlanInfo_ImplementationEvidence verifies
+// implementation-commit-provenance#ac:plan-evidence-rolls-up: `plan info`
+// surfaces the derived SET of the plan's tasks' `**Implemented-by:**` refs.
+func TestPlanInfo_ImplementationEvidence(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	writePlanRaw(t, plansDir, "evi",
+		"# Plan: evi\n\n**Status:** Implementing\n\n## Tasks\n\n"+
+			"### Task 1: a\n\n**Status:** complete\n**Implemented-by:** ref-one\n\n"+
+			"### Task 2: b\n\n**Status:** complete\n**Implemented-by:** ref-two\n")
+
+	stdout, _, err := runPlan(t, "info", "evi")
+	if err != nil {
+		t.Fatalf("plan info evi: %v", err)
+	}
+	for _, want := range []string{"implementation_evidence:", "ref-one", "ref-two"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("evidence output missing %q in: %s", want, stdout)
+		}
+	}
+}
+
+// TestPlanInfo_ImplementationEvidence_None: a plan with no task provenance still
+// emits the evidence key (present-but-empty), exiting 0.
+func TestPlanInfo_ImplementationEvidence_None(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	writePlanRaw(t, plansDir, "no-evi",
+		"# Plan: no-evi\n\n**Status:** Implementing\n\n## Tasks\n\n### Task 1: a\n\n**Status:** complete\n")
+
+	stdout, _, err := runPlan(t, "info", "no-evi")
+	if err != nil {
+		t.Fatalf("plan info no-evi: %v", err)
+	}
+	if !strings.Contains(stdout, "implementation_evidence: []") {
+		t.Errorf("expected empty evidence set, got: %s", stdout)
+	}
+}
+
+// TestPlanInfo_SnapshotsStayDistinct verifies
+// implementation-commit-provenance#ac:snapshots-stay-distinct: a plan with both
+// a `## Snapshots` Git Hash and task provenance surfaces them as distinct
+// records — the snapshot hash is not pulled into the evidence list.
+func TestPlanInfo_SnapshotsStayDistinct(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	const snapHash = "specstatehash999"
+	writePlanRaw(t, plansDir, "both",
+		"# Plan: both\n\n**Status:** Implementing\n\n"+
+			"## Snapshots\n\n| Date | Git Hash |\n| - | - |\n| 2026-06-25 | "+snapHash+" |\n\n"+
+			"## Tasks\n\n### Task 1: a\n\n**Status:** complete\n**Implemented-by:** codehash111\n")
+
+	stdout, _, err := runPlan(t, "info", "both")
+	if err != nil {
+		t.Fatalf("plan info both: %v", err)
+	}
+	if !strings.Contains(stdout, "codehash111") {
+		t.Errorf("expected implementation ref in evidence, got: %s", stdout)
+	}
+	// The snapshot Git Hash must not appear in the evidence section. Since
+	// `plan info` does not surface Snapshots at all, it must not appear anywhere.
+	if strings.Contains(stdout, snapHash) {
+		t.Errorf("snapshot Git Hash leaked into plan info output: %s", stdout)
+	}
+}
+
+// TestPlanInfo_ImplementationEvidence_Text covers the text format branch.
+func TestPlanInfo_ImplementationEvidence_Text(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	writePlanRaw(t, plansDir, "evi-text",
+		"# Plan: evi-text\n\n**Status:** Implementing\n\n## Tasks\n\n"+
+			"### Task 1: a\n\n**Status:** complete\n**Implemented-by:** ref-one\n")
+
+	stdout, _, err := runPlan(t, "info", "evi-text", "--format", "text")
+	if err != nil {
+		t.Fatalf("plan info evi-text: %v", err)
+	}
+	if !strings.Contains(stdout, "Implementation evidence:") || !strings.Contains(stdout, "task 1: ref-one") {
+		t.Errorf("text evidence missing, got: %s", stdout)
+	}
+}
+
+// TestPlanInfo_ImplementationEvidence_TextNone covers the "none" text branch.
+func TestPlanInfo_ImplementationEvidence_TextNone(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+
+	writePlanRaw(t, plansDir, "no-evi-text",
+		"# Plan: no-evi-text\n\n**Status:** Implementing\n\n## Tasks\n\n### Task 1: a\n\n**Status:** complete\n")
+
+	stdout, _, err := runPlan(t, "info", "no-evi-text", "--format", "text")
+	if err != nil {
+		t.Fatalf("plan info no-evi-text: %v", err)
+	}
+	if !strings.Contains(stdout, "Implementation evidence: none") {
+		t.Errorf("expected 'none' evidence line, got: %s", stdout)
+	}
 }

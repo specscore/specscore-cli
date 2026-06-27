@@ -19,14 +19,14 @@ Two tasks, linear. Task 1 adds the task-status rollup helper to `pkg/plan` (coun
 ### Task 1: Task-status rollup in pkg/plan
 
 **Verifies:** cli/plan/info#ac:info-returns-task-rollup
-**Status:** done
+**Status:** complete
 
 Add a rollup helper to `pkg/plan` that counts a plan's tasks by their parsed `**Status:**` values — `done`, `in-progress`, `pending`, `blocked` — plus a `total`, each `0` when none. Derived from the existing per-task status parse, independent of the plan-level status. Unit-test a plan with all tasks `done`.
 
 ### Task 2: `plan info` command — metadata, rollup, not-found
 
 **Verifies:** cli/plan/info#ac:info-returns-metadata, cli/plan/info#ac:info-returns-task-rollup, cli/plan/info#ac:not-found-exits-3
-**Status:** done
+**Status:** complete
 
 Implement `plan info <slug>`: emit a YAML (default) / JSON / text document with `slug`, `status`, `source_feature`, `mode`, `date`, `owner`, and the `tasks` rollup from Task 1. An unresolved slug exits `3` naming the missing slug, with no partial output written to stdout.
 

@@ -22,6 +22,10 @@ type planInfoDoc struct {
 	Date          string      `yaml:"date" json:"date"`
 	Owner         string      `yaml:"owner" json:"owner"`
 	Tasks         plan.Rollup `yaml:"tasks" json:"tasks"`
+	// ImplementationEvidence is the DERIVED, query-only set of the plan's tasks'
+	// `**Implemented-by:**` refs. It is a distinct record from any Snapshots Git
+	// Hash and is never written back into the plan.
+	ImplementationEvidence []plan.EvidenceEntry `yaml:"implementation_evidence" json:"implementation_evidence"`
 }
 
 func planInfoCommand() *cobra.Command {
@@ -85,6 +89,8 @@ func runPlanInfo(cmd *cobra.Command, args []string) error {
 		Date:          p.Date,
 		Owner:         p.Owner,
 		Tasks:         p.TaskRollup(),
+
+		ImplementationEvidence: p.ImplementationEvidence(),
 	}
 
 	w := cmd.OutOrStdout()
@@ -114,7 +120,15 @@ func writePlanInfoText(w io.Writer, doc planInfoDoc) error {
 	_, _ = fmt.Fprintf(bw, "Date:           %s\n", doc.Date)
 	_, _ = fmt.Fprintf(bw, "Owner:          %s\n", doc.Owner)
 	r := doc.Tasks
-	_, _ = fmt.Fprintf(bw, "Tasks: %d total (%d done, %d in-progress, %d pending, %d blocked)\n",
-		r.Total, r.Done, r.InProgress, r.Pending, r.Blocked)
+	_, _ = fmt.Fprintf(bw, "Tasks: %d total (%d complete, %d in_progress, %d planning, %d queued, %d blocked)\n",
+		r.Total, r.Complete, r.InProgress, r.Planning, r.Queued, r.Blocked)
+	if len(doc.ImplementationEvidence) == 0 {
+		_, _ = fmt.Fprintf(bw, "Implementation evidence: none\n")
+	} else {
+		_, _ = fmt.Fprintf(bw, "Implementation evidence:\n")
+		for _, e := range doc.ImplementationEvidence {
+			_, _ = fmt.Fprintf(bw, "  - task %d: %s\n", e.Task, e.Ref)
+		}
+	}
 	return bw.Flush()
 }

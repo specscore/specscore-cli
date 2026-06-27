@@ -21,7 +21,7 @@ The fifteen pre-existing ACs (`clean-tree-exits-0` … `consumer-path-multi-glob
 
 ### Task 1: Capture the fix-modified file set in `pkg/lint`
 
-**Status:** done
+**Status:** complete
 **Depends-On:** —
 **Verifies:** cli/spec/lint#ac:fix-reports-only-changed-files
 
@@ -31,7 +31,7 @@ In `pkg/lint`, when `Lint()` runs with `Fix:true`, snapshot a content hash of ev
 
 ### Task 2: Emit the `{fixed, violations}` envelope under `--fix --format json|yaml`
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/spec/lint#ac:fix-json-envelope-only-under-fix, cli/spec/lint#ac:fix-report-needs-no-flag, cli/spec/lint#ac:fix-reports-only-changed-files
 
@@ -39,7 +39,7 @@ In `internal/cli/spec.go`, when `--fix` is set and the format is `json` or `yaml
 
 ### Task 3: Print the text-mode "Fixed N file(s)" summary to stderr under `--fix`
 
-**Status:** done
+**Status:** complete
 **Depends-On:** 1
 **Verifies:** cli/spec/lint#ac:fix-text-summary-on-stderr
 
