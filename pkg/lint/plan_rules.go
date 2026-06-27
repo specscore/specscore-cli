@@ -39,6 +39,12 @@ type planRulesChecker struct {
 	// legacy plan **Status:** tokens (Completed→Implemented, Under Review→In
 	// Review) to canonical. Standard fixer: unscoped pass or `--fix=P-006`.
 	fixP006Legacy bool
+
+	// fixP004Legacy, when true, makes the fix pass rewrite the closed set of
+	// legacy per-task **Status:** tokens (pending→planning, done→complete,
+	// in-progress→in_progress) to the canonical Task-status enum. Standard
+	// fixer: unscoped pass or `--fix=P-004`.
+	fixP004Legacy bool
 }
 
 func newPlanRulesChecker() *planRulesChecker {
@@ -54,7 +60,7 @@ func (c *planRulesChecker) severity() string { return "error" }
 // opt-in no-source repair (named "no-source" rather than a P-00x rule ID) and
 // the standard P-007 execution-band reconciliation (named by its rule ID).
 func (c *planRulesChecker) fixTargets() []string {
-	return []string{FixTargetNoSource, "P-006", "P-007"}
+	return []string{FixTargetNoSource, "P-004", "P-006", "P-007"}
 }
 
 func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
@@ -114,6 +120,11 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 // each gated by its own flag: the opt-in "no-source" repair and the standard
 // P-007 execution-band reconciliation. Both are idempotent.
 func (c *planRulesChecker) fix(specRoot string) error {
+	if c.fixP004Legacy {
+		if err := fixLegacyTaskStatuses(specRoot); err != nil {
+			return err
+		}
+	}
 	if c.fixP006Legacy {
 		if err := fixLegacyStatusesInTree(filepath.Join(specRoot, "plans"), legacyPlanStatusMap, false); err != nil {
 			return err
@@ -224,6 +235,32 @@ func lintPlan(p *plan.Plan, relPath, featuresDir string) []Violation {
 
 // ----- P-004 schema-token validity -----
 
+// canonicalTaskStatuses is the sole legal per-task **Status:** vocabulary: the
+// 7-value Task-status enum (unify-task-status-vocabulary#ac:enum-is-sole-vocabulary).
+// P-004 validates every `### Task N:` block's **Status:** against this set.
+var canonicalTaskStatuses = map[string]bool{
+	"planning":    true,
+	"queued":      true,
+	"in_progress": true,
+	"blocked":     true,
+	"complete":    true,
+	"failed":      true,
+	"aborted":     true,
+}
+
+// canonicalTaskStatusList renders the enum for violation messages, in enum order.
+const canonicalTaskStatusList = "planning, queued, in_progress, blocked, complete, failed, aborted"
+
+// legacyTaskStatusMap is the CLOSED set of pre-enum legacy per-task **Status:**
+// tokens and their canonical replacement. `lint` names the replacement in the
+// violation; `lint --fix` rewrites the value in place
+// (unify-task-status-vocabulary#ac:lint-flags-legacy / #ac:lint-fix-migrates-legacy).
+var legacyTaskStatusMap = map[string]string{
+	"pending":     "planning",
+	"done":        "complete",
+	"in-progress": "in_progress",
+}
+
 func lintP004SchemaTokens(p *plan.Plan, relPath string) []Violation {
 	var out []Violation
 	if p.ModeRawPresent && !p.ModeValueValid {
@@ -239,20 +276,98 @@ func lintP004SchemaTokens(p *plan.Plan, relPath string) []Violation {
 		})
 	}
 	for _, t := range p.Tasks {
-		if t.StatusPresent && !t.StatusValueValid {
+		if !t.StatusPresent || canonicalTaskStatuses[t.StatusRaw] {
+			continue
+		}
+		if canonical, ok := legacyTaskStatusMap[t.StatusRaw]; ok {
 			out = append(out, Violation{
-				File:     relPath,
-				Line:     t.StatusLine,
-				Severity: "error",
-				Rule:     "P-004",
+				File:      relPath,
+				Line:      t.StatusLine,
+				Severity:  "error",
+				Rule:      "P-004",
+				FixTarget: "P-004",
 				Message: fmt.Sprintf(
-					"Task %d: invalid **Status:** value %q (accepted: pending, in-progress, done, blocked, failed, aborted)",
-					t.Number, t.StatusRaw,
+					"Task %d: legacy **Status:** value %q; use canonical %q (run --fix to migrate)",
+					t.Number, t.StatusRaw, canonical,
 				),
 			})
+			continue
 		}
+		out = append(out, Violation{
+			File:     relPath,
+			Line:     t.StatusLine,
+			Severity: "error",
+			Rule:     "P-004",
+			Message: fmt.Sprintf(
+				"Task %d: **Status:** value %q is not a valid task status (accepted: %s)",
+				t.Number, t.StatusRaw, canonicalTaskStatusList,
+			),
+		})
 	}
 	return out
+}
+
+// fixLegacyTaskStatuses rewrites every legacy per-task **Status:** token to its
+// canonical enum value across all single-file Plans, changing only the value on
+// each task's **Status:** line. It mirrors lintP004SchemaTokens' legacy detection
+// so a second pass is a no-op (the rewritten value is canonical, not legacy).
+func fixLegacyTaskStatuses(specRoot string) error {
+	plansDir := filepath.Join(specRoot, "plans")
+	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(plansDir)
+	if err != nil {
+		return fmt.Errorf("reading plans dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == "README.md" || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		planPath := filepath.Join(plansDir, name)
+		p, parseErr := plan.Parse(planPath)
+		if parseErr != nil {
+			return fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
+		}
+		if !p.HasPlanTitle {
+			continue
+		}
+		rewrites := map[int]string{}
+		for _, t := range p.Tasks {
+			if !t.StatusPresent {
+				continue
+			}
+			if canonical, ok := legacyTaskStatusMap[t.StatusRaw]; ok {
+				rewrites[t.StatusLine] = canonical
+			}
+		}
+		if len(rewrites) == 0 {
+			continue
+		}
+		if err := rewriteTaskStatusLines(planPath, rewrites); err != nil {
+			return fmt.Errorf("fixing %s: %w", planPath, err)
+		}
+	}
+	return nil
+}
+
+// rewriteTaskStatusLines rewrites each 1-based line in rewrites to
+// `**Status:** <canonical>`, preserving every other line verbatim. Line numbers
+// come from the parse pass over the same file, so they are always in range.
+func rewriteTaskStatusLines(path string, rewrites map[int]string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	for lineNo, canonical := range rewrites {
+		lines[lineNo-1] = "**Status:** " + canonical
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 // ----- P-003 dependency-graph -----

@@ -1578,3 +1578,114 @@ func TestRewritePlanStatusLine_Errors(t *testing.T) {
 		t.Skip("write to read-only file unexpectedly succeeded (likely running as root)")
 	}
 }
+
+// =============================================================================
+// plan_rules.go — P-004 legacy-task-status fix-path coverage
+// =============================================================================
+
+// legacyTaskStatusPlan returns plan bytes whose first task carries a legacy
+// **Status:** token and whose second task carries no status line at all.
+const legacyTaskStatusPlan = "# Plan: P\n\n**Source:** none\n\n" +
+	"## Tasks\n\n### Task 1: A\n\n**Status:** done\n\n### Task 2: B\n\nno status here\n"
+
+func TestP004Fix_NonExistentRoot(t *testing.T) {
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix("/nonexistent/path"); err != nil {
+		t.Errorf("fix should silently skip nonexistent path, got: %v", err)
+	}
+}
+
+func TestP004Fix_ReadDirError(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(plansDir, 0o000); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(plansDir, 0o755) }()
+
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(root); err == nil {
+		t.Error("expected error for unreadable plans dir")
+	}
+}
+
+func TestP004Fix_ParseError(t *testing.T) {
+	root := setupSpecTree(t, map[string]string{
+		"plans/p.md": legacyTaskStatusPlan,
+	})
+	planPath := filepath.Join(root, "plans", "p.md")
+	if err := os.Chmod(planPath, 0o000); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(planPath, 0o644) }()
+
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(root); err == nil {
+		t.Error("expected error when a plan file cannot be parsed")
+	}
+}
+
+// Covers the !HasPlanTitle skip and the !StatusPresent task skip: a non-plan
+// .md file is ignored, and a task without a **Status:** line is skipped while a
+// sibling legacy task is still migrated.
+func TestP004Fix_SkipsNonPlanAndStatuslessTask(t *testing.T) {
+	root := setupSpecTree(t, map[string]string{
+		"plans/notes.md": "# Random notes\n\nnot a plan\n",
+		"plans/p.md":     legacyTaskStatusPlan,
+	})
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(root); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "plans", "p.md"))
+	if !strings.Contains(string(got), "**Status:** complete") {
+		t.Fatalf("legacy task status not migrated:\n%s", got)
+	}
+	if strings.Contains(string(got), "**Status:** done") {
+		t.Fatalf("legacy `done` still present:\n%s", got)
+	}
+}
+
+// Covers fixLegacyTaskStatuses' rewrite error-wrapping branch.
+func TestP004Fix_RewriteError(t *testing.T) {
+	root := setupSpecTree(t, map[string]string{
+		"plans/p.md": legacyTaskStatusPlan,
+	})
+	planPath := filepath.Join(root, "plans", "p.md")
+	if err := os.Chmod(planPath, 0o444); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(planPath, 0o644) }()
+
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(root); err == nil {
+		t.Skip("write to read-only file unexpectedly succeeded (likely running as root)")
+	}
+}
+
+// Covers rewriteTaskStatusLines' ReadFile and WriteFile error paths directly.
+func TestRewriteTaskStatusLines_Errors(t *testing.T) {
+	if err := rewriteTaskStatusLines(filepath.Join(t.TempDir(), "missing.md"), map[int]string{1: "complete"}); err == nil {
+		t.Error("expected a read error for a missing file")
+	}
+
+	f := filepath.Join(t.TempDir(), "p.md")
+	if err := os.WriteFile(f, []byte("**Status:** done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f, 0o444); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(f, 0o644) }()
+	if err := rewriteTaskStatusLines(f, map[int]string{1: "complete"}); err == nil {
+		t.Skip("write to read-only file unexpectedly succeeded (likely running as root)")
+	}
+}

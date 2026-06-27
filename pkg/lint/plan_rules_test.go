@@ -350,7 +350,7 @@ func TestP004_StubPendingPermitted(t *testing.T) {
 
 ### Task 1: A
 **Verifies:** f#ac:a
-**Status:** pending
+**Status:** planning
 
 <!-- implement: pending -->
 `)
@@ -403,8 +403,171 @@ func TestP004_InvalidStatusValue(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected invalid-status P-004; got: %+v", v)
 	}
-	if !strings.Contains(got.Message, "pending") || !strings.Contains(got.Message, "in-progress") {
-		t.Fatalf("message must cite accepted set; got: %s", got.Message)
+	if !strings.Contains(got.Message, "in_progress") || !strings.Contains(got.Message, "planning") {
+		t.Fatalf("message must cite the canonical enum; got: %s", got.Message)
+	}
+}
+
+// AC enum-is-sole-vocabulary: a non-enum, non-legacy token (`shipped`) is
+// rejected as not a valid task status, with no canonical mapping offered.
+func TestP004_NonEnumStatusRejectedNoMapping(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.writeFeature(t, "f", "a")
+	e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** shipped
+`)
+	got := hasViolation(runRules(t, e), "P-004", `"shipped"`)
+	if got == nil {
+		t.Fatal("expected P-004 for non-enum status `shipped`")
+	}
+	if !strings.Contains(got.Message, "not a valid task status") {
+		t.Fatalf("message must state value is not valid; got: %s", got.Message)
+	}
+	if got.FixTarget != "" {
+		t.Fatalf("non-legacy token must offer no fix target; got: %q", got.FixTarget)
+	}
+	// No canonical mapping should be offered (no "use canonical").
+	if strings.Contains(got.Message, "use canonical") {
+		t.Fatalf("non-legacy token must not offer a mapping; got: %s", got.Message)
+	}
+}
+
+// AC lint-flags-legacy: each legacy token is flagged with its canonical
+// replacement, and a fix target is offered.
+func TestP004_LegacyStatusFlaggedWithReplacement(t *testing.T) {
+	cases := []struct{ legacy, canonical string }{
+		{"pending", "planning"},
+		{"done", "complete"},
+		{"in-progress", "in_progress"},
+	}
+	for _, tc := range cases {
+		e := newPlanRulesEnv(t)
+		e.writeFeature(t, "f", "a")
+		e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** `+tc.legacy+`
+`)
+		got := hasViolation(runRules(t, e), "P-004", `"`+tc.legacy+`"`)
+		if got == nil {
+			t.Fatalf("expected P-004 for legacy token %q", tc.legacy)
+		}
+		if !strings.Contains(got.Message, `"`+tc.canonical+`"`) {
+			t.Fatalf("message must name canonical %q; got: %s", tc.canonical, got.Message)
+		}
+		if got.FixTarget != "P-004" {
+			t.Fatalf("legacy token must offer P-004 fix target; got: %q", got.FixTarget)
+		}
+	}
+}
+
+// AC enum-is-sole-vocabulary: every canonical enum value is accepted with no
+// P-004 status violation.
+func TestP004_CanonicalStatusAccepted(t *testing.T) {
+	for _, st := range []string{"planning", "queued", "in_progress", "blocked", "complete", "failed", "aborted"} {
+		e := newPlanRulesEnv(t)
+		e.writeFeature(t, "f", "a")
+		e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** `+st+`
+`)
+		if got := hasViolation(runRules(t, e), "P-004", "Status"); got != nil {
+			t.Fatalf("canonical status %q must not be flagged; got: %+v", st, got)
+		}
+	}
+}
+
+// AC lint-fix-migrates-legacy: --fix rewrites each legacy task **Status:**
+// value-for-value to canonical, leaving all other content untouched, and is
+// idempotent.
+func TestP004_FixMigratesLegacyTokens(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.writeFeature(t, "f", "a", "b")
+	path := e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** done
+
+### Task 2: B
+**Verifies:** f#ac:b
+**Depends-On:** 1
+**Status:** pending
+`)
+	before, _ := os.ReadFile(path)
+
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+
+	want := strings.Replace(string(before), "**Status:** done", "**Status:** complete", 1)
+	want = strings.Replace(want, "**Status:** pending", "**Status:** planning", 1)
+	if string(after) != want {
+		t.Fatalf("fix changed more than the status values:\nwant:\n%q\ngot:\n%q", want, after)
+	}
+
+	// Post-fix: no legacy P-004 violations remain.
+	if got := hasViolation(runRules(t, e), "P-004", "Status"); got != nil {
+		t.Fatalf("post-fix lint still reports a status P-004: %+v", got)
+	}
+	// Idempotent: a second pass changes nothing.
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix (2nd): %v", err)
+	}
+	after2, _ := os.ReadFile(path)
+	if string(after2) != string(after) {
+		t.Fatalf("fix not idempotent:\n%s", after2)
+	}
+}
+
+// AC enum-is-sole-vocabulary: --fix leaves a non-legacy invalid token alone.
+func TestP004_FixSkipsNonLegacyToken(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.writeFeature(t, "f", "a")
+	path := e.writePlan(t, "p", `# Plan: P
+
+**Source Feature:** f
+
+## Tasks
+
+### Task 1: A
+**Verifies:** f#ac:a
+**Status:** shipped
+`)
+	before, _ := os.ReadFile(path)
+	c := newPlanRulesChecker()
+	c.fixP004Legacy = true
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Fatalf("fix must not touch a non-legacy token:\n%s", after)
 	}
 }
 

@@ -2503,7 +2503,7 @@ func TestPlanRules_P002UnrecognizedSourceValue(t *testing.T) {
 	mkdir(t, filepath.Join(root, "features"))
 	mkdir(t, filepath.Join(root, "plans"))
 	writeFile(t, filepath.Join(root, "plans", "bad.md"),
-		"# Plan: Bad\n\n**Source:** whatever\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+		"# Plan: Bad\n\n**Source:** whatever\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker()
 	violations, err := c.check(root)
@@ -2527,10 +2527,10 @@ func TestPlanRules_P002FixTargetSetOnlyWhenFixable(t *testing.T) {
 	mkdir(t, filepath.Join(root, "plans"))
 	// Missing source line -> fixable -> FixTarget "no-source".
 	writeFile(t, filepath.Join(root, "plans", "missing.md"),
-		"# Plan: Missing\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+		"# Plan: Missing\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 	// Unrecognized value -> not fixable -> no FixTarget.
 	writeFile(t, filepath.Join(root, "plans", "bad.md"),
-		"# Plan: Bad\n\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+		"# Plan: Bad\n\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker()
 	violations, err := c.check(root)
