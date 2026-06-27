@@ -114,7 +114,7 @@ func writePlanInfoText(w io.Writer, doc planInfoDoc) error {
 	_, _ = fmt.Fprintf(bw, "Date:           %s\n", doc.Date)
 	_, _ = fmt.Fprintf(bw, "Owner:          %s\n", doc.Owner)
 	r := doc.Tasks
-	_, _ = fmt.Fprintf(bw, "Tasks: %d total (%d done, %d in-progress, %d pending, %d blocked)\n",
-		r.Total, r.Done, r.InProgress, r.Pending, r.Blocked)
+	_, _ = fmt.Fprintf(bw, "Tasks: %d total (%d complete, %d in_progress, %d planning, %d queued, %d blocked)\n",
+		r.Total, r.Complete, r.InProgress, r.Planning, r.Queued, r.Blocked)
 	return bw.Flush()
 }

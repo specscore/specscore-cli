@@ -308,19 +308,19 @@ func TestP004_StubDonePlaceholder(t *testing.T) {
 
 ### Task 1: A
 **Verifies:** f#ac:a
-**Status:** pending
+**Status:** planning
 
 <!-- implement: pending -->
 
 ### Task 2: B
 **Verifies:** f#ac:b
-**Status:** done
+**Status:** complete
 
 <!-- implement: pending -->
 
 ### Task 3: C
 **Verifies:** f#ac:c
-**Status:** pending
+**Status:** planning
 
 <!-- implement: pending -->
 `)
@@ -664,7 +664,7 @@ func TestPlanRulesNoSourceFixIsOptIn(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "plans"))
 	planPath := filepath.Join(root, "plans", "p.md")
-	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker() // fixNoSource defaults to false
 	if err := c.fix(root); err != nil {
@@ -682,7 +682,7 @@ func TestPlanRulesNoSourceFixOptIn(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "plans"))
 	planPath := filepath.Join(root, "plans", "p.md")
-	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker()
 	c.fixNoSource = true
@@ -708,7 +708,7 @@ func TestPlanRulesNoSourceFixSkipsUnrecognizedValue(t *testing.T) {
 	root := t.TempDir()
 	mkdir(t, filepath.Join(root, "plans"))
 	planPath := filepath.Join(root, "plans", "p.md")
-	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
+	writeFile(t, planPath, "# Plan: P\n\n**Status:** Draft\n**Source:** garbage\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** planning\n")
 
 	c := newPlanRulesChecker()
 	c.fixNoSource = true
@@ -754,7 +754,7 @@ func itoa(n int) string {
 // AC: derive Executing from an in-progress task when body Status drifts.
 func TestP007_DeriveExecuting(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "in-progress", "pending")
+	e.p007Plan(t, "p", "Approved", "in_progress", "planning")
 	v := hasViolation(runRules(t, e), "P-007", "Executing")
 	if v == nil {
 		t.Fatal("expected a P-007 violation deriving Executing")
@@ -767,7 +767,7 @@ func TestP007_DeriveExecuting(t *testing.T) {
 // AC: derive Blocked when a task is blocked and none in-progress/failed.
 func TestP007_DeriveBlocked(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "done", "blocked")
+	e.p007Plan(t, "p", "Approved", "complete", "blocked")
 	if hasViolation(runRules(t, e), "P-007", "Blocked") == nil {
 		t.Fatal("expected a P-007 violation deriving Blocked")
 	}
@@ -776,7 +776,7 @@ func TestP007_DeriveBlocked(t *testing.T) {
 // AC: derive Implemented when all tasks are done.
 func TestP007_DeriveImplemented(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "done", "done")
+	e.p007Plan(t, "p", "Approved", "complete", "complete")
 	if hasViolation(runRules(t, e), "P-007", "Implemented") == nil {
 		t.Fatal("expected a P-007 violation deriving Implemented")
 	}
@@ -785,7 +785,7 @@ func TestP007_DeriveImplemented(t *testing.T) {
 // AC: derive Failed from a failed/aborted task (precedence over all).
 func TestP007_DeriveFailed(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Executing", "failed", "in-progress")
+	e.p007Plan(t, "p", "Executing", "failed", "in_progress")
 	if hasViolation(runRules(t, e), "P-007", "Failed") == nil {
 		t.Fatal("expected a P-007 violation deriving Failed")
 	}
@@ -795,7 +795,7 @@ func TestP007_DeriveFailed(t *testing.T) {
 // derivation-eligible body status.
 func TestP007_IndeterminateNoOp(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Approved", "done", "pending")
+	e.p007Plan(t, "p", "Approved", "complete", "planning")
 	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 		t.Fatalf("indeterminate rollup must emit no P-007: %+v", v)
 	}
@@ -813,7 +813,7 @@ func TestP007_NoTasksNoOp(t *testing.T) {
 // AC: when the derived band already equals the body status, no drift.
 func TestP007_NoDriftNoOp(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	e.p007Plan(t, "p", "Implemented", "done", "done")
+	e.p007Plan(t, "p", "Implemented", "complete", "complete")
 	if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 		t.Fatalf("matching band must emit no P-007: %+v", v)
 	}
@@ -824,7 +824,7 @@ func TestP007_NoDriftNoOp(t *testing.T) {
 func TestP007_PrepStatesNeverDerived(t *testing.T) {
 	for _, st := range []string{"Draft", "In Review"} {
 		e := newPlanRulesEnv(t)
-		e.p007Plan(t, "p", st, "done", "done")
+		e.p007Plan(t, "p", st, "complete", "complete")
 		if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 			t.Fatalf("body status %q must not be derived: %+v", st, v)
 		}
@@ -835,7 +835,7 @@ func TestP007_PrepStatesNeverDerived(t *testing.T) {
 func TestP007_DispositionStatesNeverDerived(t *testing.T) {
 	for _, st := range []string{"Rejected", "Withdrawn", "Superseded", "Deprecated"} {
 		e := newPlanRulesEnv(t)
-		e.p007Plan(t, "p", st, "done", "done")
+		e.p007Plan(t, "p", st, "complete", "complete")
 		if v := hasViolation(runRules(t, e), "P-007", ""); v != nil {
 			t.Fatalf("body status %q must not be derived: %+v", st, v)
 		}
@@ -846,7 +846,7 @@ func TestP007_DispositionStatesNeverDerived(t *testing.T) {
 // idempotent (a second pass is a no-op).
 func TestP007_FixRewritesAndIdempotent(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	path := e.p007Plan(t, "p", "Approved", "done", "done")
+	path := e.p007Plan(t, "p", "Approved", "complete", "complete")
 	before, _ := os.ReadFile(path)
 
 	c := newPlanRulesChecker()
@@ -884,7 +884,7 @@ func TestP007_FixRewritesAndIdempotent(t *testing.T) {
 // determinate rollup.
 func TestP007_FixSkipsPrepAndDisposition(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	path := e.p007Plan(t, "p", "Draft", "done", "done")
+	path := e.p007Plan(t, "p", "Draft", "complete", "complete")
 	before, _ := os.ReadFile(path)
 	c := newPlanRulesChecker()
 	c.fixP007 = true
@@ -900,7 +900,7 @@ func TestP007_FixSkipsPrepAndDisposition(t *testing.T) {
 // AC: --fix on an indeterminate plan changes nothing.
 func TestP007_FixIndeterminateNoOp(t *testing.T) {
 	e := newPlanRulesEnv(t)
-	path := e.p007Plan(t, "p", "Approved", "done", "pending")
+	path := e.p007Plan(t, "p", "Approved", "complete", "planning")
 	before, _ := os.ReadFile(path)
 	c := newPlanRulesChecker()
 	c.fixP007 = true

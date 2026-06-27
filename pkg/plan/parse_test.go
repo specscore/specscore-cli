@@ -83,7 +83,7 @@ Sample plan.
 ### Task 1: First task
 
 **Verifies:** sample#ac:one
-**Status:** pending
+**Status:** planning
 **Depends-On:** —
 
 Body prose.
@@ -121,15 +121,15 @@ Some prose.
 	if len(t1.Verifies) != 1 || t1.Verifies[0] != "sample#ac:one" {
 		t.Fatalf("task1 verifies = %v", t1.Verifies)
 	}
-	if t1.Status != StatusPending || !t1.StatusValueValid {
+	if t1.Status != StatusPlanning || !t1.StatusValueValid {
 		t.Fatalf("task1 status = %v valid=%v", t1.Status, t1.StatusValueValid)
 	}
 	if len(t1.DependsOn) != 0 || !t1.DependsOnValid {
 		t.Fatalf("task1 depends-on = %v valid=%v", t1.DependsOn, t1.DependsOnValid)
 	}
 	t2 := p.Tasks[1]
-	// Status absent → default pending.
-	if t2.Status != StatusPending {
+	// Status absent → default planning.
+	if t2.Status != StatusPlanning {
 		t.Fatalf("task2 default status = %v", t2.Status)
 	}
 	if t2.StatusPresent {
@@ -259,7 +259,7 @@ func TestParse_StubModeValid(t *testing.T) {
 ### Task 1: Pending stub task
 
 **Verifies:** foo#ac:x
-**Status:** pending
+**Status:** planning
 **Depends-On:** —
 
 <!-- implement: pending -->
@@ -518,7 +518,7 @@ func TestParse_PlaceholderByteExact(t *testing.T) {
 
 ### Task 1: X
 **Verifies:** foo#ac:a
-**Status:** pending
+**Status:** planning
 
 ` + tc.body + "\n"
 		p, err := Parse(writePlan(t, dir, "t", body))
@@ -634,7 +634,7 @@ func TestParse_PlaceholderBodyTokenAfterFields(t *testing.T) {
 
 ### Task 1: Pending
 **Verifies:** foo#ac:a
-**Status:** pending
+**Status:** planning
 **Depends-On:** —
 
 <!-- implement: pending -->

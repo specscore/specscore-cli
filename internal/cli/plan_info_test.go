@@ -43,23 +43,24 @@ func TestPlanInfo_ReturnsTaskRollup(t *testing.T) {
 	plansDir := setupPlansSpec(t)
 
 	var b strings.Builder
-	b.WriteString("# Plan: eight-done\n\n**Status:** Implementing\n\n## Tasks\n\n")
+	b.WriteString("# Plan: eight-complete\n\n**Status:** Implementing\n\n## Tasks\n\n")
 	for i := 1; i <= 8; i++ {
 		b.WriteString("### Task ")
 		b.WriteString(itoa(i))
-		b.WriteString(": work\n\n**Status:** done\n\nBody.\n\n")
+		b.WriteString(": work\n\n**Status:** complete\n\nBody.\n\n")
 	}
-	writePlanRaw(t, plansDir, "eight-done", b.String())
+	writePlanRaw(t, plansDir, "eight-complete", b.String())
 
-	stdout, _, err := runPlan(t, "info", "eight-done")
+	stdout, _, err := runPlan(t, "info", "eight-complete")
 	if err != nil {
-		t.Fatalf("plan info eight-done: %v", err)
+		t.Fatalf("plan info eight-complete: %v", err)
 	}
 	for _, want := range []string{
 		"total: 8",
-		"done: 8",
-		"in-progress: 0",
-		"pending: 0",
+		"complete: 8",
+		"in_progress: 0",
+		"planning: 0",
+		"queued: 0",
 		"blocked: 0",
 	} {
 		if !strings.Contains(stdout, want) {

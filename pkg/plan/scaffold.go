@@ -107,7 +107,7 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 	b.WriteString("\n")
 	b.WriteString("## Summary\n\n<!-- TODO: 1–3 sentences — what this plan covers and how it decomposes the source. -->\n\n")
 	b.WriteString("## Approach\n\n<!-- TODO: ≤1 paragraph — what was grouped, what was deferred and why. -->\n\n")
-	b.WriteString("## Tasks\n\n<!-- TODO: add `### Task N:` blocks, each with a **Verifies:** line naming a source-Feature AC (feature-slug#ac:<ac-slug>). -->\n\n")
+	b.WriteString("## Tasks\n\n<!-- TODO: add `### Task N:` blocks, each with a **Verifies:** line naming a source-Feature AC (feature-slug#ac:<ac-slug>) and a **Status:** line set to a canonical task status (planning, queued, in_progress, blocked, complete, failed, aborted); a new task starts at planning. -->\n\n")
 	b.WriteString("## Open Questions\n\nNone at this time.\n\n")
 	fmt.Fprintf(&b, "---\n*This document follows the %s*\n", FormatURL)
 

@@ -746,14 +746,14 @@ func lintP004StubPlaceholder(p *plan.Plan, relPath string) []Violation {
 	}
 	var out []Violation
 	for _, t := range p.Tasks {
-		if t.Status == plan.StatusDone && t.HasPlaceholder {
+		if t.Status == plan.StatusComplete && t.HasPlaceholder {
 			out = append(out, Violation{
 				File:     relPath,
 				Line:     t.HeadingLine,
 				Severity: "error",
 				Rule:     "P-004",
 				Message: fmt.Sprintf(
-					"Task %d: **Status:** done in a **Mode:** stub Plan must not have the placeholder body marker; either rerun specstudio:implement to write back the post-batch prose (REQ:posture-stub-placeholder, REQ:stub-placeholder-done-lint) or revert Status to pending",
+					"Task %d: **Status:** complete in a **Mode:** stub Plan must not have the placeholder body marker; either rerun specstudio:implement to write back the post-batch prose (REQ:posture-stub-placeholder, REQ:stub-placeholder-done-lint) or revert Status to planning",
 					t.Number,
 				),
 			})

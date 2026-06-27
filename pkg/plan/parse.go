@@ -34,10 +34,11 @@ const (
 type TaskStatus string
 
 const (
-	StatusPending    TaskStatus = "pending"
-	StatusInProgress TaskStatus = "in-progress"
-	StatusDone       TaskStatus = "done"
+	StatusPlanning   TaskStatus = "planning"
+	StatusQueued     TaskStatus = "queued"
+	StatusInProgress TaskStatus = "in_progress"
 	StatusBlocked    TaskStatus = "blocked"
+	StatusComplete   TaskStatus = "complete"
 	StatusFailed     TaskStatus = "failed"
 	StatusAborted    TaskStatus = "aborted"
 )
@@ -310,7 +311,7 @@ func parseTasks(lines []string, start, end int) []Task {
 			HeadingLine: r.headLine + 1,
 			BodyStart:   r.bodyFrom + 1,
 			BodyLines:   append([]string(nil), body...),
-			Status:      StatusPending,
+			Status:      StatusPlanning,
 		}
 		parseTaskBody(&t)
 		tasks = append(tasks, t)
@@ -345,7 +346,7 @@ func parseTaskBody(t *Task) {
 			t.StatusRaw = val
 			t.StatusLine = absLine
 			switch TaskStatus(val) {
-			case StatusPending, StatusInProgress, StatusDone, StatusBlocked, StatusFailed, StatusAborted:
+			case StatusPlanning, StatusQueued, StatusInProgress, StatusBlocked, StatusComplete, StatusFailed, StatusAborted:
 				t.Status = TaskStatus(val)
 				t.StatusValueValid = true
 			default:

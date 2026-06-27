@@ -60,6 +60,26 @@ func readPlan(t *testing.T, root, slug string) string {
 	return string(b)
 }
 
+// AC: scaffold-emits-planning (unify-task-status-vocabulary) — the embedded
+// (offline) `plan new` scaffold names `planning` as the canonical starting
+// task status and never emits the legacy `pending` token: no `### Task N:`
+// block carries `**Status:** pending`.
+func TestPlanNew_EmbeddedTaskStatusVocabulary(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+
+	if _, _, err := runPlan(t, "new", "vocab-plan", "--feature", "some-feature"); err != nil {
+		t.Fatalf("plan new: %v", err)
+	}
+	s := readPlan(t, root, "vocab-plan")
+	if strings.Contains(s, "pending") {
+		t.Errorf("scaffold must not emit the legacy `pending` task status:\n%s", s)
+	}
+	if !strings.Contains(s, "planning") {
+		t.Errorf("scaffold must name the canonical `planning` task status:\n%s", s)
+	}
+}
+
 // AC: scaffold-emits-frontmatter — the embedded (offline) scaffold carries
 // format:/status: frontmatter mirroring the body, and the footer matches.
 func TestPlanNew_EmbeddedEmitsFrontmatter(t *testing.T) {
