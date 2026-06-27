@@ -230,6 +230,9 @@ func lintPlan(p *plan.Plan, relPath, featuresDir string) []Violation {
 	// P-007 execution-band derivation drift. Depends only on the Plan.
 	v = append(v, lintP007(p, relPath)...)
 
+	// P-008 implementation-commit-provenance ref-format. Syntactic only.
+	v = append(v, lintP008(p, relPath)...)
+
 	return v
 }
 
@@ -899,6 +902,72 @@ func rewritePlanStatusLine(path string, statusLine int, band string) error {
 	lines := strings.Split(string(data), "\n")
 	lines[statusLine-1] = "**Status:** " + band
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// ----- P-008 implementation-commit-provenance ref format -----
+
+// p008ShaRe matches a git commit hash: a 7–40 char hex string
+// (implementation-commit-provenance#req:provenance-ref-format).
+var p008ShaRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+// p008BranchRe strips an OPTIONAL trailing ` (<branch>)` suffix from an
+// **Implemented-by:** value. Group 1 captures the ref core (`<repo>@<sha>` or a
+// bare `<sha>`); group 2 captures the non-empty branch.
+var p008BranchRe = regexp.MustCompile(`^(.*\S)\s+\(([^()]+)\)$`)
+
+// validImplementedByRef reports whether val is a well-formed implementation-commit
+// provenance reference, validated SYNTACTICALLY ONLY. The referenced repo is never
+// scanned and the filesystem/git is never touched (mirroring the P-005 cross-repo
+// precedent). Accepted shapes: `<repo>@<sha>`, `<repo>@<sha> (<branch>)`, bare
+// `<sha>`, and `<sha> (<branch>)`, where `<repo>` is a repo slug or a full clone
+// URL (the LAST `@<sha>` segment is the sha; everything before it is the repo) and
+// `<sha>` is 7–40 hex chars.
+func validImplementedByRef(val string) bool {
+	v := strings.TrimSpace(val)
+	if v == "" {
+		return false
+	}
+	// Strip an optional trailing ` (<branch>)` suffix; the regex guarantees a
+	// non-empty branch (and a non-empty ref core, since group 1 ends in `\S`), so
+	// an empty `()` leaves the suffix in place and fails the sha check below.
+	if m := p008BranchRe.FindStringSubmatch(v); m != nil {
+		v = strings.TrimSpace(m[1])
+	}
+	// The LAST `@` separates an optional repo from the sha. A bare sha has none.
+	if idx := strings.LastIndex(v, "@"); idx >= 0 {
+		if strings.TrimSpace(v[:idx]) == "" {
+			return false // `@<sha>` with no repo before it
+		}
+		return p008ShaRe.MatchString(v[idx+1:])
+	}
+	return p008ShaRe.MatchString(v)
+}
+
+// lintP008 validates each task's optional `**Implemented-by:**` provenance value
+// against the provenance-ref-format requirement. An absent field is valid
+// (provenance is never required); a present-but-malformed value is flagged. The
+// rule is purely syntactic — it never resolves or scans the referenced repo.
+func lintP008(p *plan.Plan, relPath string) []Violation {
+	var out []Violation
+	for _, t := range p.Tasks {
+		if !t.ImplementedByPresent {
+			continue
+		}
+		if validImplementedByRef(t.ImplementationCommit) {
+			continue
+		}
+		out = append(out, Violation{
+			File:     relPath,
+			Line:     t.ImplementedByLine,
+			Severity: "error",
+			Rule:     "P-008",
+			Message: fmt.Sprintf(
+				"Task %d: malformed **Implemented-by:** value %q (expected provenance-ref-format <repo>@<sha> or bare <sha>, optional trailing (<branch>); <sha> = 7-40 hex chars)",
+				t.Number, t.ImplementationCommit,
+			),
+		})
+	}
+	return out
 }
 
 // ----- P-005 parent reference validity -----

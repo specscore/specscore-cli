@@ -919,3 +919,115 @@ func TestP007_RegisteredAndFilterable(t *testing.T) {
 		t.Fatal("P-007 missing from AllRuleNames()")
 	}
 }
+
+// p008Plan writes a minimal, otherwise-clean single-file plan whose sole task
+// carries the given **Implemented-by:** value (omitted entirely when impl == "").
+func (e *planRulesEnv) p008Plan(t *testing.T, impl string) {
+	t.Helper()
+	e.writeFeature(t, "sample", "alpha")
+	var b strings.Builder
+	b.WriteString("# Plan: Sample\n\n**Source Feature:** sample\n**Mode:** full\n\n## Tasks\n\n### Task 1: First\n**Verifies:** sample#ac:alpha\n**Status:** complete\n")
+	if impl != "" {
+		b.WriteString("**Implemented-by:** " + impl + "\n")
+	}
+	e.writePlan(t, "sample", b.String())
+}
+
+// AC: well-formed-ref-accepted — a `<repo>@<sha> (<branch>)` ref is accepted on
+// shape alone and the linter does NOT scan the referenced repo.
+func TestP008_WellFormedRefAccepted(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "backstage@a1b2c3d (feature/foo)")
+	// No `backstage` repo exists anywhere under the env; acceptance must rely on
+	// shape alone, never a filesystem/git scan.
+	if _, err := os.Stat(filepath.Join(e.specRoot, "backstage")); !os.IsNotExist(err) {
+		t.Fatalf("test setup: backstage path should not exist")
+	}
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got != nil {
+		t.Fatalf("unexpected P-008 violation: %+v", got)
+	}
+}
+
+// AC: malformed-ref-rejected — `not a commit ref` is reported citing the
+// provenance-ref-format requirement and naming the offending value.
+func TestP008_MalformedRefRejected(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "not a commit ref")
+	v := runRules(t, e)
+	got := hasViolation(v, "P-008", "not a commit ref")
+	if got == nil {
+		t.Fatalf("expected P-008 violation naming the value, got %d violations: %+v", len(v), v)
+	}
+	if !strings.Contains(got.Message, "provenance-ref-format") {
+		t.Fatalf("violation should cite provenance-ref-format, got: %q", got.Message)
+	}
+}
+
+// AC: same-repo-bare-sha — a bare `<sha>` with no repo prefix is accepted.
+func TestP008_SameRepoBareSha(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "a1b2c3d")
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got != nil {
+		t.Fatalf("unexpected P-008 violation for bare sha: %+v", got)
+	}
+}
+
+func TestP008_AbsentFieldNoViolation(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p008Plan(t, "") // no **Implemented-by:** line at all
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got != nil {
+		t.Fatalf("absent provenance must not violate, got: %+v", got)
+	}
+}
+
+func TestP008_EmptyAfterLabelRejected(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	// `**Implemented-by:**` present with an empty value.
+	e.writeFeature(t, "sample", "alpha")
+	e.writePlan(t, "sample", "# Plan: Sample\n\n**Source Feature:** sample\n**Mode:** full\n\n## Tasks\n\n### Task 1: First\n**Verifies:** sample#ac:alpha\n**Status:** complete\n**Implemented-by:**\n")
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-008", ""); got == nil {
+		t.Fatalf("empty-after-label must violate, got %d violations: %+v", len(v), v)
+	}
+}
+
+// TestValidImplementedByRef exercises the purely-syntactic ref validator over
+// every accepted and malformed shape. The validator takes only a string and
+// touches no filesystem/git, which is the structural guarantee that P-008 never
+// scans the referenced repo.
+func TestValidImplementedByRef(t *testing.T) {
+	accepted := []string{
+		"a1b2c3d",                                  // bare sha (min length)
+		"a1b2c3d (feature/foo)",                    // bare sha + branch
+		"backstage@a1b2c3d",                        // repo slug + sha
+		"backstage@a1b2c3d (feature/foo)",          // repo slug + sha + branch
+		"https://github.com/org/repo@a1b2c3d",      // https clone URL + sha
+		"git@host:org/repo.git@a1b2c3d (main)",     // ssh clone URL + sha + branch
+		"abcdefabcdefabcdefabcdefabcdefabcdef0123", // 40-char sha
+	}
+	for _, ref := range accepted {
+		if !validImplementedByRef(ref) {
+			t.Errorf("expected accepted: %q", ref)
+		}
+	}
+	malformed := []string{
+		"",                 // empty after label
+		"   ",              // whitespace only
+		"not a commit ref", // free text
+		"a1b2c3",           // too short (6 hex)
+		"abcdefabcdefabcdefabcdefabcdefabcdef01234", // too long (41 hex)
+		"ghijklm",           // non-hex
+		"backstage@",        // repo, missing sha
+		"@a1b2c3d",          // missing repo before sha
+		"backstage@xyz123g", // repo + non-hex sha
+		"a1b2c3d ()",        // empty branch parens
+	}
+	for _, ref := range malformed {
+		if validImplementedByRef(ref) {
+			t.Errorf("expected malformed: %q", ref)
+		}
+	}
+}

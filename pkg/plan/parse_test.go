@@ -697,3 +697,44 @@ func TestParse_PlaceholderBodyTokenAfterFields(t *testing.T) {
 		t.Fatal("placeholder line missing from body lines")
 	}
 }
+
+func TestParse_ImplementedByField(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, "plans")
+	body := `# Plan: Sample
+
+**Status:** Draft
+**Source Feature:** sample
+
+## Tasks
+
+### Task 1: First task
+
+**Status:** complete
+**Implemented-by:** backstage@a1b2c3d (feature/foo)
+
+### Task 2: Second task
+
+**Status:** planning
+
+No provenance here.
+`
+	p, err := Parse(writePlan(t, plansDir, "prov", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Tasks) != 2 {
+		t.Fatalf("got %d tasks", len(p.Tasks))
+	}
+	t1 := p.Tasks[0]
+	if !t1.ImplementedByPresent || t1.ImplementationCommit != "backstage@a1b2c3d (feature/foo)" {
+		t.Fatalf("task1 implemented-by present=%v value=%q", t1.ImplementedByPresent, t1.ImplementationCommit)
+	}
+	if t1.ImplementedByLine == 0 {
+		t.Fatal("task1 ImplementedByLine should be set")
+	}
+	t2 := p.Tasks[1]
+	if t2.ImplementedByPresent || t2.ImplementationCommit != "" || t2.ImplementedByLine != 0 {
+		t.Fatalf("task2 implemented-by should be absent: present=%v value=%q line=%d", t2.ImplementedByPresent, t2.ImplementationCommit, t2.ImplementedByLine)
+	}
+}

@@ -104,6 +104,12 @@ type Task struct {
 	DependsOnValid   bool // true when raw value parsed cleanly (em-dash or list of ints)
 	HasPlaceholder   bool // true when the body contains the placeholder token on its own line
 	PlaceholderLine  int  // 1-based line of the placeholder; 0 when absent
+
+	// Implementation-commit provenance, written by `task change-status` as an
+	// `**Implemented-by:** <ref>` field adjacent to the task's **Status:**.
+	ImplementationCommit string // raw value of `**Implemented-by:**`; empty when absent or empty
+	ImplementedByLine    int    // 1-based line of `**Implemented-by:**`; 0 when absent
+	ImplementedByPresent bool   // true when the field was present (even with an empty value)
 }
 
 // DeferredAC is a single `- <feature-slug>#ac:<ac-slug> — <reason>` line.
@@ -366,6 +372,10 @@ func parseTaskBody(t *Task) {
 			deps, ok := parseDependsOn(val)
 			t.DependsOnValid = ok
 			t.DependsOn = deps
+		case "Implemented-by":
+			t.ImplementedByPresent = true
+			t.ImplementedByLine = absLine
+			t.ImplementationCommit = val
 		}
 	}
 }
