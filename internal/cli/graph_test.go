@@ -303,7 +303,7 @@ func TestGraphList_StructuredFormats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"id:", "kind:", "name:", "path:"} {
+	for _, key := range []string{"id:", "kind:", "name:", "owner:", "path:"} {
 		if !strings.Contains(out, key) {
 			t.Fatalf("yaml missing %q: %s", key, out)
 		}

@@ -4,12 +4,14 @@ import (
 	"sort"
 )
 
-// ListItem is one row of `graph list`.
+// ListItem is one row of `graph list`. Owner is the owning module id, derived
+// from placement (a module row owns itself).
 type ListItem struct {
-	ID   string `json:"id" yaml:"id"`
-	Kind string `json:"kind" yaml:"kind"`
-	Name string `json:"name" yaml:"name"`
-	Path string `json:"path" yaml:"path"`
+	ID    string `json:"id" yaml:"id"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Name  string `json:"name" yaml:"name"`
+	Owner string `json:"owner" yaml:"owner"`
+	Path  string `json:"path" yaml:"path"`
 }
 
 // List returns every GraphSpec artifact (modules plus collection artifacts) as
@@ -27,10 +29,11 @@ func List(g *Graph, kind, module string) []ListItem {
 				continue
 			}
 			items = append(items, ListItem{
-				ID:   listID(a),
-				Kind: effKind,
-				Name: a.Name,
-				Path: relTo(g.RepoRoot, a.Path),
+				ID:    listID(a),
+				Kind:  effKind,
+				Name:  a.Name,
+				Owner: a.Module,
+				Path:  relTo(g.RepoRoot, a.Path),
 			})
 		}
 	}
