@@ -18,6 +18,7 @@ type Concept struct {
 	File       string // absolute path to the .hcl file
 	Line       int
 	EnumValues []string // populated for enum concepts only
+	Properties []string // property/field member names (entity/component concepts; decision 0013 actor-is.model-role)
 }
 
 // conceptScope maps a concept kind to its name scope (decision 0011 / ModelSpec
@@ -36,9 +37,10 @@ func conceptScope(kind string) string {
 // conceptLookup is the outcome of resolving a concept name (optionally
 // constrained to a kind) within a module.
 type conceptLookup struct {
-	found      bool   // an exact match (kind honored, or trio hit for the kind-free form)
-	exists     bool   // the name is declared under some other kind (kind mismatch)
-	actualKind string // the kind the name actually has, when exists is true
+	found      bool     // an exact match (kind honored, or trio hit for the kind-free form)
+	exists     bool     // the name is declared under some other kind (kind mismatch)
+	actualKind string   // the kind the name actually has, when exists is true
+	concept    *Concept // the matched concept, when found is true
 }
 
 // lookupConcept resolves name within the module. The kind-free form (kind == "")
@@ -49,7 +51,7 @@ func (m *ModelModule) lookupConcept(kind, name string) conceptLookup {
 	if kind == "" {
 		for _, c := range m.Concepts {
 			if c.Name == name && conceptScope(c.Kind) == "trio" {
-				return conceptLookup{found: true}
+				return conceptLookup{found: true, concept: c}
 			}
 		}
 		return conceptLookup{}
@@ -60,7 +62,7 @@ func (m *ModelModule) lookupConcept(kind, name string) conceptLookup {
 			continue
 		}
 		if c.Kind == kind {
-			return conceptLookup{found: true}
+			return conceptLookup{found: true, concept: c}
 		}
 		res = conceptLookup{exists: true, actualKind: c.Kind}
 	}
@@ -174,7 +176,8 @@ func (m *ModelModule) parseBlock(path string, blk *hclsyntax.Block) {
 	}
 	switch blk.Type {
 	case "entity", "component":
-		m.Concepts = append(m.Concepts, &Concept{Name: name, Kind: blk.Type, File: path, Line: line})
+		c := &Concept{Name: name, Kind: blk.Type, File: path, Line: line, Properties: memberNames(blk.Body)}
+		m.Concepts = append(m.Concepts, c)
 		m.collectMemberRefs(path, name, blk.Body)
 	case "enum":
 		c := &Concept{Name: name, Kind: "enum", File: path, Line: line}
@@ -189,6 +192,19 @@ func (m *ModelModule) parseBlock(path string, blk *hclsyntax.Block) {
 		m.Concepts = append(m.Concepts, &Concept{Name: name, Kind: blk.Type, File: path, Line: line})
 	}
 	// Other block types (projection, index, key) are tolerated and ignored.
+}
+
+// memberNames returns the labels of the property/field blocks of an entity or
+// component body — the member names a PolicySpec actor-is.model-role clause
+// addresses (decision 0013).
+func memberNames(body *hclsyntax.Body) []string {
+	var out []string
+	for _, blk := range body.Blocks {
+		if (blk.Type == "property" || blk.Type == "field") && len(blk.Labels) > 0 {
+			out = append(out, blk.Labels[0])
+		}
+	}
+	return out
 }
 
 // collectMemberRefs extracts references from an entity/component body: the

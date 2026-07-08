@@ -47,6 +47,32 @@ type RoleIssue struct {
 	Message string
 }
 
+// RuleItem is one entry of a Tier-1 `rules:` list (decision 0013): {id, text,
+// refs?}. Presence flags and ExtraKeys let the graph-rules-shape rule report
+// missing keys and unknown structure; refsMalformed records a refs value that
+// is not a list of scalar references.
+type RuleItem struct {
+	ID            string
+	Text          string
+	Refs          []string
+	HasID         bool
+	HasText       bool
+	ExtraKeys     []string
+	Line          int
+	refsMalformed bool
+}
+
+// clauseMap is one decoded PolicySpec clause mapping (decision 0013): a flat
+// map whose values are scalars or nested clause maps. Keys lists every key in
+// declaration order; Malformed is set when the node is not a mapping at all.
+type clauseMap struct {
+	Scalars   map[string]string
+	Nested    map[string]*clauseMap
+	Keys      []string
+	Malformed bool
+	Line      int
+}
+
 // Artifact is a parsed GraphSpec artifact (module README or a collection
 // artifact). Parse is resilient: a non-nil Artifact is returned for every
 // readable file. FMError is set when the file has no leading frontmatter block
@@ -102,6 +128,25 @@ type Artifact struct {
 	// RoleIssues collects endpoint/participant shape violations (decision
 	// 0012) for the graph-role-labels rule.
 	RoleIssues []RoleIssue
+
+	// Rules carries the Tier-1 rules: list of entity/relationship/command
+	// artifacts (decision 0013); rulesMalformed records a non-list container
+	// or non-map items, mirroring the inputs pattern.
+	Rules          []RuleItem
+	rulesMalformed bool
+
+	// policy (decision 0013). AppliesKind/AppliesRef are set when the applies:
+	// block carries exactly one of command|entity|relationship; the raw clause
+	// structures back the graph-policy-shape rule.
+	AppliesKind        string
+	AppliesRef         string
+	applies            *clauseMap
+	when               []*clauseMap
+	whenMalformed      bool
+	requires           []*clauseMap
+	requiresMalformed  bool
+	invariant          []*clauseMap
+	invariantMalformed bool
 }
 
 // KeyLine returns the 1-based file line of the named top-level frontmatter key,
@@ -243,6 +288,16 @@ func (a *Artifact) fill(root *yaml.Node, lineOffset int) {
 			a.fillMetadata(val, lineOffset)
 		case "inputs":
 			a.fillInputs(val, lineOffset)
+		case "rules":
+			a.fillRules(val, lineOffset)
+		case "applies":
+			a.fillApplies(val, lineOffset)
+		case "when":
+			a.when, a.whenMalformed = clauseList(val, lineOffset)
+		case "requires":
+			a.requires, a.requiresMalformed = clauseList(val, lineOffset)
+		case "invariant":
+			a.invariant, a.invariantMalformed = clauseList(val, lineOffset)
 		}
 	}
 }
@@ -389,6 +444,107 @@ func (a *Artifact) fillInputs(val *yaml.Node, lineOffset int) {
 		}
 		a.Inputs = append(a.Inputs, in)
 	}
+}
+
+// fillRules decodes the Tier-1 rules: list (decision 0013); non-list containers
+// or non-mapping items set rulesMalformed so the graph-rules-shape rule can
+// report them, mirroring the inputs pattern.
+func (a *Artifact) fillRules(val *yaml.Node, lineOffset int) {
+	if val.Kind != yaml.SequenceNode {
+		a.rulesMalformed = true
+		return
+	}
+	for _, item := range val.Content {
+		if item.Kind != yaml.MappingNode {
+			a.rulesMalformed = true
+			continue
+		}
+		r := RuleItem{Line: lineOffset + item.Line}
+		for i := 0; i+1 < len(item.Content); i += 2 {
+			k := item.Content[i]
+			v := item.Content[i+1]
+			switch k.Value {
+			case "id":
+				r.HasID = true
+				r.ID = scalar(v)
+			case "text":
+				r.HasText = true
+				r.Text = scalar(v)
+			case "refs":
+				if v.Kind != yaml.SequenceNode {
+					r.refsMalformed = true
+					continue
+				}
+				for _, rv := range v.Content {
+					if rv.Kind != yaml.ScalarNode {
+						r.refsMalformed = true
+						continue
+					}
+					r.Refs = append(r.Refs, rv.Value)
+				}
+			default:
+				r.ExtraKeys = append(r.ExtraKeys, k.Value)
+			}
+		}
+		a.Rules = append(a.Rules, r)
+	}
+}
+
+// fillApplies decodes the policy applies: block (decision 0013). AppliesKind
+// and AppliesRef are set only when exactly one of command|entity|relationship
+// is present; the raw clause map backs the graph-policy-shape diagnostics.
+func (a *Artifact) fillApplies(val *yaml.Node, lineOffset int) {
+	cm := decodeClauseMap(val, lineOffset)
+	a.applies = cm
+	var valid []string
+	for _, k := range cm.Keys {
+		if k == KindCommand || k == KindEntity || k == KindRelationship {
+			valid = append(valid, k)
+		}
+	}
+	if len(valid) == 1 {
+		a.AppliesKind = valid[0]
+		a.AppliesRef = cm.Scalars[valid[0]]
+	}
+}
+
+// clauseList decodes a policy when/requires/invariant list into clause maps;
+// malformed reports a non-list container. Non-mapping items are flagged on the
+// item itself (clauseMap.Malformed).
+func clauseList(val *yaml.Node, lineOffset int) (items []*clauseMap, malformed bool) {
+	if val.Kind != yaml.SequenceNode {
+		return nil, true
+	}
+	for _, item := range val.Content {
+		items = append(items, decodeClauseMap(item, lineOffset))
+	}
+	return items, false
+}
+
+// decodeClauseMap decodes one policy clause mapping: scalar values land in
+// Scalars, nested mappings recurse into Nested, and every key is recorded in
+// Keys. A non-mapping node yields a Malformed clause.
+func decodeClauseMap(n *yaml.Node, lineOffset int) *clauseMap {
+	cm := &clauseMap{
+		Scalars: map[string]string{},
+		Nested:  map[string]*clauseMap{},
+		Line:    lineOffset + n.Line,
+	}
+	if n.Kind != yaml.MappingNode {
+		cm.Malformed = true
+		return cm
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k := n.Content[i]
+		v := n.Content[i+1]
+		cm.Keys = append(cm.Keys, k.Value)
+		if v.Kind == yaml.MappingNode {
+			cm.Nested[k.Value] = decodeClauseMap(v, lineOffset)
+			continue
+		}
+		cm.Scalars[k.Value] = scalar(v)
+	}
+	return cm
 }
 
 // scalar returns a scalar node's value, or "" for non-scalar nodes.

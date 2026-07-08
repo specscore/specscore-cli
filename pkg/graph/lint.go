@@ -289,12 +289,17 @@ func (l *linter) checkArtifact(m *Module, a *Artifact) {
 	switch expected {
 	case KindEntity:
 		l.checkEntity(m, a)
+		l.checkRules(m, a)
 	case KindRelationship:
 		l.checkRelationship(m, a)
+		l.checkRules(m, a)
 	case KindCommand:
 		l.checkCommand(m, a)
+		l.checkRules(m, a)
 	case KindEvent:
 		l.checkEvent(m, a)
+	case KindPolicy:
+		l.checkPolicy(m, a)
 	}
 }
 
@@ -311,10 +316,11 @@ func (l *linter) checkRoleIssues(a *Artifact) {
 // are silently meaningless to tooling — e.g. lifecycle: on a relationship.
 var knownKeysByKind = map[string]map[string]bool{
 	KindModule:       keySet("kind", "id", "name", "status", "summary", "dependsOn"),
-	KindEntity:       keySet("kind", "id", "name", "status", "summary", "model", "lifecycle"),
-	KindRelationship: keySet("kind", "id", "name", "status", "summary", "from", "to", "cardinality", "metadata"),
-	KindCommand:      keySet("kind", "id", "name", "status", "summary", "subject", "actors", "inputs", "possibleEvents"),
+	KindEntity:       keySet("kind", "id", "name", "status", "summary", "model", "lifecycle", "rules"),
+	KindRelationship: keySet("kind", "id", "name", "status", "summary", "from", "to", "cardinality", "metadata", "rules"),
+	KindCommand:      keySet("kind", "id", "name", "status", "summary", "subject", "actors", "inputs", "possibleEvents", "rules"),
 	KindEvent:        keySet("kind", "id", "name", "status", "summary", "subject", "participants", "sources"),
+	KindPolicy:       keySet("kind", "id", "name", "status", "summary", "applies", "when", "requires", "invariant"),
 }
 
 func keySet(keys ...string) map[string]bool {
@@ -356,7 +362,7 @@ func (l *linter) checkKind(a *Artifact) {
 	line := a.KeyLine("kind")
 	if !isKind(a.Kind) {
 		l.emit("graph-kind-valid", a.Path, line,
-			fmt.Sprintf("kind %q is not one of module|entity|relationship|command|event", a.Kind))
+			fmt.Sprintf("kind %q is not one of module|entity|relationship|command|event|policy", a.Kind))
 		return
 	}
 	if a.Kind != expected {
@@ -665,7 +671,7 @@ func (l *linter) checkModelspecRef(owner *Module, ownerPath, ref, field string, 
 		l.checkModuleDependency(owner, msr.Module, ownerPath, line,
 			fmt.Sprintf("%s reference %q", field, ref))
 	}
-	res := l.res.resolveConcept(msr.Module, msr.Name, msr.Kind, msr.Repo)
+	res := l.res.resolveConcept(msr.Module, msr.Name, msr.Kind, msr.Repo, msr.Fragment)
 	switch res.outcome {
 	case resResolved:
 	case resUnknownModule:
@@ -683,6 +689,12 @@ func (l *linter) checkModelspecRef(owner *Module, ownerPath, ref, field string, 
 	case resAmbiguousModule:
 		l.emit("graph-model-ref-resolves", ownerPath, line,
 			fmt.Sprintf("%s reference %q: module %q is ambiguous across configured projects", field, ref, msr.Module))
+	case resFragmentNotEnum:
+		l.emit("graph-model-ref-resolves", ownerPath, line,
+			fmt.Sprintf("%s reference %q: concept %q is %s, not an enum — fragments address enum values (decision 0013)", field, ref, msr.Name, withArticle(res.actualKind)))
+	case resFragmentUnknownValue:
+		l.emit("graph-model-ref-resolves", ownerPath, line,
+			fmt.Sprintf("%s reference %q: enum %q has no value %q", field, ref, msr.Name, msr.Fragment))
 	}
 }
 
@@ -750,8 +762,9 @@ func (l *linter) checkModelRef(m *Module, ref *ModelRef) {
 	l.checkModuleDependency(m, module, ref.File, ref.Line,
 		fmt.Sprintf("model %s reference %q", ref.Attr, ref.Target))
 	// HCL qualified names are kind-free (the attribute is the kind selector,
-	// decision 0011) and never cross-repo, so they resolve in the trio scope.
-	res := l.res.resolveConcept(module, name, "", "")
+	// decision 0011), never cross-repo, and never carry fragments, so they
+	// resolve in the trio scope.
+	res := l.res.resolveConcept(module, name, "", "", "")
 	switch res.outcome {
 	case resResolved:
 	case resUnknownModule:
@@ -795,6 +808,388 @@ func (l *linter) checkDuplicateIDs() {
 		for _, a := range arts {
 			l.emit("graph-duplicate-id", a.Path, a.KeyLine("id"),
 				fmt.Sprintf("duplicate qualified id %q defined by: %s", qid, strings.Join(paths, ", ")))
+		}
+	}
+}
+
+// --- decision 0013: Tier-1 rules: blocks and the policy kind ---
+
+// checkRules validates a Tier-1 rules: block (decision 0013) on an entity,
+// relationship, or command artifact: a list of {id, text, refs?} maps with
+// artifact-unique kebab-case ids, non-empty text, and resolvable refs.
+func (l *linter) checkRules(m *Module, a *Artifact) {
+	if a.rulesMalformed {
+		l.emit("graph-rules-shape", a.Path, a.KeyLine("rules"),
+			"rules must be a list of {id, text, refs} maps")
+	}
+	seen := map[string]bool{}
+	for _, r := range a.Rules {
+		label := r.ID
+		if label == "" {
+			label = "(unnamed)"
+		}
+		if !r.HasID || r.ID == "" {
+			l.emit("graph-rules-shape", a.Path, r.Line, "rule item is missing an `id`")
+		} else {
+			if !IsKebab(r.ID) {
+				l.emit("graph-rules-shape", a.Path, r.Line,
+					fmt.Sprintf("rule id %q must be bare lowercase kebab-case", r.ID))
+			}
+			if seen[r.ID] {
+				l.emit("graph-rules-shape", a.Path, r.Line,
+					fmt.Sprintf("duplicate rule id %q", r.ID))
+			}
+			seen[r.ID] = true
+		}
+		if !r.HasText || r.Text == "" {
+			l.emit("graph-rules-shape", a.Path, r.Line,
+				fmt.Sprintf("rule %q must carry a non-empty `text`", label))
+		}
+		if len(r.ExtraKeys) > 0 {
+			l.emit("graph-rules-shape", a.Path, r.Line,
+				fmt.Sprintf("rule %q has unexpected key(s): %s (only id, text, and refs are allowed)",
+					label, strings.Join(r.ExtraKeys, ", ")))
+		}
+		if r.refsMalformed {
+			l.emit("graph-rules-shape", a.Path, r.Line,
+				fmt.Sprintf("rule %q refs must be a list of qualified graph or modelspec:// references", label))
+		}
+		for _, ref := range r.Refs {
+			if strings.HasPrefix(ref, ModelspecScheme) {
+				l.checkModelspecRef(m, a.Path, ref, "rules.refs", r.Line)
+				continue
+			}
+			l.checkGraphRef(m, a.Path, ref, "rules.refs", r.Line)
+		}
+	}
+}
+
+// checkPolicy validates a PolicySpec artifact's clause shape and operands
+// (decision 0013): the applies target, when/requires/invariant clauses, and
+// dependency direction for every referenced module.
+func (l *linter) checkPolicy(m *Module, a *Artifact) {
+	appliesArt := l.checkPolicyApplies(m, a)
+	l.checkPolicyWhen(m, a, appliesArt)
+	l.checkPolicyRequires(m, a)
+	l.checkPolicyInvariant(m, a, appliesArt)
+}
+
+// checkPolicyApplies validates the required applies: block and returns the
+// resolved target artifact (nil when missing, malformed, or unresolved).
+func (l *linter) checkPolicyApplies(m *Module, a *Artifact) *Artifact {
+	if !a.HasKey("applies") {
+		l.emit("graph-policy-shape", a.Path, a.KeyLine("kind"),
+			"policy must declare an `applies:` block with exactly one of command|entity|relationship (decision 0013)")
+		return nil
+	}
+	line := a.KeyLine("applies")
+	cm := a.applies
+	if cm.Malformed {
+		l.emit("graph-policy-shape", a.Path, line,
+			"applies must be a map carrying exactly one of command|entity|relationship")
+		return nil
+	}
+	l.checkClauseExtraKeys(a, cm, "applies", KindCommand, KindEntity, KindRelationship)
+	if a.AppliesKind == "" {
+		l.emit("graph-policy-shape", a.Path, line,
+			"applies must carry exactly one of command|entity|relationship")
+		return nil
+	}
+	return l.checkPolicyRef(m, a, a.AppliesRef, a.AppliesKind, "applies."+a.AppliesKind, line)
+}
+
+// checkPolicyWhen validates the optional when: clause list: each clause is
+// exactly one of {input} (only for command policies, naming an input of the
+// applies command) or {is-role: {relationship, role}}.
+func (l *linter) checkPolicyWhen(m *Module, a *Artifact, appliesArt *Artifact) {
+	if a.whenMalformed {
+		l.emit("graph-policy-shape", a.Path, a.KeyLine("when"), "when must be a list of clause maps")
+	}
+	for _, c := range a.when {
+		if c.Malformed {
+			l.emit("graph-policy-shape", a.Path, c.Line,
+				"when clause must be a map carrying exactly one of `input` or `is-role`")
+			continue
+		}
+		l.checkClauseExtraKeys(a, c, "when clause", "input", "is-role")
+		hasInput := slices.Contains(c.Keys, "input")
+		hasIsRole := slices.Contains(c.Keys, "is-role")
+		if hasInput == hasIsRole {
+			l.emit("graph-policy-shape", a.Path, c.Line,
+				"when clause must carry exactly one of `input` or `is-role`")
+			continue
+		}
+		if hasInput {
+			l.checkPolicyWhenInput(a, c, appliesArt)
+			continue
+		}
+		l.checkPolicyIsRole(m, a, c)
+	}
+}
+
+// checkPolicyWhenInput validates a when {input} clause: only legal when the
+// policy applies to a command, and the value must name one of its inputs.
+func (l *linter) checkPolicyWhenInput(a *Artifact, c *clauseMap, appliesArt *Artifact) {
+	name := c.Scalars["input"]
+	if name == "" {
+		l.emit("graph-policy-shape", a.Path, c.Line, "when.input must be a non-empty input name")
+		return
+	}
+	if a.AppliesKind != KindCommand {
+		l.emit("graph-policy-shape", a.Path, c.Line,
+			"when.input is only valid when applies names a command (decision 0013)")
+		return
+	}
+	if appliesArt == nil {
+		return // the applies reference itself already failed to resolve
+	}
+	for _, in := range appliesArt.Inputs {
+		if in.Name == name {
+			return
+		}
+	}
+	l.emit("graph-policy-shape", a.Path, c.Line,
+		fmt.Sprintf("when.input %q is not an input of command %q", name, a.AppliesRef))
+}
+
+// checkPolicyIsRole validates a when {is-role: {relationship, role}} clause.
+func (l *linter) checkPolicyIsRole(m *Module, a *Artifact, c *clauseMap) {
+	nested, ok := c.Nested["is-role"]
+	if !ok {
+		l.emit("graph-policy-shape", a.Path, c.Line, "is-role must be a {relationship, role} map")
+		return
+	}
+	rel, role := l.checkClauseKeys(a, nested, "is-role", "relationship", "role")
+	if rel != "" {
+		l.checkPolicyRef(m, a, rel, KindRelationship, "is-role.relationship", nested.Line)
+	}
+	if role != "" && !IsKebab(role) {
+		l.emit("graph-policy-shape", a.Path, nested.Line,
+			fmt.Sprintf("is-role role %q must be a bare lowercase kebab-case token", role))
+	}
+}
+
+// checkPolicyRequires validates the optional requires: clause list: each
+// clause is exactly one of {entity, in-state} or {actor-is: {entity,
+// model-role}}.
+func (l *linter) checkPolicyRequires(m *Module, a *Artifact) {
+	if a.requiresMalformed {
+		l.emit("graph-policy-shape", a.Path, a.KeyLine("requires"), "requires must be a list of clause maps")
+	}
+	for _, c := range a.requires {
+		if c.Malformed {
+			l.emit("graph-policy-shape", a.Path, c.Line,
+				"requires clause must be a map: {entity, in-state} or {actor-is: {entity, model-role}}")
+			continue
+		}
+		l.checkClauseExtraKeys(a, c, "requires clause", "entity", "in-state", "actor-is")
+		hasEntity := slices.Contains(c.Keys, "entity")
+		hasInState := slices.Contains(c.Keys, "in-state")
+		hasActorIs := slices.Contains(c.Keys, "actor-is")
+		switch {
+		case hasActorIs && !hasEntity && !hasInState:
+			l.checkPolicyActorIs(m, a, c)
+		case !hasActorIs && hasEntity && hasInState:
+			l.checkPolicyEntityState(m, a, c.Scalars["entity"], c.Scalars["in-state"], "requires", c.Line)
+		default:
+			l.emit("graph-policy-shape", a.Path, c.Line,
+				"requires clause must carry exactly one of {entity, in-state} or {actor-is: {entity, model-role}}")
+		}
+	}
+}
+
+// checkPolicyActorIs validates a requires {actor-is: {entity, model-role}}
+// clause: the entity must resolve and its ModelSpec model concept must declare
+// a property named model-role.
+func (l *linter) checkPolicyActorIs(m *Module, a *Artifact, c *clauseMap) {
+	nested, ok := c.Nested["actor-is"]
+	if !ok {
+		l.emit("graph-policy-shape", a.Path, c.Line, "actor-is must be a {entity, model-role} map")
+		return
+	}
+	entity, role := l.checkClauseKeys(a, nested, "actor-is", "entity", "model-role")
+	var ent *Artifact
+	if entity != "" {
+		ent = l.checkPolicyRef(m, a, entity, KindEntity, "actor-is.entity", nested.Line)
+	}
+	if role == "" || ent == nil {
+		return
+	}
+	if ent.Model == "" {
+		l.emit("graph-policy-shape", a.Path, nested.Line,
+			fmt.Sprintf("actor-is model-role %q cannot be validated: entity %q declares no model", role, ent.QualifiedID()))
+		return
+	}
+	msr, err := ParseModelspecRef(ent.Model)
+	if err != nil {
+		return // the entity's own model: reference already fails graph-model-ref-resolves
+	}
+	res := l.res.resolveConcept(msr.Module, msr.Name, msr.Kind, msr.Repo, "")
+	if res.outcome != resResolved {
+		return // already reported on the entity artifact
+	}
+	if !slices.Contains(res.concept.Properties, role) {
+		l.emit("graph-policy-shape", a.Path, nested.Line,
+			fmt.Sprintf("actor-is model-role %q is not a property of entity %q model concept %q", role, ent.QualifiedID(), msr.Name))
+	}
+}
+
+// checkPolicyInvariant validates the optional invariant: clause list, only
+// legal when the policy applies to an entity: each clause carries
+// {when-referenced: {entity, in-state}} plus {then: {self-state}} where
+// self-state is a lifecycle state of the applies entity.
+func (l *linter) checkPolicyInvariant(m *Module, a *Artifact, appliesArt *Artifact) {
+	if !a.HasKey("invariant") {
+		return
+	}
+	line := a.KeyLine("invariant")
+	if a.AppliesKind != "" && a.AppliesKind != KindEntity {
+		l.emit("graph-policy-shape", a.Path, line,
+			"invariant is only valid when applies names an entity (decision 0013)")
+		return
+	}
+	if a.invariantMalformed {
+		l.emit("graph-policy-shape", a.Path, line, "invariant must be a list of clause maps")
+	}
+	for _, c := range a.invariant {
+		if c.Malformed {
+			l.emit("graph-policy-shape", a.Path, c.Line,
+				"invariant clause must be a map: {when-referenced: {entity, in-state}, then: {self-state}}")
+			continue
+		}
+		l.checkClauseExtraKeys(a, c, "invariant clause", "when-referenced", "then")
+		if !slices.Contains(c.Keys, "when-referenced") || !slices.Contains(c.Keys, "then") {
+			l.emit("graph-policy-shape", a.Path, c.Line,
+				"invariant clause must carry both `when-referenced` and `then`")
+			continue
+		}
+		l.checkPolicyWhenReferenced(m, a, c)
+		l.checkPolicyThen(a, c, appliesArt)
+	}
+}
+
+// checkPolicyWhenReferenced validates an invariant when-referenced operand.
+func (l *linter) checkPolicyWhenReferenced(m *Module, a *Artifact, c *clauseMap) {
+	nested, ok := c.Nested["when-referenced"]
+	if !ok {
+		l.emit("graph-policy-shape", a.Path, c.Line, "when-referenced must be a {entity, in-state} map")
+		return
+	}
+	l.checkClauseExtraKeys(a, nested, "when-referenced", "entity", "in-state")
+	l.checkPolicyEntityState(m, a, nested.Scalars["entity"], nested.Scalars["in-state"], "when-referenced", nested.Line)
+}
+
+// checkPolicyThen validates an invariant then operand: {self-state} where the
+// state belongs to the applies entity's lifecycle.
+func (l *linter) checkPolicyThen(a *Artifact, c *clauseMap, appliesArt *Artifact) {
+	nested, ok := c.Nested["then"]
+	if !ok {
+		l.emit("graph-policy-shape", a.Path, c.Line, "then must be a {self-state} map")
+		return
+	}
+	l.checkClauseExtraKeys(a, nested, "then", "self-state")
+	state := nested.Scalars["self-state"]
+	if state == "" {
+		l.emit("graph-policy-shape", a.Path, nested.Line, "then must carry a non-empty `self-state`")
+		return
+	}
+	if appliesArt == nil {
+		return // the applies reference itself already failed to resolve
+	}
+	l.checkPolicyStateMembership(a, appliesArt, state, "then.self-state", nested.Line)
+}
+
+// checkPolicyEntityState validates an {entity, in-state} operand pair: the
+// entity resolves, and in-state is one of its lifecycle states.
+func (l *linter) checkPolicyEntityState(m *Module, a *Artifact, entity, state, field string, line int) {
+	var ent *Artifact
+	if entity == "" {
+		l.emit("graph-policy-shape", a.Path, line,
+			fmt.Sprintf("%s must carry a non-empty qualified `entity` reference", field))
+	} else {
+		ent = l.checkPolicyRef(m, a, entity, KindEntity, field+".entity", line)
+	}
+	if state == "" {
+		l.emit("graph-policy-shape", a.Path, line,
+			fmt.Sprintf("%s must carry a non-empty `in-state` token", field))
+		return
+	}
+	if ent == nil {
+		return
+	}
+	l.checkPolicyStateMembership(a, ent, state, field+".in-state", line)
+}
+
+// checkPolicyStateMembership verifies that state is one of ent's declared
+// lifecycle.states; an entity without a lifecycle is itself an error here.
+func (l *linter) checkPolicyStateMembership(a *Artifact, ent *Artifact, state, field string, line int) {
+	if len(ent.LifecycleStates) == 0 {
+		l.emit("graph-policy-shape", a.Path, line,
+			fmt.Sprintf("%s %q cannot be validated: entity %q has no lifecycle", field, state, ent.QualifiedID()))
+		return
+	}
+	if !slices.Contains(ent.LifecycleStates, state) {
+		l.emit("graph-policy-shape", a.Path, line,
+			fmt.Sprintf("%s %q is not a lifecycle state of entity %q (states: %s)",
+				field, state, ent.QualifiedID(), strings.Join(ent.LifecycleStates, ", ")))
+	}
+}
+
+// checkPolicyRef validates a policy clause reference that must resolve to an
+// artifact of a specific kind: valid <module>.<id> form, dependency direction,
+// and kind-checked resolution against the qualified-id index. It returns the
+// resolved artifact, or nil.
+func (l *linter) checkPolicyRef(m *Module, a *Artifact, ref, wantKind, field string, line int) *Artifact {
+	qr, ok := ParseQualifiedRef(ref)
+	if !ok {
+		l.emit("graph-policy-shape", a.Path, line,
+			fmt.Sprintf("%s reference %q is not a valid <module>.<id> reference", field, ref))
+		return nil
+	}
+	l.checkModuleDependency(m, qr.Module, a.Path, line,
+		fmt.Sprintf("%s reference %q", field, ref))
+	var otherKind string
+	for _, art := range l.index[ref] {
+		k := kindByCollection[art.CollectionDir]
+		if k == wantKind {
+			return art
+		}
+		otherKind = k
+	}
+	if otherKind != "" {
+		l.emit("graph-policy-shape", a.Path, line,
+			fmt.Sprintf("%s reference %q resolves to %s, not %s", field, ref, withArticle(otherKind), withArticle(wantKind)))
+		return nil
+	}
+	l.emit("graph-policy-shape", a.Path, line,
+		fmt.Sprintf("%s reference %q does not resolve to an existing %s", field, ref, wantKind))
+	return nil
+}
+
+// checkClauseKeys validates a two-key clause operand map (is-role, actor-is):
+// both keys are required non-empty scalars; other keys are rejected. It
+// returns the two values ("" when missing or non-scalar).
+func (l *linter) checkClauseKeys(a *Artifact, cm *clauseMap, label, k1, k2 string) (string, string) {
+	l.checkClauseExtraKeys(a, cm, label, k1, k2)
+	v1 := cm.Scalars[k1]
+	v2 := cm.Scalars[k2]
+	if v1 == "" {
+		l.emit("graph-policy-shape", a.Path, cm.Line,
+			fmt.Sprintf("%s must carry a non-empty `%s`", label, k1))
+	}
+	if v2 == "" {
+		l.emit("graph-policy-shape", a.Path, cm.Line,
+			fmt.Sprintf("%s must carry a non-empty `%s`", label, k2))
+	}
+	return v1, v2
+}
+
+// checkClauseExtraKeys rejects every key of cm outside the allowed set.
+func (l *linter) checkClauseExtraKeys(a *Artifact, cm *clauseMap, label string, allowed ...string) {
+	for _, k := range cm.Keys {
+		if !slices.Contains(allowed, k) {
+			l.emit("graph-policy-shape", a.Path, cm.Line,
+				fmt.Sprintf("%s has unexpected key %q (allowed: %s)", label, k, strings.Join(allowed, ", ")))
 		}
 	}
 }

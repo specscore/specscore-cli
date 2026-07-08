@@ -74,12 +74,15 @@ var ReservedConceptNames = map[string]bool{
 // (modelspec://{host}/{org}/{repo}/<...>) fills Repo with "host/org/repo". Kind
 // is the singular concept kind for the three-segment form, or "" for the
 // two-segment (trio) form. Ref carries an advisory ?ref= git pin, if any.
+// Fragment carries a '#<value>' enum-value address (decision 0013), if any: it
+// resolves only when the referenced concept is an enum declaring that value.
 type ModelspecRef struct {
-	Module string
-	Kind   string // singular: entity|component|enum|collection|recordset; "" = two-segment (trio)
-	Name   string
-	Repo   string // "{host}/{org}/{repo}" for cross-repo, or "" for local
-	Ref    string // advisory ?ref= git pin (branch/tag/commit), or ""
+	Module   string
+	Kind     string // singular: entity|component|enum|collection|recordset; "" = two-segment (trio)
+	Name     string
+	Repo     string // "{host}/{org}/{repo}" for cross-repo, or "" for local
+	Ref      string // advisory ?ref= git pin (branch/tag/commit), or ""
+	Fragment string // '#<value>' enum-value address (decision 0013), or ""
 }
 
 // modelspecErrKind classifies a modelspec reference malformation so the linter
@@ -90,7 +93,7 @@ const (
 	msErrMalformed   modelspecErrKind = iota // generic grammar violation
 	msErrNotScheme                           // value does not carry the modelspec:// scheme
 	msErrLegacyForm                          // legacy modelspec://x.Y (authority present, empty path)
-	msErrFragment                            // a fragment (#...) is reserved in v0.2
+	msErrFragment                            // malformed fragment (empty, or '#' appearing twice)
 	msErrUnknownKind                         // kind segment is not one of the five tokens
 )
 
@@ -126,11 +129,19 @@ func ParseModelspecRef(ref string) (ModelspecRef, error) {
 	}
 	rest := ref[len(ModelspecScheme):]
 
-	// A fragment is reserved for future intra-concept addressing (decision 0010).
-	if strings.IndexByte(rest, '#') >= 0 {
-		return ModelspecRef{}, &ModelspecParseError{
-			kind:    msErrFragment,
-			message: "a fragment (#...) is reserved for future intra-concept addressing and is not allowed in v0.2",
+	// Split off an optional '#<value>' enum-value fragment (decision 0013).
+	// A malformed fragment (empty, or '#' appearing twice) is an error; whether
+	// a well-formed fragment resolves is decided at resolution time (the
+	// concept must be an enum declaring the value).
+	var fragment string
+	if hash := strings.IndexByte(rest, '#'); hash >= 0 {
+		fragment = rest[hash+1:]
+		rest = rest[:hash]
+		if fragment == "" || strings.IndexByte(fragment, '#') >= 0 {
+			return ModelspecRef{}, &ModelspecParseError{
+				kind:    msErrFragment,
+				message: "malformed fragment: '#<value>' addresses a single named enum value (decision 0013)",
+			}
 		}
 	}
 
@@ -152,17 +163,20 @@ func ParseModelspecRef(ref string) (ModelspecRef, error) {
 		if concept == "" || strings.Contains(concept, "/") {
 			return ModelspecRef{}, malformedModelspec()
 		}
-		return parseConceptSegment(concept, "", gitRef)
+		return parseConceptSegment(concept, "", gitRef, fragment)
 	}
 
 	// Authority present. The path (if any) starts after the first '/'.
 	slash := strings.IndexByte(rest, '/')
 	if slash < 0 {
 		// Authority present, empty path: the legacy form. Rewrite to the
-		// triple-slash local form, preserving any ?ref= pin.
+		// triple-slash local form, preserving any ?ref= pin and fragment.
 		rewrite := ModelspecScheme + "/" + rest
 		if query != "" {
 			rewrite += "?" + query
+		}
+		if fragment != "" {
+			rewrite += "#" + fragment
 		}
 		return ModelspecRef{}, &ModelspecParseError{
 			kind:    msErrLegacyForm,
@@ -187,11 +201,11 @@ func ParseModelspecRef(ref string) (ModelspecRef, error) {
 		}
 	}
 	repo := host + "/" + strings.Join(repoPath, "/")
-	return parseConceptSegment(concept, repo, gitRef)
+	return parseConceptSegment(concept, repo, gitRef, fragment)
 }
 
 // parseConceptSegment parses the final <module>[.<kind>].<Name> segment.
-func parseConceptSegment(concept, repo, gitRef string) (ModelspecRef, error) {
+func parseConceptSegment(concept, repo, gitRef, fragment string) (ModelspecRef, error) {
 	parts := strings.Split(concept, ".")
 	for _, p := range parts {
 		if p == "" {
@@ -200,7 +214,7 @@ func parseConceptSegment(concept, repo, gitRef string) (ModelspecRef, error) {
 	}
 	switch len(parts) {
 	case 2:
-		return ModelspecRef{Module: parts[0], Name: parts[1], Repo: repo, Ref: gitRef}, nil
+		return ModelspecRef{Module: parts[0], Name: parts[1], Repo: repo, Ref: gitRef, Fragment: fragment}, nil
 	case 3:
 		kind, ok := ModelspecKindTokens[parts[1]]
 		if !ok {
@@ -209,7 +223,7 @@ func parseConceptSegment(concept, repo, gitRef string) (ModelspecRef, error) {
 				message: fmt.Sprintf("unknown kind segment %q (expected one of entities, components, enums, collections, recordsets)", parts[1]),
 			}
 		}
-		return ModelspecRef{Module: parts[0], Kind: kind, Name: parts[2], Repo: repo, Ref: gitRef}, nil
+		return ModelspecRef{Module: parts[0], Kind: kind, Name: parts[2], Repo: repo, Ref: gitRef, Fragment: fragment}, nil
 	default:
 		return ModelspecRef{}, malformedModelspec()
 	}

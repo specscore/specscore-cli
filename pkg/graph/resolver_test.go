@@ -13,20 +13,20 @@ func buildValidResolver(t *testing.T) *Resolver {
 
 func TestResolver_LocalResolution(t *testing.T) {
 	r := buildValidResolver(t)
-	if got := r.resolveConcept("identity", "TeamRole", "", "").outcome; got != resResolved {
+	if got := r.resolveConcept("identity", "TeamRole", "", "", "").outcome; got != resResolved {
 		t.Fatalf("local resolved: %v", got)
 	}
-	if got := r.resolveConcept("identity", "Ghost", "", "").outcome; got != resUnknownConcept {
+	if got := r.resolveConcept("identity", "Ghost", "", "", "").outcome; got != resUnknownConcept {
 		t.Fatalf("unknown concept: %v", got)
 	}
-	if got := r.resolveConcept("zzz", "X", "", "").outcome; got != resUnknownModule {
+	if got := r.resolveConcept("zzz", "X", "", "", "").outcome; got != resUnknownModule {
 		t.Fatalf("unknown module: %v", got)
 	}
 }
 
 func TestResolver_SuffixUnavailable(t *testing.T) {
 	r := buildValidResolver(t)
-	if got := r.resolveConcept("identity", "TeamRole", "", "example.com/acme/gone").outcome; got != resRepoUnavailable {
+	if got := r.resolveConcept("identity", "TeamRole", "", "example.com/acme/gone", "").outcome; got != resRepoUnavailable {
 		t.Fatalf("expected repo unavailable, got %v", got)
 	}
 }
@@ -38,20 +38,20 @@ func TestResolver_ProjectsAndSuffix(t *testing.T) {
 	}
 	r := BuildResolver("testdata/proja", g)
 	// Step 2: configured projects.
-	if got := r.resolveConcept("shared", "Thing", "", "").outcome; got != resResolved {
+	if got := r.resolveConcept("shared", "Thing", "", "", "").outcome; got != resResolved {
 		t.Fatalf("project resolution: %v", got)
 	}
-	if got := r.resolveConcept("shared", "Ghost", "", "").outcome; got != resUnknownConcept {
+	if got := r.resolveConcept("shared", "Ghost", "", "", "").outcome; got != resUnknownConcept {
 		t.Fatalf("project unknown concept: %v", got)
 	}
 	// Step 3: explicit suffix against the locally-available projb.
-	if got := r.resolveConcept("shared", "Thing", "", "example.com/acme/projb").outcome; got != resResolved {
+	if got := r.resolveConcept("shared", "Thing", "", "example.com/acme/projb", "").outcome; got != resResolved {
 		t.Fatalf("suffix resolution: %v", got)
 	}
-	if got := r.resolveConcept("shared", "Ghost", "", "example.com/acme/projb").outcome; got != resUnknownConcept {
+	if got := r.resolveConcept("shared", "Ghost", "", "example.com/acme/projb", "").outcome; got != resUnknownConcept {
 		t.Fatalf("suffix unknown concept: %v", got)
 	}
-	if got := r.resolveConcept("nope", "Thing", "", "example.com/acme/projb").outcome; got != resUnknownModule {
+	if got := r.resolveConcept("nope", "Thing", "", "example.com/acme/projb", "").outcome; got != resUnknownModule {
 		t.Fatalf("suffix unknown module: %v", got)
 	}
 }
@@ -79,7 +79,7 @@ func TestResolver_AmbiguousAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := BuildResolver(consumer, g)
-	if got := r.resolveConcept("shared", "Thing", "", "").outcome; got != resAmbiguousModule {
+	if got := r.resolveConcept("shared", "Thing", "", "", "").outcome; got != resAmbiguousModule {
 		t.Fatalf("expected ambiguous, got %v", got)
 	}
 	// The ambiguity also surfaces as a lint violation.
@@ -101,7 +101,7 @@ func TestResolver_SkipsBadProjectEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := BuildResolver(consumer, g)
-	if got := r.resolveConcept("anything", "X", "", "").outcome; got != resUnknownModule {
+	if got := r.resolveConcept("anything", "X", "", "", "").outcome; got != resUnknownModule {
 		t.Fatalf("expected unknown module with all projects skipped, got %v", got)
 	}
 }
@@ -114,7 +114,7 @@ func TestResolver_NoConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := BuildResolver(dir, g)
-	if got := r.resolveConcept("zzz", "X", "", "").outcome; got != resUnknownModule {
+	if got := r.resolveConcept("zzz", "X", "", "", "").outcome; got != resUnknownModule {
 		t.Fatalf("local-only resolver: %v", got)
 	}
 }
@@ -135,7 +135,7 @@ func TestResolver_AbsoluteProjectPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := BuildResolver(consumer, g)
-	if got := r.resolveConcept("shared", "Thing", "", "").outcome; got != resResolved {
+	if got := r.resolveConcept("shared", "Thing", "", "", "").outcome; got != resResolved {
 		t.Fatalf("absolute project path: %v", got)
 	}
 }
@@ -173,30 +173,47 @@ func TestConceptOutcome(t *testing.T) {
 		{Name: "A", Kind: "entity"},
 		{Name: "Cats", Kind: "collection"},
 	}}
-	if conceptOutcome(nil, "", "A", false).outcome != resUnknownModule {
+	if conceptOutcome(nil, "", "A", "", false).outcome != resUnknownModule {
 		t.Fatal("not found")
 	}
-	if conceptOutcome(nil, "", "A", true).outcome != resUnknownModule {
+	if conceptOutcome(nil, "", "A", "", true).outcome != resUnknownModule {
 		t.Fatal("nil module")
 	}
-	if conceptOutcome(mm, "", "A", true).outcome != resResolved {
+	if conceptOutcome(mm, "", "A", "", true).outcome != resResolved {
 		t.Fatal("trio resolved")
 	}
-	if conceptOutcome(mm, "", "B", true).outcome != resUnknownConcept {
+	if conceptOutcome(mm, "", "B", "", true).outcome != resUnknownConcept {
 		t.Fatal("unknown concept")
 	}
 	// Two-segment form never reaches collections/recordsets.
-	if conceptOutcome(mm, "", "Cats", true).outcome != resUnknownConcept {
+	if conceptOutcome(mm, "", "Cats", "", true).outcome != resUnknownConcept {
 		t.Fatal("collection is not two-segment addressable")
 	}
 	// Kind-explicit forms.
-	if conceptOutcome(mm, "collection", "Cats", true).outcome != resResolved {
+	if conceptOutcome(mm, "collection", "Cats", "", true).outcome != resResolved {
 		t.Fatal("collection kind resolved")
 	}
-	if got := conceptOutcome(mm, "enum", "A", true); got.outcome != resKindMismatch || got.actualKind != "entity" {
+	if got := conceptOutcome(mm, "enum", "A", "", true); got.outcome != resKindMismatch || got.actualKind != "entity" {
 		t.Fatalf("kind mismatch: %+v", got)
 	}
-	if conceptOutcome(mm, "entity", "Nope", true).outcome != resUnknownConcept {
+	if conceptOutcome(mm, "entity", "Nope", "", true).outcome != resUnknownConcept {
 		t.Fatal("kind-explicit unknown concept")
+	}
+}
+
+func TestFragmentOutcome(t *testing.T) {
+	enum := &Concept{Name: "Availability", Kind: "enum", EnumValues: []string{"in-stock", "out-of-stock"}}
+	ent := &Concept{Name: "Item", Kind: "entity"}
+	if got := fragmentOutcome(enum, ""); got.outcome != resResolved || got.concept != enum {
+		t.Fatalf("no fragment: %+v", got)
+	}
+	if got := fragmentOutcome(enum, "in-stock"); got.outcome != resResolved || got.concept != enum {
+		t.Fatalf("declared value: %+v", got)
+	}
+	if got := fragmentOutcome(enum, "sold-out"); got.outcome != resFragmentUnknownValue {
+		t.Fatalf("unknown value: %+v", got)
+	}
+	if got := fragmentOutcome(ent, "in-stock"); got.outcome != resFragmentNotEnum || got.actualKind != "entity" {
+		t.Fatalf("non-enum: %+v", got)
 	}
 }

@@ -65,6 +65,20 @@ func TestParseModelspecRef(t *testing.T) {
 	if err != nil || q.Ref != "v1.2.3" || q.Repo != "example.com/acme/repo" {
 		t.Fatalf("cross-repo ref pin: %+v %v", q, err)
 	}
+	// Enum-value fragments (decision 0013) parse on both local forms and after
+	// a ?ref= pin.
+	q, err = ParseModelspecRef("modelspec:///catalog.Color#green")
+	if err != nil || q.Fragment != "green" || q.Name != "Color" {
+		t.Fatalf("fragment: %+v %v", q, err)
+	}
+	q, err = ParseModelspecRef("modelspec:///catalog.enums.Color#green")
+	if err != nil || q.Fragment != "green" || q.Kind != "enum" {
+		t.Fatalf("kind-explicit fragment: %+v %v", q, err)
+	}
+	q, err = ParseModelspecRef("modelspec:///catalog.Color?ref=main#green")
+	if err != nil || q.Fragment != "green" || q.Ref != "main" {
+		t.Fatalf("fragment after pin: %+v %v", q, err)
+	}
 }
 
 func TestParseModelspecRef_Legacy(t *testing.T) {
@@ -78,6 +92,12 @@ func TestParseModelspecRef_Legacy(t *testing.T) {
 	pe, ok = isLegacyForm(err)
 	if !ok || pe.Rewrite != "modelspec:///identity.Team?ref=main" {
 		t.Fatalf("legacy+ref: %v %+v", ok, pe)
+	}
+	// ... and an enum-value fragment (decision 0013).
+	_, err = ParseModelspecRef("modelspec://identity.Team#lead")
+	pe, ok = isLegacyForm(err)
+	if !ok || pe.Rewrite != "modelspec:///identity.Team#lead" {
+		t.Fatalf("legacy+fragment: %v %+v", ok, pe)
 	}
 	// A non-legacy error is not reported as legacy.
 	if _, ok := isLegacyForm(ParseErrOf(t, "modelspec:///x")); ok {
@@ -107,7 +127,8 @@ func TestParseModelspecRef_Errors(t *testing.T) {
 		"modelspec:///x.Y.Z.W":              msErrMalformed, // four segments
 		"modelspec:///x/y.Z":                msErrMalformed, // slash in local path
 		"modelspec:///vault.widgets.W":      msErrUnknownKind,
-		"modelspec:///vault.Name#frag":      msErrFragment,
+		"modelspec:///vault.Name#":          msErrFragment,  // empty fragment
+		"modelspec:///vault.Name#a#b":       msErrFragment,  // '#' appearing twice
 		"modelspec:///vault.Name?branch=x":  msErrMalformed, // unsupported query
 		"modelspec:///vault.Name?ref=":      msErrMalformed, // empty pin
 		"modelspec:///vault.Name?ref=a&b":   msErrMalformed, // multi-param query

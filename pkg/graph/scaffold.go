@@ -38,6 +38,7 @@ var kindTitle = map[string]string{
 	KindRelationship: "Relationship",
 	KindCommand:      "Command",
 	KindEvent:        "Event",
+	KindPolicy:       "Policy",
 }
 
 // DeriveID derives a bare kebab-case id from a display name (decision 0005):
@@ -100,7 +101,7 @@ func Scaffold(opts ScaffoldOptions) (ScaffoldResult, error) {
 	return scaffoldArtifact(opts, id, status)
 }
 
-// scaffoldModule creates a module README plus (unless --bare) the five
+// scaffoldModule creates a module README plus (unless --bare) the six
 // collection directories with README indexes.
 func scaffoldModule(opts ScaffoldOptions, id, status string) (ScaffoldResult, error) {
 	rootRel := opts.Root
@@ -267,6 +268,9 @@ func artifactContent(opts ScaffoldOptions, id, status string) string {
 		if opts.Subject != "" {
 			fmt.Fprintf(&b, "subject: %s\n", opts.Subject)
 		}
+	case KindPolicy:
+		b.WriteString("# applies:  # REQUIRED (decision 0013): exactly one of command|entity|relationship\n")
+		b.WriteString("#   command: " + opts.Module + ".<command-id>\n")
 	}
 	sum := opts.Summary
 	if sum == "" {
@@ -308,6 +312,8 @@ func collectionDescription(coll string) string {
 		return "CommandSpec artifacts"
 	case "events":
 		return "EventSpec artifacts"
+	case "policies":
+		return "PolicySpec artifacts"
 	default:
 		return "ModelSpec sources"
 	}

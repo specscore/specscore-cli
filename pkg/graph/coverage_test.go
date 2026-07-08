@@ -254,10 +254,10 @@ func TestResolver_ProjectModuleWithoutModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := BuildResolver(consumer, g)
-	if got := r.resolveConcept("withmodels", "T", "", "").outcome; got != resResolved {
+	if got := r.resolveConcept("withmodels", "T", "", "", "").outcome; got != resResolved {
 		t.Fatalf("withmodels: %v", got)
 	}
-	if got := r.resolveConcept("nomodels", "T", "", "").outcome; got != resUnknownModule {
+	if got := r.resolveConcept("nomodels", "T", "", "", "").outcome; got != resUnknownModule {
 		t.Fatalf("nomodels should be unknown (no models): %v", got)
 	}
 }

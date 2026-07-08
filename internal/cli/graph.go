@@ -72,9 +72,9 @@ func isKindToken(tok string) bool {
 func graphNewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "new <kind>",
-		Short: "Scaffold a GraphSpec artifact (module|entity|relationship|command|event)",
+		Short: "Scaffold a GraphSpec artifact (module|entity|relationship|command|event|policy)",
 		Long: `Scaffolds a GraphSpec artifact. <kind> is one of module, entity,
-relationship, command, or event. Value objects and enums are ModelSpec
+relationship, command, event, or policy. Value objects and enums are ModelSpec
 concepts and are not scaffolded here.`,
 		Args:         cobra.ArbitraryArgs,
 		SilenceUsage: true,
@@ -97,7 +97,7 @@ concepts and are not scaffolded here.`,
 func runGraphNew(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		_ = cmd.Help()
-		return exitcode.InvalidArgsError("missing <kind>; expected one of module, entity, relationship, command, event")
+		return exitcode.InvalidArgsError("missing <kind>; expected one of module, entity, relationship, command, event, policy")
 	}
 	if len(args) > 1 {
 		return exitcode.InvalidArgsErrorf("`graph new` accepts exactly one <kind>, got %d", len(args))
@@ -108,7 +108,7 @@ func runGraphNew(cmd *cobra.Command, args []string) error {
 			"`graph new %s` is not a GraphSpec kind — value objects and enums are ModelSpec concepts; model them in <module>/models/*.hcl", kind)
 	}
 	if !isKindToken(kind) {
-		return exitcode.InvalidArgsErrorf("unknown kind %q; expected one of module, entity, relationship, command, event", kind)
+		return exitcode.InvalidArgsErrorf("unknown kind %q; expected one of module, entity, relationship, command, event, policy", kind)
 	}
 
 	name, _ := cmd.Flags().GetString("name")
@@ -290,7 +290,7 @@ yaml|json, each row carries id, kind, name, and path.`,
 	}
 	cmd.Flags().String("project", "", "repository root (autodetected from CWD when omitted)")
 	cmd.Flags().String("root", "", "graph root relative to the repo (default spec/graph)")
-	cmd.Flags().String("kind", "", "filter by kind (module|entity|relationship|command|event)")
+	cmd.Flags().String("kind", "", "filter by kind (module|entity|relationship|command|event|policy)")
 	cmd.Flags().String("module", "", "filter by owning module id")
 	cmd.Flags().String("format", "text", "output format: text, yaml, json")
 	return cmd
@@ -304,7 +304,7 @@ func runGraphList(cmd *cobra.Command, _ []string) error {
 	format, _ := cmd.Flags().GetString("format")
 
 	if kind != "" && !isKindToken(kind) {
-		return exitcode.InvalidArgsErrorf("invalid --kind %q; expected one of module, entity, relationship, command, event", kind)
+		return exitcode.InvalidArgsErrorf("invalid --kind %q; expected one of module, entity, relationship, command, event, policy", kind)
 	}
 	if format != "text" && format != "json" && format != "yaml" {
 		return exitcode.InvalidArgsErrorf("invalid format: %s", format)

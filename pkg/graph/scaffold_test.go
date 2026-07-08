@@ -30,9 +30,9 @@ func TestScaffold_ModuleFullThenArtifacts(t *testing.T) {
 	if res.Target != "spec/graph/modules/identity/README.md" {
 		t.Fatalf("unexpected target %q", res.Target)
 	}
-	// Five collection READMEs + module README = 6 files.
-	if len(res.Created) != 6 {
-		t.Fatalf("expected 6 files, got %d: %v", len(res.Created), res.Created)
+	// Six collection READMEs + module README = 7 files.
+	if len(res.Created) != 7 {
+		t.Fatalf("expected 7 files, got %d: %v", len(res.Created), res.Created)
 	}
 	// The generated module must lint clean.
 	if v := lintRepo(t, root).Violations; len(v) != 0 {

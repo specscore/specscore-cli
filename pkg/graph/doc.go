@@ -7,22 +7,24 @@
 // consumer graph tree lives at a single graph root per repository (default
 // spec/graph/) with modules at modules/<module-id>/README.md, artifacts in
 // plural collection directories (entities/, relationships/, commands/,
-// events/) as unsuffixed <id>.md files, and ModelSpec sources at
+// events/, policies/) as unsuffixed <id>.md files, and ModelSpec sources at
 // modules/<module-id>/models/*.hcl (decision 0006).
 package graph
 
-// Kind tokens — the five GraphSpec kinds (decision 0004). Value objects and
-// enums are ModelSpec concepts, never GraphSpec kinds.
+// Kind tokens — the six GraphSpec kinds (decision 0004, amended by decision
+// 0013 which adds policy). Value objects and enums are ModelSpec concepts,
+// never GraphSpec kinds.
 const (
 	KindModule       = "module"
 	KindEntity       = "entity"
 	KindRelationship = "relationship"
 	KindCommand      = "command"
 	KindEvent        = "event"
+	KindPolicy       = "policy"
 )
 
-// Kinds lists the five GraphSpec kinds in canonical order.
-var Kinds = []string{KindModule, KindEntity, KindRelationship, KindCommand, KindEvent}
+// Kinds lists the six GraphSpec kinds in canonical order.
+var Kinds = []string{KindModule, KindEntity, KindRelationship, KindCommand, KindEvent, KindPolicy}
 
 // collectionByKind maps a non-module kind to its plural collection directory.
 var collectionByKind = map[string]string{
@@ -30,6 +32,7 @@ var collectionByKind = map[string]string{
 	KindRelationship: "relationships",
 	KindCommand:      "commands",
 	KindEvent:        "events",
+	KindPolicy:       "policies",
 }
 
 // kindByCollection is the inverse of collectionByKind — the collection
@@ -39,20 +42,21 @@ var kindByCollection = map[string]string{
 	"relationships": KindRelationship,
 	"commands":      KindCommand,
 	"events":        KindEvent,
+	"policies":      KindPolicy,
 }
 
-// CollectionDirs lists the five directories a full module scaffold carries
-// (four artifact collections plus models/ for ModelSpec sources).
-var CollectionDirs = []string{"entities", "relationships", "commands", "events", "models"}
+// CollectionDirs lists the six directories a full module scaffold carries
+// (five artifact collections plus models/ for ModelSpec sources).
+var CollectionDirs = []string{"entities", "relationships", "commands", "events", "policies", "models"}
 
-// ArtifactCollections lists the four artifact-bearing collection directories,
+// ArtifactCollections lists the five artifact-bearing collection directories,
 // in canonical order (models/ excluded — it holds HCL, not graph artifacts).
-var ArtifactCollections = []string{"entities", "relationships", "commands", "events"}
+var ArtifactCollections = []string{"entities", "relationships", "commands", "events", "policies"}
 
-// isKind reports whether tok is one of the five GraphSpec kinds.
+// isKind reports whether tok is one of the six GraphSpec kinds.
 func isKind(tok string) bool {
 	switch tok {
-	case KindModule, KindEntity, KindRelationship, KindCommand, KindEvent:
+	case KindModule, KindEntity, KindRelationship, KindCommand, KindEvent, KindPolicy:
 		return true
 	}
 	return false
