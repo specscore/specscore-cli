@@ -3,7 +3,7 @@ kind: entity
 id: team
 name: Team
 status: draft
-model: modelspec://identity.Team
+model: modelspec:///identity.Team
 summary: A group of users.
 ---
 

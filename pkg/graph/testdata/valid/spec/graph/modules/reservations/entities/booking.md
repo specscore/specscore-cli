@@ -3,7 +3,7 @@ kind: entity
 id: booking
 name: Booking
 status: draft
-model: modelspec://reservations.Booking
+model: modelspec:///reservations.Booking
 lifecycle:
   states: [requested, confirmed, cancelled]
 summary: A reservation for an asset.

@@ -15,9 +15,17 @@ const (
 	resResolved        resolution = iota // module + concept both found
 	resUnknownModule                     // module not found in any resolution step
 	resUnknownConcept                    // module resolved, concept absent from it
-	resRepoUnavailable                   // @-suffixed repo not locally available
+	resKindMismatch                      // concept exists under a different kind than requested
+	resRepoUnavailable                   // cross-repo target not locally available
 	resAmbiguousModule                   // module found in multiple configured projects
 )
+
+// conceptResult carries the resolution outcome plus, for resKindMismatch, the
+// kind the concept name actually has.
+type conceptResult struct {
+	outcome    resolution
+	actualKind string
+}
 
 // Resolver resolves module short names to ModelSpec modules across the three
 // decision-0007 steps: local graph root, configured `projects:` local paths,
@@ -89,38 +97,46 @@ func projectIdentity(dir string) string {
 	return p.Host + "/" + p.Org + "/" + p.Repo
 }
 
-// resolveConcept resolves a module/name reference (with an optional cross-repo
-// suffix) to a concept, returning the three-way diagnostic outcome.
-func (r *Resolver) resolveConcept(module, name, suffix string) resolution {
-	if suffix != "" {
-		repo, ok := r.repos[suffix]
+// resolveConcept resolves a module/name reference to a concept, returning the
+// diagnostic outcome. kind is the singular concept kind for a kind-explicit
+// reference, or "" for the kind-free (trio) form. repo is "host/org/repo" for a
+// cross-repo reference, or "" for a local one. The advisory ?ref= pin does not
+// change resolution (decision 0010): local resolution proceeds regardless.
+func (r *Resolver) resolveConcept(module, name, kind, repo string) conceptResult {
+	if repo != "" {
+		byID, ok := r.repos[repo]
 		if !ok {
-			return resRepoUnavailable
+			return conceptResult{outcome: resRepoUnavailable}
 		}
-		return conceptOutcome(repo[module], name, ok && repo[module] != nil)
+		return conceptOutcome(byID[module], kind, name, byID[module] != nil)
 	}
 	if mm, ok := r.local[module]; ok {
-		return conceptOutcome(mm, name, true)
+		return conceptOutcome(mm, kind, name, true)
 	}
 	mms := r.project[module]
 	switch {
 	case len(mms) == 1:
-		return conceptOutcome(mms[0], name, true)
+		return conceptOutcome(mms[0], kind, name, true)
 	case len(mms) > 1:
-		return resAmbiguousModule
+		return conceptResult{outcome: resAmbiguousModule}
 	default:
-		return resUnknownModule
+		return conceptResult{outcome: resUnknownModule}
 	}
 }
 
 // conceptOutcome maps a resolved-or-not module plus a concept lookup to a
 // resolution outcome.
-func conceptOutcome(mm *ModelModule, name string, moduleFound bool) resolution {
+func conceptOutcome(mm *ModelModule, kind, name string, moduleFound bool) conceptResult {
 	if !moduleFound || mm == nil {
-		return resUnknownModule
+		return conceptResult{outcome: resUnknownModule}
 	}
-	if mm.HasConcept(name) {
-		return resResolved
+	l := mm.lookupConcept(kind, name)
+	switch {
+	case l.found:
+		return conceptResult{outcome: resResolved}
+	case l.exists:
+		return conceptResult{outcome: resKindMismatch, actualKind: l.actualKind}
+	default:
+		return conceptResult{outcome: resUnknownConcept}
 	}
-	return resUnknownConcept
 }

@@ -516,20 +516,27 @@ func (l *linter) checkModuleDependency(owner *Module, targetModule, filePath str
 		fmt.Sprintf("%s targets module %q which is not in module %q dependsOn", ctx, targetModule, owner.ID))
 }
 
-// checkModelspecRef validates a modelspec:// reference and its dependency
-// direction (decision 0007).
+// checkModelspecRef validates a modelspec:// reference (decisions 0007/0010/
+// 0011) and its dependency direction. The legacy authority-empty-path form is a
+// distinct error carrying the exact rewrite so `graph lint --fix` can repair it.
 func (l *linter) checkModelspecRef(owner *Module, ownerPath, ref, field string, line int) {
-	msr, ok := ParseModelspecRef(ref)
-	if !ok {
+	msr, err := ParseModelspecRef(ref)
+	if err != nil {
+		if pe, ok := isLegacyForm(err); ok {
+			l.emit("graph-model-legacy-form", ownerPath, line,
+				fmt.Sprintf("%s reference %q uses the legacy modelspec form; rewrite to %q", field, ref, pe.Rewrite))
+			return
+		}
 		l.emit("graph-model-ref-resolves", ownerPath, line,
-			fmt.Sprintf("%s reference %q is not a valid modelspec:// reference", field, ref))
+			fmt.Sprintf("%s reference %q is not a valid modelspec:// reference: %v", field, ref, err))
 		return
 	}
-	if msr.Suffix == "" {
+	if msr.Repo == "" {
 		l.checkModuleDependency(owner, msr.Module, ownerPath, line,
 			fmt.Sprintf("%s reference %q", field, ref))
 	}
-	switch l.res.resolveConcept(msr.Module, msr.Name, msr.Suffix) {
+	res := l.res.resolveConcept(msr.Module, msr.Name, msr.Kind, msr.Repo)
+	switch res.outcome {
 	case resResolved:
 	case resUnknownModule:
 		l.emit("graph-model-ref-resolves", ownerPath, line,
@@ -537,9 +544,12 @@ func (l *linter) checkModelspecRef(owner *Module, ownerPath, ref, field string, 
 	case resUnknownConcept:
 		l.emit("graph-model-ref-resolves", ownerPath, line,
 			fmt.Sprintf("%s reference %q: unknown concept %q in module %q", field, ref, msr.Name, msr.Module))
+	case resKindMismatch:
+		l.emit("graph-model-ref-resolves", ownerPath, line,
+			fmt.Sprintf("%s reference %q: concept %q in module %q is a %s, not a %s", field, ref, msr.Name, msr.Module, res.actualKind, msr.Kind))
 	case resRepoUnavailable:
 		l.emit("graph-model-ref-resolves", ownerPath, line,
-			fmt.Sprintf("%s reference %q: unresolved (repository %q not available)", field, ref, msr.Suffix))
+			fmt.Sprintf("%s reference %q: unresolved (repository %q not available)", field, ref, msr.Repo))
 	case resAmbiguousModule:
 		l.emit("graph-model-ref-resolves", ownerPath, line,
 			fmt.Sprintf("%s reference %q: module %q is ambiguous across configured projects", field, ref, msr.Module))
@@ -552,14 +562,27 @@ func (l *linter) checkModel(m *Module) {
 		l.emit("graph-model-ref-resolves", d.File, d.Line,
 			fmt.Sprintf("cannot parse ModelSpec source: %s", d.Message))
 	}
+	// Reserved-token concept names are forbidden in every scope (decision 0011 /
+	// ModelSpec decision 0015): they are the kind segments of reference syntax.
+	for _, c := range mm.Concepts {
+		if ReservedConceptNames[c.Name] {
+			l.emit("graph-model-reserved-name", c.File, c.Line,
+				fmt.Sprintf("%s name %q is a reserved kind token (entities, components, enums, collections, recordsets) and cannot name a concept", c.Kind, c.Name))
+		}
+	}
+	// Duplicate detection is per name scope: the entity/component/enum trio
+	// shares one scope; collections and recordsets each have their own. A
+	// module and a same-named entity never collide — modules are bare-ID
+	// citizens, not concepts (decisions 0011).
 	seen := map[string]*Concept{}
 	for _, c := range mm.Concepts {
-		if prev, ok := seen[c.Name]; ok {
+		key := conceptScope(c.Kind) + "\x00" + c.Name
+		if prev, ok := seen[key]; ok {
 			l.emit("graph-model-duplicate-concept", c.File, c.Line,
-				fmt.Sprintf("duplicate concept name %q (also declared at line %d)", c.Name, prev.Line))
+				fmt.Sprintf("duplicate concept name %q in the %s scope (also declared at line %d)", c.Name, conceptScope(c.Kind), prev.Line))
 			continue
 		}
-		seen[c.Name] = c
+		seen[key] = c
 	}
 	for _, c := range mm.Concepts {
 		if c.Kind != "enum" {
@@ -596,7 +619,10 @@ func (l *linter) checkModelRef(m *Module, ref *ModelRef) {
 	name := ref.Target[dot+1:]
 	l.checkModuleDependency(m, module, ref.File, ref.Line,
 		fmt.Sprintf("model %s reference %q", ref.Attr, ref.Target))
-	switch l.res.resolveConcept(module, name, "") {
+	// HCL qualified names are kind-free (the attribute is the kind selector,
+	// decision 0011) and never cross-repo, so they resolve in the trio scope.
+	res := l.res.resolveConcept(module, name, "", "")
+	switch res.outcome {
 	case resResolved:
 	case resUnknownModule:
 		l.emit("graph-model-ref-resolves", ref.File, ref.Line,
@@ -607,8 +633,8 @@ func (l *linter) checkModelRef(m *Module, ref *ModelRef) {
 	case resAmbiguousModule:
 		l.emit("graph-model-ref-resolves", ref.File, ref.Line,
 			fmt.Sprintf("model %s reference %q: module %q is ambiguous across configured projects", ref.Attr, ref.Target, module))
-	case resRepoUnavailable:
-		// unreachable: bare/qualified HCL refs carry no @-suffix.
+	case resKindMismatch, resRepoUnavailable:
+		// unreachable for the kind-free, same-tree HCL resolution path.
 	}
 }
 
@@ -616,7 +642,12 @@ func (l *linter) checkDuplicateIDs() {
 	groups := map[string][]*Artifact{}
 	for _, m := range l.g.Modules {
 		for _, a := range collectArtifacts(m) {
-			if a.ID == "" {
+			// Module READMEs are bare-ID citizens, not qualified-ID concepts
+			// (decision 0011): a module never occupies a `<m>.<m>` slot, so a
+			// module and a same-named entity coexist. Module-id uniqueness is
+			// enforced separately by checkDuplicateModuleIDs. Only collection
+			// artifacts carry qualified IDs.
+			if a.ID == "" || a.CollectionDir == "" {
 				continue
 			}
 			groups[a.QualifiedID()] = append(groups[a.QualifiedID()], a)

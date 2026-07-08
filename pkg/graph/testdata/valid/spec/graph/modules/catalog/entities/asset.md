@@ -3,7 +3,7 @@ kind: entity
 id: asset
 name: Asset
 status: draft
-model: modelspec://catalog.Asset
+model: modelspec:///catalog.Asset
 summary: A bookable resource.
 ---
 

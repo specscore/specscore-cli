@@ -3,7 +3,7 @@ kind: entity
 id: item
 name: Item
 status: draft
-model: modelspec://shared.Thing
+model: modelspec:///shared.Thing
 summary: Resolves via configured projects (step 2).
 ---
 

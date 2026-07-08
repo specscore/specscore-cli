@@ -103,7 +103,7 @@ func TestLint_InputsShapeVariants(t *testing.T) {
 			"    ref: m.a",
 			"    fields: [x]",
 			"  - name: modelled", // model-only input resolving
-			"    model: modelspec://m.A"),
+			"    model: modelspec:///m.A"),
 		"spec/graph/modules/m/models/m.hcl": "entity \"A\" {}\n",
 	})
 	res := lintRepo(t, root)
@@ -119,7 +119,7 @@ func TestLint_MalformedGraphAndModelspecRefs(t *testing.T) {
 	root := repoWith(t, map[string]string{
 		"spec/graph/modules/m/README.md":     fmModule("m", "[]"),
 		"spec/graph/modules/m/commands/c.md": fmArt("command", "c", "subject: nodot"),
-		"spec/graph/modules/m/entities/e.md": fmArt("entity", "e", "model: modelspec://nodotname"),
+		"spec/graph/modules/m/entities/e.md": fmArt("entity", "e", "model: modelspec:///nodotname"),
 	})
 	res := lintRepo(t, root)
 	c := ruleCounts(res.Violations)
@@ -131,7 +131,7 @@ func TestLint_MalformedGraphAndModelspecRefs(t *testing.T) {
 func TestLint_ModelRefSuffixUnavailable(t *testing.T) {
 	root := repoWith(t, map[string]string{
 		"spec/graph/modules/m/README.md":     fmModule("m", "[]"),
-		"spec/graph/modules/m/entities/e.md": fmArt("entity", "e", "model: modelspec://shared.Thing@example.com/acme/gone"),
+		"spec/graph/modules/m/entities/e.md": fmArt("entity", "e", "model: modelspec://example.com/acme/gone/shared.Thing"),
 	})
 	res := lintRepo(t, root)
 	found := false
@@ -254,10 +254,10 @@ func TestResolver_ProjectModuleWithoutModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := BuildResolver(consumer, g)
-	if got := r.resolveConcept("withmodels", "T", ""); got != resResolved {
+	if got := r.resolveConcept("withmodels", "T", "", "").outcome; got != resResolved {
 		t.Fatalf("withmodels: %v", got)
 	}
-	if got := r.resolveConcept("nomodels", "T", ""); got != resUnknownModule {
+	if got := r.resolveConcept("nomodels", "T", "", "").outcome; got != resUnknownModule {
 		t.Fatalf("nomodels should be unknown (no models): %v", got)
 	}
 }

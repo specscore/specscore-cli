@@ -10,13 +10,61 @@ import (
 )
 
 // Concept is one ModelSpec concept declared in a module's HCL sources: an
-// entity, component, or enum (decision 0006; ModelSpec core-model).
+// entity, component, enum, collection, or recordset (decision 0006; ModelSpec
+// core-model; decision 0011 addressable concepts).
 type Concept struct {
 	Name       string
-	Kind       string // "entity", "component", or "enum"
+	Kind       string // "entity", "component", "enum", "collection", or "recordset"
 	File       string // absolute path to the .hcl file
 	Line       int
 	EnumValues []string // populated for enum concepts only
+}
+
+// conceptScope maps a concept kind to its name scope (decision 0011 / ModelSpec
+// decision 0015): entity, component, and enum share one flat "trio" scope;
+// collections and recordsets each have their own scope. Concept-name uniqueness
+// and reference resolution are per scope.
+func conceptScope(kind string) string {
+	switch kind {
+	case "entity", "component", "enum":
+		return "trio"
+	default:
+		return kind // "collection" | "recordset"
+	}
+}
+
+// conceptLookup is the outcome of resolving a concept name (optionally
+// constrained to a kind) within a module.
+type conceptLookup struct {
+	found      bool   // an exact match (kind honored, or trio hit for the kind-free form)
+	exists     bool   // the name is declared under some other kind (kind mismatch)
+	actualKind string // the kind the name actually has, when exists is true
+}
+
+// lookupConcept resolves name within the module. The kind-free form (kind == "")
+// resolves only in the trio scope (decision 0011); the kind-explicit form
+// requires an exact kind match and otherwise reports a kind mismatch when the
+// name is declared under a different kind.
+func (m *ModelModule) lookupConcept(kind, name string) conceptLookup {
+	if kind == "" {
+		for _, c := range m.Concepts {
+			if c.Name == name && conceptScope(c.Kind) == "trio" {
+				return conceptLookup{found: true}
+			}
+		}
+		return conceptLookup{}
+	}
+	var res conceptLookup
+	for _, c := range m.Concepts {
+		if c.Name != name {
+			continue
+		}
+		if c.Kind == kind {
+			return conceptLookup{found: true}
+		}
+		res = conceptLookup{exists: true, actualKind: c.Kind}
+	}
+	return res
 }
 
 // ModelRef is one module-qualified or bare reference inside HCL sources — a
@@ -48,7 +96,9 @@ type ModelModule struct {
 	ParseErrors []ModelDiag
 }
 
-// HasConcept reports whether the module declares a concept with the given name.
+// HasConcept reports whether the module declares a concept with the given name
+// in any kind (used for bare same-module HCL references, which are
+// attribute-typed and therefore kind-unambiguous at the source level).
 func (m *ModelModule) HasConcept(name string) bool {
 	for _, c := range m.Concepts {
 		if c.Name == name {
@@ -129,10 +179,13 @@ func (m *ModelModule) parseBlock(path string, blk *hclsyntax.Block) {
 			c.EnumValues = vals
 		}
 		m.Concepts = append(m.Concepts, c)
+	case "collection", "recordset":
+		// Indexed so modelspec://<module>.collections|recordsets.<Name> refs
+		// resolve. Their source/bind attributes are not reference attributes
+		// (ModelSpec decision 0014), so no member refs are collected.
+		m.Concepts = append(m.Concepts, &Concept{Name: name, Kind: blk.Type, File: path, Line: line})
 	}
-	// Other block types (collection, recordset, projection, index, key) are
-	// tolerated and ignored — they carry no cross-module concept references
-	// the v0.2 resolver needs.
+	// Other block types (projection, index, key) are tolerated and ignored.
 }
 
 // collectMemberRefs extracts references from an entity/component body: the

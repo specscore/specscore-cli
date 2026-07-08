@@ -3,7 +3,7 @@ kind: entity
 id: space
 name: Space
 status: draft
-model: modelspec://core.Space
+model: modelspec:///core.Space
 summary: A container.
 ---
 

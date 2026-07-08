@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 142
+Total rules: 144
 
 ## capability
 
@@ -126,7 +126,9 @@ Total rules: 142
 | graph-no-owner-field | error | Rejects an owner: field; ownership is derived from placement. |
 | graph-no-inline-structure | error | Rejects inline fields:/properties: in a graph artifact; structure lives in ModelSpec. |
 | graph-reference-resolves | error | Requires qualified graph references (from/to/subject/actors/participants/inputs.ref/possibleEvents) to resolve to existing artifacts. |
-| graph-model-ref-resolves | error | Requires modelspec:// and HCL concept references to resolve per decision 0007 (unknown module / unknown concept / unavailable repository). |
+| graph-model-ref-resolves | error | Requires modelspec:// and HCL concept references to resolve per decisions 0007/0010/0011 (unknown module / unknown concept / kind mismatch / unavailable repository / bad grammar). |
+| graph-model-legacy-form | error | Rejects the legacy modelspec://x.Y reference form (authority present, empty path); carries the exact modelspec:///x.Y rewrite that `graph lint --fix` applies (decision 0010). |
+| graph-model-reserved-name | error | Rejects a ModelSpec concept named with a reserved kind token (entities, components, enums, collections, recordsets) (decision 0011). |
 | graph-dependency-direction | error | Requires every cross-module reference (graph or model level) to target a module in the owning module's dependsOn. |
 | graph-relationship-owner-covers-endpoints | error | Requires a relationship's owning module to cover both endpoint modules in its dependsOn closure. |
 | graph-metadata-shape | error | Requires relationship metadata to be a flat map of scalar, qualified graph, or modelspec:// values. |

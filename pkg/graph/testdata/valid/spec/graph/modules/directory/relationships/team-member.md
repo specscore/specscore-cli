@@ -7,7 +7,7 @@ from: identity.team
 to: directory.contact
 cardinality: many-to-many
 metadata:
-  role: modelspec://identity.TeamRole
+  role: modelspec:///identity.TeamRole
 summary: A Contact participates in a Team with a role.
 ---
 

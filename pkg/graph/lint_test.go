@@ -127,7 +127,7 @@ func TestLint_NegativeCases(t *testing.T) {
 			rule: "graph-model-ref-resolves",
 			files: map[string]string{
 				"spec/graph/modules/m/README.md":     fmModule("m", "[]"),
-				"spec/graph/modules/m/entities/e.md": fmArt("entity", "e", "model: modelspec://m.Ghost"),
+				"spec/graph/modules/m/entities/e.md": fmArt("entity", "e", "model: modelspec:///m.Ghost"),
 				"spec/graph/modules/m/models/m.hcl":  "entity \"Real\" {\n  key = [\"id\"]\n}\n",
 			},
 		},
@@ -169,7 +169,7 @@ func TestLint_NegativeCases(t *testing.T) {
 			files: map[string]string{
 				"spec/graph/modules/m/README.md":     fmModule("m", "[]"),
 				"spec/graph/modules/m/entities/a.md": fmArt("entity", "a"),
-				"spec/graph/modules/m/commands/c.md": fmArt("command", "c", "inputs:", "  - name: p", "    ref: m.a", "    model: modelspec://m.A"),
+				"spec/graph/modules/m/commands/c.md": fmArt("command", "c", "inputs:", "  - name: p", "    ref: m.a", "    model: modelspec:///m.A"),
 			},
 		},
 		{
