@@ -29,7 +29,7 @@ A specification tree is only as useful as its structural consistency. Without a 
 
 ### lint
 
-Scans the spec tree and reports violations of structural conventions (README presence, Open Questions sections, heading levels, feature references, internal links, index entries, adherence footers, Idea-specific rules). `--fix` applies autofixes for rules that support them.
+Scans the spec tree and reports violations of structural conventions (README presence, Open Questions sections, heading levels, feature references, internal links, index entries, adherence footers, Idea-specific rules). Future validation integrations may add gated ModelSpec rules without changing ModelSpec semantics. `--fix` applies autofixes for rules that support them.
 
 ### migrate
 

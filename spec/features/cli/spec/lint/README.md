@@ -10,7 +10,7 @@ status: Approved
 > **AI skill:** [GitHub](https://github.com/specscore/ai-plugin-specscore/blob/main/skills/spec/references/lint.md) · [local](../../../../../../ai-plugin-specscore/skills/spec/references/lint.md) — if this command's CLI signature or behavior changes, update the linked skill to keep agents in sync.
 
 **Status:** Approved
-**Source Ideas:** index-entries-autofix, lint-fix-reports-modified-files
+**Source Ideas:** index-entries-autofix, lint-fix-reports-modified-files, modelspec-cli-validation
 
 ## Summary
 
@@ -277,6 +277,31 @@ GraphSpec validation is specified first under [`specscore graph lint`](../../gra
 #### REQ: graph-rule-registry-compatibility
 
 When GraphSpec rules are registered in `pkg/lint`, they MUST use the same rule-selection machinery as existing rule families: `--rules`, `--ignore`, `--severity`, structured output, and exit-code behavior. Their authoritative CLI contract lives under [Graph Validation](../../graph/validation/README.md), not in this generic lint feature.
+
+### ModelSpec rule integration
+
+ModelSpec is an independent specification language for application data models. The
+CLI may validate ModelSpec documents, but ModelSpec semantics remain owned by the
+ModelSpec specification, not the CLI, SpecScore, or GraphSpec.
+
+#### REQ: modelspec-rules-not-graphspec
+
+`specscore spec lint` MUST NOT model ModelSpec validation as GraphSpec validation.
+ModelSpec rules, if registered, MUST use their own rule family and diagnostics.
+
+#### REQ: modelspec-rule-registry-compatibility
+
+When ModelSpec rules are registered in `pkg/lint`, they MUST use the same
+rule-selection machinery as existing rule families: `--rules`, `--ignore`,
+`--severity`, structured output, and exit-code behavior. Rule behavior that depends on
+ModelSpec concepts MUST cite ModelSpec as the semantic source of truth.
+
+#### REQ: modelspec-validation-gated
+
+ModelSpec-specific rules SHOULD remain gated by explicit target, rule selection, or
+repo configuration until ModelSpec publishes a stable validation contract. Existing
+`specscore spec lint` workflows MUST NOT break merely because a repository contains
+experimental ModelSpec files.
 
 ## Parameters
 

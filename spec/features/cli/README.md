@@ -80,7 +80,7 @@ CLI surface for the Property Doc-Kind. Hosts the `property-*` lint rules (frontm
 
 ### spec
 
-Validates the specification tree. Hosts `spec lint`, which runs the full checker suite (structural conventions, adherence footers, OQ sections, index completeness, and Idea-specific rules) and optionally applies autofixes. Reports violations with severity levels.
+Validates the specification tree. Hosts `spec lint`, which runs the full checker suite (structural conventions, adherence footers, OQ sections, index completeness, and Idea-specific rules) and optionally applies autofixes. Future gated integrations may validate independent specifications such as ModelSpec while preserving their ownership boundaries. Reports violations with severity levels.
 
 ### task
 
