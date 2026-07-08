@@ -59,7 +59,7 @@ func TestTaskChangeStatus_Board_CompleteWithProvenance(t *testing.T) {
 // AC complete-with-provenance: full clone URL as <repo>.
 func TestTaskChangeStatus_Board_CompleteWithCloneURL(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
-	url := "https://github.com/sneat-co/backstage.git"
+	url := "https://github.com/acme/backstage.git"
 	_, _, err := runTask(t, "change-status", "auth", "--to=complete",
 		"--repo", url, "--commit", "a1b2c3d")
 	if err != nil {
