@@ -88,19 +88,19 @@ Commands that generate FeatureSpecs, implementation tasks, migration plans, or A
 
 **Requirements:** graph/ai-assistance#req:graph-review-package
 
-Running `specscore graph review --module bookius --format md` twice on the same graph emits equivalent content in deterministic order.
+Running `specscore graph review --module reservations --format md` twice on the same graph emits equivalent content in deterministic order.
 
 ### AC: explain-shows-references
 
 **Requirements:** graph/ai-assistance#req:graph-explain
 
-`specscore graph explain bookius.Booking --format yaml` includes owner, kind, outbound references, inbound references, and open questions.
+`specscore graph explain reservations.booking --format yaml` includes owner, kind, outbound references, inbound references, and open questions.
 
 ### AC: suggestions-are-advisory
 
 **Requirements:** graph/ai-assistance#req:graph-suggest
 
-`specscore graph suggest --module bookius` labels findings as advisory recommendations, not lint errors.
+`specscore graph suggest --module reservations` labels findings as advisory recommendations, not lint errors.
 
 ## Open Questions
 

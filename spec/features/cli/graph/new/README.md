@@ -12,7 +12,7 @@ status: Draft
 
 ## Summary
 
-`specscore graph new` scaffolds GraphSpec artifacts. The primary form is `specscore graph new <kind>`, where `<kind>` is a GraphSpec kind such as `module`, `entity`, `relationship`, `command`, `event`, `value-object`, or `enum`.
+`specscore graph new` scaffolds GraphSpec artifacts. The primary form is `specscore graph new <kind>`, where `<kind>` is one of the five GraphSpec kinds: `module`, `entity`, `relationship`, `command`, or `event`. Value objects and enums are ModelSpec concepts and are not scaffolded by `graph new` (GraphSpec decision 0004).
 
 The command should produce reviewable Markdown with YAML frontmatter, using GraphSpec templates rather than hard-coded CLI-only semantics.
 
@@ -24,8 +24,6 @@ specscore graph new entity --name <name> --module <module-id> [--id <id>] [--roo
 specscore graph new relationship --name <name> --from <ref> --to <ref> --module <module-id> [--id <id>] [--project <path>]
 specscore graph new command --name <name> --module <module-id> [--subject <ref>] [--project <path>]
 specscore graph new event --name <name> --module <module-id> [--subject <ref>] [--project <path>]
-specscore graph new value-object --name <name> --module <module-id> [--id <id>] [--project <path>]
-specscore graph new enum --name <name> --module <module-id> [--id <id>] [--values <csv>] [--project <path>]
 ```
 
 Future structural editing commands:
@@ -55,21 +53,21 @@ GraphSpec artifacts are intended to be Markdown-first and reviewable, but manual
 
 #### REQ: supported-kinds
 
-The first implementation MUST support `module`, `entity`, `relationship`, `command`, `event`, `value-object`, and `enum`. Unknown kind tokens MUST exit `2`.
+The first implementation MUST support `module`, `entity`, `relationship`, `command`, and `event`. Unknown kind tokens — including the retired `value-object` and `enum` — MUST exit `2`; for the retired tokens the error message SHOULD point authors to ModelSpec.
 
 ### Output location
 
 The default same-repo root is `spec/graph/`. Within a graph root, the CLI uses plural consumer directories, not GraphSpec language-kind directory names.
 
+Filenames are the bare local ID with no kind suffix — the plural directory and the frontmatter `kind:` already type the artifact (GraphSpec decision 0005).
+
 | Kind | Default location |
 |---|---|
-| `module` | `spec/graph/modules/<module-id>/README.md` or `spec/graph/<module-id>/README.md` for configured core roots |
+| `module` | `spec/graph/modules/<module-id>/README.md` |
 | `entity` | `<module-root>/entities/<id>.md` |
-| `relationship` | `<module-root>/relationships/<id>.relationship.md` |
-| `command` | `<module-root>/commands/<id>.command.md` |
-| `event` | `<module-root>/events/<id>.event.md` |
-| `value-object` | `<module-root>/value-objects/<id>.value-object.md` |
-| `enum` | `<module-root>/enums/<id>.enum.md` |
+| `relationship` | `<module-root>/relationships/<id>.md` |
+| `command` | `<module-root>/commands/<id>.md` |
+| `event` | `<module-root>/events/<id>.md` |
 
 #### REQ: plural-consumer-directories
 
@@ -85,7 +83,7 @@ Generated files must be intentionally minimal and reviewable.
 
 #### REQ: frontmatter-minimum
 
-Every generated artifact MUST include YAML frontmatter with at least `kind`, `id`, `name`, `owner`, `status`, and `summary` where those fields are meaningful for the GraphSpec kind. Relationship artifacts MUST also include `from` and `to` when supplied. Command and Event artifacts MUST include `subject` when supplied.
+Every generated artifact MUST include YAML frontmatter with at least `kind`, `id`, `name`, `status`, and `summary` where those fields are meaningful for the GraphSpec kind. Artifacts MUST NOT carry an `owner:` field — ownership is derived from placement under the module root (GraphSpec decision 0005). Relationship artifacts MUST also include `from` and `to` when supplied. Command and Event artifacts MUST include `subject` when supplied. Entity artifacts SHOULD include a `model:` placeholder comment pointing authors at the `modelspec://` reference form.
 
 #### REQ: body-sections
 
@@ -105,7 +103,7 @@ Additional sections MAY be kind-specific, such as `## Relationships`, `## Lifecy
 
 #### REQ: id-derivation
 
-When `--id` is omitted, the CLI MUST derive a stable ID from `--name` using the slug/case conventions defined by GraphSpec. Until GraphSpec finalizes ID syntax, the CLI MUST use conservative URL-safe lowercase slugs for filenames and preserve display case in `name`.
+When `--id` is omitted, the CLI MUST derive the ID from `--name` per GraphSpec decision 0005: bare lowercase kebab-case, no module prefix, filename stem equal to the ID. Display case is preserved in `name`. Supplying a module-prefixed `--id` (e.g. `reservations.booking`) MUST exit `2` (InvalidArgs) with a message explaining that qualified IDs are computed, not stored.
 
 #### REQ: collision-check
 
@@ -135,19 +133,19 @@ The first implementation MAY omit `rename`, `move`, `delete`, `extract`, `merge`
 
 **Requirements:** graph/new#req:supported-kinds, graph/new#req:frontmatter-minimum, graph/new#req:body-sections
 
-Running `specscore graph new entity --name Booking --module bookius` creates a Markdown artifact under the configured Bookius graph root with `kind: entity`, a stable id, `name: Booking`, `owner: bookius`, and an `## Open Questions` section.
+Running `specscore graph new entity --name Booking --module reservations` creates `entities/booking.md` under the reservations module graph root with `kind: entity`, `id: booking`, `name: Booking`, no `owner:` field (ownership is derived from placement), and an `## Open Questions` section.
 
 ### AC: relationship-requires-endpoints
 
 **Requirements:** graph/new#req:relationship-endpoints
 
-Running `specscore graph new relationship --name reserves --module bookius` without `--from` and `--to` exits `2` and writes no file.
+Running `specscore graph new relationship --name reserves --module reservations` without `--from` and `--to` exits `2` and writes no file.
 
 ### AC: no-overwrite-by-default
 
 **Requirements:** graph/new#req:collision-check
 
-Running the same `graph new enum` command twice exits `1` on the second invocation and leaves the first file unchanged.
+Running the same `graph new event` command twice exits `1` on the second invocation and leaves the first file unchanged.
 
 ## Open Questions
 

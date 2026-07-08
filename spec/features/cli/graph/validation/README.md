@@ -14,7 +14,9 @@ status: Draft
 
 Graph validation commands check GraphSpec structure, YAML, references, IDs, names, ownership, dependencies, lifecycle, and graph consistency.
 
-The proposed commands are `graph lint`, `graph validate`, `graph doctor`, and `graph check-refs`.
+`graph lint` is the v0.2 command and the only one implemented first. `graph validate` and `graph check-refs` are rule-subset conveniences of `lint` (`--rules graph-schema-*` and `--rules graph-ref-*` respectively) and MAY ship as aliases later; `graph doctor` is staged as Later.
+
+The v0.2 core rule set follows GraphSpec decisions 0004 and 0005: id-equals-filename-stem, id-kebab-case, no-module-prefix-in-id, reference-resolves (including `modelspec://` references once ModelSpec validation is available), ownership-derivable (artifact under a module root, no `owner:` field), dependency-direction (qualified references covered by the owning module's `dependsOn`), and relationship-owner-depends-on-endpoints.
 
 ## Synopsis
 
@@ -66,9 +68,9 @@ Graph validation should eventually include these categories:
 | YAML | parse errors, required frontmatter fields, unknown kind tokens |
 | Identity | duplicate IDs, duplicate names within scope, id/file mismatch |
 | References | broken local refs, broken cross-repo refs, unresolved module refs |
-| Ownership | artifact owner exists, module owns allowed kinds, relationship ownership |
-| Dependencies | illegal dependency direction, cross-module dependencies, cycles |
-| Lifecycle | invalid lifecycle enum refs, unknown state refs, illegal transitions if declared |
+| Ownership | artifact placed under a module root, stray `owner:` field present, relationship ownership |
+| Dependencies | qualified reference to a module missing from `dependsOn`, cycles |
+| Lifecycle | empty or duplicate `lifecycle.states`, unknown state refs, illegal transitions if declared |
 | Graph consistency | dangling relationships, inconsistent cardinality, command/event subject mismatch |
 | Module consistency | missing module indexes, artifacts outside owning module, distributed-root conflicts |
 
@@ -86,15 +88,15 @@ Graph validation SHOULD detect duplicate display names within the same module an
 
 #### REQ: ownership-validation
 
-Graph validation MUST verify that each owned artifact's `owner` resolves to a ModuleSpec or configured module root. Artifacts without resolvable owners are errors unless GraphSpec defines ownerless artifacts.
+Ownership is derived from placement (GraphSpec decision 0005). Graph validation MUST verify that every artifact resides under a resolvable module root; artifacts outside any module root are errors. An `owner:` frontmatter field on any artifact is itself a lint violation, since it duplicates derived ownership.
 
 #### REQ: dependency-validation
 
-Graph validation MUST report dependency-direction violations only when GraphSpec defines the relevant direction rule. The CLI MUST NOT invent project-specific architecture rules unless they are configured outside the core GraphSpec validator.
+Graph validation MUST verify that every qualified reference from an artifact targets a module listed in the owning module's `dependsOn`, and that a relationship's owning module covers both endpoint modules in its `dependsOn` closure. The CLI MUST NOT invent project-specific architecture rules beyond what GraphSpec defines unless they are configured outside the core GraphSpec validator.
 
 #### REQ: lifecycle-validation
 
-When an artifact references a lifecycle enum or workflow, validation MUST check that the reference resolves. Deeper transition validation is deferred until GraphSpec defines lifecycle semantics.
+When an entity declares `lifecycle.states`, validation MUST check the list is non-empty and free of duplicates, and that any state reference elsewhere in the artifact resolves to a declared state. Deeper transition validation is deferred until GraphSpec defines lifecycle transition semantics.
 
 ### Integration with `specscore spec lint`
 

@@ -102,7 +102,7 @@ Given a graph with one entity and one event, `specscore graph list --kind entity
 
 **Requirements:** graph/navigation#req:graph-refs
 
-Given a Booking command and event that reference `bookius.Booking`, `specscore graph refs bookius.Booking --format yaml` includes both referencing artifacts with their kind and path.
+Given a Booking command and event that reference `reservations.booking`, `specscore graph refs reservations.booking --format yaml` includes both referencing artifacts with their kind and path.
 
 ### AC: deps-detects-cycle
 

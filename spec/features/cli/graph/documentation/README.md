@@ -65,7 +65,7 @@ Documentation generation should include architecture-focused reports.
 
 #### REQ: module-report
 
-When scoped with `--module`, Markdown/HTML output SHOULD include a module report listing owned entities, relationships, commands, events, enums, value objects, inbound references, outbound references, and open modelling questions.
+When scoped with `--module`, Markdown/HTML output SHOULD include a module report listing owned entities, relationships, commands, events, referenced ModelSpec models/components/enums (derived nodes), inbound references, outbound references, and open modelling questions.
 
 ## Dependencies
 
@@ -89,7 +89,7 @@ Given a graph with Booking reserving Asset, `specscore graph render --format mer
 
 **Requirements:** graph/documentation#req:module-report
 
-`specscore graph render --module bookius --format md` emits a Markdown report containing Bookius-owned artifacts and cross-module references.
+`specscore graph render --module reservations --format md` emits a Markdown report containing reservations-owned artifacts and cross-module references.
 
 ## Open Questions
 

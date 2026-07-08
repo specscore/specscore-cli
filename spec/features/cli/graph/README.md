@@ -24,21 +24,23 @@ The CLI needs a coherent GraphSpec surface that feels native to the existing com
 
 ## Contents
 
-| Directory | Description |
-|---|---|
-| [new/](new/README.md) | Authoring commands for scaffolding GraphSpec artifacts. |
-| [validation/](validation/README.md) | Validation commands for structure, references, ownership, dependencies, lifecycle, and graph consistency. |
-| [navigation/](navigation/README.md) | Query commands for list, search, index, stats, tree, refs, deps, and impact analysis. |
-| [documentation/](documentation/README.md) | Render and export commands for diagrams, Markdown, HTML, and reports. |
-| [ai-assistance/](ai-assistance/README.md) | Future AI-oriented commands for review, explanation, suggestions, scaffolding, and summaries. |
+| Directory | Description | Stage |
+|---|---|---|
+| [new/](new/README.md) | Authoring commands for scaffolding GraphSpec artifacts. | v0.2 |
+| [validation/](validation/README.md) | Validation commands for structure, references, ownership, dependencies, lifecycle, and graph consistency. | v0.2 (`graph lint` only) |
+| [navigation/](navigation/README.md) | Query commands for list, search, index, stats, tree, refs, deps, and impact analysis. | v0.2 (`list`, `refs` only) |
+| [documentation/](documentation/README.md) | Render and export commands for diagrams, Markdown, HTML, and reports. | Later |
+| [ai-assistance/](ai-assistance/README.md) | Future AI-oriented commands for review, explanation, suggestions, scaffolding, and summaries. | Later |
+
+The v0.2 implementation surface is deliberately small — `graph new`, `graph lint`, `graph list`, `graph refs` — so that GraphSpec language changes do not invalidate a wide set of shipped contracts. The remaining command families are specified for review but staged as Later.
 
 ### new
 
-`graph new` scaffolds GraphSpec artifacts. The expected form is `specscore graph new <kind>`, where `<kind>` is one of `module`, `entity`, `relationship`, `command`, `event`, `value-object`, or `enum`.
+`graph new` scaffolds GraphSpec artifacts. The expected form is `specscore graph new <kind>`, where `<kind>` is one of the five GraphSpec kinds: `module`, `entity`, `relationship`, `command`, or `event`.
 
 ### validation
 
-`graph lint`, `graph validate`, `graph doctor`, and `graph check-refs` validate GraphSpec structure and graph semantics. `graph lint` is the CI-oriented entry point; `graph doctor` is the diagnostic authoring aid.
+`graph lint` validates GraphSpec structure and graph semantics and is the CI-oriented entry point. `graph validate` and `graph check-refs` are documented as rule-subset conveniences of `lint`; `graph doctor` is a diagnostic authoring aid staged as Later.
 
 ### navigation
 
@@ -96,21 +98,21 @@ Graph commands MUST be designed so a graph can span multiple SpecScore-managed r
 
 ### Artifact kinds
 
-The CLI recognizes the initial GraphSpec kinds from the GraphSpec bootstrap:
+The CLI recognizes the five GraphSpec kinds (GraphSpec decision 0004):
 
-| Kind | Command token | Typical plural directory |
+| Kind | Command token | Plural directory |
 |---|---|---|
 | ModuleSpec | `module` | `modules/` |
 | EntitySpec | `entity` | `entities/` |
 | RelationshipSpec | `relationship` | `relationships/` |
 | CommandSpec | `command` | `commands/` |
 | EventSpec | `event` | `events/` |
-| ValueObjectSpec | `value-object` | `value-objects/` |
-| EnumSpec | `enum` | `enums/` |
+
+Value objects and enums are ModelSpec concepts, not GraphSpec kinds. Graph tooling MAY surface them as derived nodes by reading referenced ModelSpec models, but no `graph` command accepts them as kind tokens.
 
 #### REQ: kind-token-vocabulary
 
-Commands that accept a GraphSpec kind MUST accept the command tokens in the table above. Unknown kind tokens MUST exit `2` (InvalidArgs) and name the offending token.
+Commands that accept a GraphSpec kind MUST accept the command tokens in the table above. Unknown kind tokens — including the retired `value-object` and `enum` — MUST exit `2` (InvalidArgs) and name the offending token; for the retired tokens the message SHOULD point to ModelSpec.
 
 ### Output conventions
 
@@ -126,7 +128,7 @@ Graph read commands MUST use `--format` values from the existing CLI vocabulary:
 
 ### Relationship to legacy entity/property commands
 
-`specscore entity` and `specscore property` already exist for legacy SpecScore Doc-Kinds under `spec/features/**/*.entity.md` and `spec/features/**/*.property.md`. GraphSpec entity/value-object/property questions are separate.
+`specscore entity` and `specscore property` already exist for the legacy SpecScore Doc-Kinds under `spec/features/**/*.entity.md` and `spec/features/**/*.property.md`. Those Doc-Kinds are frozen (SpecScore decision 0003 — One Structural Language); their command groups remain supported unchanged and are separate from GraphSpec tooling.
 
 #### REQ: no-legacy-entity-collision
 
