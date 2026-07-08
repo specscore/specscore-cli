@@ -22,7 +22,7 @@ const CatalogPath = "docs/lint-rules.md"
 // (cli/rules#req:catalog-deterministic). The document is grouped by family,
 // each rule showing its id and description (cli/rules#req:catalog-canonical-path).
 func RenderCatalog() string {
-	rules := AllRules()
+	rules := append(AllRules(), GraphRules()...)
 
 	// Group rules by family. AllRules() is already ID-sorted, so each family's
 	// slice preserves stable ID ordering.

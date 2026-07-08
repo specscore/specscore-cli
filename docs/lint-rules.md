@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 124
+Total rules: 142
 
 ## capability
 
@@ -114,6 +114,29 @@ Total rules: 124
 | grade-single-value | error | Requires exactly one grade value per artifact. |
 | grade-value | error | Rejects grade values outside the allowed A-F set. |
 | grade-values-shape | error | Requires the grade metadata field to have the canonical shape. |
+
+## graph
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| graph-id-equals-filename-stem | error | Requires a graph artifact id to equal its filename stem (a module id equals its directory name). |
+| graph-id-kebab-case | error | Requires graph artifact ids to be bare lowercase kebab-case. |
+| graph-no-module-prefix-in-id | error | Rejects a module prefix (dot) in a graph artifact id; the qualified form is computed, not stored. |
+| graph-kind-valid | error | Requires a readable kind: that is one of module|entity|relationship|command|event and matches its collection directory. |
+| graph-no-owner-field | error | Rejects an owner: field; ownership is derived from placement. |
+| graph-no-inline-structure | error | Rejects inline fields:/properties: in a graph artifact; structure lives in ModelSpec. |
+| graph-reference-resolves | error | Requires qualified graph references (from/to/subject/actors/participants/inputs.ref/possibleEvents) to resolve to existing artifacts. |
+| graph-model-ref-resolves | error | Requires modelspec:// and HCL concept references to resolve per decision 0007 (unknown module / unknown concept / unavailable repository). |
+| graph-dependency-direction | error | Requires every cross-module reference (graph or model level) to target a module in the owning module's dependsOn. |
+| graph-relationship-owner-covers-endpoints | error | Requires a relationship's owning module to cover both endpoint modules in its dependsOn closure. |
+| graph-metadata-shape | error | Requires relationship metadata to be a flat map of scalar, qualified graph, or modelspec:// values. |
+| graph-inputs-shape | error | Requires command inputs items to carry a kebab-case name plus exactly one of ref/model. |
+| graph-event-sources | warning | Warns on an explicitly empty sources: [] and rejects command references in event sources. |
+| graph-lifecycle-states | error | Requires a declared lifecycle.states list to be non-empty and free of duplicates. |
+| graph-duplicate-id | error | Rejects duplicate qualified graph IDs across the graph roots. |
+| graph-duplicate-module-id | error | Rejects a GraphSpec module id declared by more than one graph root in the union (decision 0009). |
+| graph-model-duplicate-concept | error | Rejects duplicate concept names within a module's ModelSpec sources. |
+| graph-model-enum-values | error | Requires ModelSpec enum values to be non-empty and free of duplicates. |
 
 ## idea
 
