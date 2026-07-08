@@ -14,7 +14,7 @@ func TestDetectReference(t *testing.T) {
 		{"// specscore:feature/cli/task/claim", true, "Go comment with space"},
 		{"//specscore:feature/cli/task/claim", true, "Go comment no space"},
 		{"# specscore:feature/model-selection", true, "Python comment"},
-		{"-- https://specscore.io/github.com/org/repo/spec/features/x", true, "SQL comment with URL"},
+		{"-- https://specscore.org/github.com/org/repo/spec/features/x", true, "SQL comment with URL"},
 		{"; specscore:plan/v2-migration", true, "Lisp comment"},
 		{"%specscore:doc/api", true, "LaTeX comment no space"},
 		{"/* specscore:feature/x", true, "Block comment start"},
@@ -25,7 +25,7 @@ func TestDetectReference(t *testing.T) {
 		// Invalid (no comment prefix)
 		{"specscore:feature/cli/task/claim", false, "No comment prefix"},
 		{"fmt.Println(\"specscore:feature/x\")", false, "Inside string literal"},
-		{"var x = \"https://specscore.io/...\"", false, "URL in string literal"},
+		{"var x = \"https://specscore.org/...\"", false, "URL in string literal"},
 		{"", false, "Empty line"},
 		{"// just a comment", false, "Comment without reference"},
 		{"// unknown:feature/cli", false, "Unregistered prefix"},
@@ -49,7 +49,7 @@ func TestExtractReference(t *testing.T) {
 	}{
 		{"// specscore:feature/cli/task/claim", "specscore:feature/cli/task/claim", "Go comment"},
 		{"# specscore:plan/v2", "specscore:plan/v2", "Python comment"},
-		{"-- https://specscore.io/github.com/org/repo/spec/features/x", "https://specscore.io/github.com/org/repo/spec/features/x", "SQL with URL"},
+		{"-- https://specscore.org/github.com/org/repo/spec/features/x", "https://specscore.org/github.com/org/repo/spec/features/x", "SQL with URL"},
 		{"// specscore:feature/cli/task/claim more text", "specscore:feature/cli/task/claim", "With trailing text"},
 		{"  //  specscore:doc/api/rest  ", "specscore:doc/api/rest", "Whitespace handling"},
 		{"// specscore:feature/cli", "specscore:feature/cli", "specscore prefix"},

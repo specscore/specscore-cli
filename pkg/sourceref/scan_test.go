@@ -247,7 +247,7 @@ func TestScanFilesWithExpandedURL(t *testing.T) {
 
 	content := `package main
 
-// https://specscore.io/github.com/acme/project/spec/features/cli/task
+// https://specscore.org/github.com/acme/project/spec/features/cli/task
 func TaskClaim() {}
 `
 	file := filepath.Join(tmpDir, "task.go")
@@ -442,8 +442,8 @@ func TestParseExpandedURL(t *testing.T) {
 		name      string
 	}{
 		{
-			"https://specscore.io/github.com/acme/project/spec/features/cli/task",
-			"https://specscore.io/",
+			"https://specscore.org/github.com/acme/project/spec/features/cli/task",
+			"https://specscore.org/",
 			"spec/features/cli/task",
 			"feature",
 			"@github.com/acme/project",
@@ -451,8 +451,8 @@ func TestParseExpandedURL(t *testing.T) {
 			"Feature URL",
 		},
 		{
-			"https://specscore.io/github.com/acme/project/spec/plans/rollout",
-			"https://specscore.io/",
+			"https://specscore.org/github.com/acme/project/spec/plans/rollout",
+			"https://specscore.org/",
 			"spec/plans/rollout",
 			"plan",
 			"@github.com/acme/project",
@@ -460,8 +460,8 @@ func TestParseExpandedURL(t *testing.T) {
 			"Plan URL",
 		},
 		{
-			"https://specscore.io/github.com/acme/project/docs/api",
-			"https://specscore.io/",
+			"https://specscore.org/github.com/acme/project/docs/api",
+			"https://specscore.org/",
 			"docs/api",
 			"doc",
 			"@github.com/acme/project",
@@ -469,8 +469,8 @@ func TestParseExpandedURL(t *testing.T) {
 			"Doc URL",
 		},
 		{
-			"https://specscore.io/github.com/org/repo/spec/features/x",
-			"https://specscore.io/",
+			"https://specscore.org/github.com/org/repo/spec/features/x",
+			"https://specscore.org/",
 			"spec/features/x",
 			"feature",
 			"@github.com/org/repo",
@@ -478,8 +478,8 @@ func TestParseExpandedURL(t *testing.T) {
 			"Specscore domain URL",
 		},
 		{
-			"https://specscore.io/github.com/acme/project/spec/features/deep/nested/path",
-			"https://specscore.io/",
+			"https://specscore.org/github.com/acme/project/spec/features/deep/nested/path",
+			"https://specscore.org/",
 			"spec/features/deep/nested/path",
 			"feature",
 			"@github.com/acme/project",
@@ -487,8 +487,8 @@ func TestParseExpandedURL(t *testing.T) {
 			"Deep nested path",
 		},
 		{
-			"https://specscore.io/too/few",
-			"https://specscore.io/",
+			"https://specscore.org/too/few",
+			"https://specscore.org/",
 			"",
 			"",
 			"",
@@ -496,8 +496,8 @@ func TestParseExpandedURL(t *testing.T) {
 			"Too few path segments",
 		},
 		{
-			"https://specscore.io/a/b/c",
-			"https://specscore.io/",
+			"https://specscore.org/a/b/c",
+			"https://specscore.org/",
 			"",
 			"",
 			"",

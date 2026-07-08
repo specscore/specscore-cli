@@ -40,7 +40,9 @@ type SourceRef struct {
 var (
 	mu       sync.Mutex
 	prefixes = []string{"specscore"}
-	domains  = []string{"specscore.io"}
+	// specscore.org is the canonical expansion domain
+	// (source-references#req:url-structure, decision 0010).
+	domains = []string{"specscore.org"}
 
 	// DetectionRegex is rebuilt when prefixes change.
 	DetectionRegex *regexp.Regexp

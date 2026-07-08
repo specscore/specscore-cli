@@ -90,7 +90,7 @@ func TestParseReference_Unrecognized(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParseReference_ExpandedURLTooFewSegments(t *testing.T) {
-	_, err := ParseReference("https://specscore.io/github.com/org/repo")
+	_, err := ParseReference("https://specscore.org/github.com/org/repo")
 	if err == nil {
 		t.Fatal("expected error for too few segments")
 	}
@@ -137,9 +137,9 @@ func TestScanLine_NonReferenceLine(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestExtractReference_URLWithTrailingSpace(t *testing.T) {
-	line := "// https://specscore.io/github.com/org/repo/spec/features/x rest of line"
+	line := "// https://specscore.org/github.com/org/repo/spec/features/x rest of line"
 	got := ExtractReference(line)
-	if got != "https://specscore.io/github.com/org/repo/spec/features/x" {
+	if got != "https://specscore.org/github.com/org/repo/spec/features/x" {
 		t.Errorf("ExtractReference = %q", got)
 	}
 }
@@ -400,7 +400,7 @@ func TestParseReference_RefPinRecorded(t *testing.T) {
 	if err != nil || ref.ResolvedPath != "spec/features/auth" || ref.Ref != "v1.0" {
 		t.Fatalf("same-repo pin: %+v %v", ref, err)
 	}
-	ref, err = ParseReference("https://specscore.io/github.com/org/repo/spec/features/auth?ref=abc123")
+	ref, err = ParseReference("https://specscore.org/github.com/org/repo/spec/features/auth?ref=abc123")
 	if err != nil || ref.ResolvedPath != "spec/features/auth" || ref.Ref != "abc123" {
 		t.Fatalf("url pin: %+v %v", ref, err)
 	}
@@ -630,10 +630,10 @@ func TestFormatOutput_SingleFileModeAllFiltered(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestScanLine_ParseReferenceError(t *testing.T) {
-	// specscore.io URL with only 3 path segments (need 4+): github.com/org/repo
+	// specscore.org URL with only 3 path segments (need 4+): github.com/org/repo
 	// This means DetectReference matches, ExtractReference returns the URL,
 	// but ParseReference fails (too few segments).
-	line := "// https://specscore.io/github.com/org/repo"
+	line := "// https://specscore.org/github.com/org/repo"
 	ref := ScanLine(line)
 	// ScanLine should return nil because ParseReference fails.
 	if ref != nil {
