@@ -176,6 +176,7 @@ at or above --severity are found, 0 when clean or when no graph root exists.`,
 	cmd.Flags().String("ignore", "", "disable specified rules (comma-separated)")
 	cmd.Flags().String("severity", "error", "minimum severity: error, warning, info")
 	cmd.Flags().String("format", "text", "output format: text, json, yaml")
+	cmd.Flags().Bool("fix", false, "apply graph autofixes on disk (currently: rewrite legacy modelspec://x.Y references to modelspec:///x.Y); other violations still report")
 	return cmd
 }
 
@@ -186,6 +187,7 @@ func runGraphLint(cmd *cobra.Command, _ []string) error {
 	ignoreStr, _ := cmd.Flags().GetString("ignore")
 	severity, _ := cmd.Flags().GetString("severity")
 	format, _ := cmd.Flags().GetString("format")
+	fix, _ := cmd.Flags().GetBool("fix")
 
 	if rulesStr != "" && ignoreStr != "" {
 		return exitcode.InvalidArgsError("--rules and --ignore are mutually exclusive")
@@ -216,6 +218,7 @@ func runGraphLint(cmd *cobra.Command, _ []string) error {
 		Rules:    rules,
 		Ignore:   ignore,
 		Severity: severity,
+		Fix:      fix,
 	})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("graph lint error: %v", err)
@@ -233,8 +236,24 @@ func runGraphLint(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	if err := outputLintViolations(w, res.Violations, format); err != nil {
-		return exitcode.UnexpectedErrorf("output error: %v", err)
+	// Under --fix with a structured format, emit a single {fixed, violations}
+	// envelope (matching `spec lint --fix`); otherwise report fixed files to
+	// stderr and violations to stdout.
+	if fix && (format == "json" || format == "yaml") {
+		if err := outputLintFixEnvelope(w, res.Fixed, res.Violations, format); err != nil {
+			return exitcode.UnexpectedErrorf("output error: %v", err)
+		}
+	} else {
+		if fix && format == "text" && len(res.Fixed) > 0 {
+			ew := cmd.ErrOrStderr()
+			_, _ = fmt.Fprintf(ew, "Fixed %d file(s):\n", len(res.Fixed))
+			for _, f := range res.Fixed {
+				_, _ = fmt.Fprintf(ew, "  %s\n", f)
+			}
+		}
+		if err := outputLintViolations(w, res.Violations, format); err != nil {
+			return exitcode.UnexpectedErrorf("output error: %v", err)
+		}
 	}
 	if len(res.Violations) > 0 {
 		return exitcode.ConflictErrorf("%d violation(s) found", len(res.Violations))

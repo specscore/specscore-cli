@@ -17,13 +17,17 @@ type LintOptions struct {
 	Rules    []string // enabled rules; nil = all
 	Ignore   []string // disabled rules
 	Severity string   // minimum severity: error|warning|info; "" = no filter
+	Fix      bool     // when true, apply the specified graph fixers on disk
 }
 
 // LintResult is the outcome of a graph lint pass. NoGraphRoot is true when the
-// repository has no graph root — a notice case, not a violation.
+// repository has no graph root — a notice case, not a violation. Fixed lists
+// the repo-root-relative paths of files changed by the fix pass (only when
+// opts.Fix is true).
 type LintResult struct {
 	Violations  []lint.Violation
 	NoGraphRoot bool
+	Fixed       []string
 }
 
 // graphRuleSeverity maps each graph rule id to its catalog severity.
@@ -69,6 +73,13 @@ func Lint(opts LintOptions) (LintResult, error) {
 	if !ok {
 		return LintResult{NoGraphRoot: true}, nil
 	}
+	var fixed []string
+	if opts.Fix {
+		fixed, err = fixLegacyModelspecForms(g)
+		if err != nil {
+			return LintResult{}, err
+		}
+	}
 	l := &linter{g: g, opts: opts, res: BuildResolver(opts.RepoRoot, g)}
 	l.buildIndex()
 	l.buildClosures()
@@ -90,7 +101,7 @@ func Lint(opts LintOptions) (LintResult, error) {
 		}
 		return vs[i].Message < vs[j].Message
 	})
-	return LintResult{Violations: vs}, nil
+	return LintResult{Violations: vs, Fixed: fixed}, nil
 }
 
 // linter carries the per-pass state.
@@ -633,9 +644,9 @@ func (l *linter) checkModelRef(m *Module, ref *ModelRef) {
 	case resAmbiguousModule:
 		l.emit("graph-model-ref-resolves", ref.File, ref.Line,
 			fmt.Sprintf("model %s reference %q: module %q is ambiguous across configured projects", ref.Attr, ref.Target, module))
-	case resKindMismatch, resRepoUnavailable:
-		// unreachable for the kind-free, same-tree HCL resolution path.
 	}
+	// resKindMismatch and resRepoUnavailable are unreachable here: HCL qualified
+	// names are kind-free and never cross-repo.
 }
 
 func (l *linter) checkDuplicateIDs() {

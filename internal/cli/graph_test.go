@@ -245,6 +245,73 @@ func TestGraphLint_ViolationsExitOne(t *testing.T) {
 	}
 }
 
+func TestGraphLint_FixLegacyModelspec(t *testing.T) {
+	dir := newGraphRepo(t)
+	// Seed an entity carrying a legacy modelspec reference (authority present,
+	// empty path) plus a matching HCL concept so only the legacy-form violation
+	// remains before the fix.
+	ent := filepath.Join(dir, "spec/graph/modules/identity/entities/team.md")
+	if err := os.WriteFile(ent, []byte(
+		"---\nkind: entity\nid: team\nname: Team\nstatus: draft\nmodel: modelspec://identity.Team\nsummary: s\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spec/graph/modules/identity/models/identity.hcl"),
+		[]byte("entity \"Team\" {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without --fix: the legacy-form violation is reported (exit 1).
+	out, _, err := runGraphCmd(t, "lint", "--project", dir)
+	if code := graphExit(t, err); code != 1 {
+		t.Fatalf("want exit 1, got %d (%s)", code, out)
+	}
+	if !strings.Contains(out, "graph-model-legacy-form") {
+		t.Fatalf("expected legacy-form violation: %s", out)
+	}
+
+	// With --fix (text): file rewritten, "Fixed" summary on stderr, exit 0.
+	out, errOut, err := runGraphCmd(t, "lint", "--project", dir, "--fix")
+	if err != nil {
+		t.Fatalf("fix should clean: %v (%s)", err, out)
+	}
+	if !strings.Contains(errOut, "Fixed 1 file(s):") ||
+		!strings.Contains(errOut, "spec/graph/modules/identity/entities/team.md") {
+		t.Fatalf("expected fixed-file report on stderr: %q", errOut)
+	}
+	data, _ := os.ReadFile(ent)
+	if !strings.Contains(string(data), "modelspec:///identity.Team") {
+		t.Fatalf("file not rewritten: %s", data)
+	}
+
+	// Idempotent: a second --fix run changes nothing and prints no summary.
+	_, errOut2, err := runGraphCmd(t, "lint", "--project", dir, "--fix")
+	if err != nil || strings.Contains(errOut2, "Fixed") {
+		t.Fatalf("second fix should be a no-op: err=%v stderr=%q", err, errOut2)
+	}
+}
+
+func TestGraphLint_FixEnvelopeJSON(t *testing.T) {
+	dir := newGraphRepo(t)
+	ent := filepath.Join(dir, "spec/graph/modules/identity/entities/team.md")
+	if err := os.WriteFile(ent, []byte(
+		"---\nkind: entity\nid: team\nname: Team\nstatus: draft\nmodel: modelspec://identity.Team\nsummary: s\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spec/graph/modules/identity/models/identity.hcl"),
+		[]byte("entity \"Team\" {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runGraphCmd(t, "lint", "--project", dir, "--fix", "--format", "json")
+	if err != nil {
+		t.Fatalf("fix json should clean: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, `"fixed"`) ||
+		!strings.Contains(out, "spec/graph/modules/identity/entities/team.md") ||
+		!strings.Contains(out, `"violations"`) {
+		t.Fatalf("expected {fixed, violations} envelope: %s", out)
+	}
+}
+
 func TestGraphLint_FlagValidation(t *testing.T) {
 	dir := newGraphRepo(t)
 	cases := [][]string{
@@ -516,6 +583,12 @@ func TestGraphLint_OutputEncoderErrors(t *testing.T) {
 	_, _, err = runGraphCmd(t, "lint", "--project", dir, "--format", "json")
 	if code := graphExit(t, err); code != 10 {
 		t.Fatalf("lint encoder error: want 10, got %d", code)
+	}
+
+	// --fix structured path (outputLintFixEnvelope error branch).
+	_, _, err = runGraphCmd(t, "lint", "--project", dir, "--fix", "--format", "json")
+	if code := graphExit(t, err); code != 10 {
+		t.Fatalf("fix-envelope encoder error: want 10, got %d", code)
 	}
 }
 

@@ -259,7 +259,7 @@ func artifactContent(opts ScaffoldOptions, id, status string) string {
 	fmt.Fprintf(&b, "status: %s\n", status)
 	switch opts.Kind {
 	case KindEntity:
-		b.WriteString("# model: modelspec://" + opts.Module + "." + capitalizeFirst(id) + "  # optional ModelSpec reference\n")
+		b.WriteString("# model: modelspec:///" + opts.Module + "." + capitalizeFirst(id) + "  # optional ModelSpec reference (decision 0010)\n")
 	case KindRelationship:
 		fmt.Fprintf(&b, "from: %s\n", opts.From)
 		fmt.Fprintf(&b, "to: %s\n", opts.To)
