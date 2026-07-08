@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 148
+Total rules: 150
 
 ## capability
 
@@ -122,7 +122,7 @@ Total rules: 148
 | graph-id-equals-filename-stem | error | Requires a graph artifact id to equal its filename stem (a module id equals its directory name). |
 | graph-id-kebab-case | error | Requires graph artifact ids to be bare lowercase kebab-case. |
 | graph-no-module-prefix-in-id | error | Rejects a module prefix (dot) in a graph artifact id; the qualified form is computed, not stored. |
-| graph-kind-valid | error | Requires a readable kind: that is one of module|entity|relationship|command|event and matches its collection directory. |
+| graph-kind-valid | error | Requires a readable kind: that is one of module|entity|relationship|command|event|policy and matches its collection directory. |
 | graph-no-owner-field | error | Rejects an owner: field; ownership is derived from placement. |
 | graph-no-inline-structure | error | Rejects inline fields:/properties: in a graph artifact; structure lives in ModelSpec. |
 | graph-reference-resolves | error | Requires qualified graph references (from/to/subject/actors/participants/inputs.ref/possibleEvents) to resolve to existing artifacts. |
@@ -133,6 +133,8 @@ Total rules: 148
 | graph-relationship-owner-covers-endpoints | error | Requires a relationship's owning module to cover both endpoint modules in its dependsOn closure. |
 | graph-metadata-shape | error | Requires relationship metadata to be a flat map of scalar, qualified graph, or modelspec:// values. |
 | graph-inputs-shape | error | Requires command inputs items to carry a kebab-case name plus exactly one of ref/model. |
+| graph-rules-shape | error | Requires a Tier-1 rules: block on an entity/relationship/command artifact to be a list of {id, text, refs} maps with artifact-unique kebab-case ids, non-empty text, and resolvable refs (decision 0013). |
+| graph-policy-shape | error | Requires a policy artifact to carry an applies: block naming exactly one of command|entity|relationship plus well-formed when/requires/invariant clauses whose operands resolve against the graph — inputs, lifecycle states, roles, and ModelSpec model properties (decision 0013). |
 | graph-event-sources | warning | Warns on an explicitly empty sources: [] and rejects command references in event sources. |
 | graph-lifecycle-states | error | Requires a declared lifecycle.states list to be non-empty and free of duplicates. |
 | graph-duplicate-id | error | Rejects duplicate qualified graph IDs across the graph roots. |

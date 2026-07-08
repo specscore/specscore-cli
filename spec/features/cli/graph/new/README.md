@@ -12,7 +12,7 @@ status: Draft
 
 ## Summary
 
-`specscore graph new` scaffolds GraphSpec artifacts. The primary form is `specscore graph new <kind>`, where `<kind>` is one of the five GraphSpec kinds: `module`, `entity`, `relationship`, `command`, or `event`. Value objects and enums are ModelSpec concepts and are not scaffolded by `graph new` (GraphSpec decision 0004).
+`specscore graph new` scaffolds GraphSpec artifacts. The primary form is `specscore graph new <kind>`, where `<kind>` is one of the six GraphSpec kinds: `module`, `entity`, `relationship`, `command`, `event`, or `policy`. Value objects and enums are ModelSpec concepts and are not scaffolded by `graph new` (GraphSpec decision 0004; the policy kind is added by SpecScore decision 0013).
 
 The command should produce reviewable Markdown with YAML frontmatter, using GraphSpec templates rather than hard-coded CLI-only semantics.
 
@@ -24,6 +24,7 @@ specscore graph new entity --name <name> --module <module-id> [--id <id>] [--roo
 specscore graph new relationship --name <name> --from <ref> --to <ref> --module <module-id> [--id <id>] [--project <path>]
 specscore graph new command --name <name> --module <module-id> [--subject <ref>] [--project <path>]
 specscore graph new event --name <name> --module <module-id> [--subject <ref>] [--project <path>]
+specscore graph new policy --name <name> --module <module-id> [--id <id>] [--summary <text>] [--project <path>]
 ```
 
 Future structural editing commands:
@@ -53,7 +54,7 @@ GraphSpec artifacts are intended to be Markdown-first and reviewable, but manual
 
 #### REQ: supported-kinds
 
-The first implementation MUST support `module`, `entity`, `relationship`, `command`, and `event`. Unknown kind tokens — including the retired `value-object` and `enum` — MUST exit `2`; for the retired tokens the error message SHOULD point authors to ModelSpec.
+The first implementation MUST support `module`, `entity`, `relationship`, `command`, `event`, and `policy`. Unknown kind tokens — including the retired `value-object` and `enum` — MUST exit `2`; for the retired tokens the error message SHOULD point authors to ModelSpec.
 
 ### Output location
 
@@ -68,6 +69,7 @@ Filenames are the bare local ID with no kind suffix — the plural directory and
 | `relationship` | `<module-root>/relationships/<id>.md` |
 | `command` | `<module-root>/commands/<id>.md` |
 | `event` | `<module-root>/events/<id>.md` |
+| `policy` | `<module-root>/policies/<id>.md` |
 
 #### REQ: plural-consumer-directories
 
@@ -79,7 +81,7 @@ Generated GraphSpec artifacts MUST use plural consumer directories. The CLI MUST
 
 #### REQ: module-scaffold
 
-`graph new module` MUST create the module README and MUST scaffold, by default, the five collection directories (`entities/`, `relationships/`, `commands/`, `events/`, `models/`), each with a README index — SpecScore's every-directory-has-a-README rule applies inside graph trees, and the first consumer pilot hit lint failures on every unscaffolded collection directory. A `--bare` flag MAY skip collection scaffolding. `models/` holds the module's ModelSpec sources per decision 0006.
+`graph new module` MUST create the module README and MUST scaffold, by default, the six collection directories (`entities/`, `relationships/`, `commands/`, `events/`, `policies/`, `models/`), each with a README index — SpecScore's every-directory-has-a-README rule applies inside graph trees, and the first consumer pilot hit lint failures on every unscaffolded collection directory. A `--bare` flag MAY skip collection scaffolding. `models/` holds the module's ModelSpec sources per decision 0006.
 
 ### Frontmatter and body
 
@@ -87,7 +89,7 @@ Generated files must be intentionally minimal and reviewable.
 
 #### REQ: frontmatter-minimum
 
-Every generated artifact MUST include YAML frontmatter with at least `kind`, `id`, `name`, `status`, and `summary` where those fields are meaningful for the GraphSpec kind. Artifacts MUST NOT carry an `owner:` field — ownership is derived from placement under the module root (GraphSpec decision 0005). Relationship artifacts MUST also include `from` and `to` when supplied. Command and Event artifacts MUST include `subject` when supplied. Entity artifacts SHOULD include a `model:` placeholder comment pointing authors at the local `modelspec:///<module>.<Name>` reference form (SpecScore decision 0010).
+Every generated artifact MUST include YAML frontmatter with at least `kind`, `id`, `name`, `status`, and `summary` where those fields are meaningful for the GraphSpec kind. Artifacts MUST NOT carry an `owner:` field — ownership is derived from placement under the module root (GraphSpec decision 0005). Relationship artifacts MUST also include `from` and `to` when supplied. Command and Event artifacts MUST include `subject` when supplied. Entity artifacts SHOULD include a `model:` placeholder comment pointing authors at the local `modelspec:///<module>.<Name>` reference form (SpecScore decision 0010). Policy artifacts SHOULD include a commented `# applies:` hint block pointing authors at the required applies target (SpecScore decision 0013); since `applies:` is required, a freshly scaffolded policy reports `graph-policy-shape` until the author fills it in.
 
 #### REQ: body-sections
 

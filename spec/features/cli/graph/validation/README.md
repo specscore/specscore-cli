@@ -96,7 +96,7 @@ Ownership is derived from placement (GraphSpec decision 0005). Graph validation 
 
 #### REQ: kind-segments-and-reserved-names
 
-The optional kind segment `<kind>` MUST be one of `entities`, `components`, `enums`, `collections`, or `recordsets` (decision 0011). The two-segment form `<module>.<Name>` resolves only against the flat entity/component/enum trio namespace; collections and recordsets are addressable only in the three-segment form, each with its own name scope. Duplicate-concept detection MUST treat the trio, collections, and recordsets as three separate scopes. The five kind tokens MUST be forbidden as ModelSpec concept names (reported as `graph-model-reserved-name`). An unknown kind token and a kind-segment mismatch (e.g. `...entities.Foo` where `Foo` is an enum) MUST be distinct, clear diagnostics. A `?ref=<git-ref>` pin MAY appear on any reference; it is advisory in v0.2 and does not change resolution. A fragment (`#…`) on a `modelspec://` reference is an error, reserved for future intra-concept addressing.
+The optional kind segment `<kind>` MUST be one of `entities`, `components`, `enums`, `collections`, or `recordsets` (decision 0011). The two-segment form `<module>.<Name>` resolves only against the flat entity/component/enum trio namespace; collections and recordsets are addressable only in the three-segment form, each with its own name scope. Duplicate-concept detection MUST treat the trio, collections, and recordsets as three separate scopes. The five kind tokens MUST be forbidden as ModelSpec concept names (reported as `graph-model-reserved-name`). An unknown kind token and a kind-segment mismatch (e.g. `...entities.Foo` where `Foo` is an enum) MUST be distinct, clear diagnostics. A `?ref=<git-ref>` pin MAY appear on any reference; it is advisory in v0.2 and does not change resolution. A fragment (`#<value>`) on a `modelspec://` reference addresses a named enum value (SpecScore decision 0013): it resolves only when the referenced concept is an enum and `<value>` is one of its declared values. A fragment on a non-enum concept and an unknown enum value MUST be distinct diagnostics under `graph-model-ref-resolves`; a malformed fragment (empty, or `#` appearing twice) remains a reference-grammar error.
 
 #### REQ: legacy-form-autofix
 
@@ -109,6 +109,14 @@ Relationship endpoints and event participants MAY use the decision-0012 map form
 #### REQ: ambiguous-endpoints
 
 `graph lint` MUST warn under `graph-ambiguous-endpoints` when (a) a relationship's two endpoints carry the same reference and at least one endpoint has no role label, or (b) two event participants carry the same reference without distinguishing role labels (decision 0012). Participants distinguished by different roles MUST NOT warn.
+
+#### REQ: rules-blocks
+
+Entity, relationship, and command artifacts MAY carry a Tier-1 `rules:` list (SpecScore decision 0013). `graph lint` MUST validate the block under `graph-rules-shape` (error): `rules` is a list of maps; each rule carries a bare kebab-case `id` unique within the artifact and a non-empty `text`; `refs` is an optional list of qualified graph and/or `modelspec://` references; unknown keys are rejected. Every `refs` entry MUST resolve and respect dependency direction under the existing resolution rules (`graph-reference-resolves`, `graph-model-ref-resolves`, `graph-dependency-direction`), including enum-value fragments.
+
+#### REQ: policy-clauses
+
+Policy artifacts (the sixth GraphSpec kind, SpecScore decision 0013) MUST be validated under `graph-policy-shape` (error): `applies:` is required and carries exactly one of `command`, `entity`, or `relationship` — a qualified reference that resolves to an artifact of that kind. `when:` clauses each carry exactly one of `input` (only valid when `applies` names a command, and the value must name one of that command's inputs) or `is-role: {relationship, role}` (the relationship resolves to a RelationshipSpec; the role is a bare kebab-case token). `requires:` clauses are exactly one of `{entity, in-state}` (the entity resolves and `in-state` is a member of its `lifecycle.states`; an entity without a lifecycle is an error) or `actor-is: {entity, model-role}` (the entity resolves and `model-role` names a property of its ModelSpec model concept). `invariant:` clauses are only valid when `applies` names an entity; each carries `when-referenced: {entity, in-state}` (validated like `requires`) plus `then: {self-state}` where the state belongs to the applies entity's `lifecycle.states`. Every module a clause references counts against the owning module's `dependsOn` (`graph-dependency-direction`), following the same downstream-ownership rule as relationships.
 
 #### REQ: unknown-keys
 

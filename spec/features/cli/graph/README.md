@@ -36,7 +36,7 @@ The v0.2 implementation surface is deliberately small — `graph new`, `graph li
 
 ### new
 
-`graph new` scaffolds GraphSpec artifacts. The expected form is `specscore graph new <kind>`, where `<kind>` is one of the five GraphSpec kinds: `module`, `entity`, `relationship`, `command`, or `event`.
+`graph new` scaffolds GraphSpec artifacts. The expected form is `specscore graph new <kind>`, where `<kind>` is one of the six GraphSpec kinds: `module`, `entity`, `relationship`, `command`, `event`, or `policy`.
 
 ### validation
 
@@ -98,7 +98,7 @@ Graph commands MUST be designed so a graph can span multiple SpecScore-managed r
 
 ### Artifact kinds
 
-The CLI recognizes the five GraphSpec kinds (GraphSpec decision 0004):
+The CLI recognizes the six GraphSpec kinds (GraphSpec decision 0004, amended by SpecScore decision 0013 which adds the policy kind):
 
 | Kind | Command token | Plural directory |
 |---|---|---|
@@ -107,6 +107,7 @@ The CLI recognizes the five GraphSpec kinds (GraphSpec decision 0004):
 | RelationshipSpec | `relationship` | `relationships/` |
 | CommandSpec | `command` | `commands/` |
 | EventSpec | `event` | `events/` |
+| PolicySpec | `policy` | `policies/` |
 
 Value objects and enums are ModelSpec concepts, not GraphSpec kinds. Graph tooling MAY surface them as derived nodes by reading referenced ModelSpec models, but no `graph` command accepts them as kind tokens.
 
