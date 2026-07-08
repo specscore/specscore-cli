@@ -43,8 +43,9 @@ specscore lint modelspec
 specscore validate
 ```
 
-ModelSpec rules should use the existing lint selection machinery and remain gated
-until ModelSpec publishes stable validation contracts.
+ModelSpec rules should use the existing lint selection machinery and run only when
+ModelSpec files are present or explicitly targeted. SpecScore MUST NOT force every
+repository to create a non-empty ModelSpec.
 
 ## Alternatives Considered
 
@@ -91,9 +92,8 @@ until ModelSpec publishes stable validation contracts.
 
 ## Open Questions
 
-- Should ModelSpec validation be enabled by default in repo-wide lint or require an explicit target?
 - Should the first explicit target be `specscore lint modelspec` or `specscore spec lint --rules modelspec-*`?
-- Which ModelSpec serialization formats should be validated first?
+- Should the first implementation validate HCL source, compiled JSON AST serialization, or both?
 
 ---
 *This document follows the https://specscore.md/idea-specification*

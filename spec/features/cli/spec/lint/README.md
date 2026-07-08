@@ -298,10 +298,10 @@ ModelSpec concepts MUST cite ModelSpec as the semantic source of truth.
 
 #### REQ: modelspec-validation-gated
 
-ModelSpec-specific rules SHOULD remain gated by explicit target, rule selection, or
-repo configuration until ModelSpec publishes a stable validation contract. Existing
-`specscore spec lint` workflows MUST NOT break merely because a repository contains
-experimental ModelSpec files.
+ModelSpec-specific rules SHOULD run only when ModelSpec files are present or when the
+caller explicitly targets ModelSpec validation. Existing `specscore spec lint`
+workflows MUST NOT require repositories to create a non-empty ModelSpec, and MUST NOT
+break merely because a repository has no ModelSpec files.
 
 ## Parameters
 
