@@ -266,6 +266,18 @@ When `pkg/lint` or any other consumer parses a `Consumer Path` cell from a regis
 
 This REQ defines the parsing contract. The CLI rules that consume the parsed glob list today are the entity-location and property-location rules ([cli/entity#req:discovery-scope](../../entity/README.md#req-discovery-scope), [cli/property#req:discovery-scope](../../property/README.md#req-discovery-scope)); the parsing surface is forward-compatible — a future `every-feature-registered` rule that cross-checks every registry row would consume the same parser.
 
+### GraphSpec rule integration
+
+GraphSpec validation is specified first under [`specscore graph lint`](../../graph/validation/README.md). Repo-wide `specscore spec lint` may later include GraphSpec rules, but that integration is intentionally gated because GraphSpec is still a bootstrap language.
+
+#### REQ: graph-rules-not-default-until-gated
+
+`specscore spec lint` MUST NOT enable GraphSpec-specific `graph-*` rules by default until GraphSpec declares a stable enough validation contract or repo configuration opts in. Experimental `spec/graph/` trees should be valid SpecScore repository content before GraphSpec validation is globally enforced.
+
+#### REQ: graph-rule-registry-compatibility
+
+When GraphSpec rules are registered in `pkg/lint`, they MUST use the same rule-selection machinery as existing rule families: `--rules`, `--ignore`, `--severity`, structured output, and exit-code behavior. Their authoritative CLI contract lives under [Graph Validation](../../graph/validation/README.md), not in this generic lint feature.
+
 ## Parameters
 
 None. All inputs are flags.
@@ -412,6 +424,7 @@ Given a spec tree with one autofixable violation, running `specscore spec lint -
 - **Should the multi-glob `Consumer Path` parser be exposed as a public helper in `pkg/projectdef`** (so consumers outside `pkg/lint` can use the same parser) or stay package-private to `pkg/lint`? Lean: package-private until a second caller emerges, per the meta-spec convention of deferring extraction.
 - **How should `pkg/lint`'s `Lint()` surface the fixed-files set** — a new `Result{ Violations, Fixed }` struct, a second return value, or a sibling `LintWithResult`? This affects the public `pkg/lint` Go API; settle at plan time. (Carried from the `lint-fix-reports-modified-files` Idea.)
 - **Is a terse `--format paths` (one fixed path per line on stdout) worth adding** for `lint --fix | git add`-style pipelines, or does the JSON `.fixed[]` field suffice? Deferred from MVP. (Carried from the `lint-fix-reports-modified-files` Idea.)
+- When should GraphSpec validation graduate from `specscore graph lint` into default `specscore spec lint`?
 
 ---
 *This document follows the https://specscore.md/feature-specification*

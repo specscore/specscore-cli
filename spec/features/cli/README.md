@@ -28,6 +28,7 @@ Commands that grew inside the codebase without written specs accrete inconsisten
 | [code/](code/README.md) | Source-code → SpecScore relationship queries |
 | [entity/](entity/README.md) | Entity Doc-Kind: lint enforcement, managed-section rendering, `specscore entity list/refs/tree` |
 | [feature/](feature/README.md) | Feature tree queries and scaffolding |
+| [graph/](graph/README.md) | GraphSpec command group for authoring, validating, navigating, documenting, and reviewing GraphSpec artifacts. |
 | [idea/](idea/README.md) | Idea artifact scaffolding and lifecycle |
 | [init/](init/README.md) | `specscore init` scaffolds a SpecScore-managed project root: creates `specscore.yaml`, the `spec/` tree with lint-clean Ideas and Features indexes, and optional `spec/research`/`spec/decisions` trees. Refuses to clobber an existing `specscore.yaml` unless `--force`. |
 | [issue/](issue/README.md) | Issue artifact scaffolding, lifecycle, and listing |
@@ -52,6 +53,10 @@ CLI surface for the Entity Doc-Kind. Hosts the `entity-*` lint rules (frontmatte
 ### feature
 
 Queries the feature tree: list every feature, inspect a feature's metadata and section TOC, view the hierarchy as a tree, and follow dependency / reference chains. Also hosts `feature new`, which scaffolds a new feature directory with a lint-clean README.
+
+### graph
+
+Provides the CLI surface for GraphSpec. `graph new` scaffolds GraphSpec artifacts, validation commands check graph structure and references, navigation commands answer ownership/reference/dependency questions, documentation commands render diagrams and reports, and future AI commands prepare review and explanation packages. GraphSpec remains the language owner; the CLI consumes GraphSpec.
 
 ### idea
 

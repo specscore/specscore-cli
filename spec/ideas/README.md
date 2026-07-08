@@ -20,6 +20,7 @@ Pre-spec one-pagers for the `specscore` CLI. Each Idea refines a vague concept i
 | [consilium-command-group](consilium-command-group.md) | Specified | 2026-06-03 | alexander.trakhimenok | cli/consilium, cli/consilium/config, cli/consilium/roster, cli/consilium/verdict |
 | [entity-and-property-cli-support](entity-and-property-cli-support.md) | Implemented | 2026-05-18 | alexander.trakhimenok | cli/entity, cli/property |
 | [event-emit-dispatcher](event-emit-dispatcher.md) | Implemented | 2026-05-22 | alexandertrakhimenok | cli/event, cli/event/emit |
+| [graphspec-cli-support](graphspec-cli-support.md) | Specifying | 2026-07-08 | codex | cli/graph, cli/graph/ai-assistance, cli/graph/documentation, cli/graph/navigation, cli/graph/new, cli/graph/validation |
 | [implement-configurable-ideas-path-resolution](implement-configurable-ideas-path-resolution.md) | Approved | 2026-06-07 | claude | — |
 | [index-entries-autofix](index-entries-autofix.md) | Specified | 2026-05-18 | alexander.trakhimenok | cli/spec/lint |
 | [lifecycle-verbs-for-idea-and-feature](lifecycle-verbs-for-idea-and-feature.md) | Implemented | 2026-05-18 | alexander.trakhimenok | cli/feature/change-status, cli/idea/change-status, cli/lifecycle-transitions |
