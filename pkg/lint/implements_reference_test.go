@@ -23,10 +23,15 @@ func TestParseImplementsRef(t *testing.T) {
 			wantSlug: "dashboards",
 		},
 		{
-			name:          "cross-repo feature reference carries suffix",
-			line:          "**Implements:** specscore:feature/dashboards@github.com/datatug/datatug",
+			name:          "cross-repo authority reference carries suffix",
+			line:          "**Implements:** specscore://github.com/datatug/datatug/feature/dashboards",
 			wantSlug:      "dashboards",
 			wantCrossRepo: true,
+		},
+		{
+			name:    "legacy cross-repo suffix form is an error",
+			line:    "**Implements:** specscore:feature/dashboards@github.com/datatug/datatug",
+			wantErr: true,
 		},
 		{
 			name:     "tolerates leading whitespace and trailing text",
@@ -86,14 +91,64 @@ func TestImplementsReference_SameRepoResolvesToCapability_NoViolation(t *testing
 // Task 2 — a well-formed cross-repo Implements reference is accepted without
 // attempting to fetch the remote repo (capability-and-platform-implementations#
 // ac:implements-cross-repo-suffix).
-func TestImplementsReference_CrossRepoSuffix_NoViolation(t *testing.T) {
+func TestImplementsReference_CrossRepoAuthority_NoViolation(t *testing.T) {
 	tmp := t.TempDir()
 	writeFeatureReadme(t, tmp, "dashboards-cli",
-		"# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** specscore:feature/dashboards@github.com/datatug/datatug\n\n## Summary\n")
+		"# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** specscore://github.com/datatug/datatug/feature/dashboards\n\n## Summary\n")
 
 	violations := runImplementsReferenceCheck(t, tmp)
 	if len(violations) != 0 {
-		t.Fatalf("expected 0 violations for well-formed cross-repo reference, got %d: %+v", len(violations), violations)
+		t.Fatalf("expected 0 violations for well-formed cross-repo authority reference, got %d: %+v", len(violations), violations)
+	}
+}
+
+// The legacy cross-repo suffix form is reported as an error carrying the exact
+// authority-form rewrite, and `--fix` rewrites it in place (decision 0010).
+func TestImplementsReference_LegacySuffix_ReportedAndFixed(t *testing.T) {
+	tmp := t.TempDir()
+	body := "# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** specscore:feature/dashboards@github.com/datatug/datatug\n\n## Summary\n"
+	writeFeatureReadme(t, tmp, "dashboards-cli", body)
+
+	violations := runImplementsReferenceCheck(t, tmp)
+	if len(violations) != 1 || violations[0].FixTarget != "implements-reference" {
+		t.Fatalf("expected one fixable legacy-suffix violation, got %+v", violations)
+	}
+	want := "specscore://github.com/datatug/datatug/feature/dashboards"
+	if !strings.Contains(violations[0].Message, want) {
+		t.Fatalf("message must carry the rewrite %q: %q", want, violations[0].Message)
+	}
+
+	// The fixer rewrites the line in place, preserving surrounding content.
+	c := &implementsReferenceChecker{}
+	if err := c.fix(tmp); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(tmp, "features", "dashboards-cli", "README.md"))
+	if !strings.Contains(string(data), "**Implements:** "+want) {
+		t.Fatalf("line not rewritten:\n%s", data)
+	}
+	if !strings.Contains(string(data), "## Summary") {
+		t.Fatalf("surrounding content not preserved:\n%s", data)
+	}
+	// Idempotent: a second fix pass makes no change, and re-linting is clean.
+	if _, changed := rewriteLegacyImplementsLine(data); changed {
+		t.Fatal("second fix pass should be a no-op")
+	}
+}
+
+// The fixer leaves non-Implementation features and authority-form references
+// untouched.
+func TestImplementsReference_FixSkipsNonLegacy(t *testing.T) {
+	if out, changed := rewriteLegacyImplementsLine([]byte("# Feature: Plain\n\n## Summary\n")); changed || string(out) == "" {
+		t.Fatal("non-implementation content must be left unchanged")
+	}
+	authority := "# F\n\n**Implements:** specscore://github.com/o/r/feature/x\n"
+	if _, changed := rewriteLegacyImplementsLine([]byte(authority)); changed {
+		t.Fatal("authority-form reference must not be rewritten")
+	}
+	malformed := "# F\n\n**Implements:** not-a-reference\n"
+	if _, changed := rewriteLegacyImplementsLine([]byte(malformed)); changed {
+		t.Fatal("line without a specscore token must not be rewritten")
 	}
 }
 

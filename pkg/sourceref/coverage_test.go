@@ -1,6 +1,7 @@
 package sourceref
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -346,8 +347,8 @@ func TestScanFiles_PartialErrors(t *testing.T) {
 // ParseReference — short notation with cross-repo suffix
 // ---------------------------------------------------------------------------
 
-func TestParseReference_ShortNotationWithCrossRepo(t *testing.T) {
-	ref, err := ParseReference("specscore:feature/auth@github.com/org/other")
+func TestParseReference_CrossRepoAuthority(t *testing.T) {
+	ref, err := ParseReference("specscore://github.com/org/other/feature/auth")
 	if err != nil {
 		t.Fatalf("ParseReference: %v", err)
 	}
@@ -359,6 +360,49 @@ func TestParseReference_ShortNotationWithCrossRepo(t *testing.T) {
 	}
 	if ref.Type != "feature" {
 		t.Errorf("Type = %q", ref.Type)
+	}
+}
+
+// The removed legacy suffix form is an error carrying the exact authority-form
+// rewrite (decision 0010). The pin is preserved in the rewrite.
+func TestParseReference_LegacySuffixRewrite(t *testing.T) {
+	cases := map[string]string{
+		"specscore:feature/auth@github.com/org/other":         "specscore://github.com/org/other/feature/auth",
+		"specscore:feature/auth@github.com/org/other?ref=dev": "specscore://github.com/org/other/feature/auth?ref=dev",
+	}
+	for in, want := range cases {
+		_, err := ParseReference(in)
+		var lse *LegacySuffixError
+		if !errors.As(err, &lse) {
+			t.Fatalf("ParseReference(%q) error = %v, want *LegacySuffixError", in, err)
+		}
+		if lse.Rewrite != want {
+			t.Errorf("rewrite = %q, want %q", lse.Rewrite, want)
+		}
+		if !strings.Contains(lse.Error(), want) {
+			t.Errorf("Error() = %q, want it to carry the rewrite", lse.Error())
+		}
+	}
+}
+
+// An authority form with an empty reference segment surfaces the underlying
+// empty-reference resolution error.
+func TestParseReference_AuthorityEmptyReference(t *testing.T) {
+	if _, err := ParseReference("specscore://github.com/org/repo/"); err == nil {
+		t.Fatal("expected an error for an empty authority-form reference")
+	}
+}
+
+// The advisory ?ref pin is recorded on both same-repo and expanded-URL forms
+// and does not change the resolved path.
+func TestParseReference_RefPinRecorded(t *testing.T) {
+	ref, err := ParseReference("specscore:feature/auth?ref=v1.0")
+	if err != nil || ref.ResolvedPath != "spec/features/auth" || ref.Ref != "v1.0" {
+		t.Fatalf("same-repo pin: %+v %v", ref, err)
+	}
+	ref, err = ParseReference("https://specscore.io/github.com/org/repo/spec/features/auth?ref=abc123")
+	if err != nil || ref.ResolvedPath != "spec/features/auth" || ref.Ref != "abc123" {
+		t.Fatalf("url pin: %+v %v", ref, err)
 	}
 }
 

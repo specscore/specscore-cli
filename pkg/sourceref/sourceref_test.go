@@ -138,22 +138,46 @@ func TestParseReference(t *testing.T) {
 			"Full path to file",
 		},
 
-		// Cross-repo references
+		// Cross-repo references (authority form, decision 0010)
 		{
-			"specscore:feature/agent-skills@github.com/acme/orchestrator",
+			"specscore://github.com/acme/orchestrator/feature/agent-skills",
 			"spec/features/agent-skills",
 			"feature",
 			"@github.com/acme/orchestrator",
 			false,
-			"Feature with cross-repo",
+			"Feature with cross-repo authority",
 		},
 		{
-			"specscore:doc/api/rest@bitbucket.org/acme/docs",
+			"specscore://bitbucket.org/acme/docs/doc/api/rest",
 			"docs/api/rest",
 			"doc",
 			"@bitbucket.org/acme/docs",
 			false,
-			"Doc with cross-repo",
+			"Doc with cross-repo authority",
+		},
+		// Authority form with an advisory ?ref pin.
+		{
+			"specscore://github.com/acme/orchestrator/feature/agent-skills?ref=main",
+			"spec/features/agent-skills",
+			"feature",
+			"@github.com/acme/orchestrator",
+			false,
+			"Cross-repo authority with ref pin",
+		},
+
+		// Legacy suffix form is an error (decision 0010).
+		{
+			"specscore:feature/agent-skills@github.com/acme/orchestrator",
+			"", "", "",
+			true,
+			"Legacy suffix form errors",
+		},
+		// Malformed authority form (too few segments).
+		{
+			"specscore://github.com/acme/feature",
+			"", "", "",
+			true,
+			"Authority form missing repo/reference",
 		},
 
 		// Edge cases

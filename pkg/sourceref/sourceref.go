@@ -12,6 +12,22 @@ type Reference struct {
 	ResolvedPath    string
 	CrossRepoSuffix string
 	Type            string
+	// Ref carries an advisory ?ref=<git-ref> pin (branch, tag, or commit) when
+	// present on the reference; it is preserved through canonical expansion and
+	// does not change resolution (decision 0010).
+	Ref string
+}
+
+// LegacySuffixError is returned by ParseReference when a reference uses the
+// removed `specscore:{reference}@{host}/{org}/{repo}` suffix form (decision
+// 0010). Rewrite carries the exact authority-form replacement that `--fix`
+// applies.
+type LegacySuffixError struct {
+	Rewrite string
+}
+
+func (e *LegacySuffixError) Error() string {
+	return "legacy cross-repo suffix form is not allowed; rewrite to " + e.Rewrite
 }
 
 // SourceRef represents a source file reference (file + line number).
@@ -116,6 +132,7 @@ func ParseReference(extracted string) (*Reference, error) {
 
 func parseExpandedURL(url, urlPrefix string) (*Reference, error) {
 	path := strings.TrimPrefix(url, urlPrefix)
+	path, gitRef := splitGitRefQuery(path)
 	parts := strings.Split(path, "/")
 	if len(parts) < 4 {
 		return nil, fmt.Errorf("invalid expanded URL format: too few path segments")
@@ -130,26 +147,71 @@ func parseExpandedURL(url, urlPrefix string) (*Reference, error) {
 		ResolvedPath:    resolvedPath,
 		CrossRepoSuffix: crossRepoSuffix,
 		Type:            refType,
+		Ref:             gitRef,
 	}, nil
 }
 
-func parseShortNotation(notation, prefix string) (*Reference, error) {
-	notation = strings.TrimPrefix(notation, prefix)
-	crossRepoSuffix := ""
-	reference := notation
-	if idx := strings.LastIndex(notation, "@"); idx != -1 {
-		crossRepoSuffix = notation[idx:]
-		reference = notation[:idx]
+// splitGitRefQuery splits an advisory `?ref=<git-ref>` pin off a reference body.
+// Only the exact `?ref=` marker is recognized (decision 0010); anything else is
+// left untouched in the body.
+func splitGitRefQuery(s string) (body, gitRef string) {
+	const marker = "?ref="
+	if i := strings.Index(s, marker); i >= 0 {
+		return s[:i], s[i+len(marker):]
 	}
-	resolvedPath, err := resolveReference(reference)
+	return s, ""
+}
+
+func parseShortNotation(notation, prefix string) (*Reference, error) {
+	body := strings.TrimPrefix(notation, prefix)
+	body, gitRef := splitGitRefQuery(body)
+
+	// Cross-repo authority form: specscore://{host}/{org}/{repo}/{reference}.
+	if strings.HasPrefix(body, "//") {
+		return parseAuthorityForm(strings.TrimPrefix(body, "//"), gitRef)
+	}
+
+	// Legacy suffix form: specscore:{reference}@{host}/{org}/{repo} — removed by
+	// decision 0010, reported as an error carrying the authority-form rewrite.
+	if idx := strings.LastIndex(body, "@"); idx != -1 {
+		reference := body[:idx]
+		repoPath := body[idx+1:]
+		rewrite := prefix + "//" + repoPath + "/" + reference
+		if gitRef != "" {
+			rewrite += "?ref=" + gitRef
+		}
+		return nil, &LegacySuffixError{Rewrite: rewrite}
+	}
+
+	resolvedPath, err := resolveReference(body)
 	if err != nil {
 		return nil, err
 	}
-	refType := inferType(resolvedPath)
+	return &Reference{
+		ResolvedPath: resolvedPath,
+		Type:         inferType(resolvedPath),
+		Ref:          gitRef,
+	}, nil
+}
+
+// parseAuthorityForm parses the "{host}/{org}/{repo}/{reference}" path of a
+// cross-repo authority reference. The first three segments are host/org/repo;
+// the remainder is the reference (which may itself be type-prefixed).
+func parseAuthorityForm(path, gitRef string) (*Reference, error) {
+	parts := strings.Split(path, "/")
+	if len(parts) < 4 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return nil, fmt.Errorf("invalid cross-repo authority form: expected specscore://{host}/{org}/{repo}/{reference}")
+	}
+	host, org, repo := parts[0], parts[1], parts[2]
+	resolvedPath, err := resolveReference(strings.Join(parts[3:], "/"))
+	if err != nil {
+		return nil, err
+	}
 	return &Reference{
 		ResolvedPath:    resolvedPath,
-		CrossRepoSuffix: crossRepoSuffix,
-		Type:            refType,
+		CrossRepoSuffix: fmt.Sprintf("@%s/%s/%s", host, org, repo),
+		Type:            inferType(resolvedPath),
+		Ref:             gitRef,
 	}, nil
 }
 

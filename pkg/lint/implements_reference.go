@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,6 +80,18 @@ func (c *implementsReferenceChecker) check(specRoot string) ([]Violation, error)
 
 		ref, err := parseImplementsRef(role.implementsLine)
 		if err != nil {
+			var lse *sourceref.LegacySuffixError
+			if errors.As(err, &lse) {
+				violations = append(violations, Violation{
+					File:      rel,
+					Line:      0,
+					Severity:  "error",
+					Rule:      "implements-reference",
+					Message:   fmt.Sprintf("Implements reference uses the legacy cross-repo suffix form; rewrite to %s (source-references#req:cross-repo-authority)", lse.Rewrite),
+					FixTarget: "implements-reference",
+				})
+				return
+			}
 			add("Implements reference is not a well-formed specscore: reference (capability-and-platform-implementations#req:implements-resolution)")
 			return
 		}
@@ -106,4 +119,40 @@ func (c *implementsReferenceChecker) check(specRoot string) ([]Violation, error)
 		return nil, walkErr
 	}
 	return violations, nil
+}
+
+// fix rewrites every Implementation Feature's "**Implements:**" line that uses
+// the removed legacy `@{host}/{org}/{repo}` suffix to the authority form
+// (source-references#req:cross-repo-authority / decision 0010), preserving all
+// other bytes. Idempotent: an already-authority-form line is left untouched.
+func (c *implementsReferenceChecker) fix(specRoot string) error {
+	return walkFeatureReadmes(specRoot, func(readmePath string, content []byte) {
+		out, changed := rewriteLegacyImplementsLine(content)
+		if !changed {
+			return
+		}
+		_ = os.WriteFile(readmePath, out, 0o644)
+	})
+}
+
+// rewriteLegacyImplementsLine rewrites the "**Implements:**" line's legacy
+// specscore suffix reference to its authority form. It returns the possibly
+// updated content and whether a rewrite happened.
+func rewriteLegacyImplementsLine(content []byte) ([]byte, bool) {
+	role := classifyFeatureRole(string(content))
+	if !role.isImplementation {
+		return content, false
+	}
+	token := sourceref.ExtractReference(role.implementsLine)
+	if token == "" {
+		return content, false
+	}
+	_, err := sourceref.ParseReference(token)
+	var lse *sourceref.LegacySuffixError
+	if !errors.As(err, &lse) {
+		return content, false
+	}
+	newLine := strings.Replace(role.implementsLine, token, lse.Rewrite, 1)
+	out := strings.Replace(string(content), role.implementsLine, newLine, 1)
+	return []byte(out), true
 }
