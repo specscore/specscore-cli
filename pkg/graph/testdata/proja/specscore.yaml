@@ -1,0 +1,9 @@
+# SpecScore Repo Config Schema: https://specscore.md/repo-config
+
+project:
+  title: ProjA
+  host: example.com
+  org: acme
+  repo: proja
+projects:
+  - ../projb

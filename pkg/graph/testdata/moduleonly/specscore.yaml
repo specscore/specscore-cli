@@ -1,0 +1,7 @@
+# SpecScore Repo Config Schema: https://specscore.md/repo-config
+
+project:
+  title: ModuleOnly
+modules:
+  - name: ext
+    path: ext
