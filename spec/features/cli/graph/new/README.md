@@ -77,6 +77,10 @@ Generated GraphSpec artifacts MUST use plural consumer directories. The CLI MUST
 
 `--root <path>` MUST allow callers to choose a graph root other than `spec/graph/`. The path MUST be project-relative and MUST NOT escape the project root.
 
+#### REQ: module-scaffold
+
+`graph new module` MUST create the module README and MUST scaffold, by default, the five collection directories (`entities/`, `relationships/`, `commands/`, `events/`, `models/`), each with a README index — SpecScore's every-directory-has-a-README rule applies inside graph trees, and the first consumer pilot hit lint failures on every unscaffolded collection directory. A `--bare` flag MAY skip collection scaffolding. `models/` holds the module's ModelSpec sources per decision 0006.
+
 ### Frontmatter and body
 
 Generated files must be intentionally minimal and reviewable.
@@ -150,7 +154,6 @@ Running the same `graph new event` command twice exits `1` on the second invocat
 ## Open Questions
 
 - Should `graph new` support interactive mode like `idea new -i`?
-- Should `graph new module` create all empty collection directories and README indexes by default?
 - Should `--allow-unresolved` exist for architecture sketching before all referenced concepts are created?
 - Should structural editing commands require a clean git working tree, following the stricter lifecycle mutation conventions?
 - Should `graph extract` be able to extract GraphSpec artifacts from existing FeatureSpec prose?

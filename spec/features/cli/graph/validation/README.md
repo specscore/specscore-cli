@@ -88,7 +88,11 @@ Graph validation SHOULD detect duplicate display names within the same module an
 
 #### REQ: ownership-validation
 
-Ownership is derived from placement (GraphSpec decision 0005). Graph validation MUST verify that every artifact resides under a resolvable module root; artifacts outside any module root are errors. An `owner:` frontmatter field on any artifact is itself a lint violation, since it duplicates derived ownership.
+Ownership is derived from placement (GraphSpec decision 0005). Graph validation MUST verify that every artifact resides under a resolvable module root; artifacts outside any module root are errors. An `owner:` frontmatter field on any artifact is itself a lint violation, since it duplicates derived ownership. A module that owns zero graph artifacts (a pure structural provider whose surface is only `models/`) is legal and MUST NOT be a violation.
+
+#### REQ: model-ref-resolution
+
+`modelspec://` references in graph artifacts and module-qualified names inside ModelSpec sources MUST resolve per SpecScore decision 0007: local graph root (placement per decision 0006), then configured `specscore.yaml` `projects:` local paths, then an explicit `@{host}/{org}/{repo}` suffix — with no implicit network fetch. Diagnostics MUST distinguish unknown module, unknown concept within a resolved module, and unavailable suffixed repository. Model-level cross-module references MUST be covered by the owning module's `dependsOn`, under the same dependency-direction rule as graph-level references.
 
 #### REQ: dependency-validation
 
