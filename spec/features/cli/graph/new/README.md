@@ -87,7 +87,7 @@ Generated files must be intentionally minimal and reviewable.
 
 #### REQ: frontmatter-minimum
 
-Every generated artifact MUST include YAML frontmatter with at least `kind`, `id`, `name`, `status`, and `summary` where those fields are meaningful for the GraphSpec kind. Artifacts MUST NOT carry an `owner:` field — ownership is derived from placement under the module root (GraphSpec decision 0005). Relationship artifacts MUST also include `from` and `to` when supplied. Command and Event artifacts MUST include `subject` when supplied. Entity artifacts SHOULD include a `model:` placeholder comment pointing authors at the `modelspec://` reference form.
+Every generated artifact MUST include YAML frontmatter with at least `kind`, `id`, `name`, `status`, and `summary` where those fields are meaningful for the GraphSpec kind. Artifacts MUST NOT carry an `owner:` field — ownership is derived from placement under the module root (GraphSpec decision 0005). Relationship artifacts MUST also include `from` and `to` when supplied. Command and Event artifacts MUST include `subject` when supplied. Entity artifacts SHOULD include a `model:` placeholder comment pointing authors at the local `modelspec:///<module>.<Name>` reference form (SpecScore decision 0010).
 
 #### REQ: body-sections
 

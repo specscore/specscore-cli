@@ -92,7 +92,15 @@ Ownership is derived from placement (GraphSpec decision 0005). Graph validation 
 
 #### REQ: model-ref-resolution
 
-`modelspec://` references in graph artifacts and module-qualified names inside ModelSpec sources MUST resolve per SpecScore decision 0007: local graph root (placement per decision 0006), then configured `specscore.yaml` `projects:` local paths, then an explicit `@{host}/{org}/{repo}` suffix — with no implicit network fetch. Diagnostics MUST distinguish unknown module, unknown concept within a resolved module, and unavailable suffixed repository. Model-level cross-module references MUST be covered by the owning module's `dependsOn`, under the same dependency-direction rule as graph-level references.
+`modelspec://` references in graph artifacts and module-qualified names inside ModelSpec sources MUST resolve per SpecScore decision 0007, using the URL grammar of SpecScore decision 0010 and the addressable-concept rules of SpecScore decision 0011. The reference forms are `modelspec:///<module>[.<kind>].<Name>` (local, empty authority) and `modelspec://{host}/{org}/{repo}/<module>[.<kind>].<Name>` (cross-repo, where the last path segment is the concept and everything before it is the repository path). Resolution proceeds through the same three steps: local graph root (placement per decision 0006), then configured `specscore.yaml` `projects:` local paths, then the explicit cross-repo authority — with no implicit network fetch. Diagnostics MUST distinguish unknown module, unknown concept within a resolved module, kind-segment mismatch, and unavailable cross-repo repository. Model-level cross-module references MUST be covered by the owning module's `dependsOn`, under the same dependency-direction rule as graph-level references.
+
+#### REQ: kind-segments-and-reserved-names
+
+The optional kind segment `<kind>` MUST be one of `entities`, `components`, `enums`, `collections`, or `recordsets` (decision 0011). The two-segment form `<module>.<Name>` resolves only against the flat entity/component/enum trio namespace; collections and recordsets are addressable only in the three-segment form, each with its own name scope. Duplicate-concept detection MUST treat the trio, collections, and recordsets as three separate scopes. The five kind tokens MUST be forbidden as ModelSpec concept names (reported as `graph-model-reserved-name`). An unknown kind token and a kind-segment mismatch (e.g. `...entities.Foo` where `Foo` is an enum) MUST be distinct, clear diagnostics. A `?ref=<git-ref>` pin MAY appear on any reference; it is advisory in v0.2 and does not change resolution. A fragment (`#…`) on a `modelspec://` reference is an error, reserved for future intra-concept addressing.
+
+#### REQ: legacy-form-autofix
+
+The legacy `modelspec://x.Y` form (authority present, empty path) MUST be a lint error (`graph-model-legacy-form`) carrying the exact rewrite `modelspec:///x.Y` (decision 0010). `specscore graph lint --fix` MUST apply that rewrite in artifact frontmatter/metadata/inputs, rewriting each fixed file while preserving all other bytes and reporting the fixed files the way `specscore spec lint --fix` does. `--fix` fixes only violations with a specified fixer; every other violation still reports.
 
 #### REQ: dependency-validation
 
