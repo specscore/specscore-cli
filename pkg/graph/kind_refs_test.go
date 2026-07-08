@@ -57,7 +57,7 @@ func TestLint_KindExplicitResolution(t *testing.T) {
 		if vi.Rule != "graph-model-ref-resolves" {
 			continue
 		}
-		if strings.Contains(vi.Message, "e-mismatch") || strings.Contains(vi.Message, "not a enum") {
+		if strings.Contains(vi.Message, "not an enum") {
 			mismatchMsg = vi.Message
 		}
 	}
@@ -70,7 +70,7 @@ func TestLint_KindExplicitResolution(t *testing.T) {
 			twosegMsg = vi.Message
 		}
 	}
-	if mismatchMsg == "" || !strings.Contains(mismatchMsg, "is a entity, not a enum") {
+	if mismatchMsg == "" || !strings.Contains(mismatchMsg, "is an entity, not an enum") {
 		t.Fatalf("expected kind-mismatch diagnostic: %+v", res.Violations)
 	}
 	if twosegMsg == "" {

@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 144
+Total rules: 148
 
 ## capability
 
@@ -139,6 +139,10 @@ Total rules: 144
 | graph-duplicate-module-id | error | Rejects a GraphSpec module id declared by more than one graph root in the union (decision 0009). |
 | graph-model-duplicate-concept | error | Rejects duplicate concept names within a module's ModelSpec sources. |
 | graph-model-enum-values | error | Requires ModelSpec enum values to be non-empty and free of duplicates. |
+| graph-role-labels | error | Requires role-labeled endpoints and participants to be well-formed {ref, role} maps with kebab-case role tokens (decision 0012). |
+| graph-ambiguous-endpoints | warning | Warns on a self-referential relationship without endpoint role labels and on same-reference event participants lacking distinguishing roles (decision 0012). |
+| graph-unknown-key | warning | Warns on frontmatter keys the artifact's placement-derived kind does not define (silently ignored by tooling, e.g. lifecycle: on a relationship). |
+| graph-event-reachability | info | Reports an event that is in no command's possibleEvents and declares no sources — nothing can produce it. |
 
 ## idea
 

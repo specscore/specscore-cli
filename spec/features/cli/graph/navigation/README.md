@@ -68,6 +68,10 @@ Once GraphSpec spans modules and repositories, direct file browsing is not enoug
 
 `specscore graph refs <ref>` MUST report artifacts that reference the selected artifact. This is the GraphSpec equivalent of "who references this?".
 
+#### REQ: model-derived-edges
+
+`graph refs` MUST include edges derived from ModelSpec structure: when an artifact's `model:` concept declares an entity-reference property (or `use` entry) targeting a concept that is itself some artifact's `model:`, the referencing artifact counts as referencing the target artifact. ModelSpec's core-model explicitly licenses graph consumers to derive edges from entity-reference properties; without this, an association-object entity (a relationship promoted to an entity, its endpoints now model properties) would be invisible to reference navigation — the Family Identity pilot's finding FA3.
+
 #### REQ: graph-deps
 
 `specscore graph deps <ref>` MUST report artifacts the selected artifact depends on or references. `--transitive` follows dependencies recursively and MUST detect cycles without infinite recursion.

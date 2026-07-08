@@ -102,6 +102,22 @@ The optional kind segment `<kind>` MUST be one of `entities`, `components`, `enu
 
 The legacy `modelspec://x.Y` form (authority present, empty path) MUST be a lint error (`graph-model-legacy-form`) carrying the exact rewrite `modelspec:///x.Y` (decision 0010). `specscore graph lint --fix` MUST apply that rewrite in artifact frontmatter/metadata/inputs, rewriting each fixed file while preserving all other bytes and reporting the fixed files the way `specscore spec lint --fix` does. `--fix` fixes only violations with a specified fixer; every other violation still reports.
 
+#### REQ: role-labels
+
+Relationship endpoints and event participants MAY use the decision-0012 map form `{ ref: <qualified-id>, role: <kebab-token> }` alongside the scalar form. `graph lint` MUST validate the map shape under `graph-role-labels` (error): `ref` and `role` are both required and non-empty, no other keys are allowed, and the role must be a bare lowercase kebab-case token. Labeled endpoints resolve, count against `dependsOn`, and participate in every other rule exactly as their scalar forms do.
+
+#### REQ: ambiguous-endpoints
+
+`graph lint` MUST warn under `graph-ambiguous-endpoints` when (a) a relationship's two endpoints carry the same reference and at least one endpoint has no role label, or (b) two event participants carry the same reference without distinguishing role labels (decision 0012). Participants distinguished by different roles MUST NOT warn.
+
+#### REQ: unknown-keys
+
+`graph lint` MUST warn under `graph-unknown-key` on any top-level frontmatter key that the artifact's placement-derived kind does not define (e.g. `lifecycle:` on a relationship), since such keys are silently ignored by tooling. Keys rejected by dedicated rules (`owner`, `fields`, `properties`) are excluded to avoid double-reporting.
+
+#### REQ: event-reachability
+
+`graph lint` MUST report under `graph-event-reachability` (info severity) any non-draft event that appears in no command's `possibleEvents` and declares no `sources:` key — a fact nothing can produce. Draft events are exempt: a freshly scaffolded event is always initially unreachable.
+
 #### REQ: dependency-validation
 
 Graph validation MUST verify that every qualified reference from an artifact targets a module listed in the owning module's `dependsOn`, and that a relationship's owning module covers both endpoint modules in its `dependsOn` closure. The CLI MUST NOT invent project-specific architecture rules beyond what GraphSpec defines unless they are configured outside the core GraphSpec validator.

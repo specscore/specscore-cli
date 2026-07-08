@@ -28,6 +28,10 @@ var graphCatalogRules = []Rule{
 	{ID: "graph-duplicate-module-id", Family: "graph", Severity: "error", Description: "Rejects a GraphSpec module id declared by more than one graph root in the union (decision 0009)."},
 	{ID: "graph-model-duplicate-concept", Family: "graph", Severity: "error", Description: "Rejects duplicate concept names within a module's ModelSpec sources."},
 	{ID: "graph-model-enum-values", Family: "graph", Severity: "error", Description: "Requires ModelSpec enum values to be non-empty and free of duplicates."},
+	{ID: "graph-role-labels", Family: "graph", Severity: "error", Description: "Requires role-labeled endpoints and participants to be well-formed {ref, role} maps with kebab-case role tokens (decision 0012)."},
+	{ID: "graph-ambiguous-endpoints", Family: "graph", Severity: "warning", Description: "Warns on a self-referential relationship without endpoint role labels and on same-reference event participants lacking distinguishing roles (decision 0012)."},
+	{ID: "graph-unknown-key", Family: "graph", Severity: "warning", Description: "Warns on frontmatter keys the artifact's placement-derived kind does not define (silently ignored by tooling, e.g. lifecycle: on a relationship)."},
+	{ID: "graph-event-reachability", Family: "graph", Severity: "info", Description: "Reports an event that is in no command's possibleEvents and declares no sources — nothing can produce it."},
 }
 
 // GraphRules returns a copy of the GraphSpec rule catalog. The `graph` command

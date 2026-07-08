@@ -70,10 +70,13 @@ func (m *ModelModule) lookupConcept(kind, name string) conceptLookup {
 // ModelRef is one module-qualified or bare reference inside HCL sources — a
 // property/field type reference (entity/component/enum) or an entity `use`
 // entry (decision 0014). Target is bare (<Name>) for same-module references or
-// qualified (<module>.<Name>) for cross-module references.
+// qualified (<module>.<Name>) for cross-module references. Owner is the name
+// of the concept whose body declares the reference — navigation uses it to
+// derive graph edges from model structure (association-object visibility).
 type ModelRef struct {
 	Target string
 	Attr   string // "entity", "component", "enum", or "use"
+	Owner  string // declaring concept name
 	File   string
 	Line   int
 }
@@ -172,7 +175,7 @@ func (m *ModelModule) parseBlock(path string, blk *hclsyntax.Block) {
 	switch blk.Type {
 	case "entity", "component":
 		m.Concepts = append(m.Concepts, &Concept{Name: name, Kind: blk.Type, File: path, Line: line})
-		m.collectMemberRefs(path, blk.Body)
+		m.collectMemberRefs(path, name, blk.Body)
 	case "enum":
 		c := &Concept{Name: name, Kind: "enum", File: path, Line: line}
 		if vals, ok := stringListAttr(blk.Body, "values"); ok {
@@ -190,11 +193,12 @@ func (m *ModelModule) parseBlock(path string, blk *hclsyntax.Block) {
 
 // collectMemberRefs extracts references from an entity/component body: the
 // `use` list plus every property/field block's entity/component/enum attribute.
-func (m *ModelModule) collectMemberRefs(path string, body *hclsyntax.Body) {
+// owner is the declaring concept's name.
+func (m *ModelModule) collectMemberRefs(path, owner string, body *hclsyntax.Body) {
 	if uses, ok := stringListAttr(body, "use"); ok {
 		useLine := body.Attributes["use"].SrcRange.Start.Line
 		for _, u := range uses {
-			m.Refs = append(m.Refs, &ModelRef{Target: u, Attr: "use", File: path, Line: useLine})
+			m.Refs = append(m.Refs, &ModelRef{Target: u, Attr: "use", Owner: owner, File: path, Line: useLine})
 		}
 	}
 	for _, blk := range body.Blocks {
@@ -206,6 +210,7 @@ func (m *ModelModule) collectMemberRefs(path string, body *hclsyntax.Body) {
 				m.Refs = append(m.Refs, &ModelRef{
 					Target: v,
 					Attr:   attr,
+					Owner:  owner,
 					File:   path,
 					Line:   blk.Body.Attributes[attr].SrcRange.Start.Line,
 				})

@@ -32,6 +32,21 @@ type MetaEntry struct {
 	Line   int
 }
 
+// ParticipantItem is one entry of an EventSpec `participants:` list — either a
+// scalar qualified reference or a role-labeled {ref, role} map (decision 0012).
+type ParticipantItem struct {
+	Ref  string
+	Role string
+	Line int
+}
+
+// RoleIssue is a shape violation found while decoding a role-labeled endpoint
+// or participant (decision 0012); the graph-role-labels rule reports them.
+type RoleIssue struct {
+	Line    int
+	Message string
+}
+
 // Artifact is a parsed GraphSpec artifact (module README or a collection
 // artifact). Parse is resilient: a non-nil Artifact is returned for every
 // readable file. FMError is set when the file has no leading frontmatter block
@@ -64,20 +79,29 @@ type Artifact struct {
 	LifecycleStates        []string
 	LifecycleStatesPresent bool
 
-	// relationship
+	// relationship. From/To always carry the endpoint reference; FromRole/
+	// ToRole carry the optional decision-0012 role labels of the map form.
 	From        string
+	FromRole    string
 	To          string
+	ToRole      string
 	Cardinality string
 	Metadata    []MetaEntry
 
-	// command / event
-	Subject         string
-	Actors          []string
-	Participants    []string
-	Inputs          []InputItem
-	inputsMalformed bool
-	PossibleEvents  []string
-	Sources         []string
+	// command / event. Participants carries the references (scalar view);
+	// ParticipantItems carries the role-labeled per-item view (decision 0012).
+	Subject          string
+	Actors           []string
+	Participants     []string
+	ParticipantItems []ParticipantItem
+	Inputs           []InputItem
+	inputsMalformed  bool
+	PossibleEvents   []string
+	Sources          []string
+
+	// RoleIssues collects endpoint/participant shape violations (decision
+	// 0012) for the graph-role-labels rule.
+	RoleIssues []RoleIssue
 }
 
 // KeyLine returns the 1-based file line of the named top-level frontmatter key,
@@ -196,9 +220,9 @@ func (a *Artifact) fill(root *yaml.Node, lineOffset int) {
 		case "model":
 			a.Model = scalar(val)
 		case "from":
-			a.From = scalar(val)
+			a.From, a.FromRole = a.fillEndpoint(val, "from", lineOffset)
 		case "to":
-			a.To = scalar(val)
+			a.To, a.ToRole = a.fillEndpoint(val, "to", lineOffset)
 		case "cardinality":
 			a.Cardinality = scalar(val)
 		case "subject":
@@ -208,7 +232,7 @@ func (a *Artifact) fill(root *yaml.Node, lineOffset int) {
 		case "actors":
 			a.Actors = scalarList(val)
 		case "participants":
-			a.Participants = scalarList(val)
+			a.fillParticipants(val, lineOffset)
 		case "possibleEvents":
 			a.PossibleEvents = scalarList(val)
 		case "sources":
@@ -221,6 +245,81 @@ func (a *Artifact) fill(root *yaml.Node, lineOffset int) {
 			a.fillInputs(val, lineOffset)
 		}
 	}
+}
+
+// fillEndpoint decodes a relationship endpoint (decision 0012): a scalar
+// qualified reference, or a {ref, role} map. Shape violations are recorded as
+// RoleIssues for the graph-role-labels rule.
+func (a *Artifact) fillEndpoint(val *yaml.Node, field string, lineOffset int) (ref, role string) {
+	if val.Kind == yaml.ScalarNode {
+		return val.Value, ""
+	}
+	if val.Kind != yaml.MappingNode {
+		a.roleIssue(lineOffset+val.Line, field+" must be a qualified reference or a {ref, role} map")
+		return "", ""
+	}
+	return a.decodeRefRoleMap(val, field, lineOffset)
+}
+
+// fillParticipants decodes the participants list: each item is a scalar
+// qualified reference or a {ref, role} map (decision 0012). Participants (the
+// scalar ref view) and ParticipantItems (the role-labeled view) stay in sync.
+func (a *Artifact) fillParticipants(val *yaml.Node, lineOffset int) {
+	if val.Kind != yaml.SequenceNode {
+		return
+	}
+	for _, item := range val.Content {
+		line := lineOffset + item.Line
+		switch item.Kind {
+		case yaml.ScalarNode:
+			a.Participants = append(a.Participants, item.Value)
+			a.ParticipantItems = append(a.ParticipantItems, ParticipantItem{Ref: item.Value, Line: line})
+		case yaml.MappingNode:
+			ref, role := a.decodeRefRoleMap(item, "participants item", lineOffset)
+			if ref != "" {
+				a.Participants = append(a.Participants, ref)
+			}
+			a.ParticipantItems = append(a.ParticipantItems, ParticipantItem{Ref: ref, Role: role, Line: line})
+		default:
+			a.roleIssue(line, "participants item must be a qualified reference or a {ref, role} map")
+		}
+	}
+}
+
+// decodeRefRoleMap decodes a decision-0012 {ref, role} map. Both keys are
+// required (a map without a role says nothing the scalar form doesn't); other
+// keys are rejected; the role must be a bare kebab-case token.
+func (a *Artifact) decodeRefRoleMap(node *yaml.Node, field string, lineOffset int) (ref, role string) {
+	line := lineOffset + node.Line
+	hasRef, hasRole := false, false
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		k := node.Content[i]
+		v := node.Content[i+1]
+		switch k.Value {
+		case "ref":
+			hasRef = true
+			ref = scalar(v)
+		case "role":
+			hasRole = true
+			role = scalar(v)
+		default:
+			a.roleIssue(lineOffset+k.Line, field+" map has unexpected key \""+k.Value+"\" (only ref and role are allowed)")
+		}
+	}
+	if !hasRef || ref == "" {
+		a.roleIssue(line, field+" map must carry a non-empty `ref`")
+	}
+	if !hasRole || role == "" {
+		a.roleIssue(line, field+" map must carry a non-empty `role` (use the scalar form when no role label is needed)")
+	} else if !IsKebab(role) {
+		a.roleIssue(line, field+" role \""+role+"\" must be a bare lowercase kebab-case token")
+	}
+	return ref, role
+}
+
+// roleIssue records one decision-0012 shape violation.
+func (a *Artifact) roleIssue(line int, msg string) {
+	a.RoleIssues = append(a.RoleIssues, RoleIssue{Line: line, Message: msg})
 }
 
 // fillLifecycle records whether lifecycle.states is present and its values.

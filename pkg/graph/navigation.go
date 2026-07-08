@@ -2,6 +2,7 @@ package graph
 
 import (
 	"sort"
+	"strings"
 )
 
 // ListItem is one row of `graph list`. Owner is the owning module id, derived
@@ -110,9 +111,12 @@ func ResolveRef(g *Graph, ref string) (qid string, candidates []string, found bo
 	}
 }
 
-// Refs returns the artifacts that reference targetQID (inbound). With
-// transitive, it returns the full set of artifacts that can reach targetQID
-// through reference chains, cycle-safe.
+// Refs returns the artifacts that reference targetQID (inbound), including
+// edges derived from ModelSpec structure (an entity whose model carries an
+// entity-reference property references the entity whose model is the target
+// concept — association-object visibility). With transitive, it returns the
+// full set of artifacts that can reach targetQID through reference chains,
+// cycle-safe.
 func Refs(g *Graph, targetQID string, transitive bool) []RefItem {
 	byQID := map[string]*Artifact{}
 	outbound := map[string]map[string]bool{}
@@ -126,6 +130,7 @@ func Refs(g *Graph, targetQID string, transitive bool) []RefItem {
 			outbound[q] = artifactRefs(a)
 		}
 	}
+	addModelEdges(g, outbound)
 	// reverse[target] = set of referencers.
 	reverse := map[string]map[string]bool{}
 	for src, targets := range outbound {
@@ -166,6 +171,51 @@ func Refs(g *Graph, targetQID string, transitive bool) []RefItem {
 	// IDs are unique here (result is keyed by qualified id), so no tie-break.
 	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	return items
+}
+
+// addModelEdges augments the outbound reference map with edges derived from
+// ModelSpec structure (ModelSpec core-model licenses graph consumers to derive
+// edges from entity-reference properties). For every artifact whose model
+// concept declares a reference to another concept that is itself some
+// artifact's model, an edge between the two artifacts is added. This is what
+// keeps association-object entities (a relationship promoted to an entity, its
+// endpoints now model properties) visible to `graph refs`.
+func addModelEdges(g *Graph, outbound map[string]map[string]bool) {
+	// conceptToQID maps a local "<module>.<Concept>" to the qualified id of
+	// the graph artifact whose model: names it.
+	conceptToQID := map[string]string{}
+	for _, m := range g.Modules {
+		for _, a := range m.Artifacts {
+			if a.ID == "" || a.Model == "" {
+				continue
+			}
+			msr, err := ParseModelspecRef(a.Model)
+			if err != nil || msr.Repo != "" {
+				continue
+			}
+			conceptToQID[msr.Module+"."+msr.Name] = a.QualifiedID()
+		}
+	}
+	for _, m := range g.Modules {
+		if m.Model == nil {
+			continue
+		}
+		for _, r := range m.Model.Refs {
+			srcQID, ok := conceptToQID[m.ID+"."+r.Owner]
+			if !ok {
+				continue
+			}
+			target := r.Target
+			if !strings.Contains(target, ".") {
+				target = m.ID + "." + target
+			}
+			dstQID, ok := conceptToQID[target]
+			if !ok || dstQID == srcQID {
+				continue
+			}
+			outbound[srcQID][dstQID] = true
+		}
+	}
 }
 
 // artifactRefs returns the set of qualified graph references an artifact makes

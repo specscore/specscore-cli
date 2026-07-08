@@ -211,6 +211,35 @@ func (l *linter) run() {
 	}
 	l.checkDuplicateIDs()
 	l.checkDuplicateModuleIDs()
+	l.checkEventReachability()
+}
+
+// checkEventReachability reports (info) events that no command can produce and
+// no non-command source feeds: they are declared facts nothing emits. An event
+// with a `sources:` key (even a lint-warned empty one) is considered fed.
+// Draft events are exempt — a freshly scaffolded event is always initially
+// unreachable (same stance as the non-draft model: warning on entities).
+func (l *linter) checkEventReachability() {
+	possible := map[string]bool{}
+	for _, m := range l.g.Modules {
+		for _, a := range m.Artifacts {
+			for _, ev := range a.PossibleEvents {
+				possible[ev] = true
+			}
+		}
+	}
+	for _, m := range l.g.Modules {
+		for _, a := range m.Artifacts {
+			if a.CollectionDir != "events" || !a.HasFrontmatter || a.Status == "draft" {
+				continue
+			}
+			if a.HasKey("sources") || possible[a.QualifiedID()] {
+				continue
+			}
+			l.emit("graph-event-reachability", a.Path, a.KeyLine("id"),
+				fmt.Sprintf("event %q is in no command's possibleEvents and declares no sources; nothing can produce it", a.QualifiedID()))
+		}
+	}
 }
 
 // checkDuplicateModuleIDs reports a GraphSpec module id declared by more than
@@ -250,6 +279,8 @@ func (l *linter) checkArtifact(m *Module, a *Artifact) {
 	l.checkIDRules(m, a)
 	l.checkOwner(a)
 	l.checkInlineStructure(a)
+	l.checkRoleIssues(a)
+	l.checkUnknownKeys(a)
 
 	expected := KindModule
 	if a.CollectionDir != "" {
@@ -264,6 +295,56 @@ func (l *linter) checkArtifact(m *Module, a *Artifact) {
 		l.checkCommand(m, a)
 	case KindEvent:
 		l.checkEvent(m, a)
+	}
+}
+
+// checkRoleIssues reports decision-0012 endpoint/participant shape violations
+// collected at parse time.
+func (l *linter) checkRoleIssues(a *Artifact) {
+	for _, ri := range a.RoleIssues {
+		l.emit("graph-role-labels", a.Path, ri.Line, ri.Message)
+	}
+}
+
+// knownKeysByKind maps each GraphSpec kind to its allowed top-level frontmatter
+// keys. Keys outside the set are reported by graph-unknown-key (warning): they
+// are silently meaningless to tooling — e.g. lifecycle: on a relationship.
+var knownKeysByKind = map[string]map[string]bool{
+	KindModule:       keySet("kind", "id", "name", "status", "summary", "dependsOn"),
+	KindEntity:       keySet("kind", "id", "name", "status", "summary", "model", "lifecycle"),
+	KindRelationship: keySet("kind", "id", "name", "status", "summary", "from", "to", "cardinality", "metadata"),
+	KindCommand:      keySet("kind", "id", "name", "status", "summary", "subject", "actors", "inputs", "possibleEvents"),
+	KindEvent:        keySet("kind", "id", "name", "status", "summary", "subject", "participants", "sources"),
+}
+
+func keySet(keys ...string) map[string]bool {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		m[k] = true
+	}
+	return m
+}
+
+// checkUnknownKeys warns on frontmatter keys the artifact's placement-derived
+// kind does not define. Keys already rejected by dedicated rules (owner,
+// fields, properties) are skipped to avoid double-reporting.
+func (l *linter) checkUnknownKeys(a *Artifact) {
+	expected := KindModule
+	if a.CollectionDir != "" {
+		expected = kindByCollection[a.CollectionDir]
+	}
+	known := knownKeysByKind[expected]
+	var unknown []string
+	for k := range a.presentKeys {
+		if known[k] || k == "owner" || k == "fields" || k == "properties" {
+			continue
+		}
+		unknown = append(unknown, k)
+	}
+	sort.Strings(unknown)
+	for _, k := range unknown {
+		l.emit("graph-unknown-key", a.Path, a.KeyLine(k),
+			fmt.Sprintf("key %q is not defined for kind %q and is ignored by tooling", k, expected))
 	}
 }
 
@@ -351,6 +432,12 @@ func (l *linter) checkRelationship(m *Module, a *Artifact) {
 	l.checkGraphRef(m, a.Path, a.To, "to", a.KeyLine("to"))
 	l.checkMetadata(m, a)
 	l.checkOwnerCoversEndpoints(m, a)
+	// A self-referential relationship without role labels leaves direction as
+	// the only carrier of meaning (decision 0012).
+	if a.From != "" && a.From == a.To && (a.FromRole == "" || a.ToRole == "") {
+		l.emit("graph-ambiguous-endpoints", a.Path, a.KeyLine("from"),
+			fmt.Sprintf("both endpoints reference %q; label them with roles ({ref: %s, role: ...}) so the sides are machine-readable (decision 0012)", a.From, a.From))
+	}
 }
 
 func (l *linter) checkOwnerCoversEndpoints(m *Module, a *Artifact) {
@@ -467,6 +554,27 @@ func (l *linter) checkEvent(m *Module, a *Artifact) {
 		l.checkGraphRef(m, a.Path, p, "participants", a.KeyLine("participants"))
 	}
 	l.checkEventSources(a)
+	l.checkDuplicateParticipants(a)
+}
+
+// checkDuplicateParticipants warns when two participants carry the same
+// reference without distinguishing role labels (decision 0012): either
+// copy-paste noise or two roles the author could not express before roles
+// existed.
+func (l *linter) checkDuplicateParticipants(a *Artifact) {
+	seen := map[string]int{} // ref+role -> first line
+	for _, p := range a.ParticipantItems {
+		if p.Ref == "" {
+			continue
+		}
+		key := p.Ref + "\x00" + p.Role
+		if first, ok := seen[key]; ok {
+			l.emit("graph-ambiguous-endpoints", a.Path, p.Line,
+				fmt.Sprintf("participant %q duplicates line %d without a distinguishing role label (decision 0012)", p.Ref, first))
+			continue
+		}
+		seen[key] = p.Line
+	}
 }
 
 func (l *linter) checkEventSources(a *Artifact) {
@@ -507,6 +615,17 @@ func (l *linter) checkGraphRef(owner *Module, ownerPath, ref, field string, line
 	if !l.refExists(ref) {
 		l.emit("graph-reference-resolves", ownerPath, line,
 			fmt.Sprintf("%s reference %q does not resolve to an existing artifact", field, ref))
+	}
+}
+
+// withArticle prefixes a concept kind with its indefinite article ("an entity",
+// "an enum", "a component").
+func withArticle(kind string) string {
+	switch kind[0] {
+	case 'a', 'e', 'i', 'o', 'u':
+		return "an " + kind
+	default:
+		return "a " + kind
 	}
 }
 
@@ -557,7 +676,7 @@ func (l *linter) checkModelspecRef(owner *Module, ownerPath, ref, field string, 
 			fmt.Sprintf("%s reference %q: unknown concept %q in module %q", field, ref, msr.Name, msr.Module))
 	case resKindMismatch:
 		l.emit("graph-model-ref-resolves", ownerPath, line,
-			fmt.Sprintf("%s reference %q: concept %q in module %q is a %s, not a %s", field, ref, msr.Name, msr.Module, res.actualKind, msr.Kind))
+			fmt.Sprintf("%s reference %q: concept %q in module %q is %s, not %s", field, ref, msr.Name, msr.Module, withArticle(res.actualKind), withArticle(msr.Kind)))
 	case resRepoUnavailable:
 		l.emit("graph-model-ref-resolves", ownerPath, line,
 			fmt.Sprintf("%s reference %q: unresolved (repository %q not available)", field, ref, msr.Repo))
