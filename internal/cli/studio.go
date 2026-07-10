@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -43,6 +45,9 @@ var (
 	// storeMergeFn is the test seam for the non-destructive store merge the
 	// probe verb writes through.
 	storeMergeFn = store.Merge
+	// osOpenFn is the test seam for os.Open; the contradictions verb reads the
+	// ignore-list file through this var so tests can inject read failures.
+	osOpenFn = func(name string) (io.ReadCloser, error) { return os.Open(name) }
 )
 
 // studioCommand returns the "studio" command group for SpecScore Studio —
@@ -501,7 +506,8 @@ func humanAge(verifiedAt string, now time.Time) string {
 // --- studio contradictions ---
 //
 // Feature: cli/studio/answers (REQ: contradictions-verb,
-// REQ: status-vs-behavior-drift, REQ: same-predicate-disagreement)
+// REQ: status-vs-behavior-drift, REQ: same-predicate-disagreement,
+// REQ: contradiction-facts, REQ: suppression-ignore-list)
 
 func studioContradictionsCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -526,6 +532,19 @@ predicate, object, evidence class, evidence pointer, adapter id, and
 observed_at — plus the detector id that flagged it. A store with no
 contradictions exits 0 and prints an empty list (JSON []).
 
+Each detected item is also written back as a "contradicts" fact in the store
+(adapter id "contradictions", class "derived") so "studio facts --predicate
+contradicts" can query the conflict set. Re-running is idempotent — the merge
+key advances verified_at without duplicating. Use --no-write to skip the
+write-back.
+
+A workspace ignore-list file at <workspace-dir>/.specscore-studio/contradictions-ignore.txt
+suppresses accepted contradictions: one canonical "<side-a>  <side-b>" identity
+per line (two spaces between refs), with "#"-prefixed comments and blank lines
+ignored. Suppressed items are omitted from both the output and the write-back.
+Override the file path with --ignore-file. Use --show-ignored to list what was
+suppressed.
+
 --format <human|json> selects the output format (default human).
 
 Running before "studio index" exits 2 with a message naming the expected store
@@ -537,6 +556,9 @@ path and suggesting "specscore studio index".`,
 	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
 	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
 	cmd.Flags().String("format", "human", "output format: human or json")
+	cmd.Flags().Bool("no-write", false, "compute and print items without writing contradicts facts to the store")
+	cmd.Flags().String("ignore-file", "", "path to the ignore-list file (default <workspace-dir>/.specscore-studio/contradictions-ignore.txt)")
+	cmd.Flags().Bool("show-ignored", false, "list suppressed items alongside detected items (marked as ignored)")
 	return cmd
 }
 
@@ -554,11 +576,22 @@ type contradictionSide struct {
 }
 
 // contradictionItem is the JSON/human shape of one detected contradiction: the
-// detector id plus both evidence sets (REQ: contradictions-verb).
+// detector id plus both evidence sets (REQ: contradictions-verb). For items
+// listed under --show-ignored the suppression fields are populated
+// (REQ: suppression-ignore-list): Ignored marks the item as suppressed,
+// Identity carries the canonical "<side-a>  <side-b>" pair the ignore file
+// uses, and IgnoreReason the inline comment from the matching line, if any.
 type contradictionItem struct {
 	Detector string            `json:"detector"`
 	A        contradictionSide `json:"a"`
 	B        contradictionSide `json:"b"`
+	Ignored  bool              `json:"ignored,omitempty"`
+	// Identity is the canonical "<side-a-ref>  <side-b-ref>" suppression
+	// identity, present only on ignored items surfaced by --show-ignored.
+	Identity string `json:"identity,omitempty"`
+	// IgnoreReason is the reason comment on the matching ignore-file line,
+	// present only on ignored items whose line carried an inline "#" comment.
+	IgnoreReason string `json:"ignore_reason,omitempty"`
 }
 
 func runStudioContradictions(cmd *cobra.Command, _ []string) error {
@@ -580,15 +613,84 @@ func runStudioContradictions(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	items := make([]contradictionItem, 0)
-	for _, it := range contradictions.Detect(facts) {
+	detected := contradictions.Detect(facts)
+
+	// Resolve the ignore-list file path (REQ: suppression-ignore-list).
+	// --ignore-file overrides the workspace-relative default.
+	ignoreFilePath, _ := cmd.Flags().GetString("ignore-file")
+	ignoreExplicit := cmd.Flags().Changed("ignore-file")
+	if ignoreFilePath == "" {
+		// Default: <workspace-dir>/.specscore-studio/contradictions-ignore.txt.
+		studioDir := filepath.Dir(dbPath)
+		ignoreFilePath = filepath.Join(studioDir, "contradictions-ignore.txt")
+	}
+
+	active, suppressed, err := applyIgnoreList(detected, ignoreFilePath, ignoreExplicit)
+	if err != nil {
+		return err
+	}
+
+	// Write-back: merge the active (non-suppressed) detected items into the
+	// store as `contradicts` facts (REQ: contradiction-facts). Suppressed items
+	// are excluded from write-back per REQ: suppression-ignore-list.
+	noWrite, _ := cmd.Flags().GetBool("no-write")
+	if !noWrite && len(active) > 0 {
+		now := studioNowFn()
+		contraFacts := contradictions.ToFacts(active, now.UTC().Format(time.RFC3339), version)
+		if _, err := storeMergeFn(dbPath, contraFacts); err != nil {
+			return fmt.Errorf("writing contradicts facts: %w", err)
+		}
+	}
+
+	showIgnored, _ := cmd.Flags().GetBool("show-ignored")
+
+	// Build output items from active detections.
+	items := make([]contradictionItem, 0, len(active))
+	for _, it := range active {
 		items = append(items, contradictionItem{
 			Detector: string(it.Detector),
 			A:        toSide(it.A),
 			B:        toSide(it.B),
 		})
 	}
+
+	// If --show-ignored, append suppressed items marked with a special detector
+	// suffix plus their canonical suppression identity and the reason comment
+	// from the matching ignore-file line (REQ: suppression-ignore-list).
+	if showIgnored {
+		for _, s := range suppressed {
+			items = append(items, contradictionItem{
+				Detector:     string(s.Item.Detector) + " [ignored]",
+				A:            toSide(s.Item.A),
+				B:            toSide(s.Item.B),
+				Ignored:      true,
+				Identity:     s.Identity,
+				IgnoreReason: s.Reason,
+			})
+		}
+	}
+
 	return renderContradictions(cmd, format, items)
+}
+
+// applyIgnoreList reads the ignore file at path (if it exists) and partitions
+// detected items into active items and suppressed results (each suppressed
+// result carrying its canonical identity and the matching line's reason
+// comment). A missing file at a default path is silently treated as empty
+// (no suppression); a missing file at an explicitly requested path
+// (explicit=true) exits 2 naming the path. Any other read error exits 2.
+func applyIgnoreList(detected []contradictions.Item, ignoreFilePath string, explicit bool) (active []contradictions.Item, suppressed []contradictions.Suppressed, err error) {
+	f, openErr := osOpenFn(ignoreFilePath)
+	if openErr != nil {
+		if os.IsNotExist(openErr) && !explicit {
+			// Missing default ignore file → no suppression (normal state).
+			return detected, nil, nil
+		}
+		return nil, nil, exitcode.InvalidArgsErrorf("reading ignore file %s: %v", ignoreFilePath, openErr)
+	}
+	defer func() { _ = f.Close() }()
+	a, s := contradictions.FilterIgnored(detected, f)
+	return a, s, nil
 }
 
 // toSide projects a fact onto the verb's side shape.
@@ -621,6 +723,16 @@ func renderContradictions(cmd *cobra.Command, format string, items []contradicti
 	_, _ = fmt.Fprintf(w, "Contradictions: %d\n", len(items))
 	for _, it := range items {
 		_, _ = fmt.Fprintf(w, "\n[%s]\n", it.Detector)
+		if it.Ignored {
+			// Suppressed items surfaced by --show-ignored list the canonical
+			// suppression identity (the exact "<side-a>  <side-b>" ignore-file
+			// form) plus the reason comment, so suppression is never silent
+			// (REQ: suppression-ignore-list).
+			_, _ = fmt.Fprintf(w, "  suppressed: %s\n", it.Identity)
+			if it.IgnoreReason != "" {
+				_, _ = fmt.Fprintf(w, "  reason: %s\n", it.IgnoreReason)
+			}
+		}
 		printContradictionSide(w, "a", it.A)
 		printContradictionSide(w, "b", it.B)
 	}

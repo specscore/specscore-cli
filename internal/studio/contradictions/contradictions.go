@@ -5,7 +5,8 @@
 // fixture-testable.
 //
 // Feature: cli/studio/answers (REQ: contradictions-verb,
-// REQ: status-vs-behavior-drift, REQ: same-predicate-disagreement)
+// REQ: status-vs-behavior-drift, REQ: same-predicate-disagreement,
+// REQ: contradiction-facts, REQ: suppression-ignore-list)
 //
 // Two detectors, partitioned by evidence class so the noise discipline holds:
 //
@@ -24,7 +25,10 @@
 package contradictions
 
 import (
+	"bufio"
+	"io"
 	"sort"
+	"strings"
 
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 )
@@ -228,4 +232,116 @@ func sortItems(items []Item) {
 // used to order items deterministically.
 func factRef(f fact.Fact) string {
 	return f.Subject + "|" + f.Predicate + "|" + f.Object
+}
+
+// canonicalRefs returns the two side refs of an item in lexicographically
+// sorted order (smaller first), providing the stable canonical identity used
+// for both the `contradicts` fact's subject/object and the ignore-list key.
+func canonicalRefs(it Item) (refA, refB string) {
+	a, b := factRef(it.A), factRef(it.B)
+	if a <= b {
+		return a, b
+	}
+	return b, a
+}
+
+// ToFacts converts detected contradiction items into `contradicts` facts ready
+// to be merged into the store via store.Merge (REQ: contradiction-facts). Each
+// fact encodes the canonical conflict identity as its subject/object triple
+// (the lexicographically smaller fact-ref first), carries evidence class
+// `derived` (computed from other facts, not observed), and uses the detector
+// id as the evidence pointer. The adapter id is "contradictions"; the adapter
+// version is the CLI version string passed by the caller. Both observed_at and
+// verified_at are set to the run timestamp runAt so re-runs refresh
+// verified_at idempotently (the merge key is subject+predicate+object+class+adapter,
+// so the same conflict yields one stable row and never duplicates).
+func ToFacts(items []Item, runAt, cliVersion string) []fact.Fact {
+	out := make([]fact.Fact, 0, len(items))
+	for _, it := range items {
+		subj, obj := canonicalRefs(it)
+		out = append(out, fact.Fact{
+			Subject:   subj,
+			Predicate: "contradicts",
+			Object:    obj,
+			Evidence: fact.Evidence{
+				Class:   fact.Derived,
+				Pointer: string(it.Detector),
+			},
+			Adapter: fact.Adapter{
+				ID:      "contradictions",
+				Version: cliVersion,
+			},
+			ObservedAt: runAt,
+			VerifiedAt: runAt,
+		})
+	}
+	return out
+}
+
+// Suppressed is one contradiction item suppressed by an ignore-list entry
+// (REQ: suppression-ignore-list): the item itself, the canonical
+// "<side-a>  <side-b>" identity string that matched (the exact form the
+// ignore file uses), and the reason comment from the matching line's inline
+// "#" comment, if any — so `--show-ignored` can report what was suppressed
+// and why, and suppression is never silent.
+type Suppressed struct {
+	Item Item
+	// Identity is the canonical "<side-a-ref>  <side-b-ref>" pair (the two
+	// smaller-first refs joined by two spaces), exactly the form the ignore
+	// file uses per line.
+	Identity string
+	// Reason is the trailing inline comment (the text after " #") on the
+	// matching ignore-file line, trimmed; empty when the line carried none.
+	Reason string
+}
+
+// FilterIgnored partitions items into active (not suppressed) and suppressed
+// (matched by an ignore-list entry) results (REQ: suppression-ignore-list).
+// The reader supplies the ignore file's content: one canonical
+// "<refA>  <refB>" pair per line (two spaces between refs), with #-prefixed
+// comments and blank lines skipped, and an optional inline " # reason"
+// comment after the pair whose text is carried onto the suppressed result.
+// A nil reader is treated as an empty ignore file — all items are returned as
+// active. The canonical pair is the same smaller-ref-first identity ToFacts
+// uses as the contradicts fact's subject/object, so operators copy from fact
+// queries into the ignore file.
+func FilterIgnored(items []Item, r io.Reader) (active []Item, suppressed []Suppressed) {
+	ignored := parseIgnoreList(r)
+	for _, it := range items {
+		a, b := canonicalRefs(it)
+		key := a + "  " + b
+		if reason, ok := ignored[key]; ok {
+			suppressed = append(suppressed, Suppressed{Item: it, Identity: key, Reason: reason})
+		} else {
+			active = append(active, it)
+		}
+	}
+	return active, suppressed
+}
+
+// parseIgnoreList reads the ignore-list reader and returns the canonical
+// "<refA>  <refB>" identities it contains, each mapped to the trailing inline
+// comment on its line ("" when none). Lines starting with "#" and blank lines
+// are skipped. A nil reader returns an empty set.
+func parseIgnoreList(r io.Reader) map[string]string {
+	if r == nil {
+		return nil
+	}
+	set := make(map[string]string)
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Split off any trailing inline comment: the text after " #" is the
+		// suppression reason carried onto the suppressed item.
+		reason := ""
+		if idx := strings.Index(line, " #"); idx >= 0 {
+			reason = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line[idx:]), "#"))
+			line = strings.TrimSpace(line[:idx])
+		}
+		set[line] = reason
+	}
+	return set
 }

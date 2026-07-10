@@ -1,6 +1,7 @@
 package contradictions
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/specscore/specscore-cli/internal/studio/fact"
@@ -227,5 +228,237 @@ func TestDetect_DeterministicOrder(t *testing.T) {
 	if items[0].A.Subject != "a.example" || items[1].A.Subject != "z.example" {
 		t.Errorf("items not in deterministic subject order: %q then %q",
 			items[0].A.Subject, items[1].A.Subject)
+	}
+}
+
+// --- ToFacts (REQ: contradiction-facts) ---
+
+// TestToFacts_ShapeAndCanonicalization verifies that ToFacts produces
+// contradicts facts with the exact shape the Feature requires:
+// subject = smaller fact-ref, object = larger fact-ref, predicate = "contradicts",
+// class = "derived", pointer = detector id, adapter = "contradictions".
+func TestToFacts_ShapeAndCanonicalization(t *testing.T) {
+	a := mk("dead.example", "serves-status", "200", fact.Declared, "domains.json")
+	b := mk("dead.example", "serves-status", "down", fact.VerifiedBehavior, "https://dead.example/")
+	items := []Item{{Detector: StatusDrift, A: a, B: b}}
+
+	ts := "2026-07-10T12:00:00Z"
+	cliVer := "0.42.0"
+	facts := ToFacts(items, ts, cliVer)
+	if len(facts) != 1 {
+		t.Fatalf("got %d facts, want 1", len(facts))
+	}
+	f := facts[0]
+
+	// Predicate must be "contradicts".
+	if f.Predicate != "contradicts" {
+		t.Errorf("Predicate = %q, want contradicts", f.Predicate)
+	}
+	// Evidence class must be "derived".
+	if f.Class != fact.Derived {
+		t.Errorf("Class = %q, want derived", f.Class)
+	}
+	// Pointer must be the detector id.
+	if f.Pointer != string(StatusDrift) {
+		t.Errorf("Pointer = %q, want %q", f.Pointer, string(StatusDrift))
+	}
+	// Adapter id must be "contradictions".
+	if f.Adapter.ID != "contradictions" {
+		t.Errorf("Adapter.ID = %q, want contradictions", f.Adapter.ID)
+	}
+	// Adapter version must equal the CLI version.
+	if f.Adapter.Version != cliVer {
+		t.Errorf("Adapter.Version = %q, want %q", f.Adapter.Version, cliVer)
+	}
+	// observed_at and verified_at must equal the run time.
+	if f.ObservedAt != ts || f.VerifiedAt != ts {
+		t.Errorf("ObservedAt=%q VerifiedAt=%q, want both %q", f.ObservedAt, f.VerifiedAt, ts)
+	}
+	// Subject and Object are fact-refs; the smaller one must be the subject.
+	refA := factRef(a)
+	refB := factRef(b)
+	wantSubj, wantObj := refA, refB
+	if refA > refB {
+		wantSubj, wantObj = refB, refA
+	}
+	if f.Subject != wantSubj {
+		t.Errorf("Subject = %q, want smaller ref %q", f.Subject, wantSubj)
+	}
+	if f.Object != wantObj {
+		t.Errorf("Object = %q, want larger ref %q", f.Object, wantObj)
+	}
+}
+
+// TestToFacts_Idempotent verifies that ToFacts produces the same
+// subject/object pair regardless of item A/B assignment order, confirming
+// that the canonicalization (smaller-ref first) is stable.
+func TestToFacts_Idempotent(t *testing.T) {
+	a := mk("dead.example", "serves-status", "200", fact.Declared, "domains.json")
+	b := mk("dead.example", "serves-status", "down", fact.VerifiedBehavior, "https://dead.example/")
+
+	// Item with A=a, B=b
+	f1 := ToFacts([]Item{{Detector: StatusDrift, A: a, B: b}}, "2026-07-10T00:00:00Z", "v1")
+	// Item with A=b, B=a (reversed)
+	f2 := ToFacts([]Item{{Detector: StatusDrift, A: b, B: a}}, "2026-07-10T00:00:00Z", "v1")
+
+	if len(f1) != 1 || len(f2) != 1 {
+		t.Fatalf("unexpected fact counts: %d, %d", len(f1), len(f2))
+	}
+	if f1[0].Subject != f2[0].Subject || f1[0].Object != f2[0].Object {
+		t.Errorf("canonicalization differs by item order:\n  f1: subj=%q obj=%q\n  f2: subj=%q obj=%q",
+			f1[0].Subject, f1[0].Object, f2[0].Subject, f2[0].Object)
+	}
+}
+
+// TestToFacts_EmptyItems returns an empty slice (not nil) for empty input.
+func TestToFacts_EmptyItems(t *testing.T) {
+	facts := ToFacts(nil, "2026-07-10T00:00:00Z", "v1")
+	if facts == nil {
+		t.Error("ToFacts(nil, ...) returned nil, want empty slice")
+	}
+	if len(facts) != 0 {
+		t.Errorf("got %d facts, want 0", len(facts))
+	}
+}
+
+// --- FilterIgnored (REQ: suppression-ignore-list) ---
+
+// TestFilterIgnored_SuppressesMatchingItem verifies that an item whose
+// canonical identity appears in the ignore list is moved to the suppressed
+// result (carrying its canonical identity, with an empty reason when the line
+// has no inline comment) and removed from the active result.
+func TestFilterIgnored_SuppressesMatchingItem(t *testing.T) {
+	a := mk("dead.example", "serves-status", "200", fact.Declared, "domains.json")
+	b := mk("dead.example", "serves-status", "down", fact.VerifiedBehavior, "https://dead.example/")
+	item := Item{Detector: StatusDrift, A: a, B: b}
+
+	refA, refB := canonicalRefs(item)
+	identity := refA + "  " + refB
+
+	active, suppressed := FilterIgnored([]Item{item}, strings.NewReader(identity+"\n"))
+	if len(active) != 0 {
+		t.Errorf("active = %d, want 0 (suppressed item must be removed)", len(active))
+	}
+	if len(suppressed) != 1 {
+		t.Fatalf("suppressed = %d, want 1", len(suppressed))
+	}
+	if suppressed[0].Identity != identity {
+		t.Errorf("suppressed identity = %q, want %q", suppressed[0].Identity, identity)
+	}
+	if suppressed[0].Reason != "" {
+		t.Errorf("suppressed reason = %q, want empty (no inline comment)", suppressed[0].Reason)
+	}
+	if suppressed[0].Item.Detector != StatusDrift {
+		t.Errorf("suppressed item detector = %q, want status-drift", suppressed[0].Item.Detector)
+	}
+}
+
+// TestFilterIgnored_CommentsAndBlankLines confirms that #-prefixed comment
+// lines and blank lines in the ignore file are skipped without error.
+func TestFilterIgnored_CommentsAndBlankLines(t *testing.T) {
+	a := mk("subj", "provides", "ext-foo", fact.Declared, "r-a.json")
+	b := mk("subj", "provides", "foo-contract", fact.Declared, "r-b.json")
+	item := Item{Detector: NamingConflict, A: a, B: b}
+
+	refA, refB := canonicalRefs(item)
+	ignoreFile := "# this is a comment\n\n" + refA + "  " + refB + "\n# another comment\n"
+
+	active, suppressed := FilterIgnored([]Item{item}, strings.NewReader(ignoreFile))
+	if len(active) != 0 {
+		t.Errorf("active = %d, want 0", len(active))
+	}
+	if len(suppressed) != 1 {
+		t.Errorf("suppressed = %d, want 1", len(suppressed))
+	}
+}
+
+// TestFilterIgnored_NonMatchingItemStaysActive verifies that items not in the
+// ignore list remain in the active slice.
+func TestFilterIgnored_NonMatchingItemStaysActive(t *testing.T) {
+	a := mk("subj", "provides", "ext-foo", fact.Declared, "r-a.json")
+	b := mk("subj", "provides", "foo-contract", fact.Declared, "r-b.json")
+	item := Item{Detector: NamingConflict, A: a, B: b}
+
+	// ignore file names a different, unrelated pair
+	ignoreFile := "other|pred|obj  other|pred|obj2\n"
+
+	active, suppressed := FilterIgnored([]Item{item}, strings.NewReader(ignoreFile))
+	if len(active) != 1 {
+		t.Errorf("active = %d, want 1", len(active))
+	}
+	if len(suppressed) != 0 {
+		t.Errorf("suppressed = %d, want 0", len(suppressed))
+	}
+}
+
+// TestFilterIgnored_EmptyIgnoreFile returns all items as active.
+func TestFilterIgnored_EmptyIgnoreFile(t *testing.T) {
+	a := mk("subj", "provides", "ext-foo", fact.Declared, "r-a.json")
+	b := mk("subj", "provides", "foo-contract", fact.Declared, "r-b.json")
+	item := Item{Detector: NamingConflict, A: a, B: b}
+
+	active, suppressed := FilterIgnored([]Item{item}, strings.NewReader(""))
+	if len(active) != 1 {
+		t.Errorf("active = %d, want 1", len(active))
+	}
+	if len(suppressed) != 0 {
+		t.Errorf("suppressed = %d, want 0", len(suppressed))
+	}
+}
+
+// TestFilterIgnored_NilReader treats nil reader as empty (no suppression).
+func TestFilterIgnored_NilReader(t *testing.T) {
+	a := mk("subj", "provides", "ext-foo", fact.Declared, "r-a.json")
+	b := mk("subj", "provides", "foo-contract", fact.Declared, "r-b.json")
+	item := Item{Detector: NamingConflict, A: a, B: b}
+
+	active, suppressed := FilterIgnored([]Item{item}, nil)
+	if len(active) != 1 {
+		t.Errorf("active = %d, want 1", len(active))
+	}
+	if len(suppressed) != 0 {
+		t.Errorf("suppressed = %d, want 0", len(suppressed))
+	}
+}
+
+// TestCanonicalRefs_SmallestFirst verifies that canonicalRefs always returns
+// the lexicographically smaller ref first.
+func TestCanonicalRefs_SmallestFirst(t *testing.T) {
+	a := mk("zzz", "provides", "ext-foo", fact.Declared, "r-a.json")
+	b := mk("aaa", "provides", "foo-contract", fact.Declared, "r-b.json")
+	item := Item{Detector: NamingConflict, A: a, B: b}
+
+	refA, refB := canonicalRefs(item)
+	if refA > refB {
+		t.Errorf("canonicalRefs returned (%q, %q) — refA must be ≤ refB", refA, refB)
+	}
+}
+
+// TestFilterIgnored_TrailingComment verifies that an inline "#" comment after
+// the identity pair still matches the identity AND is carried onto the
+// suppressed result as its reason (REQ: suppression-ignore-list — the
+// "reason comment on the matching line").
+func TestFilterIgnored_TrailingComment(t *testing.T) {
+	a := mk("subj", "provides", "ext-foo", fact.Declared, "r-a.json")
+	b := mk("subj", "provides", "foo-contract", fact.Declared, "r-b.json")
+	item := Item{Detector: NamingConflict, A: a, B: b}
+
+	refA, refB := canonicalRefs(item)
+	identity := refA + "  " + refB
+	// Line has a trailing inline comment after the identity pair.
+	ignoreFile := identity + " # known issue, accepted\n"
+
+	active, suppressed := FilterIgnored([]Item{item}, strings.NewReader(ignoreFile))
+	if len(active) != 0 {
+		t.Errorf("active = %d, want 0 (trailing comment must be stripped)", len(active))
+	}
+	if len(suppressed) != 1 {
+		t.Fatalf("suppressed = %d, want 1", len(suppressed))
+	}
+	if suppressed[0].Identity != identity {
+		t.Errorf("suppressed identity = %q, want %q", suppressed[0].Identity, identity)
+	}
+	if suppressed[0].Reason != "known issue, accepted" {
+		t.Errorf("suppressed reason = %q, want %q", suppressed[0].Reason, "known issue, accepted")
 	}
 }

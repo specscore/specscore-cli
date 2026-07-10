@@ -24,7 +24,7 @@ Detectors first (pure functions over store reads — the core value), then their
 
 **Verifies:** cli/studio/answers#ac:status-drift-verified-fail, cli/studio/answers#ac:status-drift-dead-domain, cli/studio/answers#ac:naming-conflict-declared-disagreement
 **Depends-On:** —
-**Status:** in_progress
+**Status:** complete
 
 The detector engine as pure functions over store facts: status-drift branch (a) shipped-implying `has-status` joined by subject prefix to failing `has-verification-status`, branch (b) same-subject+predicate declared-vs-verified-behavior disagreement; naming-conflict (declared×declared, different objects and pointers). The `studio contradictions` verb renders items with BOTH evidence sets, human + `--format json`.
 
@@ -32,7 +32,7 @@ The detector engine as pure functions over store facts: status-drift branch (a) 
 
 **Verifies:** cli/studio/answers#ac:agreement-not-flagged, cli/studio/answers#ac:behavioral-supersession-not-flagged, cli/studio/answers#ac:contradicts-fact-written, cli/studio/answers#ac:contradictions-ignore-suppresses, cli/studio/answers#ac:contradictions-without-index-errors
 **Depends-On:** 1
-**Status:** planning
+**Status:** in_progress
 
 Prove the never-flag rules (cross-class agreement; verified×verified supersession), write each item as a `contradicts` fact (canonicalised smaller-ref-first subject/object, class derived, pointer = detector id, adapter `contradictions`) via `store.Merge` so re-runs are idempotent, honor the workspace ignore-list file (`--show-ignored`), and reuse the exit-2 missing-store guidance.
 
