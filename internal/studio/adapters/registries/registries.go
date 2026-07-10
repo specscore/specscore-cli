@@ -76,6 +76,14 @@ func (Adapter) Version() string { return adapterVersion }
 // registry files yield no facts and no warnings. Ecosystem maps are parsed
 // before domains files so their curated domain→product `fronts` facts
 // suppress the worker-name fallback for the domains they cover.
+//
+// The emitted facts are deduplicated on (subject, predicate, object,
+// evidence_class): when two registry files agree on the same relationship —
+// e.g. data/ecosystem.yaml and data/ecosystem-map.yaml both declaring a
+// product's `fronts`/`aliased-as`/`member-of` — a single representative fact
+// is kept, with the pointer of the first file in discovery order (see
+// dedup). The fact model carries one pointer, so cross-source agreement (a
+// confidence signal) collapses to one fact rather than N identical copies.
 func (a Adapter) Ingest(repoPath string) ([]fact.Fact, []fact.Warning) {
 	var warnings []fact.Warning
 	warnf := func(format string, args ...any) {
@@ -91,7 +99,33 @@ func (a Adapter) Ingest(repoPath string) ([]fact.Fact, []fact.Warning) {
 	for _, rel := range files.domains {
 		facts = append(facts, ingestDomains(repoPath, rel, curated, warnf)...)
 	}
-	return facts, warnings
+	return dedup(facts), warnings
+}
+
+// dedup collapses facts identical in (subject, predicate, object,
+// evidence_class) to a single representative, keeping the first occurrence
+// and preserving its evidence pointer. Facts are emitted in a stable source
+// order — ecosystem maps (root before data/) before domains.json — so the
+// surviving pointer is deterministic: when two registry files declare the
+// same relationship, the first file in that order wins. Pure duplicates
+// (identical pointer too) likewise collapse to one. Output order is the
+// input order with later duplicates dropped.
+func dedup(facts []fact.Fact) []fact.Fact {
+	type key struct {
+		subject, predicate, object string
+		class                      fact.Class
+	}
+	seen := make(map[key]bool, len(facts))
+	out := facts[:0]
+	for _, f := range facts {
+		k := key{f.Subject, f.Predicate, f.Object, f.Class}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // declared builds a declared-class fact; adapter/observed-at/ecosystem are

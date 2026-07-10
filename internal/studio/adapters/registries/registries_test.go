@@ -68,6 +68,46 @@ func TestIngest_RegRepo_EmitsCuratedAndDomainFacts(t *testing.T) {
 	}
 }
 
+func TestIngest_AgreeingRegistryFilesDedupToOneFact(t *testing.T) {
+	// Two ecosystem files (data/ecosystem-map.yaml and data/ecosystem.yaml)
+	// declare the same product identically. Cross-source agreement is a
+	// confidence signal, but each relationship is one fact: the adapter must
+	// not emit duplicates. The surviving pointer is the first file in
+	// discovery order — data/ecosystem-map.yaml (glob sorts "-" before ".").
+	facts, warnings := New(nil).Ingest("testdata/agreerepo")
+
+	want := []fact.Fact{
+		declaredFact("dupius", "aliased-as", "Dupius", "data/ecosystem-map.yaml"),
+		declaredFact("dupius", "implemented-by", "dupius-repo", "data/ecosystem-map.yaml"),
+		declaredFact("dupius", "member-of", "hospitality", "data/ecosystem-map.yaml"),
+		declaredFact("dup.app", "fronts", "dupius", "data/ecosystem-map.yaml"),
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %+v, want none", warnings)
+	}
+	if len(facts) != len(want) {
+		t.Fatalf("len(facts) = %d, want %d — duplicate registry facts leaked\nfacts: %+v", len(facts), len(want), facts)
+	}
+	for i := range want {
+		if facts[i] != want[i] {
+			t.Errorf("facts[%d] = %+v, want %+v", i, facts[i], want[i])
+		}
+	}
+	// No two facts may share (subject, predicate, object, evidence_class).
+	type key struct {
+		s, p, o string
+		c       fact.Class
+	}
+	seen := map[key]bool{}
+	for _, f := range facts {
+		k := key{f.Subject, f.Predicate, f.Object, f.Class}
+		if seen[k] {
+			t.Errorf("duplicate fact for %+v", k)
+		}
+		seen[k] = true
+	}
+}
+
 func TestIngest_DomainsOnly_FallsBackToWorkerFronts(t *testing.T) {
 	facts, warnings := New(nil).Ingest("testdata/domonly")
 

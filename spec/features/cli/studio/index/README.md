@@ -63,6 +63,8 @@ The manifests adapter parses `go.mod` and `package.json` files (repo root plus o
 
 The registries adapter parses well-known ops registry files when present at a repo root or configured per-repo in `studio.yaml` (`registries:` list): `domains.json` (Sneat-ops shape) → domain entities with `fronts`/`serves-status` facts; `ecosystem*.yaml` maps → product entities with `aliased-as`, `implemented-by`, and `member-of` facts. All facts from this adapter are `declared`.
 
+The adapter emits **no duplicate facts**: when two registry files of the same repo agree on a relationship — e.g. both `ecosystem-map.yaml` and `ecosystem.yaml` declaring a product's `fronts`/`aliased-as`/`member-of` — it collapses them to a single representative fact rather than one copy per file. Cross-source agreement is a confidence signal, but the fact model carries one `evidence_pointer`; the surviving pointer is that of the first file in discovery order (root before `data/`, ecosystem maps before `domains.json`, glob-sorted within a directory), so emission stays deterministic. Facts identical in `(subject, predicate, object, evidence_class)` never appear twice.
+
 ### Query verb
 
 #### REQ: facts-query
@@ -161,6 +163,13 @@ Scenario: registries adapter emits domain
 Given a fixture repo with a `domains.json` mapping `example.app` to a live status
 When I run `specscore studio index` and then `specscore studio facts --predicate fronts`
 Then the output contains a fact whose subject is domain `example.app`
+
+### AC: registry-dedup-agreement
+
+Scenario: two agreeing registry files yield one fact
+Given a fixture repo whose `ecosystem-map.yaml` and `ecosystem.yaml` both declare the same product fronting the same domain
+When I run `specscore studio index` and then `specscore studio facts --predicate fronts --count`
+Then exactly one `fronts` fact is stored for that domain/product — the duplicate is collapsed, not doubled
 
 ### AC: partial-tolerance-warns
 
