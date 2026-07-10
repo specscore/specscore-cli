@@ -18,6 +18,7 @@ Command group for the Rehearse acceptance-evidence layer (v0.3 fold-in per rehea
 | Child | Description |
 |---|---|
 | [run](run/README.md) | TODO: Add description. |
+| [evidence](evidence/README.md) | Persist rehearse run JSON reports and ingest them at studio index time as verified-behavior facts |
 
 ## Problem
 

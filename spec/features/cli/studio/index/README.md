@@ -39,7 +39,7 @@ Every `studio index` run rebuilds the fact store from scratch: facts from previo
 
 #### REQ: fact-shape
 
-Every stored fact carries: `subject`, `predicate`, `object` (entity ref or scalar), `evidence_class` (`declared` or `derived` in this feature), `evidence_pointer` (repo-relative file path, plus a line or record locator where cheap), `adapter` (id + version), `observed_at`, and the ecosystem name. Entity references use stable IDs: repo (`host/org/name`, or an absolute-path-derived slug for local-only repos), spec (`<repo>#<path-slug>`), package/module (registry coordinates), domain (fqdn).
+Every stored fact carries: `subject`, `predicate`, `object` (entity ref or scalar), `evidence_class` (`declared` or `derived` in this feature; amended by `cli/rehearse/evidence`, which adds `verified-behavior`), `evidence_pointer` (repo-relative file path, plus a line or record locator where cheap), `adapter` (id + version), `observed_at`, and the ecosystem name. Entity references use stable IDs: repo (`host/org/name`, or an absolute-path-derived slug for local-only repos), spec (`<repo>#<path-slug>`), package/module (registry coordinates), domain (fqdn).
 
 #### REQ: partial-tolerance
 
