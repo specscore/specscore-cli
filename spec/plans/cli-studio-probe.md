@@ -32,7 +32,7 @@ Add `VerifiedAt` to `internal/studio/fact`, the `verified_at` column to the stor
 
 **Verifies:** cli/studio/probe#ac:probe-writes-verified-serves-status, cli/studio/probe#ac:declared-and-verified-coexist, cli/studio/probe#ac:network-failure-records-down
 **Depends-On:** 1
-**Status:** in_progress
+**Status:** complete
 
 New `internal/studio/probe` package + `studio probe` verb in `internal/cli/studio.go`: reads domain targets from `serves-status` declared facts in the store, checks each via https-first/http-fallback through an injectable HTTP seam, and emits `verified-behavior` facts under adapter id `probe-domain` (both-schemes failure → `down`), merged into the store without touching declared facts. Run summary (human + JSON `{kinds, facts_written, verified_refreshed, warnings}`).
 
@@ -40,7 +40,7 @@ New `internal/studio/probe` package + `studio probe` verb in `internal/cli/studi
 
 **Verifies:** cli/studio/probe#ac:probe-preserves-index-facts, cli/studio/probe#ac:reprobe-refreshes-verified-at, cli/studio/probe#ac:changed-object-new-observation, cli/studio/probe#ac:probe-without-index-errors
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 Prove the non-destructive merge through the verb: probing preserves all index-written facts; re-probing an unchanged fact refreshes `verified_at` while keeping `observed_at`; a changed object writes a fresh observation (both stamps new); `studio probe` without a prior `studio index` store exits 2 with the same guidance `studio facts` gives.
 
