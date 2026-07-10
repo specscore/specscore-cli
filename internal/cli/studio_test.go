@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/specscore/specscore-cli/internal/studio/fact"
+	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
@@ -206,6 +209,201 @@ func TestStudioIndex_DefaultWorkspaceIsCWDStudioYAML(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), filepath.Join(dir, "studio.yaml")) {
 		t.Errorf("error %q does not name the default workspace path", err.Error())
+	}
+}
+
+// --- studio facts ---
+
+// seedStudioStore rebuilds the workspace's default fact store with two
+// sample facts and returns its path.
+func seedStudioStore(t *testing.T, wsPath string) string {
+	t.Helper()
+	dbPath := filepath.Join(filepath.Dir(wsPath), ".specscore-studio", "facts.db")
+	facts := []fact.Fact{
+		{
+			Subject:    "pkg:a",
+			Predicate:  "imports",
+			Object:     "pkg:b",
+			Evidence:   fact.Evidence{Class: fact.Derived, Pointer: "codegraph/pkg.json"},
+			Adapter:    fact.Adapter{ID: "codegraph", Version: "1"},
+			ObservedAt: "2026-07-10T00:00:00Z",
+			Ecosystem:  "demo",
+		},
+		{
+			Subject:    "repo#x",
+			Predicate:  "has-status",
+			Object:     "Approved",
+			Evidence:   fact.Evidence{Class: fact.Declared, Pointer: "spec/features/x/README.md:9"},
+			Adapter:    fact.Adapter{ID: "specscore", Version: "1"},
+			ObservedAt: "2026-07-10T00:00:00Z",
+			Ecosystem:  "demo",
+		},
+	}
+	if err := store.Rebuild(dbPath, facts); err != nil {
+		t.Fatal(err)
+	}
+	return dbPath
+}
+
+// AC: missing-store-error — facts in a workspace where `studio index` has
+// never run exits 2 with a message naming the expected store path and
+// suggesting `studio index`.
+func TestStudioFacts_MissingStoreExits2(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a") // no .specscore-studio/facts.db
+	wantDB := filepath.Join(filepath.Dir(wsPath), ".specscore-studio", "facts.db")
+
+	_, _, err := runStudioCmd(t, "facts", "--workspace", wsPath, "--predicate", "imports")
+	if code := studioExit(t, err); code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d", code, exitcode.InvalidArgs)
+	}
+	if !strings.Contains(err.Error(), wantDB) {
+		t.Errorf("error %q does not name the expected store path %q", err.Error(), wantDB)
+	}
+	if !strings.Contains(err.Error(), "studio index") {
+		t.Errorf("error %q does not suggest `studio index`", err.Error())
+	}
+}
+
+func TestStudioFacts_MissingWorkspaceExits2(t *testing.T) {
+	wsPath := filepath.Join(t.TempDir(), "studio.yaml") // no workspace file
+
+	_, _, err := runStudioCmd(t, "facts", "--workspace", wsPath)
+	if code := studioExit(t, err); code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d", code, exitcode.InvalidArgs)
+	}
+	if !strings.Contains(err.Error(), wsPath) {
+		t.Errorf("error %q does not name the workspace path", err.Error())
+	}
+}
+
+func TestStudioFacts_TableOutput(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStudioStore(t, wsPath)
+
+	out, _, err := runStudioCmd(t, "facts", "--workspace", wsPath, "--predicate", "imports")
+	if err != nil {
+		t.Fatalf("studio facts: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("table has %d lines, want header + 1 row:\n%s", len(lines), out)
+	}
+	if !strings.HasPrefix(lines[0], "SUBJECT") || !strings.Contains(lines[0], "ADAPTER") {
+		t.Errorf("missing table header: %q", lines[0])
+	}
+	for _, want := range []string{"pkg:a", "imports", "pkg:b", "derived", "codegraph"} {
+		if !strings.Contains(lines[1], want) {
+			t.Errorf("row %q missing %q", lines[1], want)
+		}
+	}
+}
+
+func TestStudioFacts_JSONOutputFullShape(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStudioStore(t, wsPath)
+
+	out, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--predicate", "has-status", "--format", "json")
+	if err != nil {
+		t.Fatalf("studio facts: %v", err)
+	}
+	var facts []fact.Fact
+	if err := json.Unmarshal([]byte(out), &facts); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("got %d facts, want 1", len(facts))
+	}
+	f := facts[0]
+	if f.Subject != "repo#x" || f.Object != "Approved" || f.Class != fact.Declared ||
+		f.Pointer != "spec/features/x/README.md:9" || f.Adapter.ID != "specscore" ||
+		f.Adapter.Version != "1" || f.ObservedAt == "" || f.Ecosystem != "demo" {
+		t.Errorf("JSON fact missing full fact shape: %+v", f)
+	}
+	// The raw JSON uses the fact-shape field names.
+	for _, key := range []string{`"evidence_class"`, `"evidence_pointer"`, `"adapter"`, `"observed_at"`, `"ecosystem"`} {
+		if !strings.Contains(out, key) {
+			t.Errorf("JSON output missing %s:\n%s", key, out)
+		}
+	}
+}
+
+func TestStudioFacts_Count(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStudioStore(t, wsPath)
+
+	out, _, err := runStudioCmd(t, "facts", "--workspace", wsPath, "--count")
+	if err != nil {
+		t.Fatalf("studio facts: %v", err)
+	}
+	if out != "2\n" {
+		t.Errorf("count output = %q, want \"2\\n\"", out)
+	}
+}
+
+func TestStudioFacts_CountZeroMatchesExitsZero(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStudioStore(t, wsPath)
+
+	out, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--subject", "gone*", "--count")
+	if err != nil {
+		t.Fatalf("studio facts with zero matches: %v", err)
+	}
+	if out != "0\n" {
+		t.Errorf("count output = %q, want \"0\\n\"", out)
+	}
+}
+
+func TestStudioFacts_SubjectPrefixFilter(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStudioStore(t, wsPath)
+
+	out, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--subject", "pkg:*", "--count")
+	if err != nil {
+		t.Fatalf("studio facts: %v", err)
+	}
+	if out != "1\n" {
+		t.Errorf("prefix-filtered count = %q, want \"1\\n\"", out)
+	}
+}
+
+func TestStudioFacts_DBFlagBypassesWorkspace(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	dbPath := seedStudioStore(t, wsPath)
+
+	// No workspace file at the default ./studio.yaml is needed with --db.
+	out, _, err := runStudioCmd(t, "facts", "--db", dbPath, "--count")
+	if err != nil {
+		t.Fatalf("studio facts --db: %v", err)
+	}
+	if out != "2\n" {
+		t.Errorf("count output = %q, want \"2\\n\"", out)
+	}
+}
+
+func TestStudioFacts_DBFlagAbsError(t *testing.T) {
+	old := filepathAbsFn
+	filepathAbsFn = func(string) (string, error) { return "", errors.New("abs boom") }
+	t.Cleanup(func() { filepathAbsFn = old })
+
+	_, _, err := runStudioCmd(t, "facts", "--db", "rel.db")
+	if code := studioExit(t, err); code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d", code, exitcode.InvalidArgs)
+	}
+}
+
+func TestStudioFacts_BadFormatExits2(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStudioStore(t, wsPath)
+
+	_, _, err := runStudioCmd(t, "facts", "--workspace", wsPath, "--format", "yaml")
+	if code := studioExit(t, err); code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d", code, exitcode.InvalidArgs)
+	}
+	if !strings.Contains(err.Error(), "yaml") {
+		t.Errorf("error %q does not name the bad format", err.Error())
 	}
 }
 

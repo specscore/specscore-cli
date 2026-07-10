@@ -32,7 +32,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:missing-store-error
 **Depends-On:** 1
-**Status:** in_progress
+**Status:** complete
 
 `internal/studio/fact` (Fact/Evidence types, stable-ID helpers), `internal/studio/store` (schema, atomic temp-file-swap rebuild, filter queries), and the `facts` verb with table/JSON/`--count` output plus the exit-2 missing-store path. Resolves the Feature's open questions as implementation details: local repo-slug = basename with `-N` collision counter; no `--repo` sugar in v1.
 
@@ -40,7 +40,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:spec-status-fact
 **Depends-On:** 2
-**Status:** planning
+**Status:** in_progress
 
 `internal/studio/adapters/specscore`: parse spec trees into idea/feature entities and declared facts (has-status, promotes-to/sourced-from, contains, has-ac), reusing the CLI's existing spec-parsing packages where exported. Fixture repo in testdata; the AC asserts the full fact shape end-to-end.
 
