@@ -40,7 +40,7 @@ Prove the never-flag rules (cross-class agreement; verified×verified supersessi
 
 **Verifies:** cli/studio/answers#ac:resolve-alias-to-canonical, cli/studio/answers#ac:resolve-ambiguous-lists-candidates, cli/studio/answers#ac:resolve-unknown-guides
 **Depends-On:** 2
-**Status:** in_progress
+**Status:** complete
 
 `studio resolve <name>`: case-insensitive lookup over `aliased-as` facts and entity ids themselves; unique hit prints the canonical id (exit 0), multiple candidates listed (exit 5, AmbiguousSlug), unknown prints guidance (exit 3, NotFound). The resolution helper is shared machinery for Task 4's router.
 
@@ -48,7 +48,7 @@ Prove the never-flag rules (cross-class agreement; verified×verified supersessi
 
 **Verifies:** cli/studio/answers#ac:ask-routes-with-citations, cli/studio/answers#ac:ask-unroutable-lists-templates, cli/studio/answers#ac:ask-routed-but-empty
 **Depends-On:** 3
-**Status:** planning
+**Status:** in_progress
 
 `studio ask "<question>"`: deterministic trigger-pattern router over the Feature's 13 templates, each a parameterized store query (the `is-it-live` template does the fronts→serves-status two-step hop), answers always citing fact ids/pointers; unroutable exits 1 listing the templates; routed-but-empty exits 3 with no citation-free prose.
 

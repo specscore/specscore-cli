@@ -73,6 +73,7 @@ Running "specscore studio" with no subcommand prints this help and exits 0.`,
 		studioFactsCommand(),
 		studioContradictionsCommand(),
 		studioResolveCommand(),
+		studioAskCommand(),
 	)
 	return cmd
 }
