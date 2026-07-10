@@ -115,10 +115,20 @@ jobs:
           /tmp/specscore rehearse run
           spec/features/cli/studio/index/_tests
           spec/features/cli/studio/probe/_tests
+          spec/features/cli/studio/answers/_tests
           spec/features/cli/rehearse/run/_tests
           spec/features/cli/rehearse/evidence/_tests
           --report-out .specscore/rehearse/latest.json
           --format json
+
+      # The answers benchmark exit gate (cli/studio/answers#req:exit-gate-fixture-and-sneat):
+      # the hermetic fixture floor. Indexes + seeds the committed fixture and
+      # asserts every answerable instance answers and every expected-unanswerable
+      # declines (no network, no gh — sqlite3-seeded probe facts).
+      - name: answers benchmark fixture floor
+        env:
+          SPECSCORE: /tmp/specscore
+        run: spec/features/cli/studio/answers/benchmark/run.sh --fixture
 
       - name: v0.4 self-hosting gate (studio index + facts --class verified-behavior)
         env:

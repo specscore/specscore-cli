@@ -1,0 +1,17 @@
+# Hermetic benchmark fixture workspace (cli/studio/answers#req:exit-gate-fixture-and-sneat).
+#
+# A small, hand-authored miniature of the Sneat ecosystem using the REAL Sneat
+# entity ids the benchmark is parameterized over — product ids (anymeter,
+# assetus, gameboard, …), domains (anymeter.app, fillless.com, agendum.app, …),
+# backstage spec refs, and go modules — so the one committed questions.jsonl
+# scores 41/50 against this fixture exactly as it does against a real Sneat
+# workspace index. Indexed offline; the probe-only verified-behavior facts
+# (live/dead serves-status, per-repo ci-status) are seeded by
+# benchmark/fixture/seed.sh with sqlite3 rather than a live probe, keeping the
+# fixture floor hermetic (no network, no gh).
+name: sneat
+repos:
+  - sneat-ops
+  - backstage
+  - sneat-go-backend
+  - listus

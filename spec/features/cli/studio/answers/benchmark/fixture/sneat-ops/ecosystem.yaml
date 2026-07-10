@@ -1,0 +1,53 @@
+# Curated ecosystem map for the answers benchmark fixture.
+#
+# A tiny, honest miniature of the Sneat ecosystem using the REAL Sneat entity
+# ids the benchmark questions are parameterized over (anymeter, assetus,
+# gameboard, calendarius, formius/fillless.com, …), so the one committed
+# questions.jsonl scores identically against this fixture and against a real
+# Sneat workspace index. The registries adapter turns each product into
+# aliased-as / implemented-by / member-of facts and each domain into a
+# canonical domain→product `fronts` fact.
+products:
+  - id: anymeter
+    brand: AnyMeter
+    repos:
+      - trackus
+    domains:
+      - anymeter.app
+  - id: assetus
+    brand: Assetus
+    repos:
+      - assetus
+    domains:
+      - assetus.app
+  - id: gameboard
+    brand: GameBoard
+    vertical: sports
+    repos:
+      - gameboard
+    domains:
+      - gameboard.live
+  - id: calendarius
+    brand: Calendarius
+    repos:
+      - calendarius
+    domains:
+      - calendarius.app
+  # The dead investor-CTA class: fillless.com is declared serving in
+  # domains.json while the probe-stubbed verified-behavior fact says down.
+  - id: formius
+    brand: Formius
+    repos:
+      - formius
+    domains:
+      - fillless.com
+  - id: kids-club
+    vertical: hospitality
+  - id: motorius
+    vertical: automotive
+  - id: listus
+    repos:
+      - listus
+  - id: logistus
+    repos:
+      - logistus

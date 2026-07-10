@@ -7,6 +7,9 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -14,9 +17,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
+	"github.com/specscore/specscore-cli/internal/studio/contradictions"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/ingr"
 	"github.com/specscore/specscore-cli/internal/studio/probe"
+	"github.com/specscore/specscore-cli/internal/studio/resolve"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/internal/studio/workspace"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -41,6 +46,9 @@ var (
 	// storeMergeFn is the test seam for the non-destructive store merge the
 	// probe verb writes through.
 	storeMergeFn = store.Merge
+	// osOpenFn is the test seam for os.Open; the contradictions verb reads the
+	// ignore-list file through this var so tests can inject read failures.
+	osOpenFn = func(name string) (io.ReadCloser, error) { return os.Open(name) }
 )
 
 // studioCommand returns the "studio" command group for SpecScore Studio —
@@ -63,6 +71,9 @@ Running "specscore studio" with no subcommand prints this help and exits 0.`,
 		studioIndexCommand(),
 		studioProbeCommand(),
 		studioFactsCommand(),
+		studioContradictionsCommand(),
+		studioResolveCommand(),
+		studioAskCommand(),
 	)
 	return cmd
 }
@@ -492,6 +503,409 @@ func humanAge(verifiedAt string, now time.Time) string {
 		return fmt.Sprintf("%dd", int(age.Hours())/24)
 	default:
 		return "stale"
+	}
+}
+
+// --- studio contradictions ---
+//
+// Feature: cli/studio/answers (REQ: contradictions-verb,
+// REQ: status-vs-behavior-drift, REQ: same-predicate-disagreement,
+// REQ: contradiction-facts, REQ: suppression-ignore-list)
+
+func studioContradictionsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "contradictions",
+		Short: "Report contradictions between facts in the store (offline)",
+		Long: `Reads the fact store built by "studio index" (enriched by "studio probe")
+and reports contradictions between facts. It performs no network I/O — it is a
+pure query over the store.
+
+Two detector classes are computed:
+
+  status-drift    a declared claim a verified-behavior observation contradicts:
+                  a shipped-implying has-status (Approved, Stable, Implementing)
+                  whose feature has a failing has-verification-status, or a
+                  declared serves-status (e.g. 200) a live probe disagrees with
+                  (e.g. down).
+  naming-conflict two declared facts asserting different objects for the same
+                  subject and predicate from different evidence pointers.
+
+Each reported item carries both evidence sets — for each side the subject,
+predicate, object, evidence class, evidence pointer, adapter id, and
+observed_at — plus the detector id that flagged it. A store with no
+contradictions exits 0 and prints an empty list (JSON []).
+
+Each detected item is also written back as a "contradicts" fact in the store
+(adapter id "contradictions", class "derived") so "studio facts --predicate
+contradicts" can query the conflict set. Re-running is idempotent — the merge
+key advances verified_at without duplicating. Use --no-write to skip the
+write-back.
+
+A workspace ignore-list file at <workspace-dir>/.specscore-studio/contradictions-ignore.txt
+suppresses accepted contradictions: one canonical "<side-a>  <side-b>" identity
+per line (two spaces between refs), with "#"-prefixed comments and blank lines
+ignored. Suppressed items are omitted from both the output and the write-back.
+Override the file path with --ignore-file. Use --show-ignored to list what was
+suppressed.
+
+--format <human|json> selects the output format (default human).
+
+Running before "studio index" exits 2 with a message naming the expected store
+path and suggesting "specscore studio index".`,
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE:         runStudioContradictions,
+	}
+	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
+	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
+	cmd.Flags().String("format", "human", "output format: human or json")
+	cmd.Flags().Bool("no-write", false, "compute and print items without writing contradicts facts to the store")
+	cmd.Flags().String("ignore-file", "", "path to the ignore-list file (default <workspace-dir>/.specscore-studio/contradictions-ignore.txt)")
+	cmd.Flags().Bool("show-ignored", false, "list suppressed items alongside detected items (marked as ignored)")
+	return cmd
+}
+
+// contradictionSide is one side of a contradiction in the verb's output: the
+// fact's triple plus the provenance fields the Feature's item shape requires
+// (REQ: contradictions-verb).
+type contradictionSide struct {
+	Subject    string `json:"subject"`
+	Predicate  string `json:"predicate"`
+	Object     string `json:"object"`
+	Class      string `json:"evidence_class"`
+	Pointer    string `json:"evidence_pointer"`
+	Adapter    string `json:"adapter"`
+	ObservedAt string `json:"observed_at"`
+}
+
+// contradictionItem is the JSON/human shape of one detected contradiction: the
+// detector id plus both evidence sets (REQ: contradictions-verb). For items
+// listed under --show-ignored the suppression fields are populated
+// (REQ: suppression-ignore-list): Ignored marks the item as suppressed,
+// Identity carries the canonical "<side-a>  <side-b>" pair the ignore file
+// uses, and IgnoreReason the inline comment from the matching line, if any.
+type contradictionItem struct {
+	Detector string            `json:"detector"`
+	A        contradictionSide `json:"a"`
+	B        contradictionSide `json:"b"`
+	Ignored  bool              `json:"ignored,omitempty"`
+	// Identity is the canonical "<side-a-ref>  <side-b-ref>" suppression
+	// identity, present only on ignored items surfaced by --show-ignored.
+	Identity string `json:"identity,omitempty"`
+	// IgnoreReason is the reason comment on the matching ignore-file line,
+	// present only on ignored items whose line carried an inline "#" comment.
+	IgnoreReason string `json:"ignore_reason,omitempty"`
+}
+
+func runStudioContradictions(cmd *cobra.Command, _ []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "human" && format != "json" {
+		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
+	}
+
+	dbPath, err := studioFactsStorePath(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Query serves as the missing/empty-store guard: it returns the same exit-2
+	// guidance `studio facts` gives when `studio index` has never run
+	// (REQ: contradictions-verb; AC: contradictions-without-index-errors).
+	facts, err := store.Query(dbPath, store.Filter{})
+	if err != nil {
+		return err
+	}
+
+	detected := contradictions.Detect(facts)
+
+	// Resolve the ignore-list file path (REQ: suppression-ignore-list).
+	// --ignore-file overrides the workspace-relative default.
+	ignoreFilePath, _ := cmd.Flags().GetString("ignore-file")
+	ignoreExplicit := cmd.Flags().Changed("ignore-file")
+	if ignoreFilePath == "" {
+		// Default: <workspace-dir>/.specscore-studio/contradictions-ignore.txt.
+		studioDir := filepath.Dir(dbPath)
+		ignoreFilePath = filepath.Join(studioDir, "contradictions-ignore.txt")
+	}
+
+	active, suppressed, err := applyIgnoreList(detected, ignoreFilePath, ignoreExplicit)
+	if err != nil {
+		return err
+	}
+
+	// Write-back: merge the active (non-suppressed) detected items into the
+	// store as `contradicts` facts (REQ: contradiction-facts). Suppressed items
+	// are excluded from write-back per REQ: suppression-ignore-list.
+	noWrite, _ := cmd.Flags().GetBool("no-write")
+	if !noWrite && len(active) > 0 {
+		now := studioNowFn()
+		contraFacts := contradictions.ToFacts(active, now.UTC().Format(time.RFC3339), version)
+		if _, err := storeMergeFn(dbPath, contraFacts); err != nil {
+			return fmt.Errorf("writing contradicts facts: %w", err)
+		}
+	}
+
+	showIgnored, _ := cmd.Flags().GetBool("show-ignored")
+
+	// Build output items from active detections.
+	items := make([]contradictionItem, 0, len(active))
+	for _, it := range active {
+		items = append(items, contradictionItem{
+			Detector: string(it.Detector),
+			A:        toSide(it.A),
+			B:        toSide(it.B),
+		})
+	}
+
+	// If --show-ignored, append suppressed items marked with a special detector
+	// suffix plus their canonical suppression identity and the reason comment
+	// from the matching ignore-file line (REQ: suppression-ignore-list).
+	if showIgnored {
+		for _, s := range suppressed {
+			items = append(items, contradictionItem{
+				Detector:     string(s.Item.Detector) + " [ignored]",
+				A:            toSide(s.Item.A),
+				B:            toSide(s.Item.B),
+				Ignored:      true,
+				Identity:     s.Identity,
+				IgnoreReason: s.Reason,
+			})
+		}
+	}
+
+	return renderContradictions(cmd, format, items)
+}
+
+// applyIgnoreList reads the ignore file at path (if it exists) and partitions
+// detected items into active items and suppressed results (each suppressed
+// result carrying its canonical identity and the matching line's reason
+// comment). A missing file at a default path is silently treated as empty
+// (no suppression); a missing file at an explicitly requested path
+// (explicit=true) exits 2 naming the path. Any other read error exits 2.
+func applyIgnoreList(detected []contradictions.Item, ignoreFilePath string, explicit bool) (active []contradictions.Item, suppressed []contradictions.Suppressed, err error) {
+	f, openErr := osOpenFn(ignoreFilePath)
+	if openErr != nil {
+		if os.IsNotExist(openErr) && !explicit {
+			// Missing default ignore file → no suppression (normal state).
+			return detected, nil, nil
+		}
+		return nil, nil, exitcode.InvalidArgsErrorf("reading ignore file %s: %v", ignoreFilePath, openErr)
+	}
+	defer func() { _ = f.Close() }()
+	a, s := contradictions.FilterIgnored(detected, f)
+	return a, s, nil
+}
+
+// toSide projects a fact onto the verb's side shape.
+func toSide(f fact.Fact) contradictionSide {
+	return contradictionSide{
+		Subject:    f.Subject,
+		Predicate:  f.Predicate,
+		Object:     f.Object,
+		Class:      string(f.Class),
+		Pointer:    f.Pointer,
+		Adapter:    f.Adapter.ID,
+		ObservedAt: f.ObservedAt,
+	}
+}
+
+// renderContradictions prints the detected items as a JSON array or a human
+// list. A clean store prints an empty JSON array / a "No contradictions" line
+// (REQ: contradictions-verb).
+func renderContradictions(cmd *cobra.Command, format string, items []contradictionItem) error {
+	w := cmd.OutOrStdout()
+	if format == "json" {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(items)
+	}
+	if len(items) == 0 {
+		_, _ = fmt.Fprintln(w, "No contradictions found.")
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "Contradictions: %d\n", len(items))
+	for _, it := range items {
+		_, _ = fmt.Fprintf(w, "\n[%s]\n", it.Detector)
+		if it.Ignored {
+			// Suppressed items surfaced by --show-ignored list the canonical
+			// suppression identity (the exact "<side-a>  <side-b>" ignore-file
+			// form) plus the reason comment, so suppression is never silent
+			// (REQ: suppression-ignore-list).
+			_, _ = fmt.Fprintf(w, "  suppressed: %s\n", it.Identity)
+			if it.IgnoreReason != "" {
+				_, _ = fmt.Fprintf(w, "  reason: %s\n", it.IgnoreReason)
+			}
+		}
+		printContradictionSide(w, "a", it.A)
+		printContradictionSide(w, "b", it.B)
+	}
+	return nil
+}
+
+// printContradictionSide prints one side's triple and provenance under a label.
+func printContradictionSide(w io.Writer, label string, s contradictionSide) {
+	_, _ = fmt.Fprintf(w, "  %s: (%s, %s, %s)\n", label, s.Subject, s.Predicate, s.Object)
+	_, _ = fmt.Fprintf(w, "     class=%s pointer=%s adapter=%s observed_at=%s\n",
+		s.Class, s.Pointer, s.Adapter, s.ObservedAt)
+}
+
+// --- studio resolve ---
+//
+// Feature: cli/studio/answers (REQ: resolve-verb,
+// REQ: resolve-ambiguous-and-unknown)
+
+func studioResolveCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "resolve <name>",
+		Short: "Map a brand or entity name to its canonical id (offline)",
+		Long: `Maps a brand, domain, repo slug, package, or product name to its canonical
+entity id, reading only the fact store (no network I/O).
+
+Resolution is case-insensitive and draws candidates from two sources:
+  (a) the object of every aliased-as fact in the store — the brand-name layer
+      minted by the registries adapter.
+  (b) the entity ids the store knows as fact subjects or objects (product ids,
+      repo slugs, domain ids).
+
+A unique match prints the canonical id and exits 0. With --format json it
+prints an object: {"id", "kind", "citation"}.
+
+When the name resolves to more than one candidate, all candidates are listed
+and the command exits 5 (AmbiguousSlug); the caller must disambiguate.
+
+When the name resolves to nothing, the command exits 3 (NotFound) with
+guidance naming what was searched (aliases and entity ids) and suggesting
+"studio facts --object '<name>*'" to explore.
+
+An empty or whitespace-only name, or the wrong number of arguments, exits 2
+(InvalidArgs).
+
+Running before "studio index" exits 2 with a message naming the expected
+store path and suggesting "specscore studio index".`,
+		Args:         cobra.RangeArgs(0, 2), // validated in RunE for better messages
+		SilenceUsage: true,
+		RunE:         runStudioResolve,
+	}
+	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
+	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
+	cmd.Flags().String("format", "human", "output format: human or json")
+	return cmd
+}
+
+// resolveJSONResponse is the JSON shape for a unique resolve result
+// (REQ: resolve-verb).
+type resolveJSONResponse struct {
+	ID       string          `json:"id"`
+	Kind     string          `json:"kind"`
+	Citation resolveJSONCite `json:"citation"`
+}
+
+// resolveAmbiguousJSONResponse is the JSON shape for an ambiguous resolve
+// result (REQ: resolve-ambiguous-and-unknown).
+type resolveAmbiguousJSONResponse struct {
+	Kind       string                 `json:"kind"`
+	Candidates []resolveJSONCandidate `json:"candidates"`
+}
+
+// resolveJSONCandidate is one candidate in an ambiguous result.
+type resolveJSONCandidate struct {
+	ID       string          `json:"id"`
+	Citation resolveJSONCite `json:"citation"`
+}
+
+// resolveJSONCite is the citation embedded in a resolve response: the
+// subject/predicate/object of the fact that supports the candidate.
+type resolveJSONCite struct {
+	Subject   string `json:"subject"`
+	Predicate string `json:"predicate"`
+	Object    string `json:"object"`
+	Pointer   string `json:"evidence_pointer"`
+	Adapter   string `json:"adapter"`
+}
+
+func factToCite(f fact.Fact) resolveJSONCite {
+	return resolveJSONCite{
+		Subject:   f.Subject,
+		Predicate: f.Predicate,
+		Object:    f.Object,
+		Pointer:   f.Pointer,
+		Adapter:   f.Adapter.ID,
+	}
+}
+
+func runStudioResolve(cmd *cobra.Command, args []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "human" && format != "json" {
+		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
+	}
+
+	// Validate args: exactly one non-empty name is required.
+	if len(args) != 1 {
+		return exitcode.InvalidArgsErrorf("studio resolve requires exactly one <name> argument")
+	}
+	name := strings.TrimSpace(args[0])
+	if name == "" {
+		return exitcode.InvalidArgsErrorf("studio resolve: name must not be empty or whitespace")
+	}
+
+	dbPath, err := studioFactsStorePath(cmd)
+	if err != nil {
+		return err
+	}
+
+	facts, err := store.Query(dbPath, store.Filter{})
+	if err != nil {
+		return err
+	}
+
+	result := resolve.Resolve(facts, name)
+	w := cmd.OutOrStdout()
+
+	switch result.Kind {
+	case resolve.Unique:
+		if format == "json" {
+			resp := resolveJSONResponse{
+				ID:       result.ID,
+				Kind:     "unique",
+				Citation: factToCite(result.Citation),
+			}
+			enc := json.NewEncoder(w)
+			enc.SetIndent("", "  ")
+			return enc.Encode(resp)
+		}
+		_, _ = fmt.Fprintln(w, result.ID)
+		return nil
+
+	case resolve.Ambiguous:
+		// Build the human-readable candidate list for the error message.
+		parts := make([]string, 0, len(result.Candidates))
+		for _, c := range result.Candidates {
+			parts = append(parts, fmt.Sprintf("%s (via %s)", c.ID, c.Citation.Predicate))
+		}
+		if format == "json" {
+			candidates := make([]resolveJSONCandidate, 0, len(result.Candidates))
+			for _, c := range result.Candidates {
+				candidates = append(candidates, resolveJSONCandidate{
+					ID:       c.ID,
+					Citation: factToCite(c.Citation),
+				})
+			}
+			resp := resolveAmbiguousJSONResponse{Kind: "ambiguous", Candidates: candidates}
+			enc := json.NewEncoder(w)
+			enc.SetIndent("", "  ")
+			if encErr := enc.Encode(resp); encErr != nil {
+				return encErr
+			}
+		}
+		return exitcode.Newf(exitcode.AmbiguousSlug,
+			"studio resolve: %q is ambiguous — candidates: %s",
+			name, strings.Join(parts, "; "))
+
+	default: // NotFound
+		return exitcode.NotFoundErrorf(
+			"studio resolve: %q not found — searched aliases (aliased-as facts) and entity ids in the store\n"+
+				"Hint: try `specscore studio facts --object '%s*'` to explore",
+			name, name)
 	}
 }
 

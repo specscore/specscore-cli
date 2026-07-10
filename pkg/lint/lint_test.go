@@ -920,3 +920,30 @@ func writeFile(t *testing.T, path string, content string) {
 		t.Fatal(err)
 	}
 }
+
+// TestIsReservedFixturePath covers the benchmark-fixture skip predicate: a path
+// with a `benchmark` segment is reserved (skipped by the structural rules); a
+// path without one is not (cli/studio/answers#req:exit-gate-fixture-and-sneat).
+func TestIsReservedFixturePath(t *testing.T) {
+	reserved := []string{
+		"features/cli/studio/answers/benchmark/fixture/sneat-ops",
+		"features/cli/studio/answers/benchmark/README.md",
+		"features/x/benchmark/fixture/repo/spec/features/y/README.md",
+	}
+	for _, p := range reserved {
+		if !isReservedFixturePath(p) {
+			t.Errorf("isReservedFixturePath(%q) = false, want true", p)
+		}
+	}
+	notReserved := []string{
+		"features/cli/studio/answers/README.md",
+		"features/cli/studio/answers/_tests/status-drift.md",
+		"plans/cli-studio-answers.md",
+		"",
+	}
+	for _, p := range notReserved {
+		if isReservedFixturePath(p) {
+			t.Errorf("isReservedFixturePath(%q) = true, want false", p)
+		}
+	}
+}

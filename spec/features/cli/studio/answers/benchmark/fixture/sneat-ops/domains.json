@@ -1,0 +1,8 @@
+{
+  "domains": {
+    "fillless.com": {"status": {"/": {"http_status": 200}}},
+    "issuenumber.one": {"status": {"/": {"http_status": 404}}},
+    "agiledger.app": {"status": {"/": {"http_status": 0}}},
+    "sneat.ai": {"status": {"/": {"http_status": 0}}}
+  }
+}

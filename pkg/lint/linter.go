@@ -252,15 +252,40 @@ func (l *linter) lint() ([]Violation, error) {
 			return nil, fmt.Errorf("checker %s: %v", c.name(), err)
 		}
 
-		// Keep only violations whose rule is enabled.
+		// Keep only violations whose rule is enabled and which do not target a
+		// reserved benchmark-fixture subtree.
 		for _, vi := range v {
-			if l.isRuleEnabled(vi.Rule) {
+			if l.isRuleEnabled(vi.Rule) && !isReservedFixturePath(vi.File) {
 				violations = append(violations, vi)
 			}
 		}
 	}
 
 	return violations, nil
+}
+
+// reservedFeatureSubtree is the name of the per-feature subtree that holds
+// benchmark tooling and its committed fixture workspace (questions.jsonl,
+// run.sh, fixture/). Like `_tests`, it lives under a feature directory but is
+// not itself a spec artifact, so the structural rules do not apply to it and a
+// parent index need not list it (cli/studio/answers#req:benchmark-file,
+// #req:exit-gate-fixture-and-sneat).
+const reservedFeatureSubtree = "benchmark"
+
+// isReservedFixturePath reports whether a spec-root-relative path lives inside a
+// per-feature `benchmark/` subtree — the committed benchmark tooling and fixture
+// workspace (hand-authored miniature repo checkouts a benchmark runner indexes
+// offline). These are not spec artifacts of THIS repo, so the structural rules
+// (readme-exists, oq-section, studio-toolbar, status-mirror, …) do not apply.
+// The exclusion mirrors the `ideas/seeds` precedent in readme-exists: a
+// documented, path-scoped skip for a known non-spec subtree.
+func isReservedFixturePath(relPath string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(relPath), "/") {
+		if seg == reservedFeatureSubtree {
+			return true
+		}
+	}
+	return false
 }
 
 // FixTargetNames returns the sorted set of valid `--fix=<target>` action names:

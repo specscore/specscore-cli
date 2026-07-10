@@ -62,7 +62,9 @@ func (c *indexEntriesChecker) check(specRoot string) ([]Violation, error) {
 
 		var actualChildren []string
 		for _, entry := range entries {
-			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && !strings.HasPrefix(entry.Name(), "_") {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") &&
+				!strings.HasPrefix(entry.Name(), "_") &&
+				entry.Name() != reservedFeatureSubtree {
 				actualChildren = append(actualChildren, entry.Name())
 			}
 		}
