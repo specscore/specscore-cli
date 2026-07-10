@@ -52,8 +52,8 @@ set -e
 [ "$exit_code" -eq 0 ] \
   || { echo "FAIL: exit code $exit_code, want 0; stderr: $(cat "$workdir/stderr.log"); report: $(cat "$workdir/report.json")"; exit 1; }
 
-# And the JSON lists 11 scenarios all with status `pass` and non-empty
-# `verifies` arrays
+# And the JSON lists every studio-index scenario, all with status `pass` and
+# non-empty `verifies` arrays (bump the count below when index scenarios change)
 python3 - "$workdir/report.json" <<'PY'
 import json, sys
 
@@ -61,7 +61,7 @@ with open(sys.argv[1]) as f:
     reports = json.load(f)
 
 assert isinstance(reports, list), "FAIL: report is not a JSON array"
-assert len(reports) == 11, f"FAIL: {len(reports)} scenarios, want 11"
+assert len(reports) == 12, f"FAIL: {len(reports)} scenarios, want 12"
 for r in reports:
     assert r["status"] == "pass", f"FAIL: {r['file']} is {r['status']!r}, want pass: {r.get('detail', '')}"
     verifies = r["verifies"]
