@@ -40,7 +40,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:spec-status-fact
 **Depends-On:** 2
-**Status:** in_progress
+**Status:** complete
 
 `internal/studio/adapters/specscore`: parse spec trees into idea/feature entities and declared facts (has-status, promotes-to/sourced-from, contains, has-ac), reusing the CLI's existing spec-parsing packages where exported. Fixture repo in testdata; the AC asserts the full fact shape end-to-end.
 
@@ -48,7 +48,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:manifest-consumes-fact, cli/studio/index#ac:rebuild-drops-removed-repo
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 `internal/studio/adapters/manifests`: go.mod + package.json at root and one nested level → publishes/consumes facts. With adapters live, prove rebuild-only semantics end-to-end (facts from a repo removed from the workspace disappear on re-index).
 
@@ -56,7 +56,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:codegraph-import-fact
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 `internal/studio/adapters/codegraph`: read committed codegraph/ snapshot recordsets, emit package entities and derived imports edges; symbol-level pass-through only where the snapshot already provides it.
 
@@ -64,7 +64,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:registry-domain-fact
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 `internal/studio/adapters/registries`: domains.json (Sneat-ops shape) → domain entities + fronts/serves-status facts; ecosystem*.yaml maps → product entities + aliased-as/implemented-by/member-of facts. Per-repo `registries:` configuration in studio.yaml.
 

@@ -1,8 +1,10 @@
 // Package workspace loads and resolves SpecScore Studio workspace files
-// (studio.yaml): an ecosystem name plus a list of repo directory paths or
-// glob patterns, absolute or workspace-relative.
+// (studio.yaml): an ecosystem name plus a list of repo entries — directory
+// paths or glob patterns, absolute or workspace-relative, each optionally
+// carrying a per-repo `registries:` file list for the registries adapter.
 //
-// Feature: cli/studio/index (REQ: workspace-config, REQ: workspace-errors)
+// Feature: cli/studio/index (REQ: workspace-config, REQ: workspace-errors,
+// REQ: adapter-registries)
 package workspace
 
 import (
@@ -25,13 +27,40 @@ var (
 	osReadFileFn   = os.ReadFile
 )
 
+// RepoEntry is one raw entry of the workspace `repos` list. It accepts two
+// YAML forms — a plain string path, or a mapping `{path: ..., registries:
+// [...]}` — so existing string-only workspaces keep parsing unchanged
+// (REQ: adapter-registries).
+type RepoEntry struct {
+	// Path is the absolute or workspace-relative repo directory path; glob
+	// patterns allowed (required).
+	Path string `yaml:"path"`
+	// Registries are optional repo-relative ops-registry file paths for the
+	// registries adapter to parse in addition to its discovered defaults.
+	Registries []string `yaml:"registries"`
+}
+
+// UnmarshalYAML accepts both entry forms: a scalar string decodes into Path;
+// anything else decodes as the mapping form.
+func (e *RepoEntry) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		return node.Decode(&e.Path)
+	}
+	type plain RepoEntry // drop methods to avoid recursing into this hook
+	var p plain
+	if err := node.Decode(&p); err != nil {
+		return err
+	}
+	*e = RepoEntry(p)
+	return nil
+}
+
 // Workspace is a parsed studio.yaml workspace file.
 type Workspace struct {
 	// Name is the ecosystem name (required).
 	Name string `yaml:"name"`
-	// Repos are the raw repo entries: absolute or workspace-relative local
-	// directory paths; glob patterns allowed (required, non-empty).
-	Repos []string `yaml:"repos"`
+	// Repos are the raw repo entries (required, non-empty).
+	Repos []RepoEntry `yaml:"repos"`
 
 	// Path is the absolute path of the workspace file.
 	Path string `yaml:"-"`
@@ -66,6 +95,11 @@ func Load(path string) (*Workspace, error) {
 	if len(ws.Repos) == 0 {
 		return nil, exitcode.InvalidArgsErrorf("workspace file %s: `repos` must list at least one repo path or glob", abs)
 	}
+	for i, entry := range ws.Repos {
+		if entry.Path == "" {
+			return nil, exitcode.InvalidArgsErrorf("workspace file %s: repos[%d] has no `path` — use a string entry or `{path: ..., registries: [...]}`", abs, i)
+		}
+	}
 	ws.Path = abs
 	ws.Dir = filepath.Dir(abs)
 	return &ws, nil
@@ -82,22 +116,11 @@ func (ws *Workspace) ResolveRepos() ([]string, error) {
 	seen := make(map[string]bool)
 	var out []string
 	for _, entry := range ws.Repos {
-		p := entry
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(ws.Dir, p)
-		}
-		matches := []string{p}
-		if strings.ContainsAny(p, "*?[") {
-			m, err := filepathGlobFn(p)
-			if err != nil {
-				return nil, exitcode.InvalidArgsErrorf("workspace file %s: bad glob pattern %q: %v", ws.Path, entry, err)
-			}
-			matches = m
+		matches, err := ws.expandEntry(entry.Path)
+		if err != nil {
+			return nil, err
 		}
 		for _, m := range matches {
-			if info, err := os.Stat(m); err != nil || !info.IsDir() {
-				continue
-			}
 			if !seen[m] {
 				seen[m] = true
 				out = append(out, m)
@@ -108,6 +131,69 @@ func (ws *Workspace) ResolveRepos() ([]string, error) {
 		return nil, exitcode.InvalidArgsErrorf("workspace file %s: `repos` resolve to zero existing directories — check the paths and globs against %s", ws.Path, ws.Dir)
 	}
 	return out, nil
+}
+
+// ResolveRegistries maps each resolved repo directory (the paths ResolveRepos
+// returns) to the per-repo `registries:` file lists configured for it.
+// Duplicate repo entries merge; per-repo file lists dedupe, first occurrence
+// wins the order. Bad globs and entries naming no existing directory are
+// skipped silently — they are ResolveRepos's errors to report.
+func (ws *Workspace) ResolveRegistries() map[string][]string {
+	out := make(map[string][]string)
+	for _, entry := range ws.Repos {
+		if len(entry.Registries) == 0 {
+			continue
+		}
+		matches, err := ws.expandEntry(entry.Path)
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			out[m] = appendUnique(out[m], entry.Registries)
+		}
+	}
+	return out
+}
+
+// expandEntry resolves one repo entry path (absolute, workspace-relative, or
+// glob) to the existing directories it names, in glob-sorted order. A bad
+// glob pattern returns an exit-2 error; missing paths simply match nothing.
+func (ws *Workspace) expandEntry(entry string) ([]string, error) {
+	p := entry
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(ws.Dir, p)
+	}
+	matches := []string{p}
+	if strings.ContainsAny(p, "*?[") {
+		m, err := filepathGlobFn(p)
+		if err != nil {
+			return nil, exitcode.InvalidArgsErrorf("workspace file %s: bad glob pattern %q: %v", ws.Path, entry, err)
+		}
+		matches = m
+	}
+	var dirs []string
+	for _, m := range matches {
+		if info, err := os.Stat(m); err == nil && info.IsDir() {
+			dirs = append(dirs, m)
+		}
+	}
+	return dirs, nil
+}
+
+// appendUnique appends the items not already present in dst, preserving
+// first-occurrence order.
+func appendUnique(dst, items []string) []string {
+	have := make(map[string]bool, len(dst))
+	for _, d := range dst {
+		have[d] = true
+	}
+	for _, it := range items {
+		if !have[it] {
+			have[it] = true
+			dst = append(dst, it)
+		}
+	}
+	return dst
 }
 
 // DefaultDBPath returns the default fact-store path for the workspace:

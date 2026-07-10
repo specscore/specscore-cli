@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-07-07T06:16:58Z",
+  "domains": {
+    "Orphan.dev.": {
+      "status": {
+        "/health": {
+          "http_status": 404,
+          "title": "",
+          "checked_at": "2026-07-07T06:13:44Z"
+        }
+      },
+      "cloudflare": {
+        "zone_id": "ignored",
+        "workers": {
+          "orphan-worker": "orphan.dev/*"
+        }
+      }
+    },
+    "example.app": {
+      "dns_servers": ["carol.ns.cloudflare.com"],
+      "status": {
+        "/": {
+          "http_status": 200,
+          "title": "Example — live",
+          "checked_at": "2026-07-07T06:13:44Z"
+        }
+      },
+      "cloudflare": {
+        "zone_status": "active",
+        "workers": {
+          "example-worker": "example.app/*"
+        }
+      },
+      "registrar": "Namecheap Inc."
+    },
+    "noworkers.app": {
+      "cloudflare": {
+        "workers": {}
+      }
+    },
+    "pick.app": {
+      "status": {
+        "/": {
+          "http_status": 200,
+          "title": "Pick"
+        },
+        "/a": {
+          "http_status": 500
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# Generated ecosystem registry shape (Sneat-ops data/ecosystem.yaml).
+generated_at: "2026-07-09T22:07:51.295Z"
+generator: scripts/generate-ecosystem-registry.mjs
+counts:
+  products: 1
+products:
+  - id: mappy
+    brand: Mappy
+    repos:
+      - mappy-repo
+    domains:
+      - name: mapped.app
+        live: true
+        http_status: 200
+        title: "Mapped"
+    vertical: null
+    has_app: true

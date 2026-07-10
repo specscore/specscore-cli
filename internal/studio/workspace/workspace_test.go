@@ -56,7 +56,7 @@ func TestLoad_Valid(t *testing.T) {
 	if ws.Name != "demo" {
 		t.Errorf("Name = %q, want %q", ws.Name, "demo")
 	}
-	if len(ws.Repos) != 2 || ws.Repos[0] != "repo-a" || ws.Repos[1] != "/abs/repo-b" {
+	if len(ws.Repos) != 2 || ws.Repos[0].Path != "repo-a" || ws.Repos[1].Path != "/abs/repo-b" {
 		t.Errorf("Repos = %v, want [repo-a /abs/repo-b]", ws.Repos)
 	}
 	if !filepath.IsAbs(ws.Path) || filepath.Base(ws.Path) != "studio.yaml" {
@@ -144,6 +144,64 @@ func TestLoad_EmptyRepos(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "repos") {
 		t.Errorf("error %q does not mention the repos field", err.Error())
+	}
+}
+
+func TestLoad_RepoEntryMapForm(t *testing.T) {
+	dir := t.TempDir()
+	path := writeWorkspace(t, dir, `name: demo
+repos:
+  - repo-a
+  - path: repo-ops
+    registries:
+      - ops/domains.json
+      - ops/ecosystem.yaml
+`)
+
+	ws, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(ws.Repos) != 2 {
+		t.Fatalf("len(Repos) = %d, want 2", len(ws.Repos))
+	}
+	if ws.Repos[0].Path != "repo-a" || len(ws.Repos[0].Registries) != 0 {
+		t.Errorf("Repos[0] = %+v, want bare path repo-a", ws.Repos[0])
+	}
+	if ws.Repos[1].Path != "repo-ops" {
+		t.Errorf("Repos[1].Path = %q, want repo-ops", ws.Repos[1].Path)
+	}
+	if regs := ws.Repos[1].Registries; len(regs) != 2 || regs[0] != "ops/domains.json" || regs[1] != "ops/ecosystem.yaml" {
+		t.Errorf("Repos[1].Registries = %v, want [ops/domains.json ops/ecosystem.yaml]", regs)
+	}
+}
+
+func TestLoad_RepoEntryMapFormMissingPath(t *testing.T) {
+	dir := t.TempDir()
+	path := writeWorkspace(t, dir, "name: demo\nrepos:\n  - registries: [x.json]\n")
+
+	_, err := Load(path)
+	if code := exitCode(t, err); code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(err.Error(), "path") {
+		t.Errorf("error %q does not mention the missing path field", err.Error())
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q does not name the workspace path", err.Error())
+	}
+}
+
+func TestLoad_RepoEntryBadShape(t *testing.T) {
+	dir := t.TempDir()
+	path := writeWorkspace(t, dir, "name: demo\nrepos:\n  - path: [not, a, scalar]\n")
+
+	_, err := Load(path)
+	if code := exitCode(t, err); code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q does not name the workspace path", err.Error())
 	}
 }
 
@@ -268,6 +326,82 @@ func TestResolveRepos_BadGlob(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "[") {
 		t.Errorf("error %q does not name the bad pattern", err.Error())
+	}
+}
+
+// --- ResolveRegistries ---
+
+func TestResolveRegistries_MapsResolvedReposToConfiguredFiles(t *testing.T) {
+	dir := t.TempDir()
+	ops := mkRepo(t, dir, "repo-ops")
+	mkRepo(t, dir, "repo-plain")
+	path := writeWorkspace(t, dir, `name: demo
+repos:
+  - repo-plain
+  - path: repo-ops
+    registries: [ops/domains.json]
+  - path: repo-ops
+    registries: [ops/domains.json, extra/ecosystem.yaml]
+`)
+
+	ws, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	regs := ws.ResolveRegistries()
+	if len(regs) != 1 {
+		t.Fatalf("ResolveRegistries = %v, want exactly one repo entry", regs)
+	}
+	got := regs[ops]
+	// Duplicate entries merge; per-repo file lists dedupe, order preserved.
+	if len(got) != 2 || got[0] != "ops/domains.json" || got[1] != "extra/ecosystem.yaml" {
+		t.Errorf("registries[%s] = %v, want [ops/domains.json extra/ecosystem.yaml]", ops, got)
+	}
+}
+
+func TestResolveRegistries_GlobEntryAppliesToAllMatches(t *testing.T) {
+	dir := t.TempDir()
+	a := mkRepo(t, dir, "repo-a")
+	b := mkRepo(t, dir, "repo-b")
+	// A plain file matching the glob must be skipped, like ResolveRepos does.
+	if err := os.WriteFile(filepath.Join(dir, "repo-file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := writeWorkspace(t, dir, "name: demo\nrepos:\n  - path: 'repo-*'\n    registries: [reg.json]\n")
+
+	ws, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	regs := ws.ResolveRegistries()
+	if len(regs) != 2 {
+		t.Fatalf("ResolveRegistries = %v, want entries for both matches", regs)
+	}
+	for _, repo := range []string{a, b} {
+		if got := regs[repo]; len(got) != 1 || got[0] != "reg.json" {
+			t.Errorf("registries[%s] = %v, want [reg.json]", repo, got)
+		}
+	}
+}
+
+func TestResolveRegistries_SkipsBadGlobAndMissingDirs(t *testing.T) {
+	dir := t.TempDir()
+	path := writeWorkspace(t, dir, `name: demo
+repos:
+  - path: '['
+    registries: [reg.json]
+  - path: no-such-dir
+    registries: [reg.json]
+`)
+
+	ws, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Bad globs are ResolveRepos's error to report; registries resolution
+	// skips them silently, as it does entries naming no existing directory.
+	if regs := ws.ResolveRegistries(); len(regs) != 0 {
+		t.Errorf("ResolveRegistries = %v, want empty", regs)
 	}
 }
 

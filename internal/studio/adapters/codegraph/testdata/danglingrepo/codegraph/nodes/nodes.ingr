@@ -1,0 +1,18 @@
+# INGR.io | nodes: $ID, kind, name, file_path
+"import:i9"
+"import"
+null
+"x/a.go"
+"variable:v1"
+"variable"
+"v"
+null
+null
+"import"
+"orphan"
+"x/a.go"
+42
+"import"
+"not-a-string-id"
+"x/a.go"
+# 4 records

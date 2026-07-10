@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/specscore/specscore-cli/internal/studio/adapters"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -110,6 +111,7 @@ func TestStudioIndex_DBFlagOverridesDefault(t *testing.T) {
 
 func TestStudioIndex_RelativeDBFlagIsAbsolutized(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
+	t.Chdir(t.TempDir()) // the rebuilt store lands in the cwd
 
 	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath, "--db", "rel.db")
 	if err != nil {
@@ -121,6 +123,9 @@ func TestStudioIndex_RelativeDBFlagIsAbsolutized(t *testing.T) {
 	}
 	if !strings.Contains(out, "Fact store: "+filepath.Join(cwd, "rel.db")) {
 		t.Errorf("summary does not absolutize relative --db; got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "rel.db")); err != nil {
+		t.Errorf("rebuilt store missing at --db path: %v", err)
 	}
 }
 
@@ -209,6 +214,121 @@ func TestStudioIndex_DefaultWorkspaceIsCWDStudioYAML(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), filepath.Join(dir, "studio.yaml")) {
 		t.Errorf("error %q does not name the default workspace path", err.Error())
+	}
+}
+
+// newSpecScoreRepo writes a minimal SpecScore-managed repo (specscore.yaml +
+// spec/features/x/README.md with **Status:** Approved) into dir/name.
+func newSpecScoreRepo(t *testing.T, dir, name string) {
+	t.Helper()
+	featureDir := filepath.Join(dir, name, "spec", "features", "x")
+	if err := os.MkdirAll(featureDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "project:\n  title: Fixture Repo\n"
+	if err := os.WriteFile(filepath.Join(dir, name, "specscore.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	readme := "# Feature: X\n\n**Status:** Approved\n"
+	if err := os.WriteFile(filepath.Join(featureDir, "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// AC: spec-status-fact — indexing a repo whose spec/features/x/README.md
+// declares **Status:** Approved yields a has-status fact with the full fact
+// shape, observable via `studio facts --predicate has-status --format json`.
+func TestStudioIndex_SpecScoreStatusFactEndToEnd(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	wsDir := filepath.Dir(wsPath)
+	newSpecScoreRepo(t, wsDir, "repo-a")
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+	if !strings.Contains(out, "Facts by adapter:") || !strings.Contains(out, "specscore: 1") {
+		t.Errorf("summary missing specscore fact count; got:\n%s", out)
+	}
+
+	jsonOut, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--predicate", "has-status", "--format", "json")
+	if err != nil {
+		t.Fatalf("studio facts: %v", err)
+	}
+	var facts []fact.Fact
+	if err := json.Unmarshal([]byte(jsonOut), &facts); err != nil {
+		t.Fatalf("facts output is not JSON: %v\n%s", err, jsonOut)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("got %d has-status facts, want 1:\n%s", len(facts), jsonOut)
+	}
+	f := facts[0]
+	if !strings.HasSuffix(f.Subject, "#x") {
+		t.Errorf("Subject = %q, want suffix #x", f.Subject)
+	}
+	if f.Object != "Approved" {
+		t.Errorf("Object = %q, want Approved", f.Object)
+	}
+	if f.Class != fact.Declared {
+		t.Errorf("Class = %q, want declared", f.Class)
+	}
+	if f.Pointer != "spec/features/x/README.md" {
+		t.Errorf("Pointer = %q, want spec/features/x/README.md", f.Pointer)
+	}
+	if f.Adapter.ID != "specscore" || f.Adapter.Version == "" {
+		t.Errorf("Adapter = %+v, want id specscore with a non-empty version", f.Adapter)
+	}
+	if f.ObservedAt == "" {
+		t.Error("ObservedAt is empty")
+	}
+	if f.Ecosystem != "demo" {
+		t.Errorf("Ecosystem = %q, want demo", f.Ecosystem)
+	}
+}
+
+// REQ: partial-tolerance (minimal collect + print) — the run summary lists
+// every collected warning.
+func TestStudioIndex_SummaryListsWarnings(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+
+	old := adaptersRunFn
+	adaptersRunFn = func(_ []adapters.Adapter, _ []string, _ string) adapters.Result {
+		return adapters.Result{
+			Warnings:       []adapters.Warning{{Repo: "repo-a", Adapter: "specscore", Message: "file boom"}},
+			FactsByAdapter: map[string]int{"specscore": 0},
+		}
+	}
+	t.Cleanup(func() { adaptersRunFn = old })
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+	for _, want := range []string{"Warnings: 1", "repo-a [specscore]: file boom"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// REQ: rebuild-only — a store-write failure surfaces as an error (exit 1)
+// instead of a summary.
+func TestStudioIndex_RebuildFailurePropagates(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The db parent "directory" is a regular file → MkdirAll fails.
+	_, _, err := runStudioCmd(t, "index", "--workspace", wsPath,
+		"--db", filepath.Join(blocker, "facts.db"))
+	if err == nil {
+		t.Fatal("expected a store-rebuild error")
+	}
+	if !strings.Contains(err.Error(), "fact-store directory") {
+		t.Errorf("error %q does not mention the fact-store directory", err.Error())
 	}
 }
 

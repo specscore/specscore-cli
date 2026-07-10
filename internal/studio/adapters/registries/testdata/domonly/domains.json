@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-07-07T06:16:58Z",
+  "domains": {
+    "solo.app": {
+      "status": {
+        "/": {
+          "http_status": 200,
+          "title": "Solo"
+        }
+      },
+      "cloudflare": {
+        "workers": {
+          "solo-worker": "solo.app/*"
+        }
+      }
+    }
+  }
+}

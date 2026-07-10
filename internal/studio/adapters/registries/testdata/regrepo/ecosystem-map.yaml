@@ -1,0 +1,15 @@
+# Curated ecosystem facts (Sneat-ops ecosystem-map.yaml shape).
+products:
+  - id: examplus
+    brand: "Examplus"
+    repos: [example-repo, example-ext]
+    domains: [example.app]
+    vertical: hospitality
+    maturity: app-live
+    notes: "Unknown keys are ignored."
+
+  - brand: "No Id"
+    repos: [nowhere]
+
+  - id: nulled
+    vertical: null

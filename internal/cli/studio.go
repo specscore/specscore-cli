@@ -1,7 +1,8 @@
 package cli
 
 // Feature implemented: cli/studio/index (REQ: workspace-config,
-// REQ: workspace-errors, REQ: facts-query)
+// REQ: workspace-errors, REQ: rebuild-only, REQ: partial-tolerance,
+// REQ: facts-query, REQ: adapter-registries)
 
 import (
 	"encoding/json"
@@ -10,10 +11,15 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/specscore/specscore-cli/internal/studio/adapters"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/internal/studio/workspace"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
+
+// Test seams — package-level vars wrapping external functions.
+// Production code calls these vars; tests replace them via t.Cleanup.
+var adaptersRunFn = adapters.Run
 
 // studioCommand returns the "studio" command group for SpecScore Studio —
 // the multi-repo ecosystem fact indexer.
@@ -80,12 +86,26 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 		dbPath = abs
 	}
 
+	all := adapters.All(adapters.Options{Registries: ws.ResolveRegistries()})
+	result := adaptersRunFn(all, repos, ws.Name)
+	if err := store.Rebuild(dbPath, result.Facts); err != nil {
+		return err
+	}
+
 	w := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(w, "Ecosystem: %s\n", ws.Name)
 	_, _ = fmt.Fprintf(w, "Workspace: %s\n", ws.Path)
 	_, _ = fmt.Fprintf(w, "Repos: %d\n", len(repos))
 	for _, r := range repos {
 		_, _ = fmt.Fprintf(w, "  %s\n", r)
+	}
+	_, _ = fmt.Fprintln(w, "Facts by adapter:")
+	for _, a := range all {
+		_, _ = fmt.Fprintf(w, "  %s: %d\n", a.ID(), result.FactsByAdapter[a.ID()])
+	}
+	_, _ = fmt.Fprintf(w, "Warnings: %d\n", len(result.Warnings))
+	for _, warn := range result.Warnings {
+		_, _ = fmt.Fprintf(w, "  %s [%s]: %s\n", warn.Repo, warn.Adapter, warn.Message)
 	}
 	_, _ = fmt.Fprintf(w, "Fact store: %s\n", dbPath)
 	return nil

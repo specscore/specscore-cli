@@ -54,6 +54,18 @@ type Fact struct {
 	Ecosystem  string  `json:"ecosystem"`
 }
 
+// Warning is a non-fatal ingestion problem: a file, adapter, or repo that
+// could not be ingested and was skipped at the smallest possible granularity
+// (REQ: partial-tolerance). Adapters fill Message only; the pipeline stamps
+// Repo (slug) and Adapter (id) centrally. The type lives here — not in the
+// adapters package — so adapter implementations depend only on this leaf
+// package while the adapters registry can import them without a cycle.
+type Warning struct {
+	Repo    string `json:"repo"`
+	Adapter string `json:"adapter"`
+	Message string `json:"message"`
+}
+
 // --- stable-ID helpers ---
 
 // RepoSlugger mints stable IDs for local-only repos (no remote host/org/name

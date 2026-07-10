@@ -1,0 +1,5 @@
+# INGR.io | edges: $ID, source, target, kind
+"e1"
+"file:x/a.go"
+"import:missing"
+# 1 record but the last field line is missing

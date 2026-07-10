@@ -1,0 +1,16 @@
+{
+  "domains": {
+    "config.app": {
+      "status": {
+        "/": {
+          "http_status": 301
+        }
+      },
+      "cloudflare": {
+        "workers": {
+          "config-worker": "config.app/*"
+        }
+      }
+    }
+  }
+}
