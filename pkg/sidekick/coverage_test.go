@@ -103,7 +103,7 @@ func TestRewriteFrontmatterStatus_WriteError(t *testing.T) {
 	if err := os.Chmod(p, 0o400); err != nil { // read-only → WriteFile fails
 		t.Fatal(err)
 	}
-	defer os.Chmod(p, 0o644)
+	defer func() { _ = os.Chmod(p, 0o644) }()
 	if _, err := RewriteFrontmatterStatus(p, "Implemented"); err == nil {
 		t.Fatal("expected WriteFile error on read-only file")
 	}
@@ -197,7 +197,7 @@ func TestRollback_WriteError(t *testing.T) {
 	if err := os.Chmod(roDir, 0o500); err != nil { // no write → WriteFile fails
 		t.Fatal(err)
 	}
-	defer os.Chmod(roDir, 0o755)
+	defer func() { _ = os.Chmod(roDir, 0o755) }()
 	opts := RelocateOptions{SeedPath: filepath.Join(roDir, "x.md")}
 	if err := rollback(opts, []byte("data"), errors.New("cause")); err == nil {
 		t.Fatal("expected rollback WriteFile error")

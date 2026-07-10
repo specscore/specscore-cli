@@ -96,7 +96,7 @@ func TestDownloadAndVerify_ChecksumFetchFails(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+assetName, func(w http.ResponseWriter, r *http.Request) {
-		w.Write(archive)
+		_, _ = w.Write(archive)
 	})
 	// checksums endpoint intentionally absent → 404.
 	srv := startServer(t, mux)
@@ -124,7 +124,7 @@ func TestDownloadAndVerify_DefaultsRuntimeOSArch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	t.Cleanup(func() { os.Remove(path) })
+	t.Cleanup(func() { _ = os.Remove(path) })
 }
 
 func TestFetch_RequestError(t *testing.T) {
@@ -191,8 +191,8 @@ func TestExtractFromTarGz_BadTar(t *testing.T) {
 	// Valid gzip wrapping invalid tar bytes → tr.Next returns a non-EOF error.
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
-	gw.Write([]byte("this is definitely not a valid tar stream payload"))
-	gw.Close()
+	_, _ = gw.Write([]byte("this is definitely not a valid tar stream payload"))
+	_ = gw.Close()
 	if _, err := extractFromTarGz(buf.Bytes(), "specscore"); err == nil {
 		t.Fatal("expected tar read error, got nil")
 	}
@@ -344,9 +344,9 @@ func TestReplaceExecutable_RenameError(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "specscore")
-	os.WriteFile(target, []byte("orig"), 0o755)
+	_ = os.WriteFile(target, []byte("orig"), 0o755)
 	newBin := filepath.Join(dir, "new")
-	os.WriteFile(newBin, []byte("new"), 0o644)
+	_ = os.WriteFile(newBin, []byte("new"), 0o644)
 
 	if err := ReplaceExecutable(target, newBin); err == nil {
 		t.Fatal("expected rename error, got nil")
@@ -360,9 +360,9 @@ func TestReplaceExecutable_WindowsPath(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "specscore.exe")
-	os.WriteFile(target, []byte("orig"), 0o755)
+	_ = os.WriteFile(target, []byte("orig"), 0o755)
 	newBin := filepath.Join(dir, "new")
-	os.WriteFile(newBin, []byte("new bytes"), 0o644)
+	_ = os.WriteFile(newBin, []byte("new bytes"), 0o644)
 
 	if err := ReplaceExecutable(target, newBin); err != nil {
 		t.Fatalf("windows replace: %v", err)
@@ -381,9 +381,9 @@ func TestReplaceExecutable_WindowsMoveAsideError(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "specscore.exe")
-	os.WriteFile(target, []byte("orig"), 0o755)
+	_ = os.WriteFile(target, []byte("orig"), 0o755)
 	newBin := filepath.Join(dir, "new")
-	os.WriteFile(newBin, []byte("new"), 0o644)
+	_ = os.WriteFile(newBin, []byte("new"), 0o644)
 
 	if err := ReplaceExecutable(target, newBin); err == nil {
 		t.Fatal("expected move-aside error, got nil")
@@ -407,9 +407,9 @@ func TestReplaceExecutable_WindowsInstallError(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "specscore.exe")
-	os.WriteFile(target, []byte("orig"), 0o755)
+	_ = os.WriteFile(target, []byte("orig"), 0o755)
 	newBin := filepath.Join(dir, "new")
-	os.WriteFile(newBin, []byte("new"), 0o644)
+	_ = os.WriteFile(newBin, []byte("new"), 0o644)
 
 	if err := ReplaceExecutable(target, newBin); err == nil {
 		t.Fatal("expected install error, got nil")
@@ -423,7 +423,7 @@ func TestStage_CreateTempError(t *testing.T) {
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
-	os.WriteFile(src, []byte("x"), 0o644)
+	_ = os.WriteFile(src, []byte("x"), 0o644)
 	if _, err := stage(dir, src); err == nil {
 		t.Fatal("expected create-temp error, got nil")
 	}
@@ -450,7 +450,7 @@ func TestStage_CloseError(t *testing.T) {
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
-	os.WriteFile(src, []byte("x"), 0o644)
+	_ = os.WriteFile(src, []byte("x"), 0o644)
 	if _, err := stage(dir, src); err == nil {
 		t.Fatal("expected close error, got nil")
 	}
@@ -474,7 +474,7 @@ func TestStage_ChmodError(t *testing.T) {
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
-	os.WriteFile(src, []byte("x"), 0o644)
+	_ = os.WriteFile(src, []byte("x"), 0o644)
 	if _, err := stage(dir, src); err == nil {
 		t.Fatal("expected chmod error, got nil")
 	}
@@ -498,7 +498,7 @@ func (errReader) Read([]byte) (int, error) { return 0, errors.New("read fail") }
 type closeErrFile struct{ *os.File }
 
 func (c *closeErrFile) Close() error {
-	c.File.Close()
+	_ = c.File.Close()
 	return errors.New("close fail")
 }
 
@@ -507,9 +507,9 @@ func (c *closeErrFile) Close() error {
 type removeOnCloseFile struct{ *os.File }
 
 func (r *removeOnCloseFile) Close() error {
-	name := r.File.Name()
+	name := r.Name()
 	err := r.File.Close()
-	os.Remove(name)
+	_ = os.Remove(name)
 	return err
 }
 

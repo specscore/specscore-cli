@@ -52,13 +52,13 @@ func ReplaceExecutable(targetPath, newBinaryPath string) error {
 		old := targetPath + ".old"
 		_ = os.Remove(old)
 		if err := renameFunc(targetPath, old); err != nil {
-			os.Remove(staged)
+			_ = os.Remove(staged)
 			return exitcode.UnexpectedErrorf("move aside current executable: %v", err)
 		}
 		if err := renameFunc(staged, targetPath); err != nil {
 			// Best effort: restore the original so the install stays runnable.
-			renameFunc(old, targetPath)
-			os.Remove(staged)
+			_ = renameFunc(old, targetPath)
+			_ = os.Remove(staged)
 			return exitcode.UnexpectedErrorf("install new executable: %v", err)
 		}
 		_ = os.Remove(old)
@@ -67,7 +67,7 @@ func ReplaceExecutable(targetPath, newBinaryPath string) error {
 
 	// POSIX: a single rename atomically replaces the target.
 	if err := renameFunc(staged, targetPath); err != nil {
-		os.Remove(staged)
+		_ = os.Remove(staged)
 		return exitcode.UnexpectedErrorf("install new executable: %v", err)
 	}
 	return nil
@@ -81,23 +81,23 @@ func stage(dir, src string) (string, error) {
 	if err != nil {
 		return "", exitcode.UnexpectedErrorf("open new binary: %v", err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	tmp, err := stageCreateTmp(dir, ".specscore-stage-*")
 	if err != nil {
 		return "", exitcode.UnexpectedErrorf("create staging file: %v", err)
 	}
 	if _, err := io.Copy(tmp, in); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 		return "", exitcode.UnexpectedErrorf("stage new binary: %v", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return "", exitcode.UnexpectedErrorf("close staging file: %v", err)
 	}
 	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return "", exitcode.UnexpectedErrorf("chmod staging file: %v", err)
 	}
 	return tmp.Name(), nil

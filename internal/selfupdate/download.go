@@ -121,7 +121,7 @@ func (d Downloader) fetch(ctx context.Context, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, exitcode.NotFoundErrorf("download of %s failed: status %d", name, resp.StatusCode)
@@ -172,7 +172,7 @@ func extractFromTarGz(archive []byte, want string) (string, error) {
 	if err != nil {
 		return "", exitcode.UnexpectedErrorf("open gzip archive: %v", err)
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 
 	tr := tar.NewReader(gr)
 	for {
@@ -201,7 +201,7 @@ func extractFromZip(archive []byte, want string) (string, error) {
 			if err != nil {
 				return "", exitcode.UnexpectedErrorf("open %s in archive: %v", want, err)
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			return writeTempBinary(rc)
 		}
 	}
@@ -229,12 +229,12 @@ func writeTempBinary(r io.Reader) (string, error) {
 		return "", exitcode.UnexpectedErrorf("create temp file: %v", err)
 	}
 	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return "", exitcode.UnexpectedErrorf("write temp binary: %v", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name())
 		return "", exitcode.UnexpectedErrorf("close temp binary: %v", err)
 	}
 	return f.Name(), nil

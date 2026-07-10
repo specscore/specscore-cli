@@ -40,7 +40,7 @@ func RenderCatalog() string {
 	var b strings.Builder
 	b.WriteString("# Lint Rule Catalog\n\n")
 	b.WriteString("Generated from the lint rule registry. Do not edit by hand.\n\n")
-	b.WriteString(fmt.Sprintf("Total rules: %d\n", len(rules)))
+	fmt.Fprintf(&b, "Total rules: %d\n", len(rules))
 
 	for _, fam := range families {
 		b.WriteString("\n## ")

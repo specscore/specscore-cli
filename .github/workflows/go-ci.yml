@@ -58,6 +58,13 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        continue-on-error: true
+        with:
+          skip-pkg-cache: false
+          skip-build-cache: false
+
       - name: go build
         run: go build ./...
 

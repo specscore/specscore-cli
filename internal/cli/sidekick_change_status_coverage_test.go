@@ -42,7 +42,7 @@ func TestSidekickChangeStatus_NoteWriteError(t *testing.T) {
 	if err := os.Chmod(seedsDir, 0o500); err != nil { // read-only → note temp-write fails
 		t.Fatal(err)
 	}
-	defer os.Chmod(seedsDir, 0o755)
+	defer func() { _ = os.Chmod(seedsDir, 0o755) }()
 	if _, _, err := runSidekick(t, "change-status", "foo", "--to=implemented", "--note", "shipped"); err == nil {
 		t.Fatal("expected note-write error")
 	}

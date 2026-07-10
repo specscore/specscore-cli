@@ -93,10 +93,10 @@ func serveRelease(t *testing.T, version, assetName string, assetBytes []byte, ch
 	checksums := fmt.Sprintf("%s  %s\n", checksumHash, assetName)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+assetName, func(w http.ResponseWriter, r *http.Request) {
-		w.Write(assetBytes)
+		_, _ = w.Write(assetBytes)
 	})
 	mux.HandleFunc("/"+checksumName, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(checksums))
+		_, _ = w.Write([]byte(checksums))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -115,7 +115,7 @@ func TestDownloadAndVerify_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	t.Cleanup(func() { os.Remove(path) })
+	t.Cleanup(func() { _ = os.Remove(path) })
 
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestDownloadAndVerify_Zip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	t.Cleanup(func() { os.Remove(path) })
+	t.Cleanup(func() { _ = os.Remove(path) })
 
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestDownloadAndVerify_ChecksumMismatchAborts(t *testing.T) {
 		t.Fatalf("expected verification error, got nil (path=%q)", path)
 	}
 	if path != "" {
-		os.Remove(path)
+		_ = os.Remove(path)
 		t.Fatalf("expected no extracted file on mismatch, got path %q", path)
 	}
 
@@ -186,11 +186,11 @@ func TestDownloadAndVerify_MissingChecksumEntry(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+assetName, func(w http.ResponseWriter, r *http.Request) {
-		w.Write(archive)
+		_, _ = w.Write(archive)
 	})
 	mux.HandleFunc("/"+checksumName, func(w http.ResponseWriter, r *http.Request) {
 		// Lists a different file, not our asset.
-		fmt.Fprintf(w, "%s  specscore_%s_darwin_arm64.tar.gz\n", sha256Hex(archive), version)
+		_, _ = fmt.Fprintf(w, "%s  specscore_%s_darwin_arm64.tar.gz\n", sha256Hex(archive), version)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -198,11 +198,11 @@ func TestDownloadAndVerify_MissingChecksumEntry(t *testing.T) {
 	d := Downloader{BaseURL: srv.URL, Client: http.DefaultClient}
 	path, err := d.DownloadAndVerify(context.Background(), version, "linux", "amd64")
 	if err == nil {
-		os.Remove(path)
+		_ = os.Remove(path)
 		t.Fatalf("expected error for missing checksum entry, got nil")
 	}
 	if path != "" {
-		os.Remove(path)
+		_ = os.Remove(path)
 		t.Fatalf("expected no extracted file, got path %q", path)
 	}
 	var ec *exitcode.Error

@@ -37,7 +37,7 @@ func TestAppendResolutionNote_WriteError(t *testing.T) {
 	if err := os.Chmod(dir, 0o500); err != nil { // dir not writable → atomic temp write fails
 		t.Fatal(err)
 	}
-	defer os.Chmod(dir, 0o755)
+	defer func() { _ = os.Chmod(dir, 0o755) }()
 	if _, _, err := AppendResolutionNote(p, "a note"); err == nil {
 		t.Fatal("expected writeFileAtomic error in read-only dir")
 	}

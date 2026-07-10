@@ -40,11 +40,6 @@ func TestList_Filters(t *testing.T) {
 	if len(res) == 0 {
 		t.Fatal("no reservations items")
 	}
-	for _, it := range res {
-		if it.ID != "reservations" && it.Kind != "module" {
-			// module row's ID is the bare module id
-		}
-	}
 	mods := List(g, "module", "")
 	found := false
 	for _, it := range mods {
