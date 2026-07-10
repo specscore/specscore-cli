@@ -24,7 +24,7 @@ Data model first, then the verb, then each probe kind, then the self-hosted proo
 
 **Verifies:** cli/studio/probe#ac:stale-filter-selects-old-facts, cli/studio/probe#ac:stale-filter-malformed-duration, cli/studio/probe#ac:age-column-rendered
 **Depends-On:** —
-**Status:** in_progress
+**Status:** complete
 
 Add `VerifiedAt` to `internal/studio/fact`, the `verified_at` column to the store schema, and `store.Merge` (per-adapter-id replace; refresh-vs-new-observation stamp semantics per REQ verified-at-field). Extend `studio facts` with the `--stale <duration>` filter (malformed duration exits 2 with a helpful message) and the VERIFIED age column in human output.
 
@@ -32,7 +32,7 @@ Add `VerifiedAt` to `internal/studio/fact`, the `verified_at` column to the stor
 
 **Verifies:** cli/studio/probe#ac:probe-writes-verified-serves-status, cli/studio/probe#ac:declared-and-verified-coexist, cli/studio/probe#ac:network-failure-records-down
 **Depends-On:** 1
-**Status:** planning
+**Status:** in_progress
 
 New `internal/studio/probe` package + `studio probe` verb in `internal/cli/studio.go`: reads domain targets from `serves-status` declared facts in the store, checks each via https-first/http-fallback through an injectable HTTP seam, and emits `verified-behavior` facts under adapter id `probe-domain` (both-schemes failure → `down`), merged into the store without touching declared facts. Run summary (human + JSON `{kinds, facts_written, verified_refreshed, warnings}`).
 

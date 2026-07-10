@@ -7,13 +7,16 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
+	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/ingr"
+	"github.com/specscore/specscore-cli/internal/studio/probe"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/internal/studio/workspace"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -27,6 +30,13 @@ var (
 	// studioNowFn is the clock the facts verb reads for the --stale cutoff and
 	// the VERIFIED age column; tests replace it for deterministic ages.
 	studioNowFn = time.Now
+	// probeRunDomainFn is the test seam for the domain-liveness probe kind; the
+	// verb runs it through this var so tests inject deterministic results
+	// without exercising the HTTP seam.
+	probeRunDomainFn = probe.RunDomain
+	// storeMergeFn is the test seam for the non-destructive store merge the
+	// probe verb writes through.
+	storeMergeFn = store.Merge
 )
 
 // studioCommand returns the "studio" command group for SpecScore Studio —
@@ -47,6 +57,7 @@ Running "specscore studio" with no subcommand prints this help and exits 0.`,
 	}
 	cmd.AddCommand(
 		studioIndexCommand(),
+		studioProbeCommand(),
 		studioFactsCommand(),
 	)
 	return cmd
@@ -174,6 +185,134 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 	// summary is printed (REQ: partial-tolerance).
 	if strict, _ := cmd.Flags().GetBool("strict"); strict && len(result.Warnings) > 0 {
 		return exitcode.NotFoundErrorf("studio index collected %d warning(s) — failing because --strict is set", len(result.Warnings))
+	}
+	return nil
+}
+
+// --- studio probe ---
+
+// probeKinds are the accepted --kind selectors. This phase implements the
+// domain-liveness kind; the ci kind lands in a later task, so selecting it (or
+// all) simply runs whatever kinds are implemented today.
+const (
+	kindDomain = "domain"
+	kindCI     = "ci"
+	kindAll    = "all"
+)
+
+func studioProbeCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "probe",
+		Short: "Run live checks and merge verified-behavior facts into the store",
+		Long: `Reads probe targets from the fact store built by "studio index" and runs
+live checks, merging the resulting verified-behavior facts back into the same
+store without rebuilding it. Unlike index, probe performs network I/O; it never
+runs as a side effect of index.
+
+The domain kind issues an HTTP(S) GET to every domain carrying a serves-status
+fact (https first, http on transport failure) and records the answering status
+— or the reserved object "down" when neither scheme responds. A dead domain is
+a successful observation, not a run failure.
+
+--kind <domain|ci|all> selects which probe families run (default all).
+--format <human|json> controls the run summary; the JSON summary is an object
+with kinds, facts_written, verified_refreshed and warnings.
+
+Running probe before "studio index" exits 2 with a message naming the expected
+store path and suggesting "specscore studio index".`,
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE:         runStudioProbe,
+	}
+	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
+	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
+	cmd.Flags().String("kind", kindAll, "probe families to run: domain, ci or all")
+	cmd.Flags().String("format", "human", "run-summary format: human or json")
+	return cmd
+}
+
+// probeSummary is the JSON shape of the probe run summary (REQ: probe-verb):
+// the kinds that ran, how many facts were written (fresh observations) and
+// refreshed (re-verifications), and any per-target/per-kind warnings.
+type probeSummary struct {
+	Kinds           []string `json:"kinds"`
+	FactsWritten    int      `json:"facts_written"`
+	VerifiedRefresh int      `json:"verified_refreshed"`
+	Warnings        []string `json:"warnings"`
+}
+
+func runStudioProbe(cmd *cobra.Command, _ []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "human" && format != "json" {
+		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
+	}
+	kind, _ := cmd.Flags().GetString("kind")
+	if kind != kindDomain && kind != kindCI && kind != kindAll {
+		return exitcode.InvalidArgsErrorf("unknown --kind %q: expected domain, ci or all", kind)
+	}
+
+	dbPath, err := studioFactsStorePath(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Query serves as the missing/empty-store guard: it returns the same exit-2
+	// guidance `studio facts` gives when `studio index` has never run.
+	existing, err := store.Query(dbPath, store.Filter{})
+	if err != nil {
+		return err
+	}
+
+	now := studioNowFn()
+	var kinds []string
+	var produced []fact.Fact
+	var warnings []string
+	if kind == kindDomain || kind == kindAll {
+		res := probeRunDomainFn(existing, version, now)
+		kinds = append(kinds, res.Kinds...)
+		produced = append(produced, res.Facts...)
+		warnings = append(warnings, res.Warnings...)
+	}
+
+	merged, err := storeMergeFn(dbPath, produced)
+	if err != nil {
+		return err
+	}
+
+	summary := probeSummary{
+		Kinds:           kinds,
+		FactsWritten:    merged.Written,
+		VerifiedRefresh: merged.Refreshed,
+		Warnings:        warnings,
+	}
+	return renderProbeSummary(cmd, format, summary)
+}
+
+// renderProbeSummary prints the probe run summary as JSON or free-form human
+// prose over the same data (REQ: probe-verb).
+func renderProbeSummary(cmd *cobra.Command, format string, s probeSummary) error {
+	w := cmd.OutOrStdout()
+	if format == "json" {
+		if s.Kinds == nil {
+			s.Kinds = []string{}
+		}
+		if s.Warnings == nil {
+			s.Warnings = []string{}
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(s)
+	}
+	kinds := "none"
+	if len(s.Kinds) > 0 {
+		kinds = strings.Join(s.Kinds, ", ")
+	}
+	_, _ = fmt.Fprintf(w, "Probe kinds: %s\n", kinds)
+	_, _ = fmt.Fprintf(w, "Facts written: %d\n", s.FactsWritten)
+	_, _ = fmt.Fprintf(w, "Verified refreshed: %d\n", s.VerifiedRefresh)
+	_, _ = fmt.Fprintf(w, "Warnings: %d\n", len(s.Warnings))
+	for _, warn := range s.Warnings {
+		_, _ = fmt.Fprintf(w, "  %s\n", warn)
 	}
 	return nil
 }
