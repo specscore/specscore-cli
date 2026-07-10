@@ -19,6 +19,7 @@ Command group for SpecScore Studio: index, facts (Phase 0); ask, serve, mcp (lat
 |---|---|
 | [index](index/README.md) | TODO: Add description. |
 | [probe](probe/README.md) | TODO: Add description. |
+| [answers](answers/README.md) | TODO: Add description. |
 
 ## Problem
 
