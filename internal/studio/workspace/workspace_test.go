@@ -242,12 +242,15 @@ func TestResolveRepos_RelativeAndAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	repos, err := ws.ResolveRepos()
+	repos, missing, err := ws.ResolveRepos()
 	if err != nil {
 		t.Fatalf("ResolveRepos: %v", err)
 	}
 	if len(repos) != 2 || repos[0] != relRepo || repos[1] != absRepo {
 		t.Errorf("repos = %v, want [%s %s]", repos, relRepo, absRepo)
+	}
+	if len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
 	}
 }
 
@@ -265,30 +268,82 @@ func TestResolveRepos_Glob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	repos, err := ws.ResolveRepos()
+	repos, missing, err := ws.ResolveRepos()
 	if err != nil {
 		t.Fatalf("ResolveRepos: %v", err)
 	}
 	if len(repos) != 2 || repos[0] != a || repos[1] != b {
 		t.Errorf("repos = %v, want [%s %s]", repos, a, b)
 	}
+	if len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
+	}
 }
 
-func TestResolveRepos_SkipsMissingAndDedupes(t *testing.T) {
+func TestResolveRepos_DedupesAndReportsMissingLiterals(t *testing.T) {
 	dir := t.TempDir()
 	a := mkRepo(t, dir, "repo-a")
-	path := writeWorkspace(t, dir, "name: demo\nrepos:\n  - repo-a\n  - repo-a\n  - 'repo-*'\n  - no-such-dir\n")
+	path := writeWorkspace(t, dir, "name: demo\nrepos:\n  - repo-a\n  - repo-a\n  - 'repo-*'\n  - no-such-dir\n  - no-such-dir\n")
 
 	ws, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	repos, err := ws.ResolveRepos()
+	repos, missing, err := ws.ResolveRepos()
 	if err != nil {
 		t.Fatalf("ResolveRepos: %v", err)
 	}
 	if len(repos) != 1 || repos[0] != a {
 		t.Errorf("repos = %v, want exactly [%s]", repos, a)
+	}
+	// A literal path naming no existing directory is reported once (deduped)
+	// so the pipeline can surface it as a warning (REQ: partial-tolerance).
+	want := filepath.Join(dir, "no-such-dir")
+	if len(missing) != 1 || missing[0] != want {
+		t.Errorf("missing = %v, want exactly [%s]", missing, want)
+	}
+}
+
+func TestResolveRepos_GlobMatchingNothingIsSilent(t *testing.T) {
+	dir := t.TempDir()
+	a := mkRepo(t, dir, "repo-a")
+	path := writeWorkspace(t, dir, "name: demo\nrepos:\n  - repo-a\n  - 'nope-*'\n")
+
+	ws, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	repos, missing, err := ws.ResolveRepos()
+	if err != nil {
+		t.Fatalf("ResolveRepos: %v", err)
+	}
+	if len(repos) != 1 || repos[0] != a {
+		t.Errorf("repos = %v, want exactly [%s]", repos, a)
+	}
+	if len(missing) != 0 {
+		t.Errorf("missing = %v, want none for a zero-match glob", missing)
+	}
+}
+
+func TestResolveRepos_LiteralFileIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	mkRepo(t, dir, "repo-a")
+	filePath := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := writeWorkspace(t, dir, "name: demo\nrepos:\n  - repo-a\n  - not-a-dir\n")
+
+	ws, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	_, missing, err := ws.ResolveRepos()
+	if err != nil {
+		t.Fatalf("ResolveRepos: %v", err)
+	}
+	if len(missing) != 1 || missing[0] != filePath {
+		t.Errorf("missing = %v, want exactly [%s]", missing, filePath)
 	}
 }
 
@@ -300,7 +355,7 @@ func TestResolveRepos_ZeroResolving(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	_, err = ws.ResolveRepos()
+	_, _, err = ws.ResolveRepos()
 	if code := exitCode(t, err); code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}
@@ -320,7 +375,7 @@ func TestResolveRepos_BadGlob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	_, err = ws.ResolveRepos()
+	_, _, err = ws.ResolveRepos()
 	if code := exitCode(t, err); code != 2 {
 		t.Errorf("exit code = %d, want 2", code)
 	}

@@ -106,31 +106,40 @@ func Load(path string) (*Workspace, error) {
 }
 
 // ResolveRepos expands the workspace's repo entries into a deduplicated,
-// entry-ordered list of existing absolute directory paths. Relative entries
-// resolve against the workspace directory; entries containing glob
-// metacharacters expand via filepath.Glob (matches sorted). Entries that do
-// not name an existing directory are skipped silently — per-repo tolerance
-// is handled downstream. Zero resolved directories returns an exit-2 error
-// naming the workspace path.
-func (ws *Workspace) ResolveRepos() ([]string, error) {
+// entry-ordered list of existing absolute directory paths, plus the
+// deduplicated absolute paths of literal (non-glob) entries that name no
+// existing directory. Relative entries resolve against the workspace
+// directory; entries containing glob metacharacters expand via filepath.Glob
+// (matches sorted) and match nothing silently. Missing literal paths are NOT
+// an error here — the ingestion pipeline surfaces them as repo-level
+// warnings (REQ: partial-tolerance). Zero resolved directories returns an
+// exit-2 error naming the workspace path (REQ: workspace-errors).
+func (ws *Workspace) ResolveRepos() (repos, missing []string, err error) {
 	seen := make(map[string]bool)
-	var out []string
+	seenMissing := make(map[string]bool)
 	for _, entry := range ws.Repos {
-		matches, err := ws.expandEntry(entry.Path)
+		matches, resolved, isGlob, err := ws.expandEntry(entry.Path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if !isGlob && len(matches) == 0 {
+			if !seenMissing[resolved] {
+				seenMissing[resolved] = true
+				missing = append(missing, resolved)
+			}
+			continue
 		}
 		for _, m := range matches {
 			if !seen[m] {
 				seen[m] = true
-				out = append(out, m)
+				repos = append(repos, m)
 			}
 		}
 	}
-	if len(out) == 0 {
-		return nil, exitcode.InvalidArgsErrorf("workspace file %s: `repos` resolve to zero existing directories — check the paths and globs against %s", ws.Path, ws.Dir)
+	if len(repos) == 0 {
+		return nil, nil, exitcode.InvalidArgsErrorf("workspace file %s: `repos` resolve to zero existing directories — check the paths and globs against %s", ws.Path, ws.Dir)
 	}
-	return out, nil
+	return repos, missing, nil
 }
 
 // ResolveRegistries maps each resolved repo directory (the paths ResolveRepos
@@ -144,7 +153,7 @@ func (ws *Workspace) ResolveRegistries() map[string][]string {
 		if len(entry.Registries) == 0 {
 			continue
 		}
-		matches, err := ws.expandEntry(entry.Path)
+		matches, _, _, err := ws.expandEntry(entry.Path)
 		if err != nil {
 			continue
 		}
@@ -156,28 +165,30 @@ func (ws *Workspace) ResolveRegistries() map[string][]string {
 }
 
 // expandEntry resolves one repo entry path (absolute, workspace-relative, or
-// glob) to the existing directories it names, in glob-sorted order. A bad
-// glob pattern returns an exit-2 error; missing paths simply match nothing.
-func (ws *Workspace) expandEntry(entry string) ([]string, error) {
+// glob) to the existing directories it names, in glob-sorted order, plus the
+// resolved absolute form of the entry and whether it was a glob pattern. A
+// bad glob pattern returns an exit-2 error; missing paths simply match
+// nothing.
+func (ws *Workspace) expandEntry(entry string) (dirs []string, resolved string, isGlob bool, err error) {
 	p := entry
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(ws.Dir, p)
 	}
 	matches := []string{p}
 	if strings.ContainsAny(p, "*?[") {
+		isGlob = true
 		m, err := filepathGlobFn(p)
 		if err != nil {
-			return nil, exitcode.InvalidArgsErrorf("workspace file %s: bad glob pattern %q: %v", ws.Path, entry, err)
+			return nil, p, true, exitcode.InvalidArgsErrorf("workspace file %s: bad glob pattern %q: %v", ws.Path, entry, err)
 		}
 		matches = m
 	}
-	var dirs []string
 	for _, m := range matches {
 		if info, err := os.Stat(m); err == nil && info.IsDir() {
 			dirs = append(dirs, m)
 		}
 	}
-	return dirs, nil
+	return dirs, p, isGlob, nil
 }
 
 // appendUnique appends the items not already present in dst, preserving

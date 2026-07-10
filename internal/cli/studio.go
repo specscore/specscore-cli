@@ -54,13 +54,20 @@ func studioIndexCommand() *cobra.Command {
 globs), resolves the repos, and rebuilds the fact store from scratch.
 
 A missing or unparsable workspace file, or a workspace whose repos resolve
-to zero existing directories, exits 2 with a one-line actionable error.`,
+to zero existing directories, exits 2 with a one-line actionable error.
+
+Individual broken repos never abort the run: a missing repo path, a
+panicking adapter, or a malformed artifact file is skipped at the smallest
+possible granularity and reported as a warning in the run summary. The
+command exits 0 with warnings by default; --strict makes any warning exit 3
+after the run completes and the summary is printed.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE:         runStudioIndex,
 	}
 	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
 	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
+	cmd.Flags().Bool("strict", false, "exit 3 when the run collected any warning")
 	return cmd
 }
 
@@ -72,10 +79,13 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	repos, err := ws.ResolveRepos()
+	repos, missing, err := ws.ResolveRepos()
 	if err != nil {
 		return err
 	}
+	// Missing literal repo paths flow through the pipeline so they surface
+	// as repo-level warnings + per-repo summary lines (REQ: partial-tolerance).
+	repos = append(repos, missing...)
 
 	dbPath := ws.DefaultDBPath()
 	if dbFlag != "" {
@@ -96,8 +106,8 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintf(w, "Ecosystem: %s\n", ws.Name)
 	_, _ = fmt.Fprintf(w, "Workspace: %s\n", ws.Path)
 	_, _ = fmt.Fprintf(w, "Repos: %d\n", len(repos))
-	for _, r := range repos {
-		_, _ = fmt.Fprintf(w, "  %s\n", r)
+	for _, r := range result.Repos {
+		_, _ = fmt.Fprintf(w, "  %s: %d facts, %d warnings\n", r.Path, r.Facts, r.Warnings)
 	}
 	_, _ = fmt.Fprintln(w, "Facts by adapter:")
 	for _, a := range all {
@@ -105,9 +115,19 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 	}
 	_, _ = fmt.Fprintf(w, "Warnings: %d\n", len(result.Warnings))
 	for _, warn := range result.Warnings {
+		if warn.Adapter == "" { // repo-level warning: no adapter to blame
+			_, _ = fmt.Fprintf(w, "  %s: %s\n", warn.Repo, warn.Message)
+			continue
+		}
 		_, _ = fmt.Fprintf(w, "  %s [%s]: %s\n", warn.Repo, warn.Adapter, warn.Message)
 	}
 	_, _ = fmt.Fprintf(w, "Fact store: %s\n", dbPath)
+
+	// --strict escalates warnings only after the run completed and the full
+	// summary is printed (REQ: partial-tolerance).
+	if strict, _ := cmd.Flags().GetBool("strict"); strict && len(result.Warnings) > 0 {
+		return exitcode.NotFoundErrorf("studio index collected %d warning(s) — failing because --strict is set", len(result.Warnings))
+	}
 	return nil
 }
 

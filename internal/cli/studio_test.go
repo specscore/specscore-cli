@@ -312,6 +312,95 @@ func TestStudioIndex_SummaryListsWarnings(t *testing.T) {
 	}
 }
 
+// newBrokenStudioWorkspace writes a studio.yaml listing one healthy
+// SpecScore fixture repo plus one path that does not exist, returning the
+// workspace path and the missing repo path.
+func newBrokenStudioWorkspace(t *testing.T) (wsPath, missingPath string) {
+	t.Helper()
+	wsPath = newStudioWorkspace(t, "repo-a")
+	wsDir := filepath.Dir(wsPath)
+	newSpecScoreRepo(t, wsDir, "repo-a")
+	missingPath = filepath.Join(wsDir, "no-such-repo")
+	content := "name: demo\nrepos:\n  - repo-a\n  - no-such-repo\n"
+	if err := os.WriteFile(wsPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return wsPath, missingPath
+}
+
+// AC: partial-tolerance-warns — one broken repo does not abort the run: the
+// command exits 0, the summary lists a warning for the missing path, and
+// facts from the healthy repo are queryable.
+func TestStudioIndex_MissingRepoPathWarnsAndExitsZero(t *testing.T) {
+	wsPath, missingPath := newBrokenStudioWorkspace(t)
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index with one missing repo: %v", err)
+	}
+	if !strings.Contains(out, "Warnings: 1") {
+		t.Errorf("summary missing \"Warnings: 1\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, missingPath) {
+		t.Errorf("summary does not name the missing path %q; got:\n%s", missingPath, out)
+	}
+	// Per-repo summary lines: healthy repo with facts, missing repo with the
+	// warning (REQ: partial-tolerance).
+	wsDir := filepath.Dir(wsPath)
+	for _, want := range []string{
+		filepath.Join(wsDir, "repo-a") + ": 1 facts, 0 warnings",
+		missingPath + ": 0 facts, 1 warnings",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary missing per-repo line %q; got:\n%s", want, out)
+		}
+	}
+
+	// Facts from the healthy repo are queryable.
+	countOut, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--predicate", "has-status", "--count")
+	if err != nil {
+		t.Fatalf("studio facts: %v", err)
+	}
+	if countOut != "1\n" {
+		t.Errorf("healthy-repo fact count = %q, want \"1\\n\"", countOut)
+	}
+}
+
+// AC: strict-mode-fails — --strict escalates warnings: the command exits 3
+// and the warning is still printed.
+func TestStudioIndex_StrictEscalatesWarningsToExit3(t *testing.T) {
+	wsPath, missingPath := newBrokenStudioWorkspace(t)
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath, "--strict")
+	if code := studioExit(t, err); code != exitcode.NotFound {
+		t.Errorf("exit code = %d, want 3", code)
+	}
+	if !strings.Contains(out, missingPath) {
+		t.Errorf("warning for %q not printed under --strict; got:\n%s", missingPath, out)
+	}
+	// The run completes before escalating: the full summary is printed and
+	// the store is rebuilt.
+	if !strings.Contains(out, "Fact store: ") {
+		t.Errorf("summary not completed under --strict; got:\n%s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(wsPath), ".specscore-studio", "facts.db")); statErr != nil {
+		t.Errorf("fact store not rebuilt under --strict: %v", statErr)
+	}
+	if !strings.Contains(err.Error(), "warning") {
+		t.Errorf("error %q does not mention warnings", err.Error())
+	}
+}
+
+func TestStudioIndex_StrictWithoutWarningsExitsZero(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+
+	_, _, err := runStudioCmd(t, "index", "--workspace", wsPath, "--strict")
+	if err != nil {
+		t.Fatalf("studio index --strict with no warnings: %v", err)
+	}
+}
+
 // REQ: rebuild-only — a store-write failure surfaces as an error (exit 1)
 // instead of a summary.
 func TestStudioIndex_RebuildFailurePropagates(t *testing.T) {

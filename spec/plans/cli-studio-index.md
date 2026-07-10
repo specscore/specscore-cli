@@ -72,7 +72,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:partial-tolerance-warns, cli/studio/index#ac:strict-mode-fails
 **Depends-On:** 3, 4, 5, 6
-**Status:** planning
+**Status:** complete
 
 Warning collection at file→adapter→repo granularity across all adapters, adapter-panic recovery, per-repo summary lines, exit 0-with-warnings default and exit 3 under `--strict`.
 

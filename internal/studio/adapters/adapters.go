@@ -9,6 +9,8 @@
 package adapters
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -66,17 +68,40 @@ type Result struct {
 	// Facts are the fully stamped facts, in repo-then-adapter emission order.
 	Facts []fact.Fact
 	// Warnings are the collected non-fatal problems, stamped with the repo
-	// slug and adapter id they came from.
+	// slug and adapter id they came from. Repo-level warnings (a repo path
+	// that is not an existing directory) carry an empty Adapter.
 	Warnings []Warning
 	// FactsByAdapter counts the facts each adapter emitted, keyed by adapter
 	// id; every adapter that ran has an entry (zero included).
 	FactsByAdapter map[string]int
+	// Repos are the per-repo run summaries, in input repo order; skipped
+	// repos are included (zero facts, one repo-level warning).
+	Repos []RepoSummary
+}
+
+// RepoSummary is the per-repo rollup for the run summary: how many facts and
+// warnings one repo path contributed (REQ: partial-tolerance).
+type RepoSummary struct {
+	// Path is the repo path as passed to Run.
+	Path string
+	// Slug is the stable repo slug minted for the path.
+	Slug string
+	// Facts is the number of facts ingested from the repo.
+	Facts int
+	// Warnings is the number of warnings collected for the repo.
+	Warnings int
 }
 
 // Run executes every adapter over every repo (sequentially) and stamps the
 // shared fact fields centrally: the repo slug onto "#"-prefixed subjects and
 // objects, the adapter id + version, one observed_at timestamp for the whole
 // run (UTC, RFC 3339), and the ecosystem name.
+//
+// Partial tolerance (REQ: partial-tolerance) is enforced at repo and adapter
+// granularity here (adapters handle file granularity themselves): a repo
+// path that is not an existing directory becomes one repo-level warning and
+// is skipped; a panicking adapter is recovered into a warning naming the
+// adapter and repo, and the remaining adapters still run.
 func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 	observedAt := nowFn().UTC().Format(time.RFC3339)
 	slugger := fact.NewRepoSlugger()
@@ -86,8 +111,16 @@ func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 	}
 	for _, repo := range repos {
 		slug := slugger.Slug(repo)
+		summary := RepoSummary{Path: repo, Slug: slug}
+		if info, err := os.Stat(repo); err != nil || !info.IsDir() {
+			res.Warnings = append(res.Warnings, Warning{Repo: slug,
+				Message: fmt.Sprintf("repo directory does not exist: %s — repo skipped", repo)})
+			summary.Warnings++
+			res.Repos = append(res.Repos, summary)
+			continue
+		}
 		for _, a := range adapters {
-			facts, warnings := a.Ingest(repo)
+			facts, warnings := safeIngest(a, repo)
 			for _, f := range facts {
 				if strings.HasPrefix(f.Subject, "#") {
 					f.Subject = slug + f.Subject
@@ -100,13 +133,30 @@ func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 				f.Ecosystem = ecosystem
 				res.Facts = append(res.Facts, f)
 				res.FactsByAdapter[a.ID()]++
+				summary.Facts++
 			}
 			for _, w := range warnings {
 				w.Repo = slug
 				w.Adapter = a.ID()
 				res.Warnings = append(res.Warnings, w)
+				summary.Warnings++
 			}
 		}
+		res.Repos = append(res.Repos, summary)
 	}
 	return res
+}
+
+// safeIngest runs one adapter over one repo, recovering a panic into a
+// warning so the rest of the run completes (REQ: partial-tolerance, adapter
+// granularity). On panic no facts survive for that adapter+repo; the caller
+// stamps the warning with the adapter id and repo slug like any other.
+func safeIngest(a Adapter, repo string) (facts []fact.Fact, warnings []Warning) {
+	defer func() {
+		if r := recover(); r != nil {
+			facts = nil
+			warnings = []Warning{{Message: fmt.Sprintf("adapter panicked: %v — adapter skipped for this repo", r)}}
+		}
+	}()
+	return a.Ingest(repo)
 }
