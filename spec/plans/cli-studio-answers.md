@@ -32,7 +32,7 @@ The detector engine as pure functions over store facts: status-drift branch (a) 
 
 **Verifies:** cli/studio/answers#ac:agreement-not-flagged, cli/studio/answers#ac:behavioral-supersession-not-flagged, cli/studio/answers#ac:contradicts-fact-written, cli/studio/answers#ac:contradictions-ignore-suppresses, cli/studio/answers#ac:contradictions-without-index-errors
 **Depends-On:** 1
-**Status:** in_progress
+**Status:** complete
 
 Prove the never-flag rules (cross-class agreement; verified×verified supersession), write each item as a `contradicts` fact (canonicalised smaller-ref-first subject/object, class derived, pointer = detector id, adapter `contradictions`) via `store.Merge` so re-runs are idempotent, honor the workspace ignore-list file (`--show-ignored`), and reuse the exit-2 missing-store guidance.
 
@@ -40,7 +40,7 @@ Prove the never-flag rules (cross-class agreement; verified×verified supersessi
 
 **Verifies:** cli/studio/answers#ac:resolve-alias-to-canonical, cli/studio/answers#ac:resolve-ambiguous-lists-candidates, cli/studio/answers#ac:resolve-unknown-guides
 **Depends-On:** 2
-**Status:** planning
+**Status:** in_progress
 
 `studio resolve <name>`: case-insensitive lookup over `aliased-as` facts and entity ids themselves; unique hit prints the canonical id (exit 0), multiple candidates listed (exit 5, AmbiguousSlug), unknown prints guidance (exit 3, NotFound). The resolution helper is shared machinery for Task 4's router.
 

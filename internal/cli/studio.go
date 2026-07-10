@@ -21,6 +21,7 @@ import (
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/ingr"
 	"github.com/specscore/specscore-cli/internal/studio/probe"
+	"github.com/specscore/specscore-cli/internal/studio/resolve"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/internal/studio/workspace"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -71,6 +72,7 @@ Running "specscore studio" with no subcommand prints this help and exits 0.`,
 		studioProbeCommand(),
 		studioFactsCommand(),
 		studioContradictionsCommand(),
+		studioResolveCommand(),
 	)
 	return cmd
 }
@@ -744,6 +746,166 @@ func printContradictionSide(w io.Writer, label string, s contradictionSide) {
 	_, _ = fmt.Fprintf(w, "  %s: (%s, %s, %s)\n", label, s.Subject, s.Predicate, s.Object)
 	_, _ = fmt.Fprintf(w, "     class=%s pointer=%s adapter=%s observed_at=%s\n",
 		s.Class, s.Pointer, s.Adapter, s.ObservedAt)
+}
+
+// --- studio resolve ---
+//
+// Feature: cli/studio/answers (REQ: resolve-verb,
+// REQ: resolve-ambiguous-and-unknown)
+
+func studioResolveCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "resolve <name>",
+		Short: "Map a brand or entity name to its canonical id (offline)",
+		Long: `Maps a brand, domain, repo slug, package, or product name to its canonical
+entity id, reading only the fact store (no network I/O).
+
+Resolution is case-insensitive and draws candidates from two sources:
+  (a) the object of every aliased-as fact in the store — the brand-name layer
+      minted by the registries adapter.
+  (b) the entity ids the store knows as fact subjects or objects (product ids,
+      repo slugs, domain ids).
+
+A unique match prints the canonical id and exits 0. With --format json it
+prints an object: {"id", "kind", "citation"}.
+
+When the name resolves to more than one candidate, all candidates are listed
+and the command exits 5 (AmbiguousSlug); the caller must disambiguate.
+
+When the name resolves to nothing, the command exits 3 (NotFound) with
+guidance naming what was searched (aliases and entity ids) and suggesting
+"studio facts --object '<name>*'" to explore.
+
+An empty or whitespace-only name, or the wrong number of arguments, exits 2
+(InvalidArgs).
+
+Running before "studio index" exits 2 with a message naming the expected
+store path and suggesting "specscore studio index".`,
+		Args:         cobra.RangeArgs(0, 2), // validated in RunE for better messages
+		SilenceUsage: true,
+		RunE:         runStudioResolve,
+	}
+	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
+	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
+	cmd.Flags().String("format", "human", "output format: human or json")
+	return cmd
+}
+
+// resolveJSONResponse is the JSON shape for a unique resolve result
+// (REQ: resolve-verb).
+type resolveJSONResponse struct {
+	ID       string          `json:"id"`
+	Kind     string          `json:"kind"`
+	Citation resolveJSONCite `json:"citation"`
+}
+
+// resolveAmbiguousJSONResponse is the JSON shape for an ambiguous resolve
+// result (REQ: resolve-ambiguous-and-unknown).
+type resolveAmbiguousJSONResponse struct {
+	Kind       string                 `json:"kind"`
+	Candidates []resolveJSONCandidate `json:"candidates"`
+}
+
+// resolveJSONCandidate is one candidate in an ambiguous result.
+type resolveJSONCandidate struct {
+	ID       string          `json:"id"`
+	Citation resolveJSONCite `json:"citation"`
+}
+
+// resolveJSONCite is the citation embedded in a resolve response: the
+// subject/predicate/object of the fact that supports the candidate.
+type resolveJSONCite struct {
+	Subject   string `json:"subject"`
+	Predicate string `json:"predicate"`
+	Object    string `json:"object"`
+	Pointer   string `json:"evidence_pointer"`
+	Adapter   string `json:"adapter"`
+}
+
+func factToCite(f fact.Fact) resolveJSONCite {
+	return resolveJSONCite{
+		Subject:   f.Subject,
+		Predicate: f.Predicate,
+		Object:    f.Object,
+		Pointer:   f.Pointer,
+		Adapter:   f.Adapter.ID,
+	}
+}
+
+func runStudioResolve(cmd *cobra.Command, args []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "human" && format != "json" {
+		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
+	}
+
+	// Validate args: exactly one non-empty name is required.
+	if len(args) != 1 {
+		return exitcode.InvalidArgsErrorf("studio resolve requires exactly one <name> argument")
+	}
+	name := strings.TrimSpace(args[0])
+	if name == "" {
+		return exitcode.InvalidArgsErrorf("studio resolve: name must not be empty or whitespace")
+	}
+
+	dbPath, err := studioFactsStorePath(cmd)
+	if err != nil {
+		return err
+	}
+
+	facts, err := store.Query(dbPath, store.Filter{})
+	if err != nil {
+		return err
+	}
+
+	result := resolve.Resolve(facts, name)
+	w := cmd.OutOrStdout()
+
+	switch result.Kind {
+	case resolve.Unique:
+		if format == "json" {
+			resp := resolveJSONResponse{
+				ID:       result.ID,
+				Kind:     "unique",
+				Citation: factToCite(result.Citation),
+			}
+			enc := json.NewEncoder(w)
+			enc.SetIndent("", "  ")
+			return enc.Encode(resp)
+		}
+		_, _ = fmt.Fprintln(w, result.ID)
+		return nil
+
+	case resolve.Ambiguous:
+		// Build the human-readable candidate list for the error message.
+		parts := make([]string, 0, len(result.Candidates))
+		for _, c := range result.Candidates {
+			parts = append(parts, fmt.Sprintf("%s (via %s)", c.ID, c.Citation.Predicate))
+		}
+		if format == "json" {
+			candidates := make([]resolveJSONCandidate, 0, len(result.Candidates))
+			for _, c := range result.Candidates {
+				candidates = append(candidates, resolveJSONCandidate{
+					ID:       c.ID,
+					Citation: factToCite(c.Citation),
+				})
+			}
+			resp := resolveAmbiguousJSONResponse{Kind: "ambiguous", Candidates: candidates}
+			enc := json.NewEncoder(w)
+			enc.SetIndent("", "  ")
+			if encErr := enc.Encode(resp); encErr != nil {
+				return encErr
+			}
+		}
+		return exitcode.Newf(exitcode.AmbiguousSlug,
+			"studio resolve: %q is ambiguous — candidates: %s",
+			name, strings.Join(parts, "; "))
+
+	default: // NotFound
+		return exitcode.NotFoundErrorf(
+			"studio resolve: %q not found — searched aliases (aliased-as facts) and entity ids in the store\n"+
+				"Hint: try `specscore studio facts --object '%s*'` to explore",
+			name, name)
+	}
 }
 
 // studioFactsStorePath resolves the fact-store path for the facts verb:
