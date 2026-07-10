@@ -59,14 +59,15 @@ func Run(reg blocks.Registry, files []string) []ScenarioReport {
 // with zero step blocks is no-steps (REQ: scenario-shape).
 func runScenario(reg blocks.Registry, file string) ScenarioReport {
 	start := time.Now()
+	bag := NewBag()
 	rep := ScenarioReport{
 		File:     file,
 		Verifies: []string{},
-		Bag:      map[string]string{},
 		Steps:    []StepReport{},
 	}
 	finish := func(status string) ScenarioReport {
 		rep.Status = status
+		rep.Bag = bag.Map()
 		rep.DurationMS = time.Since(start).Milliseconds()
 		return rep
 	}
@@ -97,19 +98,59 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 			rep.Steps = append(rep.Steps, StepReport{Kind: b.Kind, Status: StepStatusSkipped})
 			continue
 		}
-		res := runStep(reg[b.Kind], blocks.StepCtx{WorkDir: workDir, Body: b.Body, Params: b.Params})
+		stepCtx, err := stepContext(bag, workDir, b)
+		if err != nil {
+			// Interpolation failed: the step fails without dispatching.
+			rep.Steps = append(rep.Steps, StepReport{Kind: b.Kind, Status: blocks.StatusFail, Detail: err.Error()})
+			failed = true
+			continue
+		}
+		res := runStep(reg[b.Kind], stepCtx)
 		rep.Steps = append(rep.Steps, StepReport{
 			Kind:   b.Kind,
 			Status: res.Status,
 			Detail: res.Detail,
 			Output: res.Output,
 		})
+		bag.Merge(res.Captures)
 		failed = failed || res.Status == blocks.StatusFail
 	}
 	if failed {
 		return finish(StatusFail)
 	}
 	return finish(StatusPass)
+}
+
+// textInterpolatedKinds are the block classes whose bodies and info-string
+// params get {{name}} textual interpolation from the context bag before
+// dispatch (REQ: context-bag). Hurl-derived kinds (hurl, graphql) are
+// deliberately absent: Hurl owns the {{name}} syntax natively, so they
+// receive the bag through StepCtx.Vars and pass it on as --variable flags.
+var textInterpolatedKinds = map[string]bool{"bash": true, "sql": true, "dtql": true}
+
+// stepContext builds one step's StepCtx from the context bag: every kind
+// gets the ordered bag snapshot in Vars; text-interpolated kinds additionally
+// get {{name}} resolved in the body and info-string param values. An unknown
+// variable is an error naming it — the step fails before dispatch.
+func stepContext(bag *Bag, workDir string, b scenario.Block) (blocks.StepCtx, error) {
+	ctx := blocks.StepCtx{WorkDir: workDir, Body: b.Body, Params: b.Params, Vars: bag.Snapshot()}
+	if !textInterpolatedKinds[b.Kind] {
+		return ctx, nil
+	}
+	body, err := bag.Interpolate(b.Body)
+	if err != nil {
+		return ctx, fmt.Errorf("%s step failed: %v", b.Kind, err)
+	}
+	params := make(map[string]string, len(b.Params))
+	for key, value := range b.Params {
+		interpolated, err := bag.Interpolate(value)
+		if err != nil {
+			return ctx, fmt.Errorf("%s step failed: info-string param %s: %v", b.Kind, key, err)
+		}
+		params[key] = interpolated
+	}
+	ctx.Body, ctx.Params = body, params
+	return ctx, nil
 }
 
 // stepBlocks filters the scenario's fenced blocks down to executable step

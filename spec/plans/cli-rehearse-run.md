@@ -48,7 +48,7 @@ Shared trailing-directive parser (`-- assert-rows:`, `-- assert-row-json:`, `-- 
 
 **Verifies:** cli/rehearse/run#ac:context-bag-chains
 **Depends-On:** 2, 3
-**Status:** in_progress
+**Status:** complete
 
 Bag in the runner: textual `{{name}}` interpolation for bash/sql/dtql bodies+params (unknown → step fail naming it), `$REHEARSE_CAPTURES` file for bash, `-- capture:` merge for sql/dtql, bag state in the JSON report. Unit coverage includes capture ordering and unknown-variable failure.
 
@@ -56,7 +56,7 @@ Bag in the runner: textual `{{name}}` interpolation for bash/sql/dtql bodies+par
 
 **Verifies:** cli/rehearse/run#ac:hurl-pass, cli/rehearse/run#ac:hurl-missing-skips, cli/rehearse/run#ac:graphql-jsonpath
 **Depends-On:** 4
-**Status:** planning
+**Status:** in_progress
 
 Hurl delegation (`hurl --test` + JSON report parsing for `[Captures]` merge), upfront missing-binary scan skipping whole scenarios pre-execution, bag passed via `--variable` flags (no textual pre-interpolation); graphql executor compiling query + `-- variables:` + `-- assert-jsonpath:` directives onto a generated Hurl file, `-- capture-jsonpath:` support. Unit coverage includes captures merge + capture-jsonpath (reviewer advisory).
 

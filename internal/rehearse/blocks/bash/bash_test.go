@@ -3,6 +3,7 @@ package bash_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -58,6 +59,79 @@ func TestRun_RunsInWorkDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "marker")); err != nil {
 		t.Errorf("step did not run in WorkDir: %v", err)
+	}
+}
+
+func TestRun_CapturesFromRehearseCapturesFile(t *testing.T) {
+	res := bash.New().Run(blocks.StepCtx{WorkDir: t.TempDir(), Body: `
+echo "uid=42" >> "$REHEARSE_CAPTURES"
+echo "" >> "$REHEARSE_CAPTURES"
+echo "url=http://x/?a=1&b=2" >> "$REHEARSE_CAPTURES"
+`})
+	if res.Status != blocks.StatusPass {
+		t.Fatalf("status = %q, want pass (detail: %s)", res.Status, res.Detail)
+	}
+	want := []blocks.Capture{
+		{Name: "uid", Value: "42"},
+		// The value keeps everything after the first "=", verbatim.
+		{Name: "url", Value: "http://x/?a=1&b=2"},
+	}
+	if !reflect.DeepEqual(res.Captures, want) {
+		t.Errorf("captures = %v, want %v", res.Captures, want)
+	}
+}
+
+func TestRun_NoCapturesWrittenMeansNoCaptures(t *testing.T) {
+	res := bash.New().Run(blocks.StepCtx{WorkDir: t.TempDir(), Body: "true"})
+	if res.Status != blocks.StatusPass {
+		t.Fatalf("status = %q, want pass (detail: %s)", res.Status, res.Detail)
+	}
+	if len(res.Captures) != 0 {
+		t.Errorf("captures = %v, want none", res.Captures)
+	}
+}
+
+func TestRun_MalformedCaptureLineFails(t *testing.T) {
+	for name, line := range map[string]string{
+		"no equals sign": "just-a-word",
+		"empty name":     "=value",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := bash.New().Run(blocks.StepCtx{WorkDir: t.TempDir(),
+				Body: `echo '` + line + `' >> "$REHEARSE_CAPTURES"`})
+			if res.Status != blocks.StatusFail {
+				t.Fatalf("status = %q, want fail", res.Status)
+			}
+			if !strings.Contains(res.Detail, "does not match `name=value`") || !strings.Contains(res.Detail, line) {
+				t.Errorf("detail does not name the malformed line: %q", res.Detail)
+			}
+		})
+	}
+}
+
+func TestRun_CapturesFileIsPerStepAndRemoved(t *testing.T) {
+	dir := t.TempDir()
+	exec := bash.New()
+	if res := exec.Run(blocks.StepCtx{WorkDir: dir, Body: `echo "uid=42" >> "$REHEARSE_CAPTURES"`}); res.Status != blocks.StatusPass {
+		t.Fatalf("first step: %q (detail: %s)", res.Status, res.Detail)
+	}
+	// The next step starts with a fresh file: no stale uid capture.
+	res := exec.Run(blocks.StepCtx{WorkDir: dir, Body: `true`})
+	if res.Status != blocks.StatusPass {
+		t.Fatalf("second step: %q (detail: %s)", res.Status, res.Detail)
+	}
+	if len(res.Captures) != 0 {
+		t.Errorf("stale captures leaked across steps: %v", res.Captures)
+	}
+	// And no captures files linger in the shared working dir after the steps.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading workdir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".rehearse-captures-") {
+			t.Errorf("captures file left behind in workdir: %s", e.Name())
+		}
 	}
 }
 
