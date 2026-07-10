@@ -24,6 +24,12 @@ const (
 	// Derived facts are computed from an artifact (e.g. an import edge read
 	// out of a codegraph snapshot, a dependency parsed from go.mod).
 	Derived Class = "derived"
+	// VerifiedBehavior facts are produced by executing the system and
+	// observing its outcome — the top rung of the evidence ladder, above
+	// declared and derived.
+	//
+	// Feature: cli/rehearse/evidence (REQ: verified-behavior-class)
+	VerifiedBehavior Class = "verified-behavior"
 )
 
 // Evidence is the provenance of a fact: its class plus a pointer to the

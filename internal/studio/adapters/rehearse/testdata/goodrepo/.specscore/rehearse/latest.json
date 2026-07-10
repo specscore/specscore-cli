@@ -1,0 +1,48 @@
+{
+  "runner_version": "0.3.0",
+  "git_sha": "abc123",
+  "git_dirty": false,
+  "started_at": "2026-01-02T03:04:05Z",
+  "scenarios": [
+    {
+      "file": "spec/features/x/_tests/s.md",
+      "status": "pass",
+      "verifies": ["x#ac:y"],
+      "duration_ms": 42,
+      "bag": {},
+      "steps": []
+    },
+    {
+      "file": "spec/features/x/_tests/fail.md",
+      "status": "fail",
+      "verifies": ["x#ac:y", "x#ac:z"],
+      "duration_ms": 17,
+      "bag": {},
+      "steps": []
+    },
+    {
+      "file": "spec/features/x/_tests/skipped.md",
+      "status": "skipped",
+      "verifies": ["x#ac:y"],
+      "duration_ms": 0,
+      "bag": {},
+      "steps": []
+    },
+    {
+      "file": "spec/features/x/_tests/nosteps.md",
+      "status": "no-steps",
+      "verifies": ["x#ac:y"],
+      "duration_ms": 0,
+      "bag": {},
+      "steps": []
+    },
+    {
+      "file": "spec/features/x/_tests/empty-verifies.md",
+      "status": "pass",
+      "verifies": [],
+      "duration_ms": 5,
+      "bag": {},
+      "steps": []
+    }
+  ]
+}

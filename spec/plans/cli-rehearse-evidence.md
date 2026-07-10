@@ -32,7 +32,7 @@ Add the `RunReport` envelope (runner_version, git_sha, git_dirty, started_at, sc
 
 **Verifies:** cli/rehearse/evidence#ac:adapter-emits-verified-by, cli/rehearse/evidence#ac:fail-status-fact, cli/rehearse/evidence#ac:skipped-scenario-no-facts
 **Depends-On:** 1
-**Status:** planning
+**Status:** complete
 
 Add `VerifiedBehavior Class = "verified-behavior"` to `internal/studio/fact` and the new pure-function adapter package `internal/studio/adapters/rehearse`: read `<repo>/.specscore/rehearse/latest.json`, emit `verified-by` + `has-verification-status` fact pairs per scenario–AC (pass/fail only; skipped/no-steps/empty-verifies emit nothing), subjects `#<verifies-entry>` for repo-slug prefixing, evidence_pointer `.specscore/rehearse/latest.json`, observed_at set to the report's started_at. Fixture-tested like its four siblings.
 

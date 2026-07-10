@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestClasses(t *testing.T) {
+	// Verify the three evidence-class constants have the expected string values
+	// so marshalled JSON facts carry the right evidence_class strings.
+	// Feature: cli/rehearse/evidence (REQ: verified-behavior-class)
+	if Declared != "declared" {
+		t.Errorf("Declared = %q, want %q", Declared, "declared")
+	}
+	if Derived != "derived" {
+		t.Errorf("Derived = %q, want %q", Derived, "derived")
+	}
+	if VerifiedBehavior != "verified-behavior" {
+		t.Errorf("VerifiedBehavior = %q, want %q", VerifiedBehavior, "verified-behavior")
+	}
+}
+
 func TestFact_JSONShape(t *testing.T) {
 	f := Fact{
 		Subject:   "repo:github.com/acme/app",
