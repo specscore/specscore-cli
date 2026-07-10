@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/specscore/specscore-cli/internal/rehearse/runner"
 )
 
 // runRehearseCmd executes the rehearse command group with args against a
@@ -424,5 +427,246 @@ func TestRehearseRun_GraphQLBlockPasses(t *testing.T) {
 	}
 	if !strings.Contains(out, "1 pass") {
 		t.Errorf("report does not mark the graphql scenario pass:\n%s", out)
+	}
+}
+
+// --- Feature: cli/rehearse/evidence (REQ: report-out, REQ: report-provenance) ---
+
+// swapWriteReport replaces writeReportFn for the duration of a test and
+// restores it via t.Cleanup.
+func swapWriteReport(t *testing.T, fn func(string, string, time.Time, []runner.ScenarioReport, string) error) {
+	t.Helper()
+	orig := writeReportFn
+	writeReportFn = fn
+	t.Cleanup(func() { writeReportFn = orig })
+}
+
+// AC: report-out-writes-envelope — --report-out writes a valid JSON envelope
+// with non-empty runner_version, non-empty git_sha, git_dirty false,
+// non-empty RFC 3339 started_at, and a scenarios array with pass status.
+func TestRehearseRun_ReportOutWritesEnvelope(t *testing.T) {
+	file := writeScenario(t, "echo hello")
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "out", "report.json")
+
+	// Stub osGetwdFn so the runner has a consistent cwd (not a real git repo).
+	restoreWd := osGetwdFn
+	osGetwdFn = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { osGetwdFn = restoreWd })
+
+	// Capture what WriteReport receives and write a canned envelope.
+	var capturedPath, capturedVersion string
+	var capturedStartedAt time.Time
+	var capturedReports []runner.ScenarioReport
+	var capturedDir string
+	swapWriteReport(t, func(path, rv string, started time.Time, rpts []runner.ScenarioReport, d string) error {
+		capturedPath = path
+		capturedVersion = rv
+		capturedStartedAt = started
+		capturedReports = rpts
+		capturedDir = d
+		// Write a real envelope so we can verify the JSON shape.
+		return runner.WriteReport(path, rv, started, rpts, d)
+	})
+	// Stub git: clean HEAD so the envelope has a non-empty sha.
+	restoreExec := runner.ExecCommandFn
+	runner.ExecCommandFn = func(d, name string, args ...string) ([]byte, error) {
+		switch {
+		case args[0] == "rev-parse" && args[1] == "HEAD":
+			return []byte("deadbeef\n"), nil
+		case args[0] == "rev-parse" && args[1] == "--show-toplevel":
+			return []byte(d + "\n"), nil
+		case args[0] == "status":
+			return []byte(""), nil
+		}
+		return nil, errors.New("unexpected git call")
+	}
+	t.Cleanup(func() { runner.ExecCommandFn = restoreExec })
+
+	// Fix NowFn so started_at is deterministic.
+	fixedTime := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	restoreNow := runner.NowFn
+	runner.NowFn = func() time.Time { return fixedTime }
+	t.Cleanup(func() { runner.NowFn = restoreNow })
+
+	out, _, err := runRehearseCmd(t, "run", file, "--report-out", reportPath)
+	if err != nil {
+		t.Fatalf("rehearse run: %v\n%s", err, out)
+	}
+
+	// Verify the seam received the right arguments.
+	if capturedPath != reportPath {
+		t.Errorf("WriteReport path = %q, want %q", capturedPath, reportPath)
+	}
+	if capturedVersion == "" {
+		t.Errorf("WriteReport runnerVersion is empty")
+	}
+	if !capturedStartedAt.Equal(fixedTime) {
+		t.Errorf("WriteReport startedAt = %v, want %v", capturedStartedAt, fixedTime)
+	}
+	if len(capturedReports) != 1 {
+		t.Fatalf("WriteReport reports len = %d, want 1", len(capturedReports))
+	}
+	if capturedDir == "" {
+		t.Errorf("WriteReport dir is empty")
+	}
+
+	// Verify the actual JSON file.
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q): %v", reportPath, err)
+	}
+	var env runner.RunReport
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if env.RunnerVersion == "" {
+		t.Error("runner_version is empty")
+	}
+	if env.GitSHA != "deadbeef" {
+		t.Errorf("git_sha = %q, want deadbeef", env.GitSHA)
+	}
+	if env.GitDirty {
+		t.Error("git_dirty = true, want false")
+	}
+	if env.StartedAt != "2026-01-02T03:04:05Z" {
+		t.Errorf("started_at = %q, want RFC 3339", env.StartedAt)
+	}
+	if len(env.Scenarios) != 1 {
+		t.Fatalf("scenarios len = %d, want 1", len(env.Scenarios))
+	}
+	sc := env.Scenarios[0]
+	if sc.Status != "pass" {
+		t.Errorf("scenarios[0].status = %q, want pass", sc.Status)
+	}
+	if len(sc.Verifies) == 0 {
+		t.Error("scenarios[0].verifies is empty")
+	}
+	if sc.DurationMS < 0 {
+		t.Errorf("scenarios[0].duration_ms = %d", sc.DurationMS)
+	}
+	if len(sc.Steps) == 0 {
+		t.Error("scenarios[0].steps is empty")
+	}
+
+	// stdout report is unchanged.
+	if !strings.Contains(out, "pass") {
+		t.Errorf("stdout does not contain pass:\n%s", out)
+	}
+}
+
+// AC: report-out-on-failure — a failing run still writes the report and exits 1.
+func TestRehearseRun_ReportOutOnFailure(t *testing.T) {
+	file := writeScenario(t, "exit 7")
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.json")
+
+	restoreWd := osGetwdFn
+	osGetwdFn = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { osGetwdFn = restoreWd })
+
+	// Stub WriteReport to delegate to the real impl (no git needed here).
+	swapWriteReport(t, func(path, rv string, started time.Time, rpts []runner.ScenarioReport, d string) error {
+		return runner.WriteReport(path, rv, started, rpts, d)
+	})
+	// Stub git to return empty (outside git).
+	restoreExec := runner.ExecCommandFn
+	runner.ExecCommandFn = func(d, name string, args ...string) ([]byte, error) {
+		return nil, errors.New("not a git repo")
+	}
+	t.Cleanup(func() { runner.ExecCommandFn = restoreExec })
+
+	_, _, err := runRehearseCmd(t, "run", file, "--report-out", reportPath)
+	if code := rehearseExit(t, err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+
+	data, readErr := os.ReadFile(reportPath)
+	if readErr != nil {
+		t.Fatalf("report not written: %v", readErr)
+	}
+	var env runner.RunReport
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(env.Scenarios) != 1 || env.Scenarios[0].Status != "fail" {
+		t.Errorf("scenarios[0].status = %q, want fail", env.Scenarios[0].Status)
+	}
+}
+
+// AC: report-out-outside-git — git_sha is empty and git_dirty is false.
+func TestRehearseRun_ReportOutOutsideGit(t *testing.T) {
+	file := writeScenario(t, "echo ok")
+	dir := t.TempDir()
+	reportPath := filepath.Join(dir, "report.json")
+
+	restoreWd := osGetwdFn
+	osGetwdFn = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { osGetwdFn = restoreWd })
+
+	// Stub git to simulate "not a git repo".
+	restoreExec := runner.ExecCommandFn
+	runner.ExecCommandFn = func(d, name string, args ...string) ([]byte, error) {
+		return nil, errors.New("not a git repository")
+	}
+	t.Cleanup(func() { runner.ExecCommandFn = restoreExec })
+
+	swapWriteReport(t, func(path, rv string, started time.Time, rpts []runner.ScenarioReport, d string) error {
+		return runner.WriteReport(path, rv, started, rpts, d)
+	})
+
+	_, _, err := runRehearseCmd(t, "run", file, "--report-out", reportPath)
+	if err != nil {
+		t.Fatalf("rehearse run: %v", err)
+	}
+
+	data, _ := os.ReadFile(reportPath)
+	var env runner.RunReport
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if env.GitSHA != "" {
+		t.Errorf("git_sha = %q, want empty", env.GitSHA)
+	}
+	if env.GitDirty {
+		t.Error("git_dirty = true, want false")
+	}
+}
+
+// report-out unwritable path → exits 2 after stdout report is printed.
+func TestRehearseRun_ReportOutUnwritableExits2(t *testing.T) {
+	file := writeScenario(t, "echo hi")
+	dir := t.TempDir()
+
+	restoreWd := osGetwdFn
+	osGetwdFn = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { osGetwdFn = restoreWd })
+
+	// Stub WriteReport to fail.
+	swapWriteReport(t, func(path, rv string, started time.Time, rpts []runner.ScenarioReport, d string) error {
+		return errors.New("permission denied")
+	})
+
+	out, _, err := runRehearseCmd(t, "run", file, "--report-out", "/no/such/path/report.json")
+	if code := rehearseExit(t, err); code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	// stdout report must have been printed before the error.
+	if !strings.Contains(out, "pass") {
+		t.Errorf("stdout report not printed before exit 2:\n%s", out)
+	}
+}
+
+// --report-out with explicit paths triggers osGetwdFn (for git provenance);
+// a getwd failure exits 10.
+func TestRehearseRun_ReportOutGetwdErrorExits10(t *testing.T) {
+	file := writeScenario(t, "echo hi")
+	restoreWd := osGetwdFn
+	osGetwdFn = func() (string, error) { return "", errors.New("getwd gone") }
+	t.Cleanup(func() { osGetwdFn = restoreWd })
+
+	_, _, err := runRehearseCmd(t, "run", file, "--report-out", "out/report.json")
+	if code := rehearseExit(t, err); code != 10 {
+		t.Errorf("exit code = %d, want 10", code)
 	}
 }

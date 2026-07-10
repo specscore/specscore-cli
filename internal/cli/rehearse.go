@@ -3,6 +3,7 @@ package cli
 // Feature implemented: cli/rehearse/run (REQ: scenario-discovery,
 // REQ: scenario-shape, REQ: bash-block, REQ: hurl-block, REQ: sql-block,
 // REQ: dtql-block, REQ: graphql-block, REQ: context-bag, REQ: run-report)
+// Feature: cli/rehearse/evidence (REQ: report-out, REQ: report-provenance)
 
 import (
 	"encoding/json"
@@ -18,6 +19,11 @@ import (
 	"github.com/specscore/specscore-cli/internal/rehearse/runner"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
+
+// writeReportFn is the test seam for runner.WriteReport so CLI-layer tests can
+// stub the write without touching the filesystem.
+// Feature: cli/rehearse/evidence (REQ: report-out)
+var writeReportFn = runner.WriteReport
 
 // rehearseCommand returns the "rehearse" command group — the acceptance-
 // evidence runner for markdown scenarios.
@@ -67,6 +73,7 @@ config errors — including when discovery matches zero scenario files.`,
 		RunE:         runRehearseRun,
 	}
 	cmd.Flags().String("format", "human", "output format: human or json")
+	cmd.Flags().String("report-out", "", "persist the run report as a JSON envelope to this path (creates parent dirs; exit 2 if unwritable)")
 	return cmd
 }
 
@@ -75,17 +82,20 @@ func runRehearseRun(cmd *cobra.Command, args []string) error {
 	if format != "human" && format != "json" {
 		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
 	}
+	reportOut, _ := cmd.Flags().GetString("report-out")
 
-	// The working directory matters only for the no-argument default
-	// discovery; explicit paths never require a SpecScore repo.
-	cwd := ""
-	if len(args) == 0 {
+	// The working directory is needed for default discovery (no args) and for
+	// git provenance when --report-out is set.
+	var cwd string
+	if len(args) == 0 || reportOut != "" {
 		var err error
 		cwd, err = osGetwdFn()
 		if err != nil {
 			return exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
 		}
 	}
+
+	startedAt := runner.NowFn()
 
 	files, err := runner.Discover(args, cwd)
 	if err != nil {
@@ -102,6 +112,15 @@ func runRehearseRun(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		runner.RenderHuman(w, reports)
+	}
+
+	// Write the persisted report envelope after the stdout report is printed
+	// so the user always sees scenario results. An unwritable path exits 2.
+	// Feature: cli/rehearse/evidence (REQ: report-out)
+	if reportOut != "" {
+		if err := writeReportFn(reportOut, version, startedAt, reports, cwd); err != nil {
+			return exitcode.InvalidArgsErrorf("cannot write report to %q: %v", reportOut, err)
+		}
 	}
 
 	if failed := runner.CountFailed(reports); failed > 0 {

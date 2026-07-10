@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: Cli Rehearse Evidence
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** cli/rehearse/evidence
 **Date:** 2026-07-10
 **Owner:** ai
@@ -24,7 +24,7 @@ Producer first, consumer second, wiring third, proof last. Task 1 lands the pers
 
 **Verifies:** cli/rehearse/evidence#ac:report-out-writes-envelope, cli/rehearse/evidence#ac:report-out-on-failure, cli/rehearse/evidence#ac:report-out-outside-git
 **Depends-On:** —
-**Status:** planning
+**Status:** complete
 
 Add the `RunReport` envelope (runner_version, git_sha, git_dirty, started_at, scenarios) and report persistence to `internal/rehearse/runner` — git provenance via a test-seam exec wrapper, scenario `file` paths repo-relative inside a git work tree, parent dirs created, unwritable path exits 2 after the stdout report. Wire `--report-out <path>` in `internal/cli/rehearse.go`; stdout formats unchanged.
 
