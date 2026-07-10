@@ -63,6 +63,18 @@ type Block interface {
 	Run(ctx StepCtx) StepResult
 }
 
+// BinaryDependent is implemented by executors that delegate to an external
+// binary (hurl and the hurl-derived graphql). The runner scans a scenario's
+// step kinds upfront, before executing step 1: when a required binary is not
+// on PATH the whole scenario is reported skipped — none of its steps run,
+// including earlier bash steps — with a warning naming the binary; skips do
+// not affect the exit code (REQ: hurl-block, REQ: graphql-block).
+type BinaryDependent interface {
+	// RequiredBinary returns the name of the external binary the executor
+	// needs on PATH.
+	RequiredBinary() string
+}
+
 // Registry maps a block kind to its executor. Fenced blocks whose kind is
 // not registered are not step blocks (documentation blocks are ignored).
 type Registry map[string]Block

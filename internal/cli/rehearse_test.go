@@ -329,3 +329,100 @@ func TestRehearseRun_JSONEncodeErrorExits10(t *testing.T) {
 		t.Errorf("exit code = %d, want 10", code)
 	}
 }
+
+// TestRehearseRegistry_AllV03Kinds pins the registered block kinds: the five
+// v0.3 executors, hurl-derived ones declaring their binary dependency.
+func TestRehearseRegistry_AllV03Kinds(t *testing.T) {
+	reg := rehearseRegistry()
+	for _, kind := range []string{"bash", "hurl", "sql", "dtql", "graphql"} {
+		if _, ok := reg[kind]; !ok {
+			t.Errorf("registry lacks the %q executor", kind)
+		}
+	}
+	for _, kind := range []string{"hurl", "graphql"} {
+		dep, ok := reg[kind].(interface{ RequiredBinary() string })
+		if !ok || dep.RequiredBinary() != "hurl" {
+			t.Errorf("the %q executor does not declare its hurl dependency", kind)
+		}
+	}
+}
+
+// fakeHurlOnPath installs a fake `hurl` script as the only binary on PATH:
+// it answers the --help capability probe with --report-json support and
+// writes $FAKE_REPORT_JSON as the report.
+func fakeHurlOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	script := `#!/bin/bash
+if [ "$1" = "--help" ]; then echo "--report-json <DIR>"; exit 0; fi
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--report-json" ]; then printf '%s' "$FAKE_REPORT_JSON" > "$a/report.json"; fi
+  prev="$a"
+done
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "hurl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("FAKE_REPORT_JSON", `[{"entries":[{"captures":[]}]}]`)
+}
+
+// AC: hurl-missing-skips (unit mirror) — with a PATH lacking hurl, a
+// scenario containing a hurl block exits 0, is reported skipped, and the
+// warning names the hurl binary.
+func TestRehearseRun_MissingHurlSkipsScenario(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	file := writeScenarioBlocks(t, "```hurl\nGET http://127.0.0.1:1/\nHTTP 200\n```")
+
+	out, _, err := runRehearseCmd(t, "run", file)
+	if err != nil {
+		t.Fatalf("a skipped scenario must not fail the run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "skipped") || !strings.Contains(out, `"hurl"`) {
+		t.Errorf("report does not skip with a warning naming hurl:\n%s", out)
+	}
+	if !strings.Contains(out, "1 skipped") {
+		t.Errorf("totals line does not count the skip:\n%s", out)
+	}
+}
+
+// REQ: hurl-block + context-bag wiring through the real command: a hurl
+// scenario passes and its [Captures] land in the report's bag.
+func TestRehearseRun_HurlBlockPassesAndCaptures(t *testing.T) {
+	fakeHurlOnPath(t)
+	t.Setenv("FAKE_REPORT_JSON", `[{"entries":[{"captures":[{"name":"token","value":"t-9"}]}]}]`)
+	file := writeScenarioBlocks(t, "```hurl\nGET http://127.0.0.1:1/\nHTTP 200\n```")
+
+	out, _, err := runRehearseCmd(t, "run", file, "--format", "json")
+	if err != nil {
+		t.Fatalf("rehearse run: %v\n%s", err, out)
+	}
+	var reports []struct {
+		Status string            `json:"status"`
+		Bag    map[string]string `json:"bag"`
+	}
+	if err := json.Unmarshal([]byte(out), &reports); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if reports[0].Status != "pass" || reports[0].Bag["token"] != "t-9" {
+		t.Errorf("report = %+v, want pass with the hurl capture in the bag", reports[0])
+	}
+}
+
+// REQ: graphql-block wiring through the real command: the graphql executor
+// compiles onto the hurl delegation and passes.
+func TestRehearseRun_GraphQLBlockPasses(t *testing.T) {
+	fakeHurlOnPath(t)
+	file := writeScenarioBlocks(t,
+		"```graphql url=http://127.0.0.1:1/graphql\nquery { ok }\n-- assert-jsonpath: $.data.ok == true\n```")
+
+	out, _, err := runRehearseCmd(t, "run", file)
+	if err != nil {
+		t.Fatalf("rehearse run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "1 pass") {
+		t.Errorf("report does not mark the graphql scenario pass:\n%s", out)
+	}
+}

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -11,4 +12,5 @@ var (
 	walkDirFn   = filepath.WalkDir
 	osStatFn    = os.Stat
 	mkdirTempFn = os.MkdirTemp
+	lookPathFn  = exec.LookPath
 )

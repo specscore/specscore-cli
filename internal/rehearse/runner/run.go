@@ -85,6 +85,15 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 		return finish(StatusNoSteps)
 	}
 
+	// Upfront missing-binary scan: a scenario containing any binary-dependent
+	// block (hurl-derived) whose binary is not on PATH is skipped before ANY
+	// of its steps run, with a warning naming the binary; the exit code is
+	// unaffected (REQ: hurl-block, REQ: graphql-block).
+	if binary := missingBinary(reg, steps); binary != "" {
+		rep.Detail = fmt.Sprintf("warning: scenario skipped — it needs the %q binary, which is not on PATH", binary)
+		return finish(StatusSkipped)
+	}
+
 	workDir, err := mkdirTempFn("", "rehearse-scenario-")
 	if err != nil {
 		rep.Detail = fmt.Sprintf("creating scenario working dir: %v", err)
@@ -151,6 +160,28 @@ func stepContext(bag *Bag, workDir string, b scenario.Block) (blocks.StepCtx, er
 	}
 	ctx.Body, ctx.Params = body, params
 	return ctx, nil
+}
+
+// missingBinary scans the scenario's step kinds for executors that delegate
+// to an external binary and returns the first required binary not found on
+// PATH ("" when everything needed is available).
+func missingBinary(reg blocks.Registry, steps []scenario.Block) string {
+	checked := map[string]bool{}
+	for _, b := range steps {
+		dep, ok := reg[b.Kind].(blocks.BinaryDependent)
+		if !ok {
+			continue
+		}
+		binary := dep.RequiredBinary()
+		if checked[binary] {
+			continue
+		}
+		checked[binary] = true
+		if _, err := lookPathFn(binary); err != nil {
+			return binary
+		}
+	}
+	return ""
 }
 
 // stepBlocks filters the scenario's fenced blocks down to executable step

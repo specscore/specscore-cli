@@ -56,7 +56,7 @@ Bag in the runner: textual `{{name}}` interpolation for bash/sql/dtql bodies+par
 
 **Verifies:** cli/rehearse/run#ac:hurl-pass, cli/rehearse/run#ac:hurl-missing-skips, cli/rehearse/run#ac:graphql-jsonpath
 **Depends-On:** 4
-**Status:** in_progress
+**Status:** complete
 
 Hurl delegation (`hurl --test` + JSON report parsing for `[Captures]` merge), upfront missing-binary scan skipping whole scenarios pre-execution, bag passed via `--variable` flags (no textual pre-interpolation); graphql executor compiling query + `-- variables:` + `-- assert-jsonpath:` directives onto a generated Hurl file, `-- capture-jsonpath:` support. Unit coverage includes captures merge + capture-jsonpath (reviewer advisory).
 
@@ -64,7 +64,7 @@ Hurl delegation (`hurl --test` + JSON report parsing for `[Captures]` merge), up
 
 **Verifies:** cli/rehearse/run#ac:corpus-green
 **Depends-On:** 5
-**Status:** planning
+**Status:** in_progress
 
 The 11 Studio scenarios run green via `specscore rehearse run` (minimal shape-compliance edits only if required); CI job added to the repo workflow running the corpus; README section for `rehearse run` documenting block kinds, directives, the bag, and exit codes.
 

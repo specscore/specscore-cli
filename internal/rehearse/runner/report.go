@@ -16,10 +16,14 @@ func RenderHuman(w io.Writer, reports []ScenarioReport) {
 		counts[r.Status]++
 		_, _ = fmt.Fprintf(w, "%-8s  %s  [%s]  %dms\n",
 			r.Status, r.File, strings.Join(r.Verifies, ", "), r.DurationMS)
+		if r.Status != StatusFail && r.Status != StatusSkipped {
+			continue
+		}
+		// Failure detail, or the skipped scenario's missing-binary warning.
+		writeIndented(w, r.Detail)
 		if r.Status != StatusFail {
 			continue
 		}
-		writeIndented(w, r.Detail)
 		for _, s := range r.Steps {
 			if s.Status != StatusFail {
 				continue
