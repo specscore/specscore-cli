@@ -43,7 +43,7 @@ CREATE TABLE facts (
 	subject          TEXT NOT NULL,
 	predicate        TEXT NOT NULL,
 	object           TEXT NOT NULL,
-	evidence_class   TEXT NOT NULL CHECK (evidence_class IN ('declared', 'derived')),
+	evidence_class   TEXT NOT NULL CHECK (evidence_class IN ('declared', 'derived', 'verified-behavior')),
 	evidence_pointer TEXT NOT NULL,
 	adapter_id       TEXT NOT NULL,
 	adapter_version  TEXT NOT NULL,

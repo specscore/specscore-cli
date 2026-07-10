@@ -6,6 +6,7 @@
 // Feature: cli/studio/index (REQ: fact-shape, REQ: partial-tolerance,
 // REQ: adapter-specscore, REQ: adapter-codegraph, REQ: adapter-manifests,
 // REQ: adapter-registries)
+// Feature: cli/rehearse/evidence (REQ: adapter-rehearse, REQ: observed-at-run-time)
 package adapters
 
 import (
@@ -17,6 +18,7 @@ import (
 	"github.com/specscore/specscore-cli/internal/studio/adapters/codegraph"
 	"github.com/specscore/specscore-cli/internal/studio/adapters/manifests"
 	"github.com/specscore/specscore-cli/internal/studio/adapters/registries"
+	"github.com/specscore/specscore-cli/internal/studio/adapters/rehearse"
 	"github.com/specscore/specscore-cli/internal/studio/adapters/specscore"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 )
@@ -60,6 +62,7 @@ func All(opts Options) []Adapter {
 		codegraph.New(),
 		manifests.New(),
 		registries.New(opts.Registries),
+		rehearse.New(),
 	}
 }
 
@@ -99,8 +102,10 @@ type RepoSummary struct {
 
 // Run executes every adapter over every repo (sequentially) and stamps the
 // shared fact fields centrally: the repo slug onto "#"-prefixed subjects and
-// objects, the adapter id + version, one observed_at timestamp for the whole
-// run (UTC, RFC 3339), and the ecosystem name.
+// objects, the adapter id + version, a shared observed_at timestamp for the
+// whole run (UTC, RFC 3339) onto facts whose adapter did not set its own, and
+// the ecosystem name. The shared timestamp is NOT applied when the adapter
+// already set ObservedAt (Feature: cli/rehearse/evidence, REQ: observed-at-run-time).
 //
 // Partial tolerance (REQ: partial-tolerance) is enforced at repo and adapter
 // granularity here (adapters handle file granularity themselves): a repo
@@ -137,7 +142,9 @@ func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 					f.Object = slug + f.Object
 				}
 				f.Adapter = fact.Adapter{ID: a.ID(), Version: a.Version()}
-				f.ObservedAt = observedAt
+				if f.ObservedAt == "" {
+					f.ObservedAt = observedAt
+				}
 				f.Ecosystem = ecosystem
 				res.Facts = append(res.Facts, f)
 				res.FactsByAdapter[a.ID()]++

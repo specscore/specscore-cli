@@ -753,6 +753,193 @@ func TestStudioFacts_BadFormatExits2(t *testing.T) {
 	}
 }
 
+// --- studio index + facts: rehearse adapter end-to-end ---
+
+// newRehearsedRepo writes a repo directory with a valid rehearse report
+// (started_at = 2026-01-02T03:04:05Z, one pass scenario for x#ac:y) and
+// returns the repo path. A go.mod is NOT written so the manifests adapter
+// emits zero facts — keeping the fact count deterministic.
+func newRehearsedRepo(t *testing.T, dir, name string) string {
+	t.Helper()
+	rehearseDir := filepath.Join(dir, name, ".specscore", "rehearse")
+	if err := os.MkdirAll(rehearseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report := `{
+  "runner_version": "0.3.0",
+  "git_sha": "abc",
+  "git_dirty": false,
+  "started_at": "2026-01-02T03:04:05Z",
+  "scenarios": [
+    {
+      "file": "spec/features/x/_tests/s.md",
+      "status": "pass",
+      "verifies": ["x#ac:y"],
+      "duration_ms": 42,
+      "bag": {},
+      "steps": []
+    }
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(rehearseDir, "latest.json"), []byte(report), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, name)
+}
+
+// newBrokenRehearsalRepo writes a repo whose latest.json is not valid JSON
+// and a go.mod (so the manifests adapter emits facts that remain queryable).
+func newBrokenRehearsalRepo(t *testing.T, dir, name string) string {
+	t.Helper()
+	rehearseDir := filepath.Join(dir, name, ".specscore", "rehearse")
+	if err := os.MkdirAll(rehearseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rehearseDir, "latest.json"), []byte("not json {{{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gomod := "module example.com/fixture\n\ngo 1.21\n"
+	if err := os.WriteFile(filepath.Join(dir, name, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, name)
+}
+
+// AC: observed-at-run-time — rehearse-adapter facts carry the report's
+// started_at while facts from other adapters carry the index-run timestamp.
+// Feature: cli/rehearse/evidence (REQ: observed-at-run-time).
+func TestStudioIndex_RehearseObservedAtFromReport(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	wsDir := filepath.Dir(wsPath)
+	newRehearsedRepo(t, wsDir, "repo-a")
+	newSpecScoreRepo(t, wsDir, "repo-a")
+
+	_, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+
+	// Query verified-behavior facts — they must carry the report's started_at.
+	jsonOut, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--class", "verified-behavior", "--format", "json")
+	if err != nil {
+		t.Fatalf("studio facts --class verified-behavior: %v", err)
+	}
+	var vbFacts []fact.Fact
+	if err := json.Unmarshal([]byte(jsonOut), &vbFacts); err != nil {
+		t.Fatalf("verified-behavior facts not JSON: %v\n%s", err, jsonOut)
+	}
+	if len(vbFacts) == 0 {
+		t.Fatalf("got 0 verified-behavior facts, want ≥1")
+	}
+	const reportTS = "2026-01-02T03:04:05Z"
+	for _, f := range vbFacts {
+		if f.ObservedAt != reportTS {
+			t.Errorf("verified-behavior fact ObservedAt = %q, want %q: %+v",
+				f.ObservedAt, reportTS, f)
+		}
+	}
+
+	// Query declared facts (from the specscore adapter) — they must NOT carry
+	// the report timestamp; they carry the index-run timestamp instead.
+	jsonOut2, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--class", "declared", "--format", "json")
+	if err != nil {
+		t.Fatalf("studio facts --class declared: %v", err)
+	}
+	var declFacts []fact.Fact
+	if err := json.Unmarshal([]byte(jsonOut2), &declFacts); err != nil {
+		t.Fatalf("declared facts not JSON: %v\n%s", err, jsonOut2)
+	}
+	if len(declFacts) == 0 {
+		t.Fatalf("got 0 declared facts, want ≥1")
+	}
+	for _, f := range declFacts {
+		if f.ObservedAt == reportTS {
+			t.Errorf("declared fact ObservedAt = %q, should NOT be the report timestamp: %+v",
+				f.ObservedAt, f)
+		}
+		if f.ObservedAt == "" {
+			t.Errorf("declared fact ObservedAt is empty: %+v", f)
+		}
+	}
+}
+
+// AC: malformed-report-warns — a malformed report file causes a warning
+// naming the report file and adapter "rehearse"; exit 0; manifests facts
+// remain queryable.
+// Feature: cli/rehearse/evidence (REQ: adapter-rehearse, REQ: partial-tolerance).
+func TestStudioIndex_MalformedRehearseReportWarns(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	wsDir := filepath.Dir(wsPath)
+	newBrokenRehearsalRepo(t, wsDir, "repo-a")
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index with malformed rehearse report exited non-zero: %v", err)
+	}
+
+	// The summary must list a warning naming latest.json and adapter "rehearse".
+	if !strings.Contains(out, "Warnings: 1") {
+		t.Errorf("summary missing \"Warnings: 1\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "rehearse") {
+		t.Errorf("warning summary does not name adapter \"rehearse\"; got:\n%s", out)
+	}
+	if !strings.Contains(out, "latest.json") {
+		t.Errorf("warning summary does not name the report file \"latest.json\"; got:\n%s", out)
+	}
+
+	// Manifests facts (from go.mod) must still be queryable.
+	countOut, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--adapter", "manifests", "--count")
+	if err != nil {
+		t.Fatalf("studio facts --adapter manifests: %v", err)
+	}
+	if countOut == "0\n" {
+		t.Errorf("manifests adapter emitted 0 facts despite go.mod being present")
+	}
+}
+
+// AC: missing-report-silent — no .specscore/rehearse/ directory → no warning
+// from adapter "rehearse" and zero verified-behavior facts.
+// Feature: cli/rehearse/evidence (REQ: adapter-rehearse).
+func TestStudioIndex_MissingRehearseDirectorySilent(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	wsDir := filepath.Dir(wsPath)
+	// Add a SpecScore spec so the store has at least one fact (the store
+	// returns an error when queried while empty, so we need a non-empty store
+	// to safely filter by class).
+	newSpecScoreRepo(t, wsDir, "repo-a")
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+
+	// No warning from the rehearse adapter — the summary may list "rehearse: 0"
+	// in the "Facts by adapter" section, but the Warnings lines must not
+	// mention "rehearse".
+	warningsIdx := strings.Index(out, "Warnings:")
+	if warningsIdx >= 0 {
+		warningsSection := out[warningsIdx:]
+		if strings.Contains(warningsSection, "rehearse") {
+			t.Errorf("warnings section mentions \"rehearse\" — expected silence; got:\n%s", warningsSection)
+		}
+	}
+
+	// Zero verified-behavior facts — the store has specscore facts so it's
+	// non-empty and the query returns 0 matches instead of an empty-store error.
+	countOut, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--class", "verified-behavior", "--count")
+	if err != nil {
+		t.Fatalf("studio facts --class verified-behavior: %v", err)
+	}
+	if countOut != "0\n" {
+		t.Errorf("verified-behavior count = %q, want \"0\\n\"", countOut)
+	}
+}
+
 // --- root registration ---
 
 func TestRootCommand_HasStudio(t *testing.T) {

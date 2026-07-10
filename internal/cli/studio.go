@@ -196,7 +196,7 @@ naming the expected store path and suggesting "specscore studio index".`,
 	cmd.Flags().String("subject", "", "filter by subject (trailing * = prefix match)")
 	cmd.Flags().String("predicate", "", "filter by predicate (exact match)")
 	cmd.Flags().String("object", "", "filter by object (trailing * = prefix match)")
-	cmd.Flags().String("class", "", "filter by evidence class (declared or derived)")
+	cmd.Flags().String("class", "", "filter by evidence class (declared, derived or verified-behavior)")
 	cmd.Flags().String("adapter", "", "filter by adapter id (exact match)")
 	cmd.Flags().String("format", "table", "output format: table or json")
 	cmd.Flags().Bool("count", false, "print only the number of matching facts")

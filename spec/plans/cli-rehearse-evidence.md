@@ -40,7 +40,7 @@ Add `VerifiedBehavior Class = "verified-behavior"` to `internal/studio/fact` and
 
 **Verifies:** cli/rehearse/evidence#ac:observed-at-run-time, cli/rehearse/evidence#ac:malformed-report-warns, cli/rehearse/evidence#ac:missing-report-silent
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 Register the adapter in `All()` (one-line append), change `adapters.Run` to stamp `observed_at` only onto facts whose adapter left it empty, warn-and-skip on malformed reports and stay silent on missing ones (partial tolerance), and update the `--class` flag help text in `internal/cli/studio.go` to name all three classes. End-to-end unit coverage through `studio index` + `studio facts`.
 

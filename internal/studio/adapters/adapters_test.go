@@ -62,10 +62,69 @@ func TestAll_RegistersBuiltinsWithUniqueIDs(t *testing.T) {
 		}
 		seen[a.ID()] = true
 	}
-	for _, id := range []string{"specscore", "codegraph", "manifests", "registries"} {
+	for _, id := range []string{"specscore", "codegraph", "manifests", "registries", "rehearse"} {
 		if !seen[id] {
 			t.Errorf("All() does not register the %s adapter", id)
 		}
+	}
+}
+
+// All() must return exactly five adapters with "rehearse" last
+// (Feature: cli/rehearse/evidence, REQ: adapter-rehearse).
+func TestAll_FiveAdaptersRehearseIsLast(t *testing.T) {
+	all := All(Options{})
+	if len(all) != 5 {
+		t.Fatalf("All() returned %d adapters, want 5", len(all))
+	}
+	if all[4].ID() != "rehearse" {
+		t.Errorf("All()[4].ID() = %q, want \"rehearse\"", all[4].ID())
+	}
+}
+
+// Run must preserve a pre-set ObservedAt from adapters that set their own
+// (REQ: observed-at-run-time) and still stamp the shared timestamp on facts
+// whose adapter left ObservedAt empty.
+func TestRun_PreservesAdapterObservedAt(t *testing.T) {
+	fixed := time.Date(2026, 7, 10, 12, 30, 0, 0, time.UTC)
+	old := nowFn
+	nowFn = func() time.Time { return fixed }
+	t.Cleanup(func() { nowFn = old })
+
+	const adapterTimestamp = "2026-01-02T03:04:05Z"
+
+	// One adapter pre-sets ObservedAt (like the rehearse adapter does);
+	// the other leaves it empty (like all the other built-in adapters do).
+	withTS := &fakeAdapter{
+		id: "with-ts", version: "1",
+		facts: []fact.Fact{
+			{Subject: "s1", Predicate: "p", Object: "o", ObservedAt: adapterTimestamp},
+		},
+	}
+	withoutTS := &fakeAdapter{
+		id: "without-ts", version: "1",
+		facts: []fact.Fact{
+			{Subject: "s2", Predicate: "p", Object: "o"},
+		},
+	}
+
+	dir := t.TempDir()
+	repo := mkRepoDir(t, dir, "repo")
+	res := Run([]Adapter{withTS, withoutTS}, []string{repo}, "demo")
+
+	if len(res.Facts) != 2 {
+		t.Fatalf("len(Facts) = %d, want 2", len(res.Facts))
+	}
+
+	// Fact from "with-ts" must retain the adapter's own timestamp.
+	f0 := res.Facts[0]
+	if f0.ObservedAt != adapterTimestamp {
+		t.Errorf("Facts[0].ObservedAt = %q, want adapter timestamp %q", f0.ObservedAt, adapterTimestamp)
+	}
+
+	// Fact from "without-ts" must receive the shared run timestamp.
+	f1 := res.Facts[1]
+	if f1.ObservedAt != "2026-07-10T12:30:00Z" {
+		t.Errorf("Facts[1].ObservedAt = %q, want shared run timestamp", f1.ObservedAt)
 	}
 }
 
