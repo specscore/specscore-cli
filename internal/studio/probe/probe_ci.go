@@ -166,11 +166,8 @@ func parseGitHubRemote(url string) (org, name string, ok bool) {
 	var path string
 	switch {
 	case strings.HasPrefix(url, "git@"):
-		// git@github.com:acme/widget.git
-		rest, found := strings.CutPrefix(url, "git@")
-		if !found {
-			return "", "", false
-		}
+		// git@github.com:acme/widget.git — the case guard guarantees the prefix.
+		rest := strings.TrimPrefix(url, "git@")
 		h, p, found := strings.Cut(rest, ":")
 		if !found || h != host {
 			return "", "", false

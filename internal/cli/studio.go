@@ -228,7 +228,16 @@ with one warning (the domain kind still runs under --kind all).
 with kinds, facts_written, verified_refreshed and warnings.
 
 Running probe before "studio index" exits 2 with a message naming the expected
-store path and suggesting "specscore studio index".`,
+store path and suggesting "specscore studio index".
+
+Re-verification cadences (guidance for scheduling this verb / index re-runs,
+not in-process timers) by evidence class:
+
+  verified-behavior  hours to a day (schedule probe via CI cron)
+  derived            on push / on "studio index" re-run
+  declared           on repo change / on "studio index" re-run
+  claimed            never — rendered as decaying (no producer this phase)
+  attested           quarterly (Phase 2)`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE:         runStudioProbe,

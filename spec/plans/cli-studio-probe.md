@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: studio probe — probes + freshness as data
 
-**Status:** Executing
+**Status:** Implemented
 **Source Feature:** cli/studio/probe
 **Date:** 2026-07-10
 **Owner:** ai
@@ -56,7 +56,7 @@ Add the `probe-ci` kind: per workspace repo, resolve the GitHub coordinate from 
 
 **Verifies:** cli/studio/probe#ac:cadences-in-help
 **Depends-On:** 4
-**Status:** planning
+**Status:** complete
 
 Document the per-class cadence table in `studio probe --help` and replace the 14 pending `_tests/` stubs with executable scenarios (PATH-shim `git`/`gh` fakes + a localhost fixture server for domain checks), wired into the existing Rehearse corpus CI job. Update `.gitignore`/docs as touched.
 

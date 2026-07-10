@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -369,6 +370,80 @@ func TestStudioProbe_KindCIWorkspaceResolveError(t *testing.T) {
 	}
 }
 
+// The ci kind's target resolution surfaces a workspace *load* error (an
+// unparsable workspace file) as a non-zero exit. Passing an explicit --db makes
+// the store path resolve without loading the workspace, so the workspace.Load
+// call inside probeCITargets is the one that fails — the target-resolution path,
+// distinct from the zero-repo ResolveRepos error above.
+func TestStudioProbe_KindCIWorkspaceLoadError(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	dbPath := seedProbeStore(t, wsPath, []fact.Fact{declaredServesStatusFact("example.app", "200")})
+	// Overwrite the workspace file with unparsable YAML so workspace.Load fails.
+	if err := os.WriteFile(wsPath, []byte("name: [unterminated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubProbeCI(t, func([]probe.CIRepo) probe.Result {
+		t.Fatal("the ci kind must not run when the workspace fails to load")
+		return probe.Result{}
+	})
+
+	_, _, err := runStudioCmd(t, "probe",
+		"--workspace", wsPath, "--db", dbPath, "--kind", "ci")
+	if studioExit(t, err) == 0 {
+		t.Error("a workspace that fails to load must be a non-zero exit")
+	}
+}
+
+// The human run summary lists each per-target/per-kind warning under the count
+// line (REQ: probe-verb) — the ci kind here is stubbed to surface one warning.
+func TestStudioProbe_HumanSummaryListsWarnings(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedProbeStore(t, wsPath, []fact.Fact{declaredServesStatusFact("example.app", "200")})
+	stubProbeCI(t, func([]probe.CIRepo) probe.Result {
+		return probe.Result{
+			Kinds:    []string{probe.KindCI},
+			Warnings: []string{"repo-a: skipped — no GitHub origin remote"},
+		}
+	})
+
+	out, _, err := runStudioCmd(t, "probe", "--workspace", wsPath, "--kind", "ci")
+	if err != nil {
+		t.Fatalf("studio probe: %v", err)
+	}
+	if !strings.Contains(out, "Warnings: 1") {
+		t.Errorf("human summary missing the warnings count line:\n%s", out)
+	}
+	if !strings.Contains(out, "repo-a: skipped — no GitHub origin remote") {
+		t.Errorf("human summary must list the warning text:\n%s", out)
+	}
+}
+
+// renderProbeSummary's JSON form normalizes a nil Kinds slice to an empty JSON
+// array (never null), so the summary's shape is stable for consumers.
+func TestRenderProbeSummary_JSONNormalizesNilSlices(t *testing.T) {
+	cmd := studioProbeCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := renderProbeSummary(cmd, "json", probeSummary{}); err != nil {
+		t.Fatalf("renderProbeSummary: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("summary is not valid JSON: %v\n%s", err, out.String())
+	}
+	for _, key := range []string{"kinds", "warnings"} {
+		v, ok := got[key]
+		if !ok {
+			t.Errorf("summary JSON missing %q key: %s", key, out.String())
+			continue
+		}
+		if _, isSlice := v.([]any); !isSlice {
+			t.Errorf("summary %q must be a JSON array (not null): %v", key, v)
+		}
+	}
+}
+
 // --kind all runs both the domain and the ci kinds.
 func TestStudioProbe_KindAllRunsDomainAndCI(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -695,5 +770,36 @@ func extractGuidanceParts(msg string) [2]bool {
 	return [2]bool{
 		strings.Contains(msg, ".specscore-studio"),
 		strings.Contains(msg, "studio index"),
+	}
+}
+
+// AC: cadences-in-help — `studio probe --help` names a re-verification cadence
+// for each of the five evidence classes (REQ: freshness-cadences). The help
+// text pairs every class token with a cadence phrase so an operator learns how
+// often to schedule the verb per class.
+func TestStudioProbe_HelpNamesCadenceForEachEvidenceClass(t *testing.T) {
+	out, _, err := runStudioCmd(t, "probe", "--help")
+	if err != nil {
+		t.Fatalf("probe --help returned error: %v", err)
+	}
+
+	// Every evidence class must appear paired with a cadence phrase.
+	classes := []struct {
+		class   string
+		cadence string
+	}{
+		{"verified-behavior", "hours"},
+		{"derived", "on push"},
+		{"declared", "on repo change"},
+		{"claimed", "never"},
+		{"attested", "quarterly"},
+	}
+	for _, c := range classes {
+		if !strings.Contains(out, c.class) {
+			t.Errorf("probe --help does not name the %q evidence class:\n%s", c.class, out)
+		}
+		if !strings.Contains(out, c.cadence) {
+			t.Errorf("probe --help does not name a cadence (%q) for the %q class:\n%s", c.cadence, c.class, out)
+		}
 	}
 }

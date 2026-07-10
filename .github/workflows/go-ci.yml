@@ -107,6 +107,7 @@ jobs:
         run: >
           /tmp/specscore rehearse run
           spec/features/cli/studio/index/_tests
+          spec/features/cli/studio/probe/_tests
           spec/features/cli/rehearse/run/_tests
           spec/features/cli/rehearse/evidence/_tests
           --report-out .specscore/rehearse/latest.json
