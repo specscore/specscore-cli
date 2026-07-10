@@ -58,6 +58,7 @@ func newRootCommand() *cobra.Command {
 		rulesCommand(),
 		rootMigrateCommand(),
 		specCommand(),
+		studioCommand(),
 		taskCommand(),
 		ideaCommand(),
 		sidekickCommand(),

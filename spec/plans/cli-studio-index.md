@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: studio index — Phase-0 ecosystem indexer + facts query
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** cli/studio/index
 **Date:** 2026-07-10
 **Owner:** alex
@@ -24,7 +24,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:workspace-missing-error
 **Depends-On:** —
-**Status:** planning
+**Status:** complete
 
 `internal/studio/workspace` (studio.yaml parsing, glob resolution, workspace-relative defaults) and the `studio` command group with an `index` verb that validates the workspace and prints a run summary (no adapters yet). Exit-2 paths for missing/unparsable/zero-resolving workspaces.
 
@@ -32,7 +32,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 **Verifies:** cli/studio/index#ac:missing-store-error
 **Depends-On:** 1
-**Status:** planning
+**Status:** in_progress
 
 `internal/studio/fact` (Fact/Evidence types, stable-ID helpers), `internal/studio/store` (schema, atomic temp-file-swap rebuild, filter queries), and the `facts` verb with table/JSON/`--count` output plus the exit-2 missing-store path. Resolves the Feature's open questions as implementation details: local repo-slug = basename with `-N` collision counter; no `--repo` sugar in v1.
 
