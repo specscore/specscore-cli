@@ -146,5 +146,9 @@ jobs:
           json="$(/tmp/specscore studio facts \
             --db /tmp/.specscore-studio/facts.db \
             --class verified-behavior --format json)"
-          echo "$json" | grep -q 'cli/studio/index#ac:' \
+          # Use a here-string, not `echo "$json" | grep -q`: under pipefail,
+          # grep -q closes the pipe on first match, echo gets SIGPIPE, and the
+          # pipeline is reported as failed even though the pattern matched — a
+          # size-dependent false failure once the JSON is large.
+          grep -q 'cli/studio/index#ac:' <<< "$json" \
             || { echo "GATE FAIL: no cli/studio/index#ac: subject in verified-behavior facts"; echo "$json"; exit 1; }
