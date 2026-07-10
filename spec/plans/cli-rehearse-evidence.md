@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: Cli Rehearse Evidence
 
-**Status:** Executing
+**Status:** Implemented
 **Source Feature:** cli/rehearse/evidence
 **Date:** 2026-07-10
 **Owner:** ai
@@ -48,7 +48,7 @@ Register the adapter in `All()` (one-line append), change `adapters.Run` to stam
 
 **Verifies:** cli/rehearse/evidence#ac:self-hosting-gate
 **Depends-On:** 3
-**Status:** planning
+**Status:** complete
 
 Author the 10 `_tests/` scenarios for this feature's ACs (replacing the pending stubs with executable steps), add `.specscore/rehearse/` to `.gitignore`, extend the `Rehearse corpus` CI job to run the corpus with `--report-out`, `studio index` a minimal workspace over this repo, and assert `facts --class verified-behavior` returns rows for `cli/studio/index#ac:*` — the v0.4 success gate. Update the feature statuses (`cli/rehearse/evidence` → Implementing) and any docs the change touches.
 

@@ -25,3 +25,6 @@ cover*.out
 !.specscore/
 .specscore/*
 !.specscore/reviewers/
+
+# Rehearse run reports are local run artifacts (not committed)
+.specscore/rehearse/

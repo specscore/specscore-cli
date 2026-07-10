@@ -102,8 +102,29 @@ jobs:
           # The scenarios invoke the CLI under test via $SPECSCORE (they
           # default to `specscore` on PATH otherwise).
           SPECSCORE: /tmp/specscore
+          # Self-hosting gate scenario uses $REPO_ROOT to locate the checkout.
+          REPO_ROOT: ${{ github.workspace }}
         run: >
           /tmp/specscore rehearse run
           spec/features/cli/studio/index/_tests
           spec/features/cli/rehearse/run/_tests
+          spec/features/cli/rehearse/evidence/_tests
+          --report-out .specscore/rehearse/latest.json
           --format json
+
+      - name: v0.4 self-hosting gate (studio index + facts --class verified-behavior)
+        env:
+          SPECSCORE: /tmp/specscore
+        run: |
+          set -euo pipefail
+          # Write a minimal workspace referencing this repo checkout.
+          printf 'name: specscore-cli-gate\nrepos:\n  - %s\n' \
+            "${{ github.workspace }}" > /tmp/gate-studio.yaml
+          # Index the workspace; the rehearse adapter reads the report written above.
+          /tmp/specscore studio index --workspace /tmp/gate-studio.yaml
+          # Assert facts --class verified-behavior returns rows for cli/studio/index ACs.
+          json="$(/tmp/specscore studio facts \
+            --db /tmp/.specscore-studio/facts.db \
+            --class verified-behavior --format json)"
+          echo "$json" | grep -q 'cli/studio/index#ac:' \
+            || { echo "GATE FAIL: no cli/studio/index#ac: subject in verified-behavior facts"; echo "$json"; exit 1; }
