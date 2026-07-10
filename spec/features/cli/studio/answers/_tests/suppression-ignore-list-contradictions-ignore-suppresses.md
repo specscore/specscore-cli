@@ -33,15 +33,15 @@ cd "$workdir"
 mkdir -p ops ops-legacy
 cat > ops/ecosystem.yaml <<'YAML'
 products:
-  - id: gameboard-ext
-    repos:
-      - ext-gameboard
+  - id: ext-foo
+    domains:
+      - d.example
 YAML
 cat > ops-legacy/ecosystem-legacy.yaml <<'YAML'
 products:
-  - id: gameboard-ext
-    repos:
-      - gameboard-contract
+  - id: foo-contract
+    domains:
+      - d.example
 YAML
 cat > studio.yaml <<'YAML'
 name: demo

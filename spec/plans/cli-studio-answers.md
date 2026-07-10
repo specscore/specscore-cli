@@ -30,11 +30,11 @@ The detector engine as pure functions over store facts: status-drift branch (a) 
 
 ### Task 2: detector negatives, contradicts write-back, suppression, guards
 
-**Verifies:** cli/studio/answers#ac:agreement-not-flagged, cli/studio/answers#ac:behavioral-supersession-not-flagged, cli/studio/answers#ac:contradicts-fact-written, cli/studio/answers#ac:contradictions-ignore-suppresses, cli/studio/answers#ac:contradictions-without-index-errors
+**Verifies:** cli/studio/answers#ac:agreement-not-flagged, cli/studio/answers#ac:behavioral-supersession-not-flagged, cli/studio/answers#ac:multi-valued-not-flagged, cli/studio/answers#ac:contradicts-fact-written, cli/studio/answers#ac:contradictions-ignore-suppresses, cli/studio/answers#ac:contradictions-without-index-errors
 **Depends-On:** 1
 **Status:** complete
 
-Prove the never-flag rules (cross-class agreement; verified×verified supersession), write each item as a `contradicts` fact (canonicalised smaller-ref-first subject/object, class derived, pointer = detector id, adapter `contradictions`) via `store.Merge` so re-runs are idempotent, honor the workspace ignore-list file (`--show-ignored`), and reuse the exit-2 missing-store guidance.
+Prove the never-flag rules (cross-class agreement; verified×verified supersession; multi-valued declared predicates — the naming-conflict detector fires only on the single-valued set `{has-status, serves-status, fronts}`, the evidence-driven scoping recorded in the Feature's Autonomous Decisions after the Sneat dogfood flood), write each item as a `contradicts` fact (canonicalised smaller-ref-first subject/object, class derived, pointer = detector id, adapter `contradictions`) via `store.Merge` so re-runs are idempotent, honor the workspace ignore-list file (`--show-ignored`), and reuse the exit-2 missing-store guidance.
 
 ### Task 3: resolve verb
 

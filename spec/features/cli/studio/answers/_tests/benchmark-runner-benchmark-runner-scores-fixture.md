@@ -78,7 +78,7 @@ for l in open(src):
         continue
     o = json.loads(l)
     if o["id"] == "q42":
-        o["question"] = "aliases of contactus"  # routes + answers, but still marked unanswerable
+        o["question"] = "aliases of anymeter"  # routes + answers, but still marked unanswerable
     out.append(json.dumps(o))
 open(dst, "w").write("\n".join(out) + "\n")
 PY

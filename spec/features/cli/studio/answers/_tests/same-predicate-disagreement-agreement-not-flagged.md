@@ -12,9 +12,10 @@ Scenario source: [../README.md](../README.md) → `### AC: agreement-not-flagged
 Given an indexed store where two `declared` facts share subject, predicate, and object but come from different evidence pointers, and no other disagreement exists, when I run `specscore studio contradictions --format json`, then the command exits 0 and the JSON is an empty array.
 
 Seam: two ecosystem maps (distinct filenames → distinct pointers) both declare
-`(gameboard-ext, implemented-by, ext-gameboard)` — same object, different
-pointers: agreement, never a contradiction. No probe/rehearse facts exist, so no
-status-drift can fire either; the array must be empty.
+`(d.example, fronts, ext-foo)` — same object, different pointers, on a
+predicate in the detector's single-valued set: agreement, never a
+contradiction. No probe/rehearse facts exist, so no status-drift can fire
+either; the array must be empty.
 
 ```bash
 #!/usr/bin/env bash
@@ -33,15 +34,15 @@ cd "$workdir"
 mkdir -p ops ops-legacy
 cat > ops/ecosystem.yaml <<'YAML'
 products:
-  - id: gameboard-ext
-    repos:
-      - ext-gameboard
+  - id: ext-foo
+    domains:
+      - d.example
 YAML
 cat > ops-legacy/ecosystem-legacy.yaml <<'YAML'
 products:
-  - id: gameboard-ext
-    repos:
-      - ext-gameboard
+  - id: ext-foo
+    domains:
+      - d.example
 YAML
 cat > studio.yaml <<'YAML'
 name: demo

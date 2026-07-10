@@ -149,12 +149,14 @@ func TestStudioContradictions_StatusDriftDeadDomain(t *testing.T) {
 }
 
 // AC: naming-conflict-declared-disagreement — two declared facts disagreeing on
-// the same predicate are a naming-conflict; absent when they share the object.
+// the same single-valued predicate are a naming-conflict; absent when they
+// share the object. `fronts` is in the single-valued set the detector fires on
+// (REQ: same-predicate-disagreement).
 func TestStudioContradictions_NamingConflictDeclaredDisagreement(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
 	seedProbeStore(t, wsPath, []fact.Fact{
-		declaredFact("subj", "provides", "ext-foo", "registry-a.json"),
-		declaredFact("subj", "provides", "foo-contract", "registry-b.json"),
+		declaredFact("d.example", "fronts", "ext-foo", "registry-a.yaml"),
+		declaredFact("d.example", "fronts", "foo-contract", "registry-b.yaml"),
 	})
 
 	out, _, err := runStudioCmd(t, "contradictions", "--workspace", wsPath, "--format", "json")

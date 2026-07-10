@@ -17,8 +17,13 @@
 //     `verified-behavior` one (declared-vs-verified, e.g. a registry-declared
 //     `serves-status` 200 against a probed `down`).
 //   - naming-conflict owns declared-vs-declared disagreement: two `declared`
-//     facts sharing subject+predicate but asserting different objects from
-//     different evidence pointers (the `ext-<id>` vs `<id>-contract` class).
+//     facts sharing a *single-valued* subject+predicate but asserting different
+//     objects from different evidence pointers (the `ext-<id>` vs
+//     `<id>-contract` class). Only predicates that are single-valued per
+//     subject (singleValuedDeclared) participate — legitimately multi-valued
+//     predicates (has-ac, contains, implemented-by, …) are excluded, or every
+//     multi-AC feature would self-"conflict" (the 5,758-item Sneat dogfood
+//     flood, 92% has-ac).
 //
 // verified-behavior-vs-verified-behavior differences are supersession — a
 // changed probe result — and are flagged by neither detector.
@@ -66,6 +71,23 @@ var shippedImplying = map[string]bool{
 	"Approved":     true,
 	"Stable":       true,
 	"Implementing": true,
+}
+
+// singleValuedDeclared is the fixed set of declared predicates that are
+// single-valued per subject — the only predicates the naming-conflict detector
+// fires on (REQ: same-predicate-disagreement): a subject has one lifecycle
+// status, a domain serves one status, a domain fronts one product. Two declared
+// facts disagreeing on one of these is a real conflict between authored
+// sources. Every other declared predicate (has-ac, contains, implemented-by,
+// aliased-as, member-of, consumes, …) is legitimately multi-valued — two
+// different objects are two valid values, not a disagreement. Evidence: the
+// unscoped detector flooded the Sneat dogfood run with 5,758 items (5,328
+// has-ac + 406 contains + 24 implemented-by), 92% of them the has-ac
+// self-"conflicts" of ordinary multi-AC features.
+var singleValuedDeclared = map[string]bool{
+	"has-status":    true,
+	"serves-status": true,
+	"fronts":        true,
 }
 
 // Item is one detected contradiction: the two facts that disagree plus the
@@ -160,14 +182,20 @@ func declaredVsVerified(facts []fact.Fact) []Item {
 	return items
 }
 
-// namingConflict flags two `declared` facts sharing subject+predicate but
-// asserting different objects from different evidence pointers — the
-// declared-vs-declared class. Facts agreeing on the object (the same claim from
-// two sources) are never flagged; when N>2 declared sources disagree, one item
-// per distinct unordered pair is emitted so every disagreement is citeable.
+// namingConflict flags two `declared` facts sharing a single-valued
+// subject+predicate but asserting different objects from different evidence
+// pointers — the declared-vs-declared class. Only the singleValuedDeclared
+// predicates participate: a multi-valued predicate's differing objects are two
+// valid values, not a disagreement (REQ: same-predicate-disagreement). Facts
+// agreeing on the object (the same claim from two sources) are never flagged;
+// when N>2 declared sources disagree, one item per distinct unordered pair is
+// emitted so every disagreement is citeable.
 func namingConflict(facts []fact.Fact) []Item {
 	var items []Item
 	forEachGroup(facts, func(group []fact.Fact) {
+		if !singleValuedDeclared[group[0].Predicate] {
+			return
+		}
 		var declared []fact.Fact
 		for _, f := range group {
 			if f.Class == fact.Declared {

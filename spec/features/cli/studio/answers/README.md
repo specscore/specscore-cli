@@ -48,7 +48,7 @@ Each flagged pair becomes one contradiction item whose two sides are the `declar
 
 #### REQ: same-predicate-disagreement
 
-The **naming-conflict** detector flags two facts that share a `subject` and `predicate` but assert **different objects** from **different evidence pointers** — the `ext-<id>` vs `<id>-contract` class where two human-authored registries disagree on the same relationship. It fires only when *both* sides are `declared`: a `declared` side disagreeing with a `verified-behavior` side belongs to `status-vs-behavior-drift`'s declared-vs-verified branch, and two behavioral observations of the same predicate with different objects are supersession, not contradiction — a domain that was `200` and is now `down` is `cli/studio/probe`'s changed-object case, expressly flagged by neither detector. Facts that share subject+predicate+object (the same claim from two sources — agreement) are never flagged. Each flagged pair becomes one contradiction item; when N>2 sources disagree, the detector emits one item per distinct unordered pair so every disagreement is individually citeable.
+The **naming-conflict** detector flags two facts that share a `subject` and a **single-valued** `predicate` but assert **different objects** from **different evidence pointers** — the `ext-<id>` vs `<id>-contract` class where two human-authored registries disagree on the same relationship. It fires **only on the fixed single-valued declared predicate set** `{has-status, serves-status, fronts}` — predicates whose semantics admit exactly one object per subject (a subject has one lifecycle status; a domain serves one status; a domain fronts one product), so two declared objects genuinely disagree. Legitimately **multi-valued** predicates (`has-ac`, `contains`, `implemented-by`, `aliased-as`, `member-of`, `consumes`, …) are excluded: two different objects there are two valid values, not a disagreement — without this scoping every multi-AC feature self-"conflicts" (the Sneat dogfood run flooded 5,758 items, 92% of them `has-ac`; see Autonomous Decisions). It fires only when *both* sides are `declared`: a `declared` side disagreeing with a `verified-behavior` side belongs to `status-vs-behavior-drift`'s declared-vs-verified branch, and two behavioral observations of the same predicate with different objects are supersession, not contradiction — a domain that was `200` and is now `down` is `cli/studio/probe`'s changed-object case, expressly flagged by neither detector. Facts that share subject+predicate+object (the same claim from two sources — agreement) are never flagged. Each flagged pair becomes one contradiction item; when N>2 sources disagree, the detector emits one item per distinct unordered pair so every disagreement is individually citeable.
 
 #### REQ: contradiction-facts
 
@@ -129,24 +129,23 @@ The 50 instances in `benchmark/questions.jsonl` map to templates as follows: **4
 
 | Template | Answerable instances | Notes |
 |---|---|---|
-| `who-fronts` | 4 | one per fronted product/domain |
-| `what-repos-implement` | 4 | trackus→AnyMeter class + siblings |
+| `who-fronts` | 5 | one per fronted product/domain (anymeter.app, fillless.com, …) |
+| `what-repos-implement` | 4 | anymeter→trackus class + siblings |
 | `status-of` | 5 | feature and idea spec entities (the only `has-status` subjects any adapter emits) |
-| `aliases-of` | 3 | sizeus, spaceus, ext-X |
+| `aliases-of` | 3 | anymeter, assetus, gameboard |
 | `member-of` | 3 | vertical bundling |
-| `is-it-live` | 4 | includes the dead investor-CTA case |
-| `ci-status-of` | 3 | green + red repos |
-| `what-verifies` | 3 | AC coverage (`Verifies:` chain) |
-| `contradictions-for` | 3 | status-drift + naming-conflict subjects |
+| `is-it-live` | 4 | includes the dead investor-CTA case (fillless.com) |
+| `ci-status-of` | 4 | green + red repos |
+| `contradictions-for` | 4 | status-drift subjects from the real drift set |
 | `freshness-of` | 2 | last-verified questions |
-| `what-uses` | 3 | consumer fan-in (contactus-class questions) |
+| `what-uses` | 3 | consumer fan-in (sneat-go-core-class questions) |
 | `version-pins` | 2 | platform-version pins across consumers |
 | `aliases-resolve` | 2 | bare "what is X" |
 | **answerable total** | **41** | |
 | `expected-unanswerable` | 9 | why-exists (3), gotchas (2), deploy-method (2), commercial (2) |
 | **file total** | **50** | |
 
-(The exact per-line counts are authoritative in `benchmark/questions.jsonl`; this table is the human-readable summary the composition check enforces against the file. The split is 41 answerable / 9 unanswerable, so the 40/50 gate is clearable while the file still honestly carries 9 genuinely-out-of-scope questions.)
+(The exact per-line counts are authoritative in `benchmark/questions.jsonl`; this table is the human-readable summary the composition check enforces against the file. The split is 41 answerable / 9 unanswerable, so the 40/50 gate is clearable while the file still honestly carries 9 genuinely-out-of-scope questions. The `what-verifies` template carries **no benchmark instances**: the Sneat dogfood workspace holds zero `verified-by`/`has-verification-status` facts — no Sneat repo has adopted `rehearse run --report-out` yet (v0.5 adoption pending), so a what-verifies instance would be unanswerable there through no fault of the router. The template itself stays in `ask` — it is exercised by the router unit tests and answerable against fixture stores carrying rehearse reports; its former 3 instances are rebalanced to `who-fronts` +1, `ci-status-of` +1, and `contradictions-for` +1.)
 
 ## Exit gate
 
@@ -211,10 +210,17 @@ Then the JSON contains a `status-drift` item whose two sides are the declared `2
 
 ### AC: naming-conflict-declared-disagreement
 
-Scenario: two declared facts disagreeing on the same predicate are a contradiction
-Given an indexed store with `(subj, provides, ext-foo)` and `(subj, provides, foo-contract)`, both evidence_class `declared` with different evidence pointers
+Scenario: two declared facts disagreeing on the same single-valued predicate are a contradiction
+Given an indexed store with `(d.example, fronts, ext-foo)` and `(d.example, fronts, foo-contract)`, both evidence_class `declared` with different evidence pointers (`fronts` is in the single-valued set)
 When I run `specscore studio contradictions --format json`
 Then the JSON contains a `naming-conflict` item whose two sides are those two facts, and the item is absent when the two facts share the same object
+
+### AC: multi-valued-not-flagged
+
+Scenario: two values of a multi-valued predicate are not a contradiction
+Given an indexed store with two `declared` `has-ac` facts sharing a subject but carrying different objects and different evidence pointers (a feature with two acceptance criteria)
+When I run `specscore studio contradictions --format json`
+Then the command exits 0 and no `naming-conflict` item references those two facts (`has-ac` is not in the single-valued predicate set — two ACs are two valid values, not a disagreement)
 
 ### AC: agreement-not-flagged
 
@@ -323,6 +329,7 @@ Then the command exits 2 with a message naming the expected store path and sugge
 - **13 templates, chosen to cover the benchmark's answerable subset** — the set (who-fronts, what-repos-implement, status-of, aliases-of, member-of, is-it-live, ci-status-of, what-verifies, contradictions-for, freshness-of, what-uses, version-pins, aliases-resolve) maps 1:1 to predicates the Phase-0/probe/rehearse adapters already emit (verified against the adapter code — `what-uses`/`version-pins` both read the manifests adapter's `consumes` facts; no adapter emits `depends-on`), so every template's query is over facts that actually exist. `status-of` targets spec entities only (features and ideas) — product-status questions have no producing fact and would be dishonest benchmark instances.
 - **Benchmark is 50 instances, 41 answerable / 9 expected-unanswerable, one committed file + one runner, two gate assertions** — the file stays honest by including genuinely out-of-scope questions marked `expected-unanswerable`; CI asserts the hermetic fixture floor continuously while the ≥40/50 Sneat run is the human-runnable phase gate (network + Sneat checkout are not CI-available). This is the reviewer-acceptable honest formulation of the handout's exit-gate DESIGN CALL.
 - **Exit-code vocabulary taken from `pkg/exitcode`** (reviewer-recommended, adopted) — `resolve`: unknown name → 3 (`NotFound`), ambiguous name → 5 (`AmbiguousSlug`), usage / no store → 2 (`InvalidArgs`); `ask`: unroutable → 1 (no template — a router miss, not a store miss), routed-but-empty → 3 (`NotFound`). No new codes are invented.
+- **Naming-conflict scoped to a fixed single-valued declared predicate set** (evidence-driven, post-approval revise-in-place) — the detector as first specified fired on ANY same-subject+predicate declared pair with differing objects/pointers, and the Sneat dogfood run proved that shape wrong: **5,758 naming-conflict items** (5,328 `has-ac` + 406 `contains` + 24 `implemented-by`) — 92% of the flood was every ordinary multi-AC feature "conflicting" with itself, against 7 genuine status-drift items. Predicates like `has-ac`, `contains`, `implemented-by`, `aliased-as`, `member-of`, and `consumes` are legitimately multi-valued: two objects are two values, not a disagreement. The detector now fires only on `{has-status, serves-status, fronts}` — the declared predicates that are single-valued per subject, where a second differing object IS a disagreement between authored sources. On the same dogfood store the scoped detector yields 7 status-drift + 0 naming-conflict items, all genuine (0% noise, well under the ≤20% exit-gate ceiling). The `what-verifies` benchmark row was removed in the same evidence pass: the dogfood store holds zero rehearse facts (no Sneat repo runs `rehearse run --report-out` yet), so its 3 instances were honest-unanswerable through no router fault; they are rebalanced to who-fronts/ci-status-of/contradictions-for and the template remains routable and unit-tested.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

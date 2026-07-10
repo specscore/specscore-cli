@@ -69,21 +69,45 @@ func TestDetect(t *testing.T) {
 			wantCount: 1,
 		},
 		{
-			name: "naming-conflict: two declared facts disagree with different pointers",
+			name: "naming-conflict: two declared facts disagree on a single-valued predicate with different pointers",
 			facts: []fact.Fact{
-				mk("subj", "provides", "ext-foo", fact.Declared, "registry-a.json"),
-				mk("subj", "provides", "foo-contract", fact.Declared, "registry-b.json"),
+				mk("d.example", "fronts", "ext-foo", fact.Declared, "registry-a.yaml"),
+				mk("d.example", "fronts", "foo-contract", fact.Declared, "registry-b.yaml"),
 			},
 			wantItems: [][3]string{
-				{string(NamingConflict), "subj|provides|ext-foo", "subj|provides|foo-contract"},
+				{string(NamingConflict), "d.example|fronts|ext-foo", "d.example|fronts|foo-contract"},
 			},
 			wantCount: 1,
 		},
 		{
 			name: "agreement not flagged: same triple, different pointers",
 			facts: []fact.Fact{
-				mk("subj", "provides", "foo", fact.Declared, "registry-a.json"),
-				mk("subj", "provides", "foo", fact.Declared, "registry-b.json"),
+				mk("d.example", "fronts", "foo", fact.Declared, "registry-a.yaml"),
+				mk("d.example", "fronts", "foo", fact.Declared, "registry-b.yaml"),
+			},
+			wantCount: 0,
+		},
+		{
+			name: "multi-valued predicate not flagged: two has-ac facts are two ACs, not a conflict",
+			facts: []fact.Fact{
+				mk("repo#feat/x", "has-ac", "first-ac", fact.Declared, "spec/features/x/README.md:10"),
+				mk("repo#feat/x", "has-ac", "second-ac", fact.Declared, "spec/features/x/README.md:20"),
+			},
+			wantCount: 0,
+		},
+		{
+			name: "multi-valued predicate not flagged: two implemented-by repos are fan-out, not a conflict",
+			facts: []fact.Fact{
+				mk("bookius", "implemented-by", "bookius", fact.Declared, "ecosystem.yaml"),
+				mk("bookius", "implemented-by", "ext-bookius", fact.Declared, "ecosystem-ext.yaml"),
+			},
+			wantCount: 0,
+		},
+		{
+			name: "multi-valued predicate not flagged: two contains children are structure, not a conflict",
+			facts: []fact.Fact{
+				mk("repo#feat", "contains", "repo#feat/a", fact.Declared, "spec/features/feat/README.md"),
+				mk("repo#feat", "contains", "repo#feat/b", fact.Declared, "spec/features/feat/b/README.md"),
 			},
 			wantCount: 0,
 		},
@@ -106,8 +130,8 @@ func TestDetect(t *testing.T) {
 		{
 			name: "naming-conflict same object not flagged even with different pointers is covered; different objects same pointer not flagged",
 			facts: []fact.Fact{
-				mk("subj", "provides", "a", fact.Declared, "same.json"),
-				mk("subj", "provides", "b", fact.Declared, "same.json"),
+				mk("d.example", "fronts", "a", fact.Declared, "same.yaml"),
+				mk("d.example", "fronts", "b", fact.Declared, "same.yaml"),
 			},
 			wantCount: 0,
 		},
@@ -138,14 +162,14 @@ func TestDetect(t *testing.T) {
 		{
 			name: "N-way naming-conflict emits one item per distinct pair",
 			facts: []fact.Fact{
-				mk("subj", "provides", "a", fact.Declared, "p1.json"),
-				mk("subj", "provides", "b", fact.Declared, "p2.json"),
-				mk("subj", "provides", "c", fact.Declared, "p3.json"),
+				mk("d.example", "fronts", "a", fact.Declared, "p1.yaml"),
+				mk("d.example", "fronts", "b", fact.Declared, "p2.yaml"),
+				mk("d.example", "fronts", "c", fact.Declared, "p3.yaml"),
 			},
 			wantItems: [][3]string{
-				{string(NamingConflict), "subj|provides|a", "subj|provides|b"},
-				{string(NamingConflict), "subj|provides|a", "subj|provides|c"},
-				{string(NamingConflict), "subj|provides|b", "subj|provides|c"},
+				{string(NamingConflict), "d.example|fronts|a", "d.example|fronts|b"},
+				{string(NamingConflict), "d.example|fronts|a", "d.example|fronts|c"},
+				{string(NamingConflict), "d.example|fronts|b", "d.example|fronts|c"},
 			},
 			wantCount: 3,
 		},
@@ -195,18 +219,18 @@ func TestDetect_StatusDriftSideOrdering(t *testing.T) {
 // by predicate (the group-sort tiebreak) — the items stay deterministic.
 func TestDetect_SameSubjectDifferentPredicateOrdering(t *testing.T) {
 	facts := []fact.Fact{
-		// predicate "zeta" group (declared-vs-declared conflict)
-		mk("subj", "zeta", "a", fact.Declared, "p1.json"),
-		mk("subj", "zeta", "b", fact.Declared, "p2.json"),
-		// predicate "alpha" group (declared-vs-declared conflict)
-		mk("subj", "alpha", "a", fact.Declared, "p1.json"),
-		mk("subj", "alpha", "b", fact.Declared, "p2.json"),
+		// predicate "serves-status" group (declared-vs-declared conflict)
+		mk("subj", "serves-status", "200", fact.Declared, "p1.json"),
+		mk("subj", "serves-status", "404", fact.Declared, "p2.json"),
+		// predicate "fronts" group (declared-vs-declared conflict)
+		mk("subj", "fronts", "a", fact.Declared, "p1.yaml"),
+		mk("subj", "fronts", "b", fact.Declared, "p2.yaml"),
 	}
 	items := Detect(facts)
 	if len(items) != 2 {
 		t.Fatalf("got %d items, want 2: %+v", len(items), items)
 	}
-	if items[0].A.Predicate != "alpha" || items[1].A.Predicate != "zeta" {
+	if items[0].A.Predicate != "fronts" || items[1].A.Predicate != "serves-status" {
 		t.Errorf("groups not ordered by predicate: %q then %q",
 			items[0].A.Predicate, items[1].A.Predicate)
 	}

@@ -1,50 +1,50 @@
-{"id": "q01", "question": "who fronts sizeus.app", "template": "who-fronts", "parameter": "sizeus.app", "expectation": "answerable"}
-{"id": "q02", "question": "who fronts gameboard.app", "template": "who-fronts", "parameter": "gameboard.app", "expectation": "answerable"}
-{"id": "q03", "question": "who fronts contactus.app", "template": "who-fronts", "parameter": "contactus.app", "expectation": "answerable"}
-{"id": "q04", "question": "who fronts invest.example", "template": "who-fronts", "parameter": "invest.example", "expectation": "answerable"}
-{"id": "q05", "question": "what repos implement gameboard", "template": "what-repos-implement", "parameter": "gameboard", "expectation": "answerable"}
-{"id": "q06", "question": "what repos implement sizeus", "template": "what-repos-implement", "parameter": "sizeus", "expectation": "answerable"}
-{"id": "q07", "question": "what repos implement contactus", "template": "what-repos-implement", "parameter": "contactus", "expectation": "answerable"}
-{"id": "q08", "question": "what repos implement investus", "template": "what-repos-implement", "parameter": "investus", "expectation": "answerable"}
-{"id": "q09", "question": "status of gameboard#chess-mvp", "template": "status-of", "parameter": "gameboard#chess-mvp", "expectation": "answerable"}
-{"id": "q10", "question": "status of gameboard#sports", "template": "status-of", "parameter": "gameboard#sports", "expectation": "answerable"}
-{"id": "q11", "question": "status of contactus#inbox", "template": "status-of", "parameter": "contactus#inbox", "expectation": "answerable"}
-{"id": "q12", "question": "status of sneat-libs#contactus-ext", "template": "status-of", "parameter": "sneat-libs#contactus-ext", "expectation": "answerable"}
-{"id": "q13", "question": "status of sneat-libs#extension-contract-repo", "template": "status-of", "parameter": "sneat-libs#extension-contract-repo", "expectation": "answerable"}
-{"id": "q14", "question": "aliases of sizeus", "template": "aliases-of", "parameter": "sizeus", "expectation": "answerable"}
-{"id": "q15", "question": "aliases of spaceus", "template": "aliases-of", "parameter": "spaceus", "expectation": "answerable"}
-{"id": "q16", "question": "aliases of gameboard-ext", "template": "aliases-of", "parameter": "gameboard-ext", "expectation": "answerable"}
-{"id": "q17", "question": "what vertical is contactus in", "template": "member-of", "parameter": "contactus", "expectation": "answerable"}
+{"id": "q01", "question": "who fronts anymeter.app", "template": "who-fronts", "parameter": "anymeter.app", "expectation": "answerable"}
+{"id": "q02", "question": "who fronts assetus.app", "template": "who-fronts", "parameter": "assetus.app", "expectation": "answerable"}
+{"id": "q03", "question": "who fronts gameboard.live", "template": "who-fronts", "parameter": "gameboard.live", "expectation": "answerable"}
+{"id": "q04", "question": "who fronts calendarius.app", "template": "who-fronts", "parameter": "calendarius.app", "expectation": "answerable"}
+{"id": "q05", "question": "who fronts fillless.com", "template": "who-fronts", "parameter": "fillless.com", "expectation": "answerable"}
+{"id": "q06", "question": "what repos implement anymeter", "template": "what-repos-implement", "parameter": "anymeter", "expectation": "answerable"}
+{"id": "q07", "question": "what repos implement assetus", "template": "what-repos-implement", "parameter": "assetus", "expectation": "answerable"}
+{"id": "q08", "question": "what repos implement listus", "template": "what-repos-implement", "parameter": "listus", "expectation": "answerable"}
+{"id": "q09", "question": "what repos implement logistus", "template": "what-repos-implement", "parameter": "logistus", "expectation": "answerable"}
+{"id": "q10", "question": "status of backstage#debtus", "template": "status-of", "parameter": "backstage#debtus", "expectation": "answerable"}
+{"id": "q11", "question": "status of backstage#assetus-mvp", "template": "status-of", "parameter": "backstage#assetus-mvp", "expectation": "answerable"}
+{"id": "q12", "question": "status of backstage#calendarius/calendarius-rename", "template": "status-of", "parameter": "backstage#calendarius/calendarius-rename", "expectation": "answerable"}
+{"id": "q13", "question": "status of backstage#anymeter/standalone-product", "template": "status-of", "parameter": "backstage#anymeter/standalone-product", "expectation": "answerable"}
+{"id": "q14", "question": "status of backstage#ideas/assetus", "template": "status-of", "parameter": "backstage#ideas/assetus", "expectation": "answerable"}
+{"id": "q15", "question": "aliases of anymeter", "template": "aliases-of", "parameter": "anymeter", "expectation": "answerable"}
+{"id": "q16", "question": "aliases of assetus", "template": "aliases-of", "parameter": "assetus", "expectation": "answerable"}
+{"id": "q17", "question": "aliases of gameboard", "template": "aliases-of", "parameter": "gameboard", "expectation": "answerable"}
 {"id": "q18", "question": "what vertical is gameboard in", "template": "member-of", "parameter": "gameboard", "expectation": "answerable"}
-{"id": "q19", "question": "what vertical is sizeus in", "template": "member-of", "parameter": "sizeus", "expectation": "answerable"}
-{"id": "q20", "question": "is sizeus live", "template": "is-it-live", "parameter": "sizeus", "expectation": "answerable"}
-{"id": "q21", "question": "is gameboard live", "template": "is-it-live", "parameter": "gameboard", "expectation": "answerable"}
-{"id": "q22", "question": "is contactus live", "template": "is-it-live", "parameter": "contactus", "expectation": "answerable"}
-{"id": "q23", "question": "is invest.example live", "template": "is-it-live", "parameter": "invest.example", "expectation": "answerable"}
-{"id": "q24", "question": "ci status of gameboard", "template": "ci-status-of", "parameter": "gameboard", "expectation": "answerable"}
-{"id": "q25", "question": "ci status of contactus", "template": "ci-status-of", "parameter": "contactus", "expectation": "answerable"}
-{"id": "q26", "question": "ci status of sneat-libs", "template": "ci-status-of", "parameter": "sneat-libs", "expectation": "answerable"}
-{"id": "q27", "question": "what verifies gameboard#chess-mvp", "template": "what-verifies", "parameter": "gameboard#chess-mvp", "expectation": "answerable"}
-{"id": "q28", "question": "what verifies gameboard#sports", "template": "what-verifies", "parameter": "gameboard#sports", "expectation": "answerable"}
-{"id": "q29", "question": "what verifies contactus#inbox", "template": "what-verifies", "parameter": "contactus#inbox", "expectation": "answerable"}
-{"id": "q30", "question": "contradictions for gameboard-ext", "template": "contradictions-for", "parameter": "gameboard-ext", "expectation": "answerable"}
-{"id": "q31", "question": "contradictions for gameboard#chess-mvp", "template": "contradictions-for", "parameter": "gameboard#chess-mvp", "expectation": "answerable"}
-{"id": "q32", "question": "contradictions for invest.example", "template": "contradictions-for", "parameter": "invest.example", "expectation": "answerable"}
-{"id": "q33", "question": "how fresh is invest.example", "template": "freshness-of", "parameter": "invest.example", "expectation": "answerable"}
-{"id": "q34", "question": "how fresh is gameboard.app", "template": "freshness-of", "parameter": "gameboard.app", "expectation": "answerable"}
+{"id": "q19", "question": "what vertical is kids-club in", "template": "member-of", "parameter": "kids-club", "expectation": "answerable"}
+{"id": "q20", "question": "what vertical is motorius in", "template": "member-of", "parameter": "motorius", "expectation": "answerable"}
+{"id": "q21", "question": "is anymeter live", "template": "is-it-live", "parameter": "anymeter", "expectation": "answerable"}
+{"id": "q22", "question": "is assetus live", "template": "is-it-live", "parameter": "assetus", "expectation": "answerable"}
+{"id": "q23", "question": "is fillless.com live", "template": "is-it-live", "parameter": "fillless.com", "expectation": "answerable"}
+{"id": "q24", "question": "is agendum.app live", "template": "is-it-live", "parameter": "agendum.app", "expectation": "answerable"}
+{"id": "q25", "question": "ci status of backstage", "template": "ci-status-of", "parameter": "backstage", "expectation": "answerable"}
+{"id": "q26", "question": "ci status of gameboard", "template": "ci-status-of", "parameter": "gameboard", "expectation": "answerable"}
+{"id": "q27", "question": "ci status of sneat-go-core", "template": "ci-status-of", "parameter": "sneat-go-core", "expectation": "answerable"}
+{"id": "q28", "question": "ci status of sneat-libs", "template": "ci-status-of", "parameter": "sneat-libs", "expectation": "answerable"}
+{"id": "q29", "question": "contradictions for fillless.com", "template": "contradictions-for", "parameter": "fillless.com", "expectation": "answerable"}
+{"id": "q30", "question": "contradictions for issuenumber.one", "template": "contradictions-for", "parameter": "issuenumber.one", "expectation": "answerable"}
+{"id": "q31", "question": "contradictions for agiledger.app", "template": "contradictions-for", "parameter": "agiledger.app", "expectation": "answerable"}
+{"id": "q32", "question": "contradictions for sneat.ai", "template": "contradictions-for", "parameter": "sneat.ai", "expectation": "answerable"}
+{"id": "q33", "question": "how fresh is agendum.app", "template": "freshness-of", "parameter": "agendum.app", "expectation": "answerable"}
+{"id": "q34", "question": "how fresh is fillless.com", "template": "freshness-of", "parameter": "fillless.com", "expectation": "answerable"}
 {"id": "q35", "question": "what uses github.com/sneat-co/sneat-go-core", "template": "what-uses", "parameter": "github.com/sneat-co/sneat-go-core", "expectation": "answerable"}
 {"id": "q36", "question": "who consumes github.com/sneat-co/sneat-go-core", "template": "what-uses", "parameter": "github.com/sneat-co/sneat-go-core", "expectation": "answerable"}
-{"id": "q37", "question": "what uses github.com/sneat-co/sneat-go-core@v0.9.1", "template": "what-uses", "parameter": "github.com/sneat-co/sneat-go-core@v0.9.1", "expectation": "answerable"}
+{"id": "q37", "question": "what uses github.com/sneat-co/sneat-go-core@v0.58.6", "template": "what-uses", "parameter": "github.com/sneat-co/sneat-go-core@v0.58.6", "expectation": "answerable"}
 {"id": "q38", "question": "what version of github.com/sneat-co/sneat-go-core", "template": "version-pins", "parameter": "github.com/sneat-co/sneat-go-core", "expectation": "answerable"}
 {"id": "q39", "question": "which version pins github.com/sneat-co/sneat-go-core", "template": "version-pins", "parameter": "github.com/sneat-co/sneat-go-core", "expectation": "answerable"}
-{"id": "q40", "question": "what is SizeChart", "template": "aliases-resolve", "parameter": "SizeChart", "expectation": "answerable"}
-{"id": "q41", "question": "resolve SpaceChart", "template": "aliases-resolve", "parameter": "SpaceChart", "expectation": "answerable"}
+{"id": "q40", "question": "what is AnyMeter", "template": "aliases-resolve", "parameter": "AnyMeter", "expectation": "answerable"}
+{"id": "q41", "question": "resolve Assetus", "template": "aliases-resolve", "parameter": "Assetus", "expectation": "answerable"}
 {"id": "q42", "question": "why does contactus exist", "template": "", "parameter": "contactus", "expectation": "expected-unanswerable"}
 {"id": "q43", "question": "why does gameboard exist", "template": "", "parameter": "gameboard", "expectation": "expected-unanswerable"}
-{"id": "q44", "question": "why do we have investus", "template": "", "parameter": "investus", "expectation": "expected-unanswerable"}
+{"id": "q44", "question": "why do we have debtus", "template": "", "parameter": "debtus", "expectation": "expected-unanswerable"}
 {"id": "q45", "question": "what are the gotchas of sneat-go-core", "template": "", "parameter": "sneat-go-core", "expectation": "expected-unanswerable"}
 {"id": "q46", "question": "which secrets does deploying gameboard require", "template": "", "parameter": "gameboard", "expectation": "expected-unanswerable"}
 {"id": "q47", "question": "how is contactus deployed", "template": "", "parameter": "contactus", "expectation": "expected-unanswerable"}
 {"id": "q48", "question": "how do i deploy gameboard to production", "template": "", "parameter": "gameboard", "expectation": "expected-unanswerable"}
-{"id": "q49", "question": "what plan-signal is the sizeus waitlist showing", "template": "", "parameter": "sizeus", "expectation": "expected-unanswerable"}
-{"id": "q50", "question": "how much does sizeus cost", "template": "", "parameter": "sizeus", "expectation": "expected-unanswerable"}
+{"id": "q49", "question": "what plan-signal is the sizechart waitlist showing", "template": "", "parameter": "sizechart", "expectation": "expected-unanswerable"}
+{"id": "q50", "question": "how much does sizechart cost", "template": "", "parameter": "sizechart", "expectation": "expected-unanswerable"}

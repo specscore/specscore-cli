@@ -1,9 +1,8 @@
 {
   "domains": {
-    "sizeus.app": {"status": {"/": {"http_status": 200}}},
-    "spaceus.app": {"status": {"/": {"http_status": 200}}},
-    "contactus.app": {"status": {"/": {"http_status": 200}}},
-    "gameboard.app": {"status": {"/": {"http_status": 200}}},
-    "invest.example": {"status": {"/": {"http_status": 200}}}
+    "fillless.com": {"status": {"/": {"http_status": 200}}},
+    "issuenumber.one": {"status": {"/": {"http_status": 404}}},
+    "agiledger.app": {"status": {"/": {"http_status": 0}}},
+    "sneat.ai": {"status": {"/": {"http_status": 0}}}
   }
 }

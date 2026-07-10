@@ -1,56 +1,53 @@
 # Curated ecosystem map for the answers benchmark fixture.
 #
-# A tiny, honest miniature of the Sneat ecosystem: real product ids, brands,
-# repos, verticals, and domains chosen so every entity-targeting `studio ask`
-# template has an answerable subject. The registries adapter turns each product
-# into aliased-as / implemented-by / member-of facts and each domain into a
+# A tiny, honest miniature of the Sneat ecosystem using the REAL Sneat entity
+# ids the benchmark questions are parameterized over (anymeter, assetus,
+# gameboard, calendarius, formius/fillless.com, …), so the one committed
+# questions.jsonl scores identically against this fixture and against a real
+# Sneat workspace index. The registries adapter turns each product into
+# aliased-as / implemented-by / member-of facts and each domain into a
 # canonical domain→product `fronts` fact.
 products:
-  - id: sizeus
-    brand: SizeChart
-    vertical: retail
+  - id: anymeter
+    brand: AnyMeter
     repos:
-      - sizeus-app
+      - trackus
     domains:
-      - sizeus.app
-  - id: spaceus
-    brand: SpaceChart
-    vertical: retail
+      - anymeter.app
+  - id: assetus
+    brand: Assetus
     repos:
-      - spaceus-app
+      - assetus
     domains:
-      - spaceus.app
-  - id: contactus
-    brand: ContactUs
-    vertical: platform
-    repos:
-      - contactus
-    domains:
-      - contactus.app
+      - assetus.app
   - id: gameboard
     brand: GameBoard
-    vertical: games
+    vertical: sports
     repos:
       - gameboard
     domains:
-      - gameboard.app
-  # The dead investor-CTA product: its domain is declared live in domains.json
-  # (200) but the probe-stubbed verified-behavior fact says down — the
-  # status-drift declared-vs-verified class the benchmark's is-it-live and
-  # contradictions-for instances exercise.
-  - id: investus
-    brand: InvestUs
-    vertical: investor
+      - gameboard.live
+  - id: calendarius
+    brand: Calendarius
     repos:
-      - investus-site
+      - calendarius
     domains:
-      - invest.example
-  # The naming-conflict class: this map says gameboard-ext is implemented by
-  # `ext-gameboard`, while sneat-ops-legacy/ecosystem.yaml says it is
-  # `gameboard-contract` — two human-authored registries disagreeing on the same
-  # (subject, predicate), the `ext-<id>` vs `<id>-contract` case.
-  - id: gameboard-ext
-    brand: GameBoardExt
-    vertical: games
+      - calendarius.app
+  # The dead investor-CTA class: fillless.com is declared serving in
+  # domains.json while the probe-stubbed verified-behavior fact says down.
+  - id: formius
+    brand: Formius
     repos:
-      - ext-gameboard
+      - formius
+    domains:
+      - fillless.com
+  - id: kids-club
+    vertical: hospitality
+  - id: motorius
+    vertical: automotive
+  - id: listus
+    repos:
+      - listus
+  - id: logistus
+    repos:
+      - logistus

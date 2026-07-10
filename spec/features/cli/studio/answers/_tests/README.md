@@ -4,7 +4,7 @@ format: https://specscore.md/scenarios-index-specification
 
 # Rehearse Scenarios — studio answers
 
-Sixteen executable scenarios covering all acceptance criteria of [`cli/studio/answers`](../README.md).
+Seventeen executable scenarios covering all acceptance criteria of [`cli/studio/answers`](../README.md).
 
 Run with:
 

@@ -54,7 +54,7 @@ SS_ABS="$(command -v "$SPECSCORE")" \
 
 # --- resolve the target store ---------------------------------------------
 SCRATCH=""
-cleanup() { [ -n "$SCRATCH" ] && rm -rf "$SCRATCH"; }
+cleanup() { if [ -n "$SCRATCH" ]; then rm -rf "$SCRATCH"; fi; }
 trap cleanup EXIT
 
 if [ "$FIXTURE" -eq 1 ]; then
@@ -95,10 +95,12 @@ gate = os.environ.get("GATE", "")
 
 # The authoritative composition table (## Benchmark composition) the runner
 # enforces against the file — a drift between file and table is a hard failure.
+# what-verifies carries no benchmark instances (no rehearse evidence exists in
+# the dogfood workspace yet); the template stays in ask, unit-tested.
 COMPOSITION = {
-    "who-fronts": 4, "what-repos-implement": 4, "status-of": 5, "aliases-of": 3,
-    "member-of": 3, "is-it-live": 4, "ci-status-of": 3, "what-verifies": 3,
-    "contradictions-for": 3, "freshness-of": 2, "what-uses": 3, "version-pins": 2,
+    "who-fronts": 5, "what-repos-implement": 4, "status-of": 5, "aliases-of": 3,
+    "member-of": 3, "is-it-live": 4, "ci-status-of": 4,
+    "contradictions-for": 4, "freshness-of": 2, "what-uses": 3, "version-pins": 2,
     "aliases-resolve": 2,
 }
 ANSWERABLE_TOTAL = 41

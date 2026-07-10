@@ -1,7 +1,0 @@
-{
-  "started_at": "2026-07-01T09:00:00Z",
-  "scenarios": [
-    {"file": "chess-mvp/board-renders.md", "status": "fail", "verifies": ["chess-mvp#ac:board-renders"]},
-    {"file": "sports/scores-track.md", "status": "pass", "verifies": ["sports#ac:scores-track"]}
-  ]
-}

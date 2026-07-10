@@ -23,16 +23,18 @@ import (
 // benchmarkComposition is the authoritative `## Benchmark composition` table:
 // answerable instances per template. The answerable total is 41; the file also
 // carries 9 expected-unanswerable instances (empty template), summing to 50.
+// what-verifies carries no benchmark instances (the Sneat dogfood workspace
+// holds no rehearse facts yet — v0.5 adoption pending); the template stays in
+// ask and is covered by the router unit tests.
 var benchmarkComposition = map[string]int{
-	"who-fronts":           4,
+	"who-fronts":           5,
 	"what-repos-implement": 4,
 	"status-of":            5,
 	"aliases-of":           3,
 	"member-of":            3,
 	"is-it-live":           4,
-	"ci-status-of":         3,
-	"what-verifies":        3,
-	"contradictions-for":   3,
+	"ci-status-of":         4,
+	"contradictions-for":   4,
 	"freshness-of":         2,
 	"what-uses":            3,
 	"version-pins":         2,

@@ -11,10 +11,11 @@ Scenario source: [../README.md](../README.md) → `### AC: contradicts-fact-writ
 
 Given an indexed store containing exactly one detectable contradiction, when I run `specscore studio contradictions` and then `specscore studio facts --predicate contradicts --format json`, then the facts JSON contains a `contradicts` fact whose subject and object are the two sides' fact refs, evidence_class `derived`, adapter id `contradictions`, and evidence_pointer naming the detector, and re-running `contradictions` does not create a duplicate (same subject/predicate/object).
 
-Seam: the one contradiction is a naming-conflict — two ecosystem maps declaring
-`(gameboard-ext, implemented-by, …)` differently — so exactly one `contradicts`
-fact is written. Idempotence is proven by running `contradictions` twice and
-asserting the `contradicts` count is unchanged.
+Seam: the one contradiction is a naming-conflict — two ecosystem maps fronting
+the domain `d.example` with different products (`fronts` is in the detector's
+single-valued predicate set) — so exactly one `contradicts` fact is written.
+Idempotence is proven by running `contradictions` twice and asserting the
+`contradicts` count is unchanged.
 
 ```bash
 #!/usr/bin/env bash
@@ -33,15 +34,15 @@ cd "$workdir"
 mkdir -p ops ops-legacy
 cat > ops/ecosystem.yaml <<'YAML'
 products:
-  - id: gameboard-ext
-    repos:
-      - ext-gameboard
+  - id: ext-foo
+    domains:
+      - d.example
 YAML
 cat > ops-legacy/ecosystem-legacy.yaml <<'YAML'
 products:
-  - id: gameboard-ext
-    repos:
-      - gameboard-contract
+  - id: foo-contract
+    domains:
+      - d.example
 YAML
 cat > studio.yaml <<'YAML'
 name: demo

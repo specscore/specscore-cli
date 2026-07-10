@@ -37,10 +37,12 @@ QUESTIONS="$questions" python3 - <<'PY'
 import json, os
 from collections import Counter
 
+# what-verifies carries no benchmark instances (no rehearse evidence exists in
+# the Sneat dogfood workspace yet); the template stays in ask, unit-tested.
 COMPOSITION = {
-    "who-fronts": 4, "what-repos-implement": 4, "status-of": 5, "aliases-of": 3,
-    "member-of": 3, "is-it-live": 4, "ci-status-of": 3, "what-verifies": 3,
-    "contradictions-for": 3, "freshness-of": 2, "what-uses": 3, "version-pins": 2,
+    "who-fronts": 5, "what-repos-implement": 4, "status-of": 5, "aliases-of": 3,
+    "member-of": 3, "is-it-live": 4, "ci-status-of": 4,
+    "contradictions-for": 4, "freshness-of": 2, "what-uses": 3, "version-pins": 2,
     "aliases-resolve": 2,
 }
 lines = [l for l in open(os.environ["QUESTIONS"]) if l.strip()]
