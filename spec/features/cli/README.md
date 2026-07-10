@@ -98,6 +98,7 @@ Reports the CLI's build identity. `specscore version` prints the full human-read
 | [plan](plan/README.md) | specscore plan commands query Plan artifacts in spec/plans/ — listing them and inspecting one plan's metadata and task rollup — so agents and humans can answer what plans exist and what status they hold without hand-grepping. |
 | [sidekick](sidekick/README.md) | Scaffold sidekick-seed artifacts |
 | [studio](studio/README.md) | Command group for SpecScore Studio: index, facts (Phase 0); ask, serve, mcp (later features). Design: specstudio-skills/spec/research/studio-design-2026-07/. |
+| [rehearse](rehearse/README.md) | Command group for the Rehearse acceptance-evidence layer (v0.3 fold-in per rehearse repo spec/ideas/rehearse-evidence-layer.md). |
 
 ## Behavior
 
