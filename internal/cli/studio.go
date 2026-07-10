@@ -34,6 +34,10 @@ var (
 	// verb runs it through this var so tests inject deterministic results
 	// without exercising the HTTP seam.
 	probeRunDomainFn = probe.RunDomain
+	// probeRunCIFn is the test seam for the ci-state probe kind; the verb runs
+	// it through this var so tests inject deterministic results without
+	// exercising the exec (git/gh) seam.
+	probeRunCIFn = probe.RunCI
 	// storeMergeFn is the test seam for the non-destructive store merge the
 	// probe verb writes through.
 	storeMergeFn = store.Merge
@@ -191,9 +195,8 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 
 // --- studio probe ---
 
-// probeKinds are the accepted --kind selectors. This phase implements the
-// domain-liveness kind; the ci kind lands in a later task, so selecting it (or
-// all) simply runs whatever kinds are implemented today.
+// probeKinds are the accepted --kind selectors: the domain-liveness kind, the
+// ci-state kind, or all of them.
 const (
 	kindDomain = "domain"
 	kindCI     = "ci"
@@ -213,6 +216,12 @@ The domain kind issues an HTTP(S) GET to every domain carrying a serves-status
 fact (https first, http on transport failure) and records the answering status
 — or the reserved object "down" when neither scheme responds. A dead domain is
 a successful observation, not a run failure.
+
+The ci kind reads each workspace repo's latest default-branch CI run conclusion
+via "gh api". A repo with no origin remote or a non-GitHub remote is skipped
+with a per-repo notice; a repo whose gh api call fails records a per-repo
+warning and no fact. If "gh" is not on PATH the ci kind is skipped entirely
+with one warning (the domain kind still runs under --kind all).
 
 --kind <domain|ci|all> selects which probe families run (default all).
 --format <human|json> controls the run summary; the JSON summary is an object
@@ -273,6 +282,16 @@ func runStudioProbe(cmd *cobra.Command, _ []string) error {
 		produced = append(produced, res.Facts...)
 		warnings = append(warnings, res.Warnings...)
 	}
+	if kind == kindCI || kind == kindAll {
+		repos, err := probeCITargets(cmd)
+		if err != nil {
+			return err
+		}
+		res := probeRunCIFn(repos, version, now)
+		kinds = append(kinds, res.Kinds...)
+		produced = append(produced, res.Facts...)
+		warnings = append(warnings, res.Warnings...)
+	}
 
 	merged, err := storeMergeFn(dbPath, produced)
 	if err != nil {
@@ -286,6 +305,39 @@ func runStudioProbe(cmd *cobra.Command, _ []string) error {
 		Warnings:        warnings,
 	}
 	return renderProbeSummary(cmd, format, summary)
+}
+
+// probeCITargets resolves the ci kind's targets: the workspace's repos, in the
+// same order the index run resolved them (ResolveRepos plus the missing literal
+// paths appended), with their slugs re-minted via a fresh fact.RepoSlugger so
+// the emitted ci-status fact subjects join the store's existing repo slugs (the
+// slug-join invariant: identical order in, identical `-N` collision suffixes
+// out). The ci kind runs `git remote get-url origin` per repo, so a repo dir
+// need not exist here — a missing dir simply fails the git call and is skipped
+// as a non-GitHub repo with a per-repo notice (REQ: ci-state).
+func probeCITargets(cmd *cobra.Command) ([]probe.CIRepo, error) {
+	workspaceFlag, _ := cmd.Flags().GetString("workspace")
+	ws, err := workspace.Load(workspaceFlag)
+	if err != nil {
+		return nil, err
+	}
+	repos, missing, err := ws.ResolveRepos()
+	if err != nil {
+		return nil, err
+	}
+	// Mirror the index run's ordering: existing repos then missing literals,
+	// slugged in that exact order so the collision counter matches.
+	repos = append(repos, missing...)
+	slugger := fact.NewRepoSlugger()
+	targets := make([]probe.CIRepo, 0, len(repos))
+	for _, dir := range repos {
+		targets = append(targets, probe.CIRepo{
+			Dir:       dir,
+			Slug:      slugger.Slug(dir),
+			Ecosystem: ws.Name,
+		})
+	}
+	return targets, nil
 }
 
 // renderProbeSummary prints the probe run summary as JSON or free-form human

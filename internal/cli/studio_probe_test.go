@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,6 +51,26 @@ func stubProbeHTTP(t *testing.T, fn func(url string) (*http.Response, error)) {
 
 func httpOK(code int) *http.Response {
 	return &http.Response{StatusCode: code, Body: io.NopCloser(strings.NewReader(""))}
+}
+
+// stubProbeCI replaces the ci-kind seam for one test so a --kind all/default
+// run stays hermetic (no real git/gh). fn receives the repos the verb resolved
+// so tests can assert the slug-join invariant.
+func stubProbeCI(t *testing.T, fn func(repos []probe.CIRepo) probe.Result) {
+	t.Helper()
+	old := probeRunCIFn
+	probeRunCIFn = func(repos []probe.CIRepo, _ string, _ time.Time) probe.Result {
+		return fn(repos)
+	}
+	t.Cleanup(func() { probeRunCIFn = old })
+}
+
+// stubProbeCINoop stubs the ci kind to a no-op that produces no facts, keeping
+// a --kind all/default run hermetic when the test only exercises the domain
+// kind.
+func stubProbeCINoop(t *testing.T) {
+	t.Helper()
+	stubProbeCI(t, func([]probe.CIRepo) probe.Result { return probe.Result{Kinds: []string{probe.KindCI}} })
 }
 
 // AC: probe-writes-verified-serves-status — a live 200 probe records a
@@ -271,20 +292,46 @@ func TestStudioProbe_BadKindExits2(t *testing.T) {
 	}
 }
 
-// --kind ci is accepted this phase but runs no kinds yet (Task 4 lands it): the
-// run succeeds, issues no HTTP request, and writes no facts.
-func TestStudioProbe_KindCIRunsNoKindsYet(t *testing.T) {
-	wsPath := newStudioWorkspace(t, "repo-a")
+// --kind ci runs only the ci kind: no HTTP request, and the resolved CI targets
+// carry the store's repo slugs (the slug-join invariant) so the merged fact
+// subjects join the store's existing repo facts.
+func TestStudioProbe_KindCIRunsCIOnly(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a", "repo-b")
 	seedProbeStore(t, wsPath, []fact.Fact{declaredServesStatusFact("example.app", "200")})
 	stubProbeHTTP(t, func(string) (*http.Response, error) {
 		t.Fatal("the ci kind must not issue an HTTP request")
 		return nil, nil
+	})
+	var gotSlugs []string
+	stubProbeCI(t, func(repos []probe.CIRepo) probe.Result {
+		for _, r := range repos {
+			gotSlugs = append(gotSlugs, r.Slug)
+		}
+		// Emit one ci-status fact so the summary reports a write.
+		return probe.Result{
+			Kinds: []string{probe.KindCI},
+			Facts: []fact.Fact{{
+				Subject:    "repo-a",
+				Predicate:  probe.CIStatusPredicate,
+				Object:     "success",
+				Evidence:   fact.Evidence{Class: fact.VerifiedBehavior, Pointer: "repos/acme/repo-a/actions/runs?branch=main&per_page=1"},
+				Adapter:    fact.Adapter{ID: probe.CIAdapterID, Version: "9.9.9"},
+				ObservedAt: "2026-07-10T12:00:00Z",
+				VerifiedAt: "2026-07-10T12:00:00Z",
+				Ecosystem:  "demo",
+			}},
+		}
 	})
 
 	out, _, err := runStudioCmd(t, "probe", "--workspace", wsPath,
 		"--kind", "ci", "--format", "json")
 	if err != nil {
 		t.Fatalf("studio probe --kind ci: %v", err)
+	}
+	// The verb re-mints the store's repo slugs over the same ResolveRepos order
+	// the index run used (the slug-join invariant).
+	if len(gotSlugs) != 2 || gotSlugs[0] != "repo-a" || gotSlugs[1] != "repo-b" {
+		t.Errorf("ci target slugs = %v, want [repo-a repo-b] (store slugs, resolve order)", gotSlugs)
 	}
 	var s struct {
 		Kinds        []string `json:"kinds"`
@@ -293,26 +340,67 @@ func TestStudioProbe_KindCIRunsNoKindsYet(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &s); err != nil {
 		t.Fatalf("summary is not JSON: %v", err)
 	}
-	if len(s.Kinds) != 0 || s.FactsWritten != 0 {
-		t.Errorf("ci-only run = %+v, want no kinds and 0 facts this phase", s)
+	if len(s.Kinds) != 1 || s.Kinds[0] != "ci" {
+		t.Errorf("kinds = %v, want [ci]", s.Kinds)
+	}
+	if s.FactsWritten != 1 {
+		t.Errorf("facts_written = %d, want 1", s.FactsWritten)
 	}
 }
 
-// --kind all runs the implemented domain kind.
-func TestStudioProbe_KindAllRunsDomain(t *testing.T) {
+// The ci kind resolves its targets from the workspace; a workspace whose repos
+// resolve to zero directories is an exit-2 error (reused ResolveRepos guard).
+func TestStudioProbe_KindCIWorkspaceResolveError(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
 	seedProbeStore(t, wsPath, []fact.Fact{declaredServesStatusFact("example.app", "200")})
-	var called bool
-	stubProbeHTTP(t, func(string) (*http.Response, error) {
-		called = true
-		return httpOK(200), nil
+	// Rewrite the workspace so its single repo entry names a non-existent glob
+	// that resolves to zero directories.
+	if err := os.WriteFile(wsPath, []byte("name: demo\nrepos:\n  - nope/*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubProbeCI(t, func([]probe.CIRepo) probe.Result {
+		t.Fatal("the ci kind must not run when repo resolution fails")
+		return probe.Result{}
 	})
 
-	if _, _, err := runStudioCmd(t, "probe", "--workspace", wsPath, "--kind", "all"); err != nil {
+	_, _, err := runStudioCmd(t, "probe", "--workspace", wsPath, "--kind", "ci")
+	if code := studioExit(t, err); code != 2 {
+		t.Errorf("exit code = %d, want 2 for a zero-repo workspace", code)
+	}
+}
+
+// --kind all runs both the domain and the ci kinds.
+func TestStudioProbe_KindAllRunsDomainAndCI(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedProbeStore(t, wsPath, []fact.Fact{declaredServesStatusFact("example.app", "200")})
+	var domainCalled, ciCalled bool
+	stubProbeHTTP(t, func(string) (*http.Response, error) {
+		domainCalled = true
+		return httpOK(200), nil
+	})
+	stubProbeCI(t, func([]probe.CIRepo) probe.Result {
+		ciCalled = true
+		return probe.Result{Kinds: []string{probe.KindCI}}
+	})
+
+	out, _, err := runStudioCmd(t, "probe", "--workspace", wsPath, "--kind", "all", "--format", "json")
+	if err != nil {
 		t.Fatalf("studio probe --kind all: %v", err)
 	}
-	if !called {
+	if !domainCalled {
 		t.Error("the domain kind did not run under --kind all")
+	}
+	if !ciCalled {
+		t.Error("the ci kind did not run under --kind all")
+	}
+	var s struct {
+		Kinds []string `json:"kinds"`
+	}
+	if err := json.Unmarshal([]byte(out), &s); err != nil {
+		t.Fatalf("summary is not JSON: %v", err)
+	}
+	if len(s.Kinds) != 2 || s.Kinds[0] != "domain" || s.Kinds[1] != "ci" {
+		t.Errorf("kinds = %v, want [domain ci]", s.Kinds)
 	}
 }
 
@@ -326,6 +414,7 @@ func TestStudioProbe_MergeErrorPropagates(t *testing.T) {
 		return probe.Result{Kinds: []string{"domain"}}
 	}
 	t.Cleanup(func() { probeRunDomainFn = oldRun })
+	stubProbeCINoop(t)
 
 	oldMerge := storeMergeFn
 	storeMergeFn = func(string, []fact.Fact) (store.MergeResult, error) {

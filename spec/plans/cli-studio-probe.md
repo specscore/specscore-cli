@@ -48,7 +48,7 @@ Prove the non-destructive merge through the verb: probing preserves all index-wr
 
 **Verifies:** cli/studio/probe#ac:ci-state-fact, cli/studio/probe#ac:non-github-repo-skipped, cli/studio/probe#ac:gh-absent-skips-ci
 **Depends-On:** 3
-**Status:** planning
+**Status:** complete
 
 Add the `probe-ci` kind: per workspace repo, resolve the GitHub coordinate from `git remote get-url origin` (exec seam), skip non-GitHub/no-remote repos with a visible per-repo notice, query the latest default-branch run conclusion via `gh api` (absent `gh` skips the kind upfront, like rehearse's missing-binary skip), and emit `ci-status` facts subject-keyed by the store's repo slug.
 
