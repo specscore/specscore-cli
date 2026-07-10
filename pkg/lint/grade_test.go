@@ -48,14 +48,6 @@ func gradeViolations(t *testing.T, specRoot string) []Violation {
 	return v
 }
 
-func rulesOf(vs []Violation) []string {
-	out := make([]string, 0, len(vs))
-	for _, v := range vs {
-		out = append(out, v.Rule)
-	}
-	return out
-}
-
 const featHdr = "# Feature: X\n\n"
 
 // --- AC: grade-absent-is-valid -------------------------------------------------

@@ -232,7 +232,7 @@ func TestTaskChangeStatus_PlanInline_CompleteWithProvenance(t *testing.T) {
 	statusIdx := strings.Index(body, "**Status:** complete")
 	implIdx := strings.Index(body, "**Implemented-by:**")
 	depsIdx := strings.Index(body, "**Depends-On:** —")
-	if !(statusIdx < implIdx && implIdx < depsIdx) {
+	if statusIdx >= implIdx || implIdx >= depsIdx {
 		t.Errorf("provenance not placed adjacent to Status in setup block:\n%s", body)
 	}
 	// Sibling deploy block untouched.

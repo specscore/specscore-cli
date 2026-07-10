@@ -91,13 +91,13 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Fprintf(out, "%s: %s  # %s\n", k, renderValue(lookupValue(res.Values, k)), res.Origin[k])
+			_, _ = fmt.Fprintf(out, "%s: %s  # %s\n", k, renderValue(lookupValue(res.Values, k)), res.Origin[k])
 		}
 		return nil
 	}
 
 	data, _ := yaml.Marshal(res.Values)
-	fmt.Fprint(out, string(data))
+	_, _ = fmt.Fprint(out, string(data))
 	return nil
 }
 
@@ -115,11 +115,11 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 	rendered := renderValue(val)
 	if origin, _ := cmd.Flags().GetBool("origin"); origin {
 		if o := res.Origin[key]; o != "" {
-			fmt.Fprintf(out, "%s  # %s\n", rendered, o)
+			_, _ = fmt.Fprintf(out, "%s  # %s\n", rendered, o)
 			return nil
 		}
 	}
-	fmt.Fprintln(out, rendered)
+	_, _ = fmt.Fprintln(out, rendered)
 	return nil
 }
 

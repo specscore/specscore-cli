@@ -97,7 +97,7 @@ func TestAppendResolutionNote_AppendToExisting(t *testing.T) {
 	firstIdx := strings.Index(got, "first reason")
 	secondIdx := strings.Index(got, "second reason")
 	footIdx := strings.Index(got, footerLine)
-	if !(firstIdx < secondIdx && secondIdx < footIdx) {
+	if firstIdx >= secondIdx || secondIdx >= footIdx {
 		t.Fatalf("new paragraph must follow existing content and precede footer:\n%s", got)
 	}
 }

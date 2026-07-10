@@ -87,7 +87,7 @@ func httpGetBytes(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %d fetching %s", resp.StatusCode, url)
 	}
@@ -152,7 +152,7 @@ func extractSkillsFromTarball(gzData []byte) ([]skillFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	tr := tar.NewReader(gzr)
 	var files []skillFile
