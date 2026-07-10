@@ -7,6 +7,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
+	"github.com/specscore/specscore-cli/internal/studio/contradictions"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/ingr"
 	"github.com/specscore/specscore-cli/internal/studio/probe"
@@ -63,6 +65,7 @@ Running "specscore studio" with no subcommand prints this help and exits 0.`,
 		studioIndexCommand(),
 		studioProbeCommand(),
 		studioFactsCommand(),
+		studioContradictionsCommand(),
 	)
 	return cmd
 }
@@ -493,6 +496,142 @@ func humanAge(verifiedAt string, now time.Time) string {
 	default:
 		return "stale"
 	}
+}
+
+// --- studio contradictions ---
+//
+// Feature: cli/studio/answers (REQ: contradictions-verb,
+// REQ: status-vs-behavior-drift, REQ: same-predicate-disagreement)
+
+func studioContradictionsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "contradictions",
+		Short: "Report contradictions between facts in the store (offline)",
+		Long: `Reads the fact store built by "studio index" (enriched by "studio probe")
+and reports contradictions between facts. It performs no network I/O — it is a
+pure query over the store.
+
+Two detector classes are computed:
+
+  status-drift    a declared claim a verified-behavior observation contradicts:
+                  a shipped-implying has-status (Approved, Stable, Implementing)
+                  whose feature has a failing has-verification-status, or a
+                  declared serves-status (e.g. 200) a live probe disagrees with
+                  (e.g. down).
+  naming-conflict two declared facts asserting different objects for the same
+                  subject and predicate from different evidence pointers.
+
+Each reported item carries both evidence sets — for each side the subject,
+predicate, object, evidence class, evidence pointer, adapter id, and
+observed_at — plus the detector id that flagged it. A store with no
+contradictions exits 0 and prints an empty list (JSON []).
+
+--format <human|json> selects the output format (default human).
+
+Running before "studio index" exits 2 with a message naming the expected store
+path and suggesting "specscore studio index".`,
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE:         runStudioContradictions,
+	}
+	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
+	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
+	cmd.Flags().String("format", "human", "output format: human or json")
+	return cmd
+}
+
+// contradictionSide is one side of a contradiction in the verb's output: the
+// fact's triple plus the provenance fields the Feature's item shape requires
+// (REQ: contradictions-verb).
+type contradictionSide struct {
+	Subject    string `json:"subject"`
+	Predicate  string `json:"predicate"`
+	Object     string `json:"object"`
+	Class      string `json:"evidence_class"`
+	Pointer    string `json:"evidence_pointer"`
+	Adapter    string `json:"adapter"`
+	ObservedAt string `json:"observed_at"`
+}
+
+// contradictionItem is the JSON/human shape of one detected contradiction: the
+// detector id plus both evidence sets (REQ: contradictions-verb).
+type contradictionItem struct {
+	Detector string            `json:"detector"`
+	A        contradictionSide `json:"a"`
+	B        contradictionSide `json:"b"`
+}
+
+func runStudioContradictions(cmd *cobra.Command, _ []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "human" && format != "json" {
+		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
+	}
+
+	dbPath, err := studioFactsStorePath(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Query serves as the missing/empty-store guard: it returns the same exit-2
+	// guidance `studio facts` gives when `studio index` has never run
+	// (REQ: contradictions-verb; AC: contradictions-without-index-errors).
+	facts, err := store.Query(dbPath, store.Filter{})
+	if err != nil {
+		return err
+	}
+
+	items := make([]contradictionItem, 0)
+	for _, it := range contradictions.Detect(facts) {
+		items = append(items, contradictionItem{
+			Detector: string(it.Detector),
+			A:        toSide(it.A),
+			B:        toSide(it.B),
+		})
+	}
+	return renderContradictions(cmd, format, items)
+}
+
+// toSide projects a fact onto the verb's side shape.
+func toSide(f fact.Fact) contradictionSide {
+	return contradictionSide{
+		Subject:    f.Subject,
+		Predicate:  f.Predicate,
+		Object:     f.Object,
+		Class:      string(f.Class),
+		Pointer:    f.Pointer,
+		Adapter:    f.Adapter.ID,
+		ObservedAt: f.ObservedAt,
+	}
+}
+
+// renderContradictions prints the detected items as a JSON array or a human
+// list. A clean store prints an empty JSON array / a "No contradictions" line
+// (REQ: contradictions-verb).
+func renderContradictions(cmd *cobra.Command, format string, items []contradictionItem) error {
+	w := cmd.OutOrStdout()
+	if format == "json" {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(items)
+	}
+	if len(items) == 0 {
+		_, _ = fmt.Fprintln(w, "No contradictions found.")
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "Contradictions: %d\n", len(items))
+	for _, it := range items {
+		_, _ = fmt.Fprintf(w, "\n[%s]\n", it.Detector)
+		printContradictionSide(w, "a", it.A)
+		printContradictionSide(w, "b", it.B)
+	}
+	return nil
+}
+
+// printContradictionSide prints one side's triple and provenance under a label.
+func printContradictionSide(w io.Writer, label string, s contradictionSide) {
+	_, _ = fmt.Fprintf(w, "  %s: (%s, %s, %s)\n", label, s.Subject, s.Predicate, s.Object)
+	_, _ = fmt.Fprintf(w, "     class=%s pointer=%s adapter=%s observed_at=%s\n",
+		s.Class, s.Pointer, s.Adapter, s.ObservedAt)
 }
 
 // studioFactsStorePath resolves the fact-store path for the facts verb:

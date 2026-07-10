@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: studio answers — contradictions, resolve, ask + benchmark
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** cli/studio/answers
 **Date:** 2026-07-10
 **Owner:** ai
@@ -24,7 +24,7 @@ Detectors first (pure functions over store reads — the core value), then their
 
 **Verifies:** cli/studio/answers#ac:status-drift-verified-fail, cli/studio/answers#ac:status-drift-dead-domain, cli/studio/answers#ac:naming-conflict-declared-disagreement
 **Depends-On:** —
-**Status:** planning
+**Status:** in_progress
 
 The detector engine as pure functions over store facts: status-drift branch (a) shipped-implying `has-status` joined by subject prefix to failing `has-verification-status`, branch (b) same-subject+predicate declared-vs-verified-behavior disagreement; naming-conflict (declared×declared, different objects and pointers). The `studio contradictions` verb renders items with BOTH evidence sets, human + `--format json`.
 
