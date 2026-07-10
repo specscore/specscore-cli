@@ -9,6 +9,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,6 +171,7 @@ func rehearseNewCommand() *cobra.Command {
 	var (
 		force  bool
 		commit bool
+		dryRun bool
 	)
 	cmd := &cobra.Command{
 		Use:   "new <ac-ref>",
@@ -196,20 +198,24 @@ message:
     Verifies: <feature-slug>#ac:<ac-slug>
 
 If the commit fails but the file was written, the command exits 1 (the scaffold
-survives on disk).`,
+survives on disk).
+
+If --dry-run is set, the scaffold is printed to stdout without writing any file
+or creating a git commit. --force and --commit are ignored in this mode.`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRehearseNew(args[0], force, commit)
+			return runRehearseNew(args[0], force, commit, dryRun, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing file without error")
 	cmd.Flags().BoolVar(&commit, "commit", false, "create a git commit after writing the file")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print scaffold to stdout without writing files or committing")
 	return cmd
 }
 
 // runRehearseNew is the testable body of `rehearse new`.
-func runRehearseNew(acRef string, force, commit bool) error {
+func runRehearseNew(acRef string, force, commit, dryRun bool, out io.Writer) error {
 	// 1. Resolve the AC reference → raw body.
 	result, err := scaffold.Resolve(acRef, rehearseNewReadFileFn)
 	if err != nil {
@@ -222,18 +228,25 @@ func runRehearseNew(acRef string, force, commit bool) error {
 	// 3. Generate the scaffold markdown.
 	content := scaffold.Generate(result.FeatureSlug, result.ACSlug, extracted)
 
-	// 4. Determine the output path.
+	// 4. Dry-run: print to writer and return without writing files or committing.
+	// Feature: cli/rehearse/new-dry-run (AC: dry-run-flag, dry-run-ignores-flags)
+	if dryRun {
+		fmt.Fprint(out, content)
+		return nil
+	}
+
+	// 5. Determine the output path.
 	outPath := filepath.Join(
 		"spec", "features", result.FeatureSlug, "_tests", result.ACSlug+".md",
 	)
 
-	// 5. Create parent directories.
+	// 6. Create parent directories.
 	parentDir := filepath.Dir(outPath)
 	if mkErr := rehearseNewMkdirAllFn(parentDir, 0o755); mkErr != nil {
 		return exitcode.InvalidArgsErrorf("cannot create directory %q: %v", parentDir, mkErr)
 	}
 
-	// 6. Check for existing file (unless --force).
+	// 7. Check for existing file (unless --force).
 	if !force {
 		if _, statErr := rehearseNewStatFn(outPath); statErr == nil {
 			return exitcode.InvalidArgsErrorf(
@@ -243,12 +256,12 @@ func runRehearseNew(acRef string, force, commit bool) error {
 		}
 	}
 
-	// 7. Write the scaffold file.
+	// 8. Write the scaffold file.
 	if writeErr := rehearseNewWriteFileFn(outPath, []byte(content), 0o644); writeErr != nil {
 		return exitcode.InvalidArgsErrorf("cannot write scaffold to %q: %v", outPath, writeErr)
 	}
 
-	// 8. Optionally create a git commit.
+	// 9. Optionally create a git commit.
 	if commit {
 		msg := fmt.Sprintf(
 			"feat(rehearse): scaffold %s scenario\n\nVerifies: %s#ac:%s",

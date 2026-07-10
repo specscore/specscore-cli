@@ -4,9 +4,14 @@ package cli
 //
 // Verifies: cli/rehearse/new#ac:resolve-ac-reference
 // Verifies: cli/rehearse/new#ac:missing-ac-error
+// Verifies: cli/rehearse/new-dry-run#ac:dry-run-flag
+// Verifies: cli/rehearse/new-dry-run#ac:dry-run-ignores-flags
+// Verifies: cli/rehearse/new-dry-run#ac:error-handling-same
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -344,5 +349,134 @@ func TestRehearseNew_CommitFailsAfterWrite(t *testing.T) {
 	var ec interface{ ExitCode() int }
 	if !errors.As(err, &ec) || ec.ExitCode() != 1 {
 		t.Errorf("exit code = %v, want 1 (scaffold survives)", err)
+	}
+}
+
+// withSeams swaps all five package-level seams for the duration of the test.
+func withSeams(
+	t *testing.T,
+	readFile func(string) (string, error),
+	mkdirAll func(string, os.FileMode) error,
+	writeFile func(string, []byte, os.FileMode) error,
+	stat func(string) (os.FileInfo, error),
+	gitExec func(args ...string) ([]byte, error),
+) {
+	t.Helper()
+	origRead := rehearseNewReadFileFn
+	origMkdir := rehearseNewMkdirAllFn
+	origWrite := rehearseNewWriteFileFn
+	origStat := rehearseNewStatFn
+	origGit := rehearseNewGitExecFn
+	rehearseNewReadFileFn = readFile
+	rehearseNewMkdirAllFn = mkdirAll
+	rehearseNewWriteFileFn = writeFile
+	rehearseNewStatFn = stat
+	rehearseNewGitExecFn = gitExec
+	t.Cleanup(func() {
+		rehearseNewReadFileFn = origRead
+		rehearseNewMkdirAllFn = origMkdir
+		rehearseNewWriteFileFn = origWrite
+		rehearseNewStatFn = origStat
+		rehearseNewGitExecFn = origGit
+	})
+}
+
+// --- Dry-run tests ---
+// Verifies: cli/rehearse/new-dry-run#ac:dry-run-flag
+// Verifies: cli/rehearse/new-dry-run#ac:dry-run-ignores-flags
+// Verifies: cli/rehearse/new-dry-run#ac:error-handling-same
+
+// TestRehearseNew_DryRunPrintsScaffold — dry-run prints the scaffold to the
+// writer and returns nil without writing any file.
+func TestRehearseNew_DryRunPrintsScaffold(t *testing.T) {
+	withSeams(t, readFileOKForNew, defaultMkdirOK, defaultWriteOK, defaultStatNotExist, defaultGitOK)
+
+	var buf bytes.Buffer
+	err := runRehearseNew("cli/rehearse/new#ac:resolve-ac-reference", false, false, true, &buf)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "cli/rehearse/new#ac:resolve-ac-reference") {
+		t.Errorf("dry-run output missing Verifies reference:\n%s", out)
+	}
+	if !strings.Contains(out, "Given a valid AC reference") {
+		t.Errorf("dry-run output missing Given/When/Then:\n%s", out)
+	}
+}
+
+// TestRehearseNew_DryRunIgnoresForce — dry-run with force=true still only
+// prints; writeFile is never called.
+func TestRehearseNew_DryRunIgnoresForce(t *testing.T) {
+	writeFileCalled := false
+	writeFile := func(_ string, _ []byte, _ os.FileMode) error {
+		writeFileCalled = true
+		return nil
+	}
+	withSeams(t, readFileOKForNew, defaultMkdirOK, writeFile, defaultStatNotExist, defaultGitOK)
+
+	err := runRehearseNew("cli/rehearse/new#ac:resolve-ac-reference", true, false, true, io.Discard)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if writeFileCalled {
+		t.Error("writeFile must not be called when --dry-run is set")
+	}
+}
+
+// TestRehearseNew_DryRunIgnoresCommit — dry-run with commit=true still only
+// prints; gitExec is never called.
+func TestRehearseNew_DryRunIgnoresCommit(t *testing.T) {
+	gitCalled := false
+	git := func(_ ...string) ([]byte, error) {
+		gitCalled = true
+		return nil, nil
+	}
+	withSeams(t, readFileOKForNew, defaultMkdirOK, defaultWriteOK, defaultStatNotExist, git)
+
+	err := runRehearseNew("cli/rehearse/new#ac:resolve-ac-reference", false, true, true, io.Discard)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if gitCalled {
+		t.Error("gitExec must not be called when --dry-run is set")
+	}
+}
+
+// TestRehearseNew_DryRunExitCodeSame — error paths (e.g. missing feature file)
+// return exit 2 even when --dry-run is set.
+func TestRehearseNew_DryRunExitCodeSame(t *testing.T) {
+	withSeams(t, readFileNotFoundForNew, defaultMkdirOK, defaultWriteOK, defaultStatNotExist, defaultGitOK)
+
+	err := runRehearseNew("cli/rehearse/new#ac:resolve-ac-reference", false, false, true, io.Discard)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 2 {
+		t.Errorf("exit code = %v, want 2", err)
+	}
+}
+
+// TestRehearseNew_DryRunNormalWriteWorks — without --dry-run the file is
+// written normally (regression guard for the non-dry-run path).
+func TestRehearseNew_DryRunNormalWriteWorks(t *testing.T) {
+	var writtenPath string
+	writeFile := func(path string, _ []byte, _ os.FileMode) error {
+		writtenPath = path
+		return nil
+	}
+	withSeams(t, readFileOKForNew, defaultMkdirOK, writeFile, defaultStatNotExist, defaultGitOK)
+
+	var buf bytes.Buffer
+	err := runRehearseNew("cli/rehearse/new#ac:resolve-ac-reference", false, false, false, &buf)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if writtenPath == "" {
+		t.Error("file was not written when --dry-run is not set")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("output buffer should be empty without --dry-run, got: %q", buf.String())
 	}
 }
