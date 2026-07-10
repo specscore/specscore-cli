@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: studio probe — probes + freshness as data
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** cli/studio/probe
 **Date:** 2026-07-10
 **Owner:** ai
@@ -24,7 +24,7 @@ Data model first, then the verb, then each probe kind, then the self-hosted proo
 
 **Verifies:** cli/studio/probe#ac:stale-filter-selects-old-facts, cli/studio/probe#ac:stale-filter-malformed-duration, cli/studio/probe#ac:age-column-rendered
 **Depends-On:** —
-**Status:** planning
+**Status:** in_progress
 
 Add `VerifiedAt` to `internal/studio/fact`, the `verified_at` column to the store schema, and `store.Merge` (per-adapter-id replace; refresh-vs-new-observation stamp semantics per REQ verified-at-field). Extend `studio facts` with the `--stale <duration>` filter (malformed duration exits 2 with a helpful message) and the VERIFIED age column in human output.
 

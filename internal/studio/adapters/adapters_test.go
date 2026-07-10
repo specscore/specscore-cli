@@ -115,16 +115,25 @@ func TestRun_PreservesAdapterObservedAt(t *testing.T) {
 		t.Fatalf("len(Facts) = %d, want 2", len(res.Facts))
 	}
 
-	// Fact from "with-ts" must retain the adapter's own timestamp.
+	// Fact from "with-ts" must retain the adapter's own timestamp, and
+	// verified_at is stamped equal to it at index time (Feature:
+	// cli/studio/probe, REQ: verified-at-field).
 	f0 := res.Facts[0]
 	if f0.ObservedAt != adapterTimestamp {
 		t.Errorf("Facts[0].ObservedAt = %q, want adapter timestamp %q", f0.ObservedAt, adapterTimestamp)
 	}
+	if f0.VerifiedAt != adapterTimestamp {
+		t.Errorf("Facts[0].VerifiedAt = %q, want it equal to ObservedAt %q", f0.VerifiedAt, adapterTimestamp)
+	}
 
-	// Fact from "without-ts" must receive the shared run timestamp.
+	// Fact from "without-ts" must receive the shared run timestamp, with
+	// verified_at equal to observed_at.
 	f1 := res.Facts[1]
 	if f1.ObservedAt != "2026-07-10T12:30:00Z" {
 		t.Errorf("Facts[1].ObservedAt = %q, want shared run timestamp", f1.ObservedAt)
+	}
+	if f1.VerifiedAt != f1.ObservedAt {
+		t.Errorf("Facts[1].VerifiedAt = %q, want it equal to ObservedAt %q", f1.VerifiedAt, f1.ObservedAt)
 	}
 }
 

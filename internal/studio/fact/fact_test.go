@@ -31,6 +31,7 @@ func TestFact_JSONShape(t *testing.T) {
 		},
 		Adapter:    Adapter{ID: "specscore", Version: "1"},
 		ObservedAt: "2026-07-10T00:00:00Z",
+		VerifiedAt: "2026-07-10T00:00:00Z",
 		Ecosystem:  "demo",
 	}
 	data, err := json.Marshal(f)
@@ -48,6 +49,7 @@ func TestFact_JSONShape(t *testing.T) {
 		"evidence_class":   "declared",
 		"evidence_pointer": "spec/features/x/README.md:9",
 		"observed_at":      "2026-07-10T00:00:00Z",
+		"verified_at":      "2026-07-10T00:00:00Z",
 		"ecosystem":        "demo",
 	}
 	for k, v := range want {

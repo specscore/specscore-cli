@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +24,9 @@ import (
 var (
 	adaptersRunFn = adapters.Run
 	ingrExportFn  = ingr.Export
+	// studioNowFn is the clock the facts verb reads for the --stale cutoff and
+	// the VERIFIED age column; tests replace it for deterministic ages.
+	studioNowFn = time.Now
 )
 
 // studioCommand returns the "studio" command group for SpecScore Studio —
@@ -185,6 +189,14 @@ func studioFactsCommand() *cobra.Command {
 accept a trailing "*" for prefix match) and prints a table by default,
 JSON with --format json, or only the row count with --count.
 
+--stale <duration> (Go duration syntax, e.g. 24h or 720h) selects only facts
+whose verified_at is older than now minus the duration; it composes (AND) with
+every other filter and with --count. A malformed --stale duration exits 2.
+
+The table output carries a VERIFIED column showing each fact's freshness age
+derived from verified_at (fresh < 24h, aging < 30d, else "stale"). JSON output
+includes observed_at and verified_at verbatim.
+
 Querying a missing or empty store exits 2 with an actionable message
 naming the expected store path and suggesting "specscore studio index".`,
 		Args:         cobra.NoArgs,
@@ -198,6 +210,7 @@ naming the expected store path and suggesting "specscore studio index".`,
 	cmd.Flags().String("object", "", "filter by object (trailing * = prefix match)")
 	cmd.Flags().String("class", "", "filter by evidence class (declared, derived or verified-behavior)")
 	cmd.Flags().String("adapter", "", "filter by adapter id (exact match)")
+	cmd.Flags().String("stale", "", "select facts whose verified_at is older than a Go duration (e.g. 24h)")
 	cmd.Flags().String("format", "table", "output format: table or json")
 	cmd.Flags().Bool("count", false, "print only the number of matching facts")
 	return cmd
@@ -214,12 +227,20 @@ func runStudioFacts(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	now := studioNowFn()
 	filter := store.Filter{}
 	filter.Subject, _ = cmd.Flags().GetString("subject")
 	filter.Predicate, _ = cmd.Flags().GetString("predicate")
 	filter.Object, _ = cmd.Flags().GetString("object")
 	filter.Class, _ = cmd.Flags().GetString("class")
 	filter.Adapter, _ = cmd.Flags().GetString("adapter")
+	if staleFlag, _ := cmd.Flags().GetString("stale"); staleFlag != "" {
+		d, err := time.ParseDuration(staleFlag)
+		if err != nil {
+			return exitcode.InvalidArgsErrorf("invalid --stale duration %q: expected Go duration syntax (e.g. 24h)", staleFlag)
+		}
+		filter.StaleBefore = now.Add(-d)
+	}
 
 	facts, err := store.Query(dbPath, filter)
 	if err != nil {
@@ -237,12 +258,41 @@ func runStudioFacts(cmd *cobra.Command, _ []string) error {
 		return enc.Encode(facts)
 	}
 	tw := tabwriter.NewWriter(w, 2, 8, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "SUBJECT\tPREDICATE\tOBJECT\tCLASS\tADAPTER")
+	_, _ = fmt.Fprintln(tw, "SUBJECT\tPREDICATE\tOBJECT\tCLASS\tADAPTER\tVERIFIED")
 	for _, f := range facts {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			f.Subject, f.Predicate, f.Object, f.Class, f.Adapter.ID)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			f.Subject, f.Predicate, f.Object, f.Class, f.Adapter.ID,
+			humanAge(f.VerifiedAt, now))
 	}
 	return tw.Flush()
+}
+
+// humanAge renders a fact's freshness age from its verified_at timestamp,
+// relative to now, for the VERIFIED table column (REQ: age-rendering). The
+// thresholds mirror the UX design's freshness dots: fresh (< 24h) renders in
+// hours, aging (< 30d) in days, and anything older renders as "stale". An
+// empty or unparseable timestamp renders "?".
+func humanAge(verifiedAt string, now time.Time) string {
+	if verifiedAt == "" {
+		return "?"
+	}
+	t, err := time.Parse(time.RFC3339, verifiedAt)
+	if err != nil {
+		return "?"
+	}
+	age := now.Sub(t)
+	switch {
+	case age < 24*time.Hour:
+		h := int(age.Hours())
+		if h < 0 {
+			h = 0
+		}
+		return fmt.Sprintf("%dh", h)
+	case age < 30*24*time.Hour:
+		return fmt.Sprintf("%dd", int(age.Hours())/24)
+	default:
+		return "stale"
+	}
 }
 
 // studioFactsStorePath resolves the fact-store path for the facts verb:
