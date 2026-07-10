@@ -32,7 +32,7 @@ Runner core with the bash executor first (gives every later task a runnable surf
 
 **Verifies:** cli/rehearse/run#ac:json-report-shape
 **Depends-On:** 1
-**Status:** in_progress
+**Status:** complete
 
 `--format json` emitting `{file, status, verifies[], duration_ms, bag:{}, steps:[{kind,status,detail}]}` (bag present, empty until Task 4).
 
@@ -40,7 +40,7 @@ Runner core with the bash executor first (gives every later task a runnable surf
 
 **Verifies:** cli/rehearse/run#ac:sql-assert-rows, cli/rehearse/run#ac:dtql-counts-facts
 **Depends-On:** 1
-**Status:** in_progress
+**Status:** complete
 
 Shared trailing-directive parser (`-- assert-rows:`, `-- assert-row-json:`, `-- capture:`); sql executor (sqlite DSN via the in-repo pure-Go driver); dtql executor (dalgo `dtql` package + SQLite adapter against `db=` stores, incl. a Studio `facts.db` fixture). Unit coverage includes `-- assert-row-json` (reviewer advisory).
 
@@ -48,7 +48,7 @@ Shared trailing-directive parser (`-- assert-rows:`, `-- assert-row-json:`, `-- 
 
 **Verifies:** cli/rehearse/run#ac:context-bag-chains
 **Depends-On:** 2, 3
-**Status:** planning
+**Status:** in_progress
 
 Bag in the runner: textual `{{name}}` interpolation for bash/sql/dtql bodies+params (unknown → step fail naming it), `$REHEARSE_CAPTURES` file for bash, `-- capture:` merge for sql/dtql, bag state in the JSON report. Unit coverage includes capture ordering and unknown-variable failure.
 

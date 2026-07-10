@@ -1,7 +1,8 @@
 package cli
 
 // Feature implemented: cli/rehearse/run (REQ: scenario-discovery,
-// REQ: scenario-shape, REQ: bash-block, REQ: run-report)
+// REQ: scenario-shape, REQ: bash-block, REQ: sql-block, REQ: dtql-block,
+// REQ: run-report)
 
 import (
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks"
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/bash"
+	"github.com/specscore/specscore-cli/internal/rehearse/blocks/dtqlblock"
+	"github.com/specscore/specscore-cli/internal/rehearse/blocks/sqlblock"
 	"github.com/specscore/specscore-cli/internal/rehearse/runner"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
@@ -35,10 +38,10 @@ Running "specscore rehearse" with no subcommand prints this help and exits 0.`,
 }
 
 // rehearseRegistry returns the block-executor registry for rehearse run.
-// v0.3 registers bash; hurl/sql/dtql/graphql executors join here as they
-// land.
+// v0.3 registers bash, sql and dtql; hurl/graphql executors join here as
+// they land.
 func rehearseRegistry() blocks.Registry {
-	return blocks.NewRegistry(bash.New())
+	return blocks.NewRegistry(bash.New(), sqlblock.New(), dtqlblock.New())
 }
 
 func rehearseRunCommand() *cobra.Command {

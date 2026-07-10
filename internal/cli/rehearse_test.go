@@ -147,6 +147,120 @@ func TestRehearseRun_JSONReportShape(t *testing.T) {
 	}
 }
 
+// AC: json-report-shape — the raw JSON carries exactly the REQ run-report
+// contract fields: the first element has `file`, `status`, `verifies`,
+// `duration_ms`, `bag` (present even when empty) and a non-empty `steps`
+// array whose entries carry `kind` and `status`.
+func TestRehearseRun_JSONReportRawContractKeys(t *testing.T) {
+	file := writeScenario(t, "echo hello")
+
+	out, _, err := runRehearseCmd(t, "run", file, "--format", "json")
+	if err != nil {
+		t.Fatalf("rehearse run --format json: %v", err)
+	}
+	var raw []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(raw) == 0 {
+		t.Fatal("JSON report is empty")
+	}
+	first := raw[0]
+	for _, key := range []string{"file", "status", "verifies", "duration_ms", "bag", "steps"} {
+		if _, ok := first[key]; !ok {
+			t.Errorf("first element lacks the %q key:\n%s", key, out)
+		}
+	}
+	if string(first["bag"]) != "{}" {
+		t.Errorf("empty bag must serialize as {}, got %s", first["bag"])
+	}
+	var steps []map[string]json.RawMessage
+	if err := json.Unmarshal(first["steps"], &steps); err != nil || len(steps) == 0 {
+		t.Fatalf("steps is not a non-empty array: %v\n%s", err, first["steps"])
+	}
+	for _, key := range []string{"kind", "status"} {
+		if _, ok := steps[0][key]; !ok {
+			t.Errorf("step entry lacks the %q key:\n%s", key, first["steps"])
+		}
+	}
+}
+
+// REQ: run-report — a failing step's report entry carries its `detail`.
+func TestRehearseRun_JSONReportFailingStepCarriesDetail(t *testing.T) {
+	file := writeScenario(t, "exit 7")
+
+	out, _, err := runRehearseCmd(t, "run", file, "--format", "json")
+	if code := rehearseExit(t, err); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	var reports []struct {
+		Status string `json:"status"`
+		Steps  []struct {
+			Kind   string `json:"kind"`
+			Status string `json:"status"`
+			Detail string `json:"detail"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(out), &reports); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(reports) != 1 || reports[0].Status != "fail" {
+		t.Fatalf("reports = %+v", reports)
+	}
+	step := reports[0].Steps[0]
+	if step.Kind != "bash" || step.Status != "fail" || !strings.Contains(step.Detail, "exit status 7") {
+		t.Errorf("failing step = %+v", step)
+	}
+}
+
+// writeScenarioBlocks writes a scenario file with the given pre-fenced block
+// sections and returns its path.
+func writeScenarioBlocks(t *testing.T, fencedBlocks ...string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "scenario.md")
+	content := "# Rehearse: fixture\n\n**Status:** pending\n**Verifies:** demo/x#ac:one (REQ: y)\n\n" +
+		strings.Join(fencedBlocks, "\n\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// AC: sql-assert-rows — a scenario whose sql block queries a 3-row table
+// with `-- assert-rows: 3` exits 0 and is reported pass.
+func TestRehearseRun_SQLBlockAssertRows(t *testing.T) {
+	file := writeScenarioBlocks(t,
+		"```sql dsn=sqlite:fixture.db\nCREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (1), (2), (3);\n```",
+		"```sql dsn=sqlite:fixture.db\nSELECT * FROM t;\n-- assert-rows: 3\n```")
+
+	out, _, err := runRehearseCmd(t, "run", file)
+	if err != nil {
+		t.Fatalf("rehearse run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "pass") || !strings.Contains(out, "1 pass") {
+		t.Errorf("report does not mark the sql scenario pass:\n%s", out)
+	}
+}
+
+// AC: dtql-counts-facts — a scenario whose dtql block selects facts with
+// `-- assert-rows:` equal to the store's fact count exits 0 and is pass.
+// The store is shaped like a Studio fact store (table `facts`), built by a
+// preceding sql step in the same scenario working dir.
+func TestRehearseRun_DTQLBlockCountsFacts(t *testing.T) {
+	file := writeScenarioBlocks(t,
+		"```sql dsn=sqlite:facts.db\nCREATE TABLE facts (subject TEXT, predicate TEXT, object TEXT);\n"+
+			"INSERT INTO facts VALUES ('a', 'imports', 'b'), ('b', 'imports', 'c');\n```",
+		"```dtql db=facts.db\nfrom:\n  name: facts\n-- assert-rows: 2\n```")
+
+	out, _, err := runRehearseCmd(t, "run", file)
+	if err != nil {
+		t.Fatalf("rehearse run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "pass") || !strings.Contains(out, "1 pass") {
+		t.Errorf("report does not mark the dtql scenario pass:\n%s", out)
+	}
+}
+
 func TestRehearseRun_UnknownFormatExits2(t *testing.T) {
 	file := writeScenario(t, "echo hello")
 	_, _, err := runRehearseCmd(t, "run", file, "--format", "xml")

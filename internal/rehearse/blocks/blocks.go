@@ -25,6 +25,14 @@ type StepCtx struct {
 	Params map[string]string
 }
 
+// Capture is one name=value pair captured by a step for the scenario's
+// context bag (REQ: context-bag). Order is preserved because the bag is an
+// ordered map.
+type Capture struct {
+	Name  string
+	Value string
+}
+
 // StepResult is the outcome of running one step.
 type StepResult struct {
 	// Status is StatusPass or StatusFail.
@@ -34,6 +42,10 @@ type StepResult struct {
 	// Output is the captured stdout/stderr, already truncated to
 	// MaxStepOutput via Truncate.
 	Output string
+	// Captures are the values the step captured for the scenario's context
+	// bag, in capture order (REQ: context-bag). The runner merges them into
+	// the bag after the step.
+	Captures []Capture
 }
 
 // Block is the executor contract implemented once per block kind.

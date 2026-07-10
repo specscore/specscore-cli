@@ -4,7 +4,8 @@ go 1.26.1
 
 require (
 	charm.land/fang/v2 v2.0.1
-	github.com/dal-go/dalgo v0.44.2
+	github.com/dal-go/dalgo v0.62.10
+	github.com/dal-go/dalgo2sqlite v0.0.17
 	github.com/getsentry/sentry-go v0.46.2
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.24.0
@@ -19,7 +20,7 @@ require (
 
 require (
 	charm.land/lipgloss/v2 v2.0.3 // indirect
-	github.com/RoaringBitmap/roaring/v2 v2.18.2 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.19.0 // indirect
 	github.com/agext/levenshtein v1.2.1 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
@@ -32,7 +33,9 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/dal-go/dalgo2sql v0.8.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/georgysavva/scany/v2 v2.1.4 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
