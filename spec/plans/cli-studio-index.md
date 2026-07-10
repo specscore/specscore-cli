@@ -62,11 +62,11 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 
 ### Task 6: Registries adapter
 
-**Verifies:** cli/studio/index#ac:registry-domain-fact
+**Verifies:** cli/studio/index#ac:registry-domain-fact, cli/studio/index#ac:registry-dedup-agreement
 **Depends-On:** 2
 **Status:** complete
 
-`internal/studio/adapters/registries`: domains.json (Sneat-ops shape) → domain entities + fronts/serves-status facts; ecosystem*.yaml maps → product entities + aliased-as/implemented-by/member-of facts. Per-repo `registries:` configuration in studio.yaml.
+`internal/studio/adapters/registries`: domains.json (Sneat-ops shape) → domain entities + fronts/serves-status facts; ecosystem*.yaml maps → product entities + aliased-as/implemented-by/member-of facts. Per-repo `registries:` configuration in studio.yaml. Deduplicates facts identical in (subject, predicate, object, evidence_class) so two agreeing registry files yield one representative fact, not N copies.
 
 ### Task 7: Partial tolerance + `--strict`
 
