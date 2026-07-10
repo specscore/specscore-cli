@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: rehearse run — v0.3 acceptance-evidence runner
 
-**Status:** Approved
+**Status:** Executing
 **Source Feature:** cli/rehearse/run
 **Date:** 2026-07-10
 **Owner:** alex
@@ -24,7 +24,7 @@ Runner core with the bash executor first (gives every later task a runnable surf
 
 **Verifies:** cli/rehearse/run#ac:failing-scenario-fails-run, cli/rehearse/run#ac:standalone-run
 **Depends-On:** —
-**Status:** planning
+**Status:** complete
 
 `internal/rehearse/scenario` (body metadata incl. Verifies grammar with parenthetical stripping, fenced-block extraction with info-string params), `internal/rehearse/runner` (discovery incl. `_tests/` default and exit-2-on-empty, ordered execution, skipped-after-failure, no-steps status), the bash executor (`bash -euo pipefail`, 8KiB capture truncation), human report + exit codes, `internal/cli/rehearse.go` group + `run` verb. Unit coverage includes the `no-steps` status (reviewer advisory).
 
@@ -32,7 +32,7 @@ Runner core with the bash executor first (gives every later task a runnable surf
 
 **Verifies:** cli/rehearse/run#ac:json-report-shape
 **Depends-On:** 1
-**Status:** planning
+**Status:** in_progress
 
 `--format json` emitting `{file, status, verifies[], duration_ms, bag:{}, steps:[{kind,status,detail}]}` (bag present, empty until Task 4).
 
@@ -40,7 +40,7 @@ Runner core with the bash executor first (gives every later task a runnable surf
 
 **Verifies:** cli/rehearse/run#ac:sql-assert-rows, cli/rehearse/run#ac:dtql-counts-facts
 **Depends-On:** 1
-**Status:** planning
+**Status:** in_progress
 
 Shared trailing-directive parser (`-- assert-rows:`, `-- assert-row-json:`, `-- capture:`); sql executor (sqlite DSN via the in-repo pure-Go driver); dtql executor (dalgo `dtql` package + SQLite adapter against `db=` stores, incl. a Studio `facts.db` fixture). Unit coverage includes `-- assert-row-json` (reviewer advisory).
 

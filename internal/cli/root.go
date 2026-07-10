@@ -55,6 +55,7 @@ func newRootCommand() *cobra.Command {
 		graphCommand(),
 		planCommand(),
 		propertyCommand(),
+		rehearseCommand(),
 		rulesCommand(),
 		rootMigrateCommand(),
 		specCommand(),
