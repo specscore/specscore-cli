@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite" // pure-Go sqlite driver
 
@@ -48,6 +49,7 @@ CREATE TABLE facts (
 	adapter_id       TEXT NOT NULL,
 	adapter_version  TEXT NOT NULL,
 	observed_at      TEXT NOT NULL,
+	verified_at      TEXT NOT NULL,
 	ecosystem        TEXT NOT NULL
 );
 CREATE INDEX facts_subject ON facts (subject);
@@ -57,11 +59,12 @@ CREATE INDEX facts_object ON facts (object);
 
 const insertSQL = `INSERT INTO facts
 	(subject, predicate, object, evidence_class, evidence_pointer,
-	 adapter_id, adapter_version, observed_at, ecosystem)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	 adapter_id, adapter_version, observed_at, verified_at, ecosystem)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const selectSQL = `SELECT subject, predicate, object, evidence_class,
-	evidence_pointer, adapter_id, adapter_version, observed_at, ecosystem
+	evidence_pointer, adapter_id, adapter_version, observed_at, verified_at,
+	ecosystem
 	FROM facts`
 
 // Rebuild replaces the fact store at path with one containing exactly the
@@ -72,6 +75,16 @@ func Rebuild(path string, facts []fact.Fact) error {
 	if err := osMkdirAllFn(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating fact-store directory for %s: %w", path, err)
 	}
+	// Index facts are verified at index time: stamp verified_at = observed_at
+	// for any fact whose adapter left it empty (REQ: verified-at-field).
+	stamped := make([]fact.Fact, len(facts))
+	copy(stamped, facts)
+	for i := range stamped {
+		if stamped[i].VerifiedAt == "" {
+			stamped[i].VerifiedAt = stamped[i].ObservedAt
+		}
+	}
+	facts = stamped
 	tmp := path + ".rebuild.tmp"
 	_ = os.Remove(tmp)
 	if err := writeStore(tmp, facts); err != nil {
@@ -81,6 +94,99 @@ func Rebuild(path string, facts []fact.Fact) error {
 	if err := osRenameFn(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("swapping rebuilt fact store into %s: %w", path, err)
+	}
+	return nil
+}
+
+// MergeResult reports what a Merge did: how many facts it wrote (inserted as
+// new observations) and how many existing facts it refreshed (verified_at
+// advanced, observed_at preserved).
+type MergeResult struct {
+	// Written counts the incoming facts inserted as fresh observations (a new
+	// object, or a key not previously in the store).
+	Written int
+	// Refreshed counts the existing facts whose verified_at was advanced
+	// because an incoming fact re-verified the same observation.
+	Refreshed int
+}
+
+// mergeKey is the identity a Merge keys on (REQ: probe-merge):
+// (subject, predicate, object, evidence_class, adapter_id). A matching key is
+// a re-verification (refresh verified_at, keep observed_at); a fact with a new
+// object is a fresh observation inserted alongside its siblings.
+type mergeKey struct {
+	subject, predicate, object, class, adapterID string
+}
+
+func keyOf(f fact.Fact) mergeKey {
+	return mergeKey{f.Subject, f.Predicate, f.Object, string(f.Class), f.Adapter.ID}
+}
+
+// Merge folds the given facts into the existing store at path without
+// rebuilding it: every fact already in the store survives (index facts, prior
+// probe facts), and each incoming fact either refreshes a key-matching
+// existing fact's verified_at (preserving its original observed_at) or is
+// inserted as a fresh observation (REQ: probe-merge, REQ: verified-at-field).
+// The rewrite is atomic — the merged store is written to a temp file in the
+// same directory and swapped in on success, mirroring Rebuild, so a failed
+// merge leaves the prior store intact.
+func Merge(path string, facts []fact.Fact) (MergeResult, error) {
+	existing, err := Query(path, Filter{})
+	if err != nil {
+		return MergeResult{}, err
+	}
+
+	// Index incoming facts by merge key so a refresh finds them in one pass.
+	incomingByKey := make(map[mergeKey]fact.Fact, len(facts))
+	for _, f := range facts {
+		incomingByKey[keyOf(f)] = f
+	}
+
+	var res MergeResult
+	merged := make([]fact.Fact, 0, len(existing)+len(facts))
+	for _, e := range existing {
+		if in, ok := incomingByKey[keyOf(e)]; ok {
+			// Re-verification: same observation confirmed again. Advance
+			// verified_at to the new run time, preserve the original
+			// observed_at.
+			e.VerifiedAt = in.VerifiedAt
+			res.Refreshed++
+			delete(incomingByKey, keyOf(e))
+		}
+		merged = append(merged, e)
+	}
+	// Whatever incoming facts did not match an existing key are fresh
+	// observations (a new object, or a subject/predicate never seen). Preserve
+	// input order for determinism.
+	for _, f := range facts {
+		if _, unmatched := incomingByKey[keyOf(f)]; unmatched {
+			merged = append(merged, f)
+			res.Written++
+			delete(incomingByKey, keyOf(f))
+		}
+	}
+
+	if err := writeMerged(path, merged); err != nil {
+		return MergeResult{}, err
+	}
+	return res, nil
+}
+
+// writeMerged writes the merged fact set to a temp file and atomically swaps
+// it into place, mirroring Rebuild's temp-file discipline (REQ: probe-merge).
+func writeMerged(path string, facts []fact.Fact) error {
+	if err := osMkdirAllFn(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating fact-store directory for %s: %w", path, err)
+	}
+	tmp := path + ".merge.tmp"
+	_ = os.Remove(tmp)
+	if err := writeStore(tmp, facts); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := osRenameFn(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("swapping merged fact store into %s: %w", path, err)
 	}
 	return nil
 }
@@ -103,7 +209,7 @@ func writeStore(path string, facts []fact.Fact) error {
 	for _, f := range facts {
 		if _, err := tx.Exec(insertSQL, f.Subject, f.Predicate, f.Object,
 			string(f.Class), f.Pointer, f.Adapter.ID, f.Adapter.Version,
-			f.ObservedAt, f.Ecosystem); err != nil {
+			f.ObservedAt, f.VerifiedAt, f.Ecosystem); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("writing fact to store %s: %w", path, err)
 		}
@@ -122,6 +228,10 @@ type Filter struct {
 	Object    string
 	Class     string
 	Adapter   string
+	// StaleBefore, when non-zero, selects only facts whose verified_at is
+	// strictly older than this cutoff (the `studio facts --stale <duration>`
+	// filter; REQ: stale-filter). The zero time disables the cutoff.
+	StaleBefore time.Time
 }
 
 // Query returns the facts at path matching the filter, in deterministic
@@ -159,7 +269,7 @@ func Query(path string, f Filter) ([]fact.Fact, error) {
 		var class string
 		if err := rowsScanFn(rows, &ft.Subject, &ft.Predicate, &ft.Object,
 			&class, &ft.Pointer, &ft.Adapter.ID, &ft.Adapter.Version,
-			&ft.ObservedAt, &ft.Ecosystem); err != nil {
+			&ft.ObservedAt, &ft.VerifiedAt, &ft.Ecosystem); err != nil {
 			return nil, fmt.Errorf("reading fact from store %s: %w", path, err)
 		}
 		ft.Class = fact.Class(class)
@@ -199,6 +309,10 @@ func (f Filter) whereClause() (string, []any) {
 	addPrefixable("object", f.Object)
 	addExact("evidence_class", f.Class)
 	addExact("adapter_id", f.Adapter)
+	if !f.StaleBefore.IsZero() {
+		conds = append(conds, "verified_at < ?")
+		args = append(args, f.StaleBefore.UTC().Format(time.RFC3339))
+	}
 	if len(conds) == 0 {
 		return "", nil
 	}

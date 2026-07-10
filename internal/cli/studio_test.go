@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
@@ -750,6 +751,133 @@ func TestStudioFacts_BadFormatExits2(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "yaml") {
 		t.Errorf("error %q does not name the bad format", err.Error())
+	}
+}
+
+// --- studio facts: --stale filter and VERIFIED age column ---
+
+// seedStaleStore rebuilds the workspace store with two verified-behavior
+// facts: one verified 48h ago and one verified 1h ago, relative to now.
+func seedStaleStore(t *testing.T, wsPath string, now time.Time) string {
+	t.Helper()
+	dbPath := filepath.Join(filepath.Dir(wsPath), ".specscore-studio", "facts.db")
+	mk := func(subject string, ago time.Duration) fact.Fact {
+		ts := now.Add(-ago).UTC().Format(time.RFC3339)
+		return fact.Fact{
+			Subject:    subject,
+			Predicate:  "serves-status",
+			Object:     "200",
+			Evidence:   fact.Evidence{Class: fact.VerifiedBehavior, Pointer: "https://" + subject + "/"},
+			Adapter:    fact.Adapter{ID: "probe-domain", Version: "1"},
+			ObservedAt: ts,
+			VerifiedAt: ts,
+			Ecosystem:  "demo",
+		}
+	}
+	facts := []fact.Fact{mk("old.app", 48*time.Hour), mk("fresh.app", 1*time.Hour)}
+	if err := store.Rebuild(dbPath, facts); err != nil {
+		t.Fatal(err)
+	}
+	return dbPath
+}
+
+// AC: stale-filter-selects-old-facts — --stale 24h selects only the fact
+// verified more than 24h ago.
+func TestStudioFacts_StaleSelectsOldFacts(t *testing.T) {
+	now := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	old := studioNowFn
+	studioNowFn = func() time.Time { return now }
+	t.Cleanup(func() { studioNowFn = old })
+
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStaleStore(t, wsPath, now)
+
+	out, _, err := runStudioCmd(t, "facts", "--workspace", wsPath,
+		"--class", "verified-behavior", "--stale", "24h", "--count")
+	if err != nil {
+		t.Fatalf("studio facts --stale: %v", err)
+	}
+	if out != "1\n" {
+		t.Errorf("stale count = %q, want \"1\\n\" (only the 48h-old fact)", out)
+	}
+}
+
+// AC: stale-filter-malformed-duration — a bad --stale duration exits 2 and
+// names the invalid value.
+func TestStudioFacts_StaleMalformedExits2(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedStudioStore(t, wsPath)
+
+	_, _, err := runStudioCmd(t, "facts", "--workspace", wsPath, "--stale", "notaduration")
+	if code := studioExit(t, err); code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d", code, exitcode.InvalidArgs)
+	}
+	if !strings.Contains(err.Error(), "notaduration") {
+		t.Errorf("error %q does not name the invalid duration", err.Error())
+	}
+}
+
+// AC: age-column-rendered — the table has a VERIFIED column and a fact
+// verified 3h ago renders "3h".
+func TestStudioFacts_AgeColumnRendered(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	old := studioNowFn
+	studioNowFn = func() time.Time { return now }
+	t.Cleanup(func() { studioNowFn = old })
+
+	wsPath := newStudioWorkspace(t, "repo-a")
+	dbPath := filepath.Join(filepath.Dir(wsPath), ".specscore-studio", "facts.db")
+	ts := now.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
+	f := fact.Fact{
+		Subject: "example.app", Predicate: "serves-status", Object: "200",
+		Evidence:   fact.Evidence{Class: fact.VerifiedBehavior, Pointer: "https://example.app/"},
+		Adapter:    fact.Adapter{ID: "probe-domain", Version: "1"},
+		ObservedAt: ts, VerifiedAt: ts, Ecosystem: "demo",
+	}
+	if err := store.Rebuild(dbPath, []fact.Fact{f}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runStudioCmd(t, "facts", "--workspace", wsPath, "--class", "verified-behavior")
+	if err != nil {
+		t.Fatalf("studio facts: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("table has %d lines, want header + 1 row:\n%s", len(lines), out)
+	}
+	if !strings.Contains(lines[0], "VERIFIED") {
+		t.Errorf("header %q missing VERIFIED column", lines[0])
+	}
+	if !strings.Contains(lines[1], "3h") {
+		t.Errorf("row %q missing the 3h age", lines[1])
+	}
+}
+
+// humanAge renders each freshness band and degrades gracefully on bad input
+// (REQ: age-rendering).
+func TestHumanAge(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	rfc := func(d time.Duration) string { return now.Add(-d).UTC().Format(time.RFC3339) }
+	tests := []struct {
+		name     string
+		verified string
+		want     string
+	}{
+		{"fresh hours", rfc(3 * time.Hour), "3h"},
+		{"aging days", rfc(12 * 24 * time.Hour), "12d"},
+		{"stale", rfc(40 * 24 * time.Hour), "stale"},
+		{"just under a day", rfc(23 * time.Hour), "23h"},
+		{"future clamps to zero", rfc(-2 * time.Hour), "0h"},
+		{"empty", "", "?"},
+		{"unparseable", "not-a-timestamp", "?"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := humanAge(tt.verified, now); got != tt.want {
+				t.Errorf("humanAge(%q) = %q, want %q", tt.verified, got, tt.want)
+			}
+		})
 	}
 }
 

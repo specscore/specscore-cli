@@ -7,12 +7,16 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
+	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/ingr"
+	"github.com/specscore/specscore-cli/internal/studio/probe"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/internal/studio/workspace"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -23,6 +27,20 @@ import (
 var (
 	adaptersRunFn = adapters.Run
 	ingrExportFn  = ingr.Export
+	// studioNowFn is the clock the facts verb reads for the --stale cutoff and
+	// the VERIFIED age column; tests replace it for deterministic ages.
+	studioNowFn = time.Now
+	// probeRunDomainFn is the test seam for the domain-liveness probe kind; the
+	// verb runs it through this var so tests inject deterministic results
+	// without exercising the HTTP seam.
+	probeRunDomainFn = probe.RunDomain
+	// probeRunCIFn is the test seam for the ci-state probe kind; the verb runs
+	// it through this var so tests inject deterministic results without
+	// exercising the exec (git/gh) seam.
+	probeRunCIFn = probe.RunCI
+	// storeMergeFn is the test seam for the non-destructive store merge the
+	// probe verb writes through.
+	storeMergeFn = store.Merge
 )
 
 // studioCommand returns the "studio" command group for SpecScore Studio —
@@ -43,6 +61,7 @@ Running "specscore studio" with no subcommand prints this help and exits 0.`,
 	}
 	cmd.AddCommand(
 		studioIndexCommand(),
+		studioProbeCommand(),
 		studioFactsCommand(),
 	)
 	return cmd
@@ -174,6 +193,191 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// --- studio probe ---
+
+// probeKinds are the accepted --kind selectors: the domain-liveness kind, the
+// ci-state kind, or all of them.
+const (
+	kindDomain = "domain"
+	kindCI     = "ci"
+	kindAll    = "all"
+)
+
+func studioProbeCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "probe",
+		Short: "Run live checks and merge verified-behavior facts into the store",
+		Long: `Reads probe targets from the fact store built by "studio index" and runs
+live checks, merging the resulting verified-behavior facts back into the same
+store without rebuilding it. Unlike index, probe performs network I/O; it never
+runs as a side effect of index.
+
+The domain kind issues an HTTP(S) GET to every domain carrying a serves-status
+fact (https first, http on transport failure) and records the answering status
+— or the reserved object "down" when neither scheme responds. A dead domain is
+a successful observation, not a run failure.
+
+The ci kind reads each workspace repo's latest default-branch CI run conclusion
+via "gh api". A repo with no origin remote or a non-GitHub remote is skipped
+with a per-repo notice; a repo whose gh api call fails records a per-repo
+warning and no fact. If "gh" is not on PATH the ci kind is skipped entirely
+with one warning (the domain kind still runs under --kind all).
+
+--kind <domain|ci|all> selects which probe families run (default all).
+--format <human|json> controls the run summary; the JSON summary is an object
+with kinds, facts_written, verified_refreshed and warnings.
+
+Running probe before "studio index" exits 2 with a message naming the expected
+store path and suggesting "specscore studio index".
+
+Re-verification cadences (guidance for scheduling this verb / index re-runs,
+not in-process timers) by evidence class:
+
+  verified-behavior  hours to a day (schedule probe via CI cron)
+  derived            on push / on "studio index" re-run
+  declared           on repo change / on "studio index" re-run
+  claimed            never — rendered as decaying (no producer this phase)
+  attested           quarterly (Phase 2)`,
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE:         runStudioProbe,
+	}
+	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
+	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
+	cmd.Flags().String("kind", kindAll, "probe families to run: domain, ci or all")
+	cmd.Flags().String("format", "human", "run-summary format: human or json")
+	return cmd
+}
+
+// probeSummary is the JSON shape of the probe run summary (REQ: probe-verb):
+// the kinds that ran, how many facts were written (fresh observations) and
+// refreshed (re-verifications), and any per-target/per-kind warnings.
+type probeSummary struct {
+	Kinds           []string `json:"kinds"`
+	FactsWritten    int      `json:"facts_written"`
+	VerifiedRefresh int      `json:"verified_refreshed"`
+	Warnings        []string `json:"warnings"`
+}
+
+func runStudioProbe(cmd *cobra.Command, _ []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "human" && format != "json" {
+		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
+	}
+	kind, _ := cmd.Flags().GetString("kind")
+	if kind != kindDomain && kind != kindCI && kind != kindAll {
+		return exitcode.InvalidArgsErrorf("unknown --kind %q: expected domain, ci or all", kind)
+	}
+
+	dbPath, err := studioFactsStorePath(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Query serves as the missing/empty-store guard: it returns the same exit-2
+	// guidance `studio facts` gives when `studio index` has never run.
+	existing, err := store.Query(dbPath, store.Filter{})
+	if err != nil {
+		return err
+	}
+
+	now := studioNowFn()
+	var kinds []string
+	var produced []fact.Fact
+	var warnings []string
+	if kind == kindDomain || kind == kindAll {
+		res := probeRunDomainFn(existing, version, now)
+		kinds = append(kinds, res.Kinds...)
+		produced = append(produced, res.Facts...)
+		warnings = append(warnings, res.Warnings...)
+	}
+	if kind == kindCI || kind == kindAll {
+		repos, err := probeCITargets(cmd)
+		if err != nil {
+			return err
+		}
+		res := probeRunCIFn(repos, version, now)
+		kinds = append(kinds, res.Kinds...)
+		produced = append(produced, res.Facts...)
+		warnings = append(warnings, res.Warnings...)
+	}
+
+	merged, err := storeMergeFn(dbPath, produced)
+	if err != nil {
+		return err
+	}
+
+	summary := probeSummary{
+		Kinds:           kinds,
+		FactsWritten:    merged.Written,
+		VerifiedRefresh: merged.Refreshed,
+		Warnings:        warnings,
+	}
+	return renderProbeSummary(cmd, format, summary)
+}
+
+// probeCITargets resolves the ci kind's targets: the workspace's repos, in the
+// same order the index run resolved them (ResolveRepos plus the missing literal
+// paths appended), with their slugs re-minted via a fresh fact.RepoSlugger so
+// the emitted ci-status fact subjects join the store's existing repo slugs (the
+// slug-join invariant: identical order in, identical `-N` collision suffixes
+// out). The ci kind runs `git remote get-url origin` per repo, so a repo dir
+// need not exist here — a missing dir simply fails the git call and is skipped
+// as a non-GitHub repo with a per-repo notice (REQ: ci-state).
+func probeCITargets(cmd *cobra.Command) ([]probe.CIRepo, error) {
+	workspaceFlag, _ := cmd.Flags().GetString("workspace")
+	ws, err := workspace.Load(workspaceFlag)
+	if err != nil {
+		return nil, err
+	}
+	repos, missing, err := ws.ResolveRepos()
+	if err != nil {
+		return nil, err
+	}
+	// Mirror the index run's ordering: existing repos then missing literals,
+	// slugged in that exact order so the collision counter matches.
+	repos = append(repos, missing...)
+	slugger := fact.NewRepoSlugger()
+	targets := make([]probe.CIRepo, 0, len(repos))
+	for _, dir := range repos {
+		targets = append(targets, probe.CIRepo{
+			Dir:       dir,
+			Slug:      slugger.Slug(dir),
+			Ecosystem: ws.Name,
+		})
+	}
+	return targets, nil
+}
+
+// renderProbeSummary prints the probe run summary as JSON or free-form human
+// prose over the same data (REQ: probe-verb).
+func renderProbeSummary(cmd *cobra.Command, format string, s probeSummary) error {
+	w := cmd.OutOrStdout()
+	if format == "json" {
+		if s.Kinds == nil {
+			s.Kinds = []string{}
+		}
+		if s.Warnings == nil {
+			s.Warnings = []string{}
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(s)
+	}
+	kinds := "none"
+	if len(s.Kinds) > 0 {
+		kinds = strings.Join(s.Kinds, ", ")
+	}
+	_, _ = fmt.Fprintf(w, "Probe kinds: %s\n", kinds)
+	_, _ = fmt.Fprintf(w, "Facts written: %d\n", s.FactsWritten)
+	_, _ = fmt.Fprintf(w, "Verified refreshed: %d\n", s.VerifiedRefresh)
+	_, _ = fmt.Fprintf(w, "Warnings: %d\n", len(s.Warnings))
+	for _, warn := range s.Warnings {
+		_, _ = fmt.Fprintf(w, "  %s\n", warn)
+	}
+	return nil
+}
+
 // --- studio facts ---
 
 func studioFactsCommand() *cobra.Command {
@@ -184,6 +388,14 @@ func studioFactsCommand() *cobra.Command {
 --object, --class and --adapter (exact match; --subject and --object also
 accept a trailing "*" for prefix match) and prints a table by default,
 JSON with --format json, or only the row count with --count.
+
+--stale <duration> (Go duration syntax, e.g. 24h or 720h) selects only facts
+whose verified_at is older than now minus the duration; it composes (AND) with
+every other filter and with --count. A malformed --stale duration exits 2.
+
+The table output carries a VERIFIED column showing each fact's freshness age
+derived from verified_at (fresh < 24h, aging < 30d, else "stale"). JSON output
+includes observed_at and verified_at verbatim.
 
 Querying a missing or empty store exits 2 with an actionable message
 naming the expected store path and suggesting "specscore studio index".`,
@@ -198,6 +410,7 @@ naming the expected store path and suggesting "specscore studio index".`,
 	cmd.Flags().String("object", "", "filter by object (trailing * = prefix match)")
 	cmd.Flags().String("class", "", "filter by evidence class (declared, derived or verified-behavior)")
 	cmd.Flags().String("adapter", "", "filter by adapter id (exact match)")
+	cmd.Flags().String("stale", "", "select facts whose verified_at is older than a Go duration (e.g. 24h)")
 	cmd.Flags().String("format", "table", "output format: table or json")
 	cmd.Flags().Bool("count", false, "print only the number of matching facts")
 	return cmd
@@ -214,12 +427,20 @@ func runStudioFacts(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	now := studioNowFn()
 	filter := store.Filter{}
 	filter.Subject, _ = cmd.Flags().GetString("subject")
 	filter.Predicate, _ = cmd.Flags().GetString("predicate")
 	filter.Object, _ = cmd.Flags().GetString("object")
 	filter.Class, _ = cmd.Flags().GetString("class")
 	filter.Adapter, _ = cmd.Flags().GetString("adapter")
+	if staleFlag, _ := cmd.Flags().GetString("stale"); staleFlag != "" {
+		d, err := time.ParseDuration(staleFlag)
+		if err != nil {
+			return exitcode.InvalidArgsErrorf("invalid --stale duration %q: expected Go duration syntax (e.g. 24h)", staleFlag)
+		}
+		filter.StaleBefore = now.Add(-d)
+	}
 
 	facts, err := store.Query(dbPath, filter)
 	if err != nil {
@@ -237,12 +458,41 @@ func runStudioFacts(cmd *cobra.Command, _ []string) error {
 		return enc.Encode(facts)
 	}
 	tw := tabwriter.NewWriter(w, 2, 8, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "SUBJECT\tPREDICATE\tOBJECT\tCLASS\tADAPTER")
+	_, _ = fmt.Fprintln(tw, "SUBJECT\tPREDICATE\tOBJECT\tCLASS\tADAPTER\tVERIFIED")
 	for _, f := range facts {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			f.Subject, f.Predicate, f.Object, f.Class, f.Adapter.ID)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			f.Subject, f.Predicate, f.Object, f.Class, f.Adapter.ID,
+			humanAge(f.VerifiedAt, now))
 	}
 	return tw.Flush()
+}
+
+// humanAge renders a fact's freshness age from its verified_at timestamp,
+// relative to now, for the VERIFIED table column (REQ: age-rendering). The
+// thresholds mirror the UX design's freshness dots: fresh (< 24h) renders in
+// hours, aging (< 30d) in days, and anything older renders as "stale". An
+// empty or unparseable timestamp renders "?".
+func humanAge(verifiedAt string, now time.Time) string {
+	if verifiedAt == "" {
+		return "?"
+	}
+	t, err := time.Parse(time.RFC3339, verifiedAt)
+	if err != nil {
+		return "?"
+	}
+	age := now.Sub(t)
+	switch {
+	case age < 24*time.Hour:
+		h := int(age.Hours())
+		if h < 0 {
+			h = 0
+		}
+		return fmt.Sprintf("%dh", h)
+	case age < 30*24*time.Hour:
+		return fmt.Sprintf("%dd", int(age.Hours())/24)
+	default:
+		return "stale"
+	}
 }
 
 // studioFactsStorePath resolves the fact-store path for the facts verb:

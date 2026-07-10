@@ -145,6 +145,11 @@ func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 				if f.ObservedAt == "" {
 					f.ObservedAt = observedAt
 				}
+				// Index facts are verified at index time: verified_at equals
+				// observed_at, both honest (Feature: cli/studio/probe,
+				// REQ: verified-at-field). The probe engine is the only writer
+				// that later advances verified_at past observed_at.
+				f.VerifiedAt = f.ObservedAt
 				f.Ecosystem = ecosystem
 				res.Facts = append(res.Facts, f)
 				res.FactsByAdapter[a.ID()]++

@@ -57,7 +57,14 @@ type Fact struct {
 	Evidence
 	Adapter    Adapter `json:"adapter"`
 	ObservedAt string  `json:"observed_at"`
-	Ecosystem  string  `json:"ecosystem"`
+	// VerifiedAt is the timestamp of the fact's most recent successful
+	// re-verification, distinct from ObservedAt (when the behavior was first
+	// observed). On first write the two are equal; re-verifying an unchanged
+	// fact refreshes VerifiedAt while preserving the original ObservedAt.
+	//
+	// Feature: cli/studio/probe (REQ: verified-at-field)
+	VerifiedAt string `json:"verified_at"`
+	Ecosystem  string `json:"ecosystem"`
 }
 
 // Warning is a non-fatal ingestion problem: a file, adapter, or repo that
