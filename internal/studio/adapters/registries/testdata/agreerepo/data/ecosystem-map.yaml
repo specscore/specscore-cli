@@ -1,0 +1,9 @@
+# Curated ecosystem-map.yaml — agrees with data/ecosystem.yaml below.
+# Both files declare product `dupius` identically; the adapter must emit each
+# relationship once, keeping this file's pointer (first in discovery order).
+products:
+  - id: dupius
+    brand: "Dupius"
+    repos: [dupius-repo]
+    domains: [dup.app]
+    vertical: hospitality

@@ -1,0 +1,11 @@
+# Generated data/ecosystem.yaml — same product `dupius` as ecosystem-map.yaml.
+# Agreement across the two files is a confidence signal, but each relationship
+# is a single fact: the adapter collapses the duplicates to one.
+products:
+  - id: dupius
+    brand: Dupius
+    repos:
+      - dupius-repo
+    domains:
+      - name: dup.app
+    vertical: hospitality
