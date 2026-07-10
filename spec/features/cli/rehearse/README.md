@@ -19,6 +19,7 @@ Command group for the Rehearse acceptance-evidence layer (v0.3 fold-in per rehea
 |---|---|
 | [run](run/README.md) | TODO: Add description. |
 | [evidence](evidence/README.md) | Persist rehearse run JSON reports and ingest them at studio index time as verified-behavior facts |
+| [new](new/README.md) | Scaffold a Rehearse scenario file pre-populated with Given/When/Then structure and Verifies metadata from a feature's acceptance criterion |
 
 ## Problem
 

@@ -1,0 +1,26 @@
+---
+format: https://specscore.md/scenario-specification
+---
+
+# Rehearse: Index Two Repos
+
+**Status:** pending
+**Verifies:** cli/studio/index#ac:index-two-repos
+
+Scenario source: [../README.md](../README.md) → `### AC: index-two-repos`.
+
+Scenario: index two repos
+Given a studio.yaml with two repos
+When I run specscore studio index
+Then both repos are listed
+
+### Step: [TODO — implement the scenario steps]
+
+A placeholder bash block with guidance:
+
+```bash
+# TODO: Implement steps to verify the scenario's Given/When/Then.
+# Use $SPECSCORE to invoke the CLI under test (e.g., $SPECSCORE rehearse run ...).
+# Assert exit codes and output as needed.
+echo "TODO: implement scenario steps"
+```
