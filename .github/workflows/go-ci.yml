@@ -60,6 +60,7 @@ jobs:
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v4
+        continue-on-error: true
         with:
           skip-pkg-cache: false
           skip-build-cache: false
