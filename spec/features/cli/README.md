@@ -97,6 +97,7 @@ Reports the CLI's build identity. `specscore version` prints the full human-read
 | [consilium](consilium/README.md) | The deterministic consilium engine for the specscore CLI: the pkg/consilium package owning the gate-rule arbiter, vote-schema validation, roster resolution and validation, gate-knob config, the consilium: block in specscore.yaml, and the parent consilium cobra command. |
 | [plan](plan/README.md) | specscore plan commands query Plan artifacts in spec/plans/ — listing them and inspecting one plan's metadata and task rollup — so agents and humans can answer what plans exist and what status they hold without hand-grepping. |
 | [sidekick](sidekick/README.md) | Scaffold sidekick-seed artifacts |
+| [studio](studio/README.md) | Command group for SpecScore Studio: index, facts (Phase 0); ask, serve, mcp (later features). Design: specstudio-skills/spec/research/studio-design-2026-07/. |
 
 ## Behavior
 
