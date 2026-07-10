@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: studio index — Phase-0 ecosystem indexer + facts query
 
-**Status:** Executing
+**Status:** Implemented
 **Source Feature:** cli/studio/index
 **Date:** 2026-07-10
 **Owner:** alex
@@ -80,7 +80,7 @@ Warning collection at file→adapter→repo granularity across all adapters, ada
 
 **Verifies:** cli/studio/index#ac:ingr-export-counts, cli/studio/index#ac:index-two-repos
 **Depends-On:** 7
-**Status:** planning
+**Status:** complete
 
 `internal/studio/ingr` recordset writer (reusing the codegraph snapshot encoding), `--ingr-dir`/`--no-ingr` flags, per-repo record-count parity with the store, the full two-repo fixture workspace end-to-end scenario, and command docs (README section for `studio index`/`facts`).
 

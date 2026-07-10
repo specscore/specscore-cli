@@ -116,6 +116,22 @@ func TestRun_StampsFactsCentrally(t *testing.T) {
 	if res.FactsByAdapter["fake"] != 4 {
 		t.Errorf("FactsByAdapter[fake] = %d, want 4", res.FactsByAdapter["fake"])
 	}
+	// Per-repo fact attribution (REQ: ingr-export): each repo's group holds
+	// exactly the facts its adapter runs produced, matching the summary count.
+	for slug, want := range map[string][]string{
+		"repo":   {"repo#x", "repo#idea"},
+		"repo-2": {"repo-2#x", "repo-2#idea"},
+	} {
+		group := res.FactsByRepo[slug]
+		if len(group) != len(want) {
+			t.Fatalf("len(FactsByRepo[%s]) = %d, want %d", slug, len(group), len(want))
+		}
+		for i, f := range group {
+			if f.Subject != want[i] {
+				t.Errorf("FactsByRepo[%s][%d].Subject = %q, want %q", slug, i, f.Subject, want[i])
+			}
+		}
+	}
 	// Per-repo summaries: two facts per repo, no warnings.
 	if len(res.Repos) != 2 {
 		t.Fatalf("len(Repos) = %d, want 2", len(res.Repos))

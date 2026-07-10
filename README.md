@@ -63,6 +63,33 @@ specscore --version              # bare semver
 
 Full command reference: see [`spec/features/cli/`](spec/features/cli/).
 
+### SpecScore Studio — multi-repo fact indexing
+
+`specscore studio` federates per-repo artifacts (spec trees, CodeGrapher `codegraph/` snapshots, `go.mod`/`package.json` manifests, ops registries) across a whole ecosystem into one queryable fact store. Describe the ecosystem in a `studio.yaml` workspace file:
+
+```yaml
+name: demo
+repos:              # directory paths or globs, absolute or workspace-relative
+  - ../repo-a
+  - ../org/*        # glob entries expand to existing directories
+  - path: ../ops    # mapping form: extra registry files for this repo
+    registries: [data/domains.json]
+```
+
+Then index and query:
+
+```bash
+specscore studio index                          # rebuild the store from ./studio.yaml
+specscore studio index --workspace path/to/studio.yaml --strict   # any warning exits 3
+specscore studio facts --predicate has-status   # table of matching facts
+specscore studio facts --subject 'repo-a#*' --format json         # full fact shape
+specscore studio facts --predicate imports --count                # row count only
+```
+
+`studio index` rebuilds `<workspace-dir>/.specscore-studio/facts.db` from scratch on every run (override with `--db`) and prints a summary with per-repo and per-adapter fact counts plus every warning. Broken repos, adapters, or files are skipped at the smallest granularity and reported as warnings; the exit code stays 0 unless `--strict` is set.
+
+Every run also exports the facts as [INGR](https://ingitdb.com) recordsets — the same encoding as the committed `codegraph/` snapshots — one directory per repo slug under `<workspace-dir>/.specscore-studio/ingr/<repo-slug>/facts.ingr` (override the root with `--ingr-dir`, skip with `--no-ingr`). Each recordset starts with a fixed header naming the nine fact fields (`subject, predicate, object, evidence_class, evidence_pointer, adapter_id, adapter_version, observed_at, ecosystem`), followed by one JSON value per line (nine lines per record) and a `# <n> records` trailer; the per-repo record count always equals that repo's fact count in the index summary. Full contract: [`spec/features/cli/studio/index/`](spec/features/cli/studio/index/).
+
 ## Updating
 
 Bring an existing install to the latest release:

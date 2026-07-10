@@ -475,3 +475,19 @@ func TestDefaultDBPath(t *testing.T) {
 		t.Errorf("DefaultDBPath = %q, want %q", got, want)
 	}
 }
+
+// --- DefaultIngrDir ---
+
+func TestDefaultIngrDir(t *testing.T) {
+	dir := t.TempDir()
+	path := writeWorkspace(t, dir, "name: demo\nrepos: [a]\n")
+
+	ws, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := filepath.Join(ws.Dir, ".specscore-studio", "ingr")
+	if got := ws.DefaultIngrDir(); got != want {
+		t.Errorf("DefaultIngrDir = %q, want %q", got, want)
+	}
+}

@@ -74,6 +74,11 @@ type Result struct {
 	// FactsByAdapter counts the facts each adapter emitted, keyed by adapter
 	// id; every adapter that ran has an entry (zero included).
 	FactsByAdapter map[string]int
+	// FactsByRepo groups the stamped facts by the slug of the repo whose
+	// adapter run produced them — the provenance the INGR export needs to
+	// attribute global-coordinate facts (e.g. registry domains) to a repo
+	// (REQ: ingr-export). Skipped repos have no entry (zero facts).
+	FactsByRepo map[string][]fact.Fact
 	// Repos are the per-repo run summaries, in input repo order; skipped
 	// repos are included (zero facts, one repo-level warning).
 	Repos []RepoSummary
@@ -105,7 +110,10 @@ type RepoSummary struct {
 func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 	observedAt := nowFn().UTC().Format(time.RFC3339)
 	slugger := fact.NewRepoSlugger()
-	res := Result{FactsByAdapter: make(map[string]int, len(adapters))}
+	res := Result{
+		FactsByAdapter: make(map[string]int, len(adapters)),
+		FactsByRepo:    make(map[string][]fact.Fact, len(repos)),
+	}
 	for _, a := range adapters {
 		res.FactsByAdapter[a.ID()] = 0
 	}
@@ -133,6 +141,7 @@ func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 				f.Ecosystem = ecosystem
 				res.Facts = append(res.Facts, f)
 				res.FactsByAdapter[a.ID()]++
+				res.FactsByRepo[slug] = append(res.FactsByRepo[slug], f)
 				summary.Facts++
 			}
 			for _, w := range warnings {

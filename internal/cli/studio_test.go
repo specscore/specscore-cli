@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
+	"github.com/specscore/specscore-cli/internal/studio/ingr"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
@@ -418,6 +420,141 @@ func TestStudioIndex_RebuildFailurePropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fact-store directory") {
 		t.Errorf("error %q does not mention the fact-store directory", err.Error())
+	}
+}
+
+// --- studio index: INGR export (REQ: ingr-export) ---
+
+// ingrRecordCount reads the recordset at path and returns its `# N records`
+// trailer count.
+func ingrRecordCount(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading recordset %s: %v", path, err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	var n int
+	if _, err := fmt.Sscanf(lines[len(lines)-1], "# %d records", &n); err != nil {
+		t.Fatalf("recordset %s has no record-count trailer: %q", path, lines[len(lines)-1])
+	}
+	return n
+}
+
+// AC: ingr-export-counts (default path) — every index run writes one
+// recordset per repo slug under <workspace-dir>/.specscore-studio/ingr/ and
+// the per-repo record count equals the repo's fact count in the summary.
+func TestStudioIndex_IngrExportDefaultDirAndCounts(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a", "repo-b")
+	wsDir := filepath.Dir(wsPath)
+	newSpecScoreRepo(t, wsDir, "repo-a") // one has-status fact; repo-b stays empty
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+	ingrDir := filepath.Join(wsDir, ".specscore-studio", "ingr")
+	if !strings.Contains(out, "INGR export: "+ingrDir) {
+		t.Errorf("summary does not name the INGR export dir %q; got:\n%s", ingrDir, out)
+	}
+	for slug, want := range map[string]int{"repo-a": 1, "repo-b": 0} {
+		got := ingrRecordCount(t, filepath.Join(ingrDir, slug, "facts.ingr"))
+		if got != want {
+			t.Errorf("%s record count = %d, want %d (the summary fact count)", slug, got, want)
+		}
+		if !strings.Contains(out, fmt.Sprintf("%s: %d facts", filepath.Join(wsDir, slug), want)) {
+			t.Errorf("summary lacks %q fact count %d; got:\n%s", slug, want, out)
+		}
+	}
+}
+
+func TestStudioIndex_IngrDirFlagOverridesDefault(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	ingrDir := filepath.Join(t.TempDir(), "custom-ingr")
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath, "--ingr-dir", ingrDir)
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+	if !strings.Contains(out, "INGR export: "+ingrDir) {
+		t.Errorf("summary does not use --ingr-dir path %q; got:\n%s", ingrDir, out)
+	}
+	if _, err := os.Stat(filepath.Join(ingrDir, "repo-a", "facts.ingr")); err != nil {
+		t.Errorf("recordset missing under --ingr-dir: %v", err)
+	}
+}
+
+func TestStudioIndex_RelativeIngrDirFlagIsAbsolutized(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	t.Chdir(t.TempDir()) // the export root lands in the cwd
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath, "--ingr-dir", "rel-ingr")
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(cwd, "rel-ingr")
+	if !strings.Contains(out, "INGR export: "+abs) {
+		t.Errorf("summary does not absolutize --ingr-dir to %q; got:\n%s", abs, out)
+	}
+}
+
+func TestStudioIndex_IngrDirFlagAbsError(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+
+	old := filepathAbsFn
+	filepathAbsFn = func(p string) (string, error) {
+		if p == "rel-ingr" {
+			return "", errors.New("abs boom")
+		}
+		return filepath.Abs(p)
+	}
+	t.Cleanup(func() { filepathAbsFn = old })
+
+	_, _, err := runStudioCmd(t, "index", "--workspace", wsPath, "--ingr-dir", "rel-ingr")
+	if code := studioExit(t, err); code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d", code, exitcode.InvalidArgs)
+	}
+}
+
+func TestStudioIndex_NoIngrSkipsExport(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	wsDir := filepath.Dir(wsPath)
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath, "--no-ingr")
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+	if !strings.Contains(out, "INGR export: disabled (--no-ingr)") {
+		t.Errorf("summary does not report the disabled export; got:\n%s", out)
+	}
+	ingrDir := filepath.Join(wsDir, ".specscore-studio", "ingr")
+	if _, err := os.Stat(ingrDir); !os.IsNotExist(err) {
+		t.Errorf("INGR export dir written despite --no-ingr: %v", err)
+	}
+}
+
+// An export failure is a run-level warning, not a fatal error — the store
+// stays the query surface (REQ: ingr-export).
+func TestStudioIndex_IngrExportFailureIsWarning(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+
+	old := ingrExportFn
+	ingrExportFn = func(string, []ingr.Repo) error { return errors.New("export boom") }
+	t.Cleanup(func() { ingrExportFn = old })
+
+	out, _, err := runStudioCmd(t, "index", "--workspace", wsPath)
+	if err != nil {
+		t.Fatalf("studio index: %v", err)
+	}
+	if !strings.Contains(out, "Warnings: 1") {
+		t.Errorf("summary does not count the export warning; got:\n%s", out)
+	}
+	if !strings.Contains(out, "INGR export failed: export boom — facts remain queryable in the store") {
+		t.Errorf("summary does not list the export warning; got:\n%s", out)
 	}
 }
 

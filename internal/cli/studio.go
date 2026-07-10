@@ -2,7 +2,7 @@ package cli
 
 // Feature implemented: cli/studio/index (REQ: workspace-config,
 // REQ: workspace-errors, REQ: rebuild-only, REQ: partial-tolerance,
-// REQ: facts-query, REQ: adapter-registries)
+// REQ: facts-query, REQ: adapter-registries, REQ: ingr-export)
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
+	"github.com/specscore/specscore-cli/internal/studio/ingr"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/internal/studio/workspace"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -19,7 +20,10 @@ import (
 
 // Test seams — package-level vars wrapping external functions.
 // Production code calls these vars; tests replace them via t.Cleanup.
-var adaptersRunFn = adapters.Run
+var (
+	adaptersRunFn = adapters.Run
+	ingrExportFn  = ingr.Export
+)
 
 // studioCommand returns the "studio" command group for SpecScore Studio —
 // the multi-repo ecosystem fact indexer.
@@ -60,7 +64,12 @@ Individual broken repos never abort the run: a missing repo path, a
 panicking adapter, or a malformed artifact file is skipped at the smallest
 possible granularity and reported as a warning in the run summary. The
 command exits 0 with warnings by default; --strict makes any warning exit 3
-after the run completes and the summary is printed.`,
+after the run completes and the summary is printed.
+
+Every run also exports the facts as INGR recordsets, one directory per repo
+slug under <workspace-dir>/.specscore-studio/ingr/ (override the root with
+--ingr-dir; skip the export with --no-ingr). An export failure is a warning,
+not a fatal error — the fact store remains the query surface.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE:         runStudioIndex,
@@ -68,6 +77,8 @@ after the run completes and the summary is printed.`,
 	cmd.Flags().String("workspace", "./studio.yaml", "path to the studio.yaml workspace file")
 	cmd.Flags().String("db", "", "fact store path (default <workspace-dir>/.specscore-studio/facts.db)")
 	cmd.Flags().Bool("strict", false, "exit 3 when the run collected any warning")
+	cmd.Flags().String("ingr-dir", "", "INGR export root (default <workspace-dir>/.specscore-studio/ingr)")
+	cmd.Flags().Bool("no-ingr", false, "skip the per-repo INGR recordset export")
 	return cmd
 }
 
@@ -95,11 +106,35 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 		}
 		dbPath = abs
 	}
+	ingrDir := ws.DefaultIngrDir()
+	if ingrDirFlag, _ := cmd.Flags().GetString("ingr-dir"); ingrDirFlag != "" {
+		abs, err := filepathAbsFn(ingrDirFlag)
+		if err != nil {
+			return exitcode.InvalidArgsErrorf("resolving --ingr-dir path %s: %v", ingrDirFlag, err)
+		}
+		ingrDir = abs
+	}
 
 	all := adapters.All(adapters.Options{Registries: ws.ResolveRegistries()})
 	result := adaptersRunFn(all, repos, ws.Name)
 	if err := store.Rebuild(dbPath, result.Facts); err != nil {
 		return err
+	}
+
+	// INGR export (REQ: ingr-export): one recordset directory per repo slug,
+	// each holding exactly the facts attributed to that repo by the run. An
+	// export failure is downgraded to a run-level warning — the store stays
+	// the query surface; the export is interchange.
+	noIngr, _ := cmd.Flags().GetBool("no-ingr")
+	if !noIngr {
+		exportRepos := make([]ingr.Repo, 0, len(result.Repos))
+		for _, r := range result.Repos {
+			exportRepos = append(exportRepos, ingr.Repo{Slug: r.Slug, Facts: result.FactsByRepo[r.Slug]})
+		}
+		if err := ingrExportFn(ingrDir, exportRepos); err != nil {
+			result.Warnings = append(result.Warnings, adapters.Warning{
+				Message: fmt.Sprintf("INGR export failed: %v — facts remain queryable in the store", err)})
+		}
 	}
 
 	w := cmd.OutOrStdout()
@@ -115,13 +150,21 @@ func runStudioIndex(cmd *cobra.Command, _ []string) error {
 	}
 	_, _ = fmt.Fprintf(w, "Warnings: %d\n", len(result.Warnings))
 	for _, warn := range result.Warnings {
-		if warn.Adapter == "" { // repo-level warning: no adapter to blame
+		switch {
+		case warn.Repo == "": // run-level warning (e.g. INGR export): no repo to blame
+			_, _ = fmt.Fprintf(w, "  %s\n", warn.Message)
+		case warn.Adapter == "": // repo-level warning: no adapter to blame
 			_, _ = fmt.Fprintf(w, "  %s: %s\n", warn.Repo, warn.Message)
-			continue
+		default:
+			_, _ = fmt.Fprintf(w, "  %s [%s]: %s\n", warn.Repo, warn.Adapter, warn.Message)
 		}
-		_, _ = fmt.Fprintf(w, "  %s [%s]: %s\n", warn.Repo, warn.Adapter, warn.Message)
 	}
 	_, _ = fmt.Fprintf(w, "Fact store: %s\n", dbPath)
+	if noIngr {
+		_, _ = fmt.Fprintln(w, "INGR export: disabled (--no-ingr)")
+	} else {
+		_, _ = fmt.Fprintf(w, "INGR export: %s\n", ingrDir)
+	}
 
 	// --strict escalates warnings only after the run completed and the full
 	// summary is printed (REQ: partial-tolerance).

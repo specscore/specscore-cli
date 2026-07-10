@@ -213,6 +213,12 @@ func (ws *Workspace) DefaultDBPath() string {
 	return filepath.Join(ws.Dir, ".specscore-studio", "facts.db")
 }
 
+// DefaultIngrDir returns the default INGR export root for the workspace:
+// <workspace-dir>/.specscore-studio/ingr (REQ: ingr-export).
+func (ws *Workspace) DefaultIngrDir() string {
+	return filepath.Join(ws.Dir, ".specscore-studio", "ingr")
+}
+
 // yamlErrOneLine collapses a (possibly multi-line) YAML error into one line
 // so workspace errors stay one-line actionable.
 func yamlErrOneLine(err error) string {
