@@ -12,8 +12,8 @@ Run with:
 specscore rehearse run spec/features/cli/studio/answers/_tests
 ```
 
-All scenarios are **pending** — the feature is In Review. Every scenario is
-hermetic: detector, resolve, and ask scenarios run over a fixture store built
+All scenarios are **pass-capable** — the feature is Implementing. Every scenario
+is hermetic: detector, resolve, and ask scenarios run over a fixture store built
 offline (`studio index` over tiny fixture repos, plus `sqlite3`-seeded
 `verified-behavior` facts where a probed store is Given — the house pattern from
 `cli/studio/probe/_tests`); the benchmark scenarios assert over the committed

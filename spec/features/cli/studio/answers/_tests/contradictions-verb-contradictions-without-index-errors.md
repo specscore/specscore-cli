@@ -4,7 +4,7 @@ format: https://specscore.md/scenario-specification
 
 # Rehearse: contradictions-without-index-errors
 
-**Status:** pending
+**Status:** pass-capable
 **Verifies:** cli/studio/answers#ac:contradictions-without-index-errors (REQ: contradictions-verb)
 
 Scenario source: [../README.md](../README.md) → `### AC: contradictions-without-index-errors`.
@@ -17,13 +17,40 @@ No seams are needed: the missing-store guard fires before any store read.
 #!/usr/bin/env bash
 # Rehearse: cli/studio/answers#ac:contradictions-without-index-errors
 # Requires: specscore on PATH (override with $SPECSCORE).
-# Status: pending — scaffolded stub; implement alongside the feature.
 set -euo pipefail
 
 SPECSCORE="${SPECSCORE:-specscore}"
 
-echo "PENDING: contradictions-without-index-errors not yet implemented"
-exit 1
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+cd "$workdir"
+mkdir repo-a
+cat > studio.yaml <<'YAML'
+name: demo
+repos:
+  - repo-a
+YAML
+
+set +e
+stderr="$("$SPECSCORE" studio contradictions 2>&1 >/dev/null)"
+exit_code=$?
+set -e
+
+[ "$exit_code" -eq 2 ] || { echo "FAIL: exit code $exit_code, want 2; stderr: $stderr"; exit 1; }
+
+expected_logical="$(pwd)/.specscore-studio/facts.db"
+expected_physical="$(pwd -P)/.specscore-studio/facts.db"
+case "$stderr" in
+  *"$expected_logical"* | *"$expected_physical"*) ;;
+  *) echo "FAIL: message does not name expected store path $expected_logical: $stderr"; exit 1 ;;
+esac
+
+case "$stderr" in
+  *"studio index"*) ;;
+  *) echo "FAIL: message does not suggest studio index: $stderr"; exit 1 ;;
+esac
+
+echo "PASS: contradictions-without-index-errors"
 ```
 
 ---

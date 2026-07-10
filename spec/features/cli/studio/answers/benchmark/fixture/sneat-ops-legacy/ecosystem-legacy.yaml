@@ -1,0 +1,11 @@
+# Legacy ecosystem map — the second, disagreeing registry.
+#
+# It repeats the gameboard-ext product but names a different implementing repo
+# (`gameboard-contract` vs the current map's `ext-gameboard`), producing a second
+# `declared` `(gameboard-ext, implemented-by, ...)` fact from a distinct pointer.
+# Two declared facts, same subject+predicate, different objects, different
+# pointers → the naming-conflict detector fires.
+products:
+  - id: gameboard-ext
+    repos:
+      - gameboard-contract

@@ -1,0 +1,56 @@
+# Curated ecosystem map for the answers benchmark fixture.
+#
+# A tiny, honest miniature of the Sneat ecosystem: real product ids, brands,
+# repos, verticals, and domains chosen so every entity-targeting `studio ask`
+# template has an answerable subject. The registries adapter turns each product
+# into aliased-as / implemented-by / member-of facts and each domain into a
+# canonical domain→product `fronts` fact.
+products:
+  - id: sizeus
+    brand: SizeChart
+    vertical: retail
+    repos:
+      - sizeus-app
+    domains:
+      - sizeus.app
+  - id: spaceus
+    brand: SpaceChart
+    vertical: retail
+    repos:
+      - spaceus-app
+    domains:
+      - spaceus.app
+  - id: contactus
+    brand: ContactUs
+    vertical: platform
+    repos:
+      - contactus
+    domains:
+      - contactus.app
+  - id: gameboard
+    brand: GameBoard
+    vertical: games
+    repos:
+      - gameboard
+    domains:
+      - gameboard.app
+  # The dead investor-CTA product: its domain is declared live in domains.json
+  # (200) but the probe-stubbed verified-behavior fact says down — the
+  # status-drift declared-vs-verified class the benchmark's is-it-live and
+  # contradictions-for instances exercise.
+  - id: investus
+    brand: InvestUs
+    vertical: investor
+    repos:
+      - investus-site
+    domains:
+      - invest.example
+  # The naming-conflict class: this map says gameboard-ext is implemented by
+  # `ext-gameboard`, while sneat-ops-legacy/ecosystem.yaml says it is
+  # `gameboard-contract` — two human-authored registries disagreeing on the same
+  # (subject, predicate), the `ext-<id>` vs `<id>-contract` case.
+  - id: gameboard-ext
+    brand: GameBoardExt
+    vertical: games
+    repos:
+      - ext-gameboard

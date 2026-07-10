@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: studio answers — contradictions, resolve, ask + benchmark
 
-**Status:** Executing
+**Status:** Implemented
 **Source Feature:** cli/studio/answers
 **Date:** 2026-07-10
 **Owner:** ai
@@ -48,7 +48,7 @@ Prove the never-flag rules (cross-class agreement; verified×verified supersessi
 
 **Verifies:** cli/studio/answers#ac:ask-routes-with-citations, cli/studio/answers#ac:ask-unroutable-lists-templates, cli/studio/answers#ac:ask-routed-but-empty
 **Depends-On:** 3
-**Status:** in_progress
+**Status:** complete
 
 `studio ask "<question>"`: deterministic trigger-pattern router over the Feature's 13 templates, each a parameterized store query (the `is-it-live` template does the fronts→serves-status two-step hop), answers always citing fact ids/pointers; unroutable exits 1 listing the templates; routed-but-empty exits 3 with no citation-free prose.
 
@@ -56,7 +56,7 @@ Prove the never-flag rules (cross-class agreement; verified×verified supersessi
 
 **Verifies:** cli/studio/answers#ac:benchmark-file-has-50, cli/studio/answers#ac:benchmark-runner-scores-fixture
 **Depends-On:** 4
-**Status:** planning
+**Status:** complete
 
 Commit `benchmark/questions.jsonl` (exactly 50 instances matching the composition table) and the runner script (runs `studio contradictions` into the target store first, then scores answered-with-citations; composition check enforces the table), the hermetic CI fixture floor, replace the 16 pending `_tests/` stubs with executable scenarios (probe-corpus strategy: fixture stores, PATH shims where needed), and extend the Rehearse corpus CI job. Update feature Status → Implementing.
 

@@ -1,0 +1,17 @@
+# Hermetic benchmark fixture workspace (cli/studio/answers#req:exit-gate-fixture-and-sneat).
+#
+# A small, hand-authored miniature of the Sneat ecosystem — real product ids,
+# brands, domains, feature names, and go modules — sized so every answerable
+# `studio ask` template has a subject that exists here. Indexed offline; the
+# probe-only verified-behavior facts (a dead domain's serves-status, ci-status
+# per repo) are seeded by benchmark/fixture/seed.sh with sqlite3 rather than a
+# live probe, keeping the fixture floor hermetic (no network).
+name: sneat
+repos:
+  - sneat-ops
+  - sneat-ops-legacy
+  - gameboard
+  - contactus
+  - sneat-libs
+  - sneat-go-backend
+  - sneat-go-bots

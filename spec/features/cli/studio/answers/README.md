@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Approved
+status: Implementing
 ---
 
 # Feature: studio answers — contradictions, alias resolution, and the deterministic question router
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers?op=request-change) |
-**Status:** Approved
+**Status:** Implementing
 **Source Ideas:** —
 **Supersedes:** —
 **Grade:** A

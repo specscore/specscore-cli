@@ -1,0 +1,6 @@
+{
+  "started_at": "2026-07-02T12:00:00Z",
+  "scenarios": [
+    {"file": "inbox/receives-message.md", "status": "pass", "verifies": ["inbox#ac:receives-message"]}
+  ]
+}
