@@ -14,12 +14,14 @@ on:
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - 'spec/features/**/_tests/**'
   pull_request:
     paths:
       - '.github/workflows/go-ci.yml'
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
+      - 'spec/features/**/_tests/**'
   workflow_dispatch:
 
 permissions:
@@ -64,3 +66,44 @@ jobs:
 
       - name: coverage gate (100%)
         run: ./scripts/coverage-gate.sh
+
+  # Runs the committed acceptance corpus (Studio + Rehearse scenarios) through
+  # the self-hosted `rehearse run` runner. A separate job so Go test timing is
+  # unaffected (REQ: studio-corpus-green of spec/features/cli/rehearse/run).
+  rehearse-corpus:
+    name: Rehearse corpus
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build CLI
+        run: go build -o /tmp/specscore ./cmd/specscore
+
+      # hurl is not in the Ubuntu apt archive; install the pinned release .deb
+      # from GitHub (hurl-block scenarios execute HTTP steps through it).
+      - name: Install hurl
+        run: |
+          set -eu
+          HURL_VERSION=8.0.1
+          curl -fsSL --retry 3 -o /tmp/hurl.deb \
+            "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt-get install -y /tmp/hurl.deb
+          hurl --version
+
+      - name: Run acceptance corpus
+        env:
+          # The scenarios invoke the CLI under test via $SPECSCORE (they
+          # default to `specscore` on PATH otherwise).
+          SPECSCORE: /tmp/specscore
+        run: >
+          /tmp/specscore rehearse run
+          spec/features/cli/studio/index/_tests
+          spec/features/cli/rehearse/run/_tests
+          --format json

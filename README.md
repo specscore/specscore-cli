@@ -57,6 +57,7 @@ specscore spec lint              # lint the current spec tree
 specscore feature list           # list features
 specscore feature show <slug>    # inspect a feature
 specscore task list              # show the task board
+specscore rehearse run           # execute markdown acceptance scenarios
 specscore version                # full build identity
 specscore --version              # bare semver
 ```
@@ -89,6 +90,68 @@ specscore studio facts --predicate imports --count                # row count on
 `studio index` rebuilds `<workspace-dir>/.specscore-studio/facts.db` from scratch on every run (override with `--db`) and prints a summary with per-repo and per-adapter fact counts plus every warning. Broken repos, adapters, or files are skipped at the smallest granularity and reported as warnings; the exit code stays 0 unless `--strict` is set.
 
 Every run also exports the facts as [INGR](https://ingitdb.com) recordsets — the same encoding as the committed `codegraph/` snapshots — one directory per repo slug under `<workspace-dir>/.specscore-studio/ingr/<repo-slug>/facts.ingr` (override the root with `--ingr-dir`, skip with `--no-ingr`). Each recordset starts with a fixed header naming the nine fact fields (`subject, predicate, object, evidence_class, evidence_pointer, adapter_id, adapter_version, observed_at, ecosystem`), followed by one JSON value per line (nine lines per record) and a `# <n> records` trailer; the per-repo record count always equals that repo's fact count in the index summary. Full contract: [`spec/features/cli/studio/index/`](spec/features/cli/studio/index/).
+
+### Rehearse — executable acceptance scenarios
+
+`specscore rehearse run <paths...>` executes markdown acceptance scenarios — files carrying `**Verifies:**` AC identity in body metadata plus fenced executable step blocks — and reports per-scenario, per-AC pass/fail:
+
+```bash
+specscore rehearse run                                # inside a SpecScore repo: all spec/features/**/_tests/
+specscore rehearse run spec/features/cli/studio/index/_tests   # a directory (recursive *.md, excluding README.md)
+specscore rehearse run scenario.md --format json      # a single file, machine-readable report
+```
+
+Discovery accepts files, directories, and globs; explicit paths work in any directory — no `specscore.yaml` required (standalone mode). A scenario's step blocks run in order in one scenario-scoped temp working dir; the first failing step fails the scenario and the remaining steps are skipped-after-failure.
+
+**Step-block kinds** (v0.3) — one scenario can mix all five:
+
+````markdown
+# Rehearse: checkout applies a discount
+
+**Status:** pending
+**Verifies:** shop/checkout#ac:discount-applied
+
+```bash
+sqlite3 app.db < seed.sql                # runs via bash -euo pipefail
+echo "uid=42" >> "$REHEARSE_CAPTURES"    # capture into the context bag
+```
+
+```hurl
+POST http://127.0.0.1:8080/checkout
+{"user": {{uid}}}
+HTTP 200
+[Captures]
+order_id: jsonpath "$.id"
+```
+
+```sql dsn=sqlite:app.db
+SELECT username FROM orders WHERE id = {{order_id}};
+-- assert-rows: 1
+-- capture: name = username
+```
+
+```dtql db=.specscore-studio/facts.db
+from:
+  name: facts
+-- assert-rows: 128
+```
+
+```graphql url=http://127.0.0.1:8080/graphql
+query { order(id: {{order_id}}) { ok } }
+-- variables: {}
+-- assert-jsonpath: $.data.order.ok == true
+```
+````
+
+`hurl` and `graphql` blocks delegate to the [hurl](https://hurl.dev) binary (`hurl --test`) — the runner ships no HTTP client of its own. When `hurl` is missing from PATH, scenarios containing hurl-derived blocks are reported `skipped` (with a warning naming the binary) rather than failed, and skips never affect the exit code. `sql` runs against a DSN (v0.3 driver: `sqlite:<path>`); `dtql` runs a [dalgo](https://github.com/dal-go/dalgo) DTQL query document against a SQLite store — which makes a Studio fact store (`facts.db`) directly assertable by scenarios.
+
+**Directives** are trailing `-- name: value` comment lines inside declarative blocks: `-- assert-rows: <N>` and `-- assert-row-json: {...}` (sql/dtql), `-- capture: <name> = <column>` (sql/dtql), `-- variables: {...}` and `-- assert-jsonpath: <path> == <json-value>` (graphql), `-- capture-jsonpath: <name> = <path>` (graphql).
+
+**Context bag.** Each scenario owns an ordered map of string variables shared across its steps. Consumption is per block class: `bash`/`sql`/`dtql` bodies and info-string params have `{{name}}` placeholders textually interpolated before execution (an unknown variable fails the step); hurl-derived blocks (`hurl`, `graphql`) get the bag as `--variable name=value` flags instead — Hurl owns the `{{name}}` syntax natively, so multi-request hurl blocks stay verbatim-valid. Captures into the bag: `bash` appends `name=value` lines to `$REHEARSE_CAPTURES`; `hurl` uses native `[Captures]`; `sql`/`dtql`/`graphql` use the capture directives above.
+
+**Reporting & exit codes.** The human report is one line per scenario (status, file, `Verifies:` AC ids, duration) plus totals; `--format json` emits `[{file, status, verifies[], duration_ms, bag{}, steps[{kind, status, detail}]}]`. Exit `0` when no scenario failed, `1` when any failed, `2` on usage/config errors — including when discovery matches zero scenario files.
+
+The runner is self-hosting: the committed acceptance corpus under `spec/features/**/_tests/` (including the Rehearse feature's own scenarios) runs green through `specscore rehearse run`, and CI executes it on every change (the `Rehearse corpus` job in [`go-ci.yml`](.github/workflows/go-ci.yml)). Full contract: [`spec/features/cli/rehearse/run/`](spec/features/cli/rehearse/run/).
 
 ## Updating
 

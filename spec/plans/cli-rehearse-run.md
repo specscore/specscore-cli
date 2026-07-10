@@ -4,7 +4,7 @@ status: Approved
 ---
 # Plan: rehearse run — v0.3 acceptance-evidence runner
 
-**Status:** Executing
+**Status:** Implemented
 **Source Feature:** cli/rehearse/run
 **Date:** 2026-07-10
 **Owner:** alex
@@ -64,7 +64,7 @@ Hurl delegation (`hurl --test` + JSON report parsing for `[Captures]` merge), up
 
 **Verifies:** cli/rehearse/run#ac:corpus-green
 **Depends-On:** 5
-**Status:** in_progress
+**Status:** complete
 
 The 11 Studio scenarios run green via `specscore rehearse run` (minimal shape-compliance edits only if required); CI job added to the repo workflow running the corpus; README section for `rehearse run` documenting block kinds, directives, the bag, and exit codes.
 
