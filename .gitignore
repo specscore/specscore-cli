@@ -20,3 +20,8 @@ cover*.out
 .claude/
 .specscore/
 .codegraph/
+
+# reviewer-gate prompts are config, not runtime state
+!.specscore/
+.specscore/*
+!.specscore/reviewers/
