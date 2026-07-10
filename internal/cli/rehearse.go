@@ -4,9 +4,14 @@ package cli
 // REQ: scenario-shape, REQ: bash-block, REQ: hurl-block, REQ: sql-block,
 // REQ: dtql-block, REQ: graphql-block, REQ: context-bag, REQ: run-report)
 // Feature: cli/rehearse/evidence (REQ: report-out, REQ: report-provenance)
+// Feature: cli/rehearse/new (REQ: scaffold-new)
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -17,6 +22,7 @@ import (
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/hurl"
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/sqlblock"
 	"github.com/specscore/specscore-cli/internal/rehearse/runner"
+	"github.com/specscore/specscore-cli/internal/rehearse/scaffold"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
@@ -24,6 +30,28 @@ import (
 // stub the write without touching the filesystem.
 // Feature: cli/rehearse/evidence (REQ: report-out)
 var writeReportFn = runner.WriteReport
+
+// Test seams for rehearseNewCommand. Defaults to real OS/git implementations.
+// Feature: cli/rehearse/new (REQ: scaffold-new)
+//
+// rehearseNewGitExecFn receives the full shell-style command string (e.g.
+// "git commit -m \"msg\" path") for test assertion convenience; the default
+// production implementation rebuilds exec.Command args from the string via
+// strings.Fields then re-joins any -m value that was quoted.  Tests inject
+// a stub that simply records the string and returns success.
+var (
+	rehearseNewReadFileFn func(path string) (string, error) = func(path string) (string, error) {
+		b, err := os.ReadFile(path)
+		return string(b), err
+	}
+	rehearseNewMkdirAllFn  func(path string, perm os.FileMode) error              = os.MkdirAll
+	rehearseNewWriteFileFn func(path string, data []byte, perm os.FileMode) error = os.WriteFile
+	rehearseNewStatFn      func(path string) (os.FileInfo, error)                 = os.Stat
+	// gitExecFn receives the git sub-command and all its arguments as separate
+	// strings (i.e. everything after "git"). Production default shells out to
+	// exec.Command; tests inject a stub.
+	rehearseNewGitExecFn func(args ...string) ([]byte, error) = gitRunArgs
+)
 
 // rehearseCommand returns the "rehearse" command group — the acceptance-
 // evidence runner for markdown scenarios.
@@ -42,6 +70,7 @@ Running "specscore rehearse" with no subcommand prints this help and exits 0.`,
 		},
 	}
 	cmd.AddCommand(rehearseRunCommand())
+	cmd.AddCommand(rehearseNewCommand())
 	return cmd
 }
 
@@ -127,4 +156,117 @@ func runRehearseRun(cmd *cobra.Command, args []string) error {
 		return exitcode.ConflictErrorf("%d of %d scenario(s) failed", failed, len(reports))
 	}
 	return nil
+}
+
+// rehearseNewCommand returns the "rehearse new" subcommand that scaffolds a
+// scenario file from an acceptance criterion reference.
+//
+// Usage: specscore rehearse new <feature-slug>#ac:<ac-slug>
+//
+// Feature: cli/rehearse/new (REQ: scaffold-new)
+// Verifies: cli/rehearse/new#ac:resolve-ac-reference
+// Verifies: cli/rehearse/new#ac:missing-ac-error
+func rehearseNewCommand() *cobra.Command {
+	var (
+		force  bool
+		commit bool
+	)
+	cmd := &cobra.Command{
+		Use:   "new <ac-ref>",
+		Short: "Scaffold a scenario from an acceptance criterion",
+		Long: `Scaffold a Rehearse scenario file for a given acceptance criterion.
+
+<ac-ref> must be in the form <feature-slug>#ac:<ac-slug>, for example:
+
+    specscore rehearse new cli/rehearse/new#ac:resolve-ac-reference
+
+The command reads spec/features/<feature-slug>/README.md, extracts the
+Given/When/Then text for the named AC, generates a scaffold markdown file, and
+writes it to:
+
+    spec/features/<feature-slug>/_tests/<ac-slug>.md
+
+If the output file already exists the command exits 2 unless --force is set.
+
+If --commit is set, a git commit is created after writing the file with the
+message:
+
+    feat(rehearse): scaffold <ac-slug> scenario
+
+    Verifies: <feature-slug>#ac:<ac-slug>
+
+If the commit fails but the file was written, the command exits 1 (the scaffold
+survives on disk).`,
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRehearseNew(args[0], force, commit)
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing file without error")
+	cmd.Flags().BoolVar(&commit, "commit", false, "create a git commit after writing the file")
+	return cmd
+}
+
+// runRehearseNew is the testable body of `rehearse new`.
+func runRehearseNew(acRef string, force, commit bool) error {
+	// 1. Resolve the AC reference → raw body.
+	result, err := scaffold.Resolve(acRef, rehearseNewReadFileFn)
+	if err != nil {
+		return exitcode.InvalidArgsErrorf("%v", err)
+	}
+
+	// 2. Extract Given/When/Then from the body.
+	extracted := scaffold.Extract(result.RawBody)
+
+	// 3. Generate the scaffold markdown.
+	content := scaffold.Generate(result.FeatureSlug, result.ACSlug, extracted)
+
+	// 4. Determine the output path.
+	outPath := filepath.Join(
+		"spec", "features", result.FeatureSlug, "_tests", result.ACSlug+".md",
+	)
+
+	// 5. Create parent directories.
+	parentDir := filepath.Dir(outPath)
+	if mkErr := rehearseNewMkdirAllFn(parentDir, 0o755); mkErr != nil {
+		return exitcode.InvalidArgsErrorf("cannot create directory %q: %v", parentDir, mkErr)
+	}
+
+	// 6. Check for existing file (unless --force).
+	if !force {
+		if _, statErr := rehearseNewStatFn(outPath); statErr == nil {
+			return exitcode.InvalidArgsErrorf(
+				"file already exists: %s\nUse --force to overwrite or delete the file first.",
+				outPath,
+			)
+		}
+	}
+
+	// 7. Write the scaffold file.
+	if writeErr := rehearseNewWriteFileFn(outPath, []byte(content), 0o644); writeErr != nil {
+		return exitcode.InvalidArgsErrorf("cannot write scaffold to %q: %v", outPath, writeErr)
+	}
+
+	// 8. Optionally create a git commit.
+	if commit {
+		msg := fmt.Sprintf(
+			"feat(rehearse): scaffold %s scenario\n\nVerifies: %s#ac:%s",
+			result.ACSlug, result.FeatureSlug, result.ACSlug,
+		)
+		if _, gitErr := rehearseNewGitExecFn("commit", "-m", msg, outPath); gitErr != nil {
+			return exitcode.ConflictErrorf(
+				"scaffold written to %s but git commit failed: %v",
+				outPath, gitErr,
+			)
+		}
+	}
+
+	return nil
+}
+
+// gitRunArgs shells out to git with the provided sub-command arguments
+// (everything after "git") and returns combined stdout+stderr output.
+func gitRunArgs(args ...string) ([]byte, error) {
+	return exec.Command("git", args...).CombinedOutput()
 }
