@@ -24,6 +24,7 @@ Command group for the Rehearse acceptance-evidence layer (v0.3 fold-in per rehea
 | [file-assertions](file-assertions/README.md) | Verify filesystem state (file existence, content, permissions) in scenario assertions |
 | [run-filter](run-filter/README.md) | Run scenarios by acceptance criterion with --filter flag |
 | [file-assertions-glob](file-assertions-glob/README.md) | Glob patterns in file assertion paths for set-based matching |
+| [file-assertions-glob-recursive](file-assertions-glob-recursive/README.md) | Recursive `**` glob matching in file assertion paths via doublestar |
 
 ## Problem
 

@@ -532,27 +532,106 @@ func TestEvalGlob_Permissions_SetBased(t *testing.T) {
 	}
 }
 
-// TestEvalGlob_Recursive_Rejected asserts that recursive `**` patterns are
-// rejected loudly rather than silently matching only one directory level.
-// filepath.Glob does not support `**`; true recursion is deferred to v0.8.
-func TestEvalGlob_Recursive_Rejected(t *testing.T) {
+// mkRecursiveTree builds root.txt (depth 0), sub/sub.txt (depth 1) and
+// sub/nested/nested.txt (depth 2), each with the given content, and returns the
+// temp dir. Used by the recursive-glob tests
+// (Feature: cli/rehearse/file-assertions-glob-recursive).
+func mkRecursiveTree(t *testing.T, content string) string {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "sub", "nested"), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	writeTempFile(t, dir, "root.txt", "root")
-	writeTempFile(t, filepath.Join(dir, "sub"), "sub.txt", "sub")
-	writeTempFile(t, filepath.Join(dir, "sub", "nested"), "nested.txt", "nested")
+	writeTempFile(t, dir, "root.txt", content)
+	writeTempFile(t, filepath.Join(dir, "sub"), "sub.txt", content)
+	writeTempFile(t, filepath.Join(dir, "sub", "nested"), "nested.txt", content)
+	return dir
+}
+
+// TestEvalGlob_Recursive_MatchesAllDepths — `**/*.txt` matches files at depths
+// 0, 1 and 2 (doublestar), so exists passes.
+func TestEvalGlob_Recursive_MatchesAllDepths(t *testing.T) {
+	dir := mkRecursiveTree(t, "data")
 
 	fa := scenario.FileAssertion{Path: "**/*.txt", Kind: "exists"}
 
 	passed, msg := fileblock.Eval(fa, dir)
 
-	if passed {
-		t.Error("Eval glob recursive returned passed=true, want false (** unsupported until v0.8)")
+	if !passed {
+		t.Errorf("Eval recursive exists returned passed=false; msg=%q", msg)
 	}
-	if !strings.Contains(msg, "recursive glob") {
-		t.Errorf("Eval glob recursive returned msg=%q, want it to mention 'recursive glob'", msg)
+	if msg != "" {
+		t.Errorf("Eval recursive exists returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_Recursive_ContainsAllMatch — recursive contains passes only when
+// every matched file (any depth) contains the substring.
+func TestEvalGlob_Recursive_ContainsAllMatch(t *testing.T) {
+	dir := mkRecursiveTree(t, "line INFO here")
+
+	fa := scenario.FileAssertion{Path: "**/*.txt", Kind: "contains", Expected: "INFO"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval recursive contains-all returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval recursive contains-all returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_Recursive_ContainsPartialFail — recursive contains fails when a
+// deep match lacks the substring (proves all depths are actually inspected).
+func TestEvalGlob_Recursive_ContainsPartialFail(t *testing.T) {
+	dir := mkRecursiveTree(t, "INFO")
+	// Overwrite the deepest file so it no longer contains "INFO".
+	writeTempFile(t, filepath.Join(dir, "sub", "nested"), "nested.txt", "ERROR")
+
+	fa := scenario.FileAssertion{Path: "**/*.txt", Kind: "contains", Expected: "INFO"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Error("Eval recursive contains-partial returned passed=true, want false")
+	}
+	if msg == "" {
+		t.Error("Eval recursive contains-partial returned empty msg, want non-empty")
+	}
+}
+
+// TestEvalGlob_Recursive_NoMatches_Missing — a recursive pattern that matches
+// nothing passes for the missing kind.
+func TestEvalGlob_Recursive_NoMatches_Missing(t *testing.T) {
+	dir := mkRecursiveTree(t, "data")
+
+	fa := scenario.FileAssertion{Path: "**/*.bak", Kind: "missing"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval recursive missing returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval recursive missing returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_Recursive_InvalidPattern covers the doublestar error branch: an
+// unterminated character class in a recursive pattern is malformed.
+func TestEvalGlob_Recursive_InvalidPattern(t *testing.T) {
+	dir := t.TempDir()
+
+	fa := scenario.FileAssertion{Path: "**/[", Kind: "exists"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Error("Eval recursive invalid pattern returned passed=true, want false")
+	}
+	if !strings.Contains(msg, "invalid glob pattern") {
+		t.Errorf("Eval recursive invalid pattern returned msg=%q, want 'invalid glob pattern'", msg)
 	}
 }
 

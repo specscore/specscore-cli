@@ -12,7 +12,7 @@ status: Stable
 
 ## Summary
 
-Extend file assertion paths to support glob patterns (e.g., `*.json`, `build/**/*.o`, `spec/**/*_test.md`). Matches multiple files; assertion passes if all matched files satisfy the condition (e.g., all `.json` files contain "version"). Enables scenario assertions over sets of files rather than individual paths. Complements v0.6.2's file assertions by adding set-based matching.
+Extend file assertion paths to support single-level glob patterns (e.g., `*.json`, `build/*.o`, `dir/*_test.md`). Matches multiple files; assertion passes if all matched files satisfy the condition (e.g., all `.json` files contain "version"). Enables scenario assertions over sets of files rather than individual paths. Complements v0.6.2's file assertions by adding set-based matching. Recursive `**` globbing is delivered separately by [`cli/rehearse/file-assertions-glob-recursive`](../file-assertions-glob-recursive/README.md) (v0.8).
 
 ## Problem
 
@@ -29,11 +29,12 @@ File assertion paths support single-level glob patterns:
 - `dir/*.txt` — all `.txt` files in a specific directory
 - `?` and `[…]` wildcards per Go's `filepath.Glob` semantics
 
-Glob syntax follows Go's `filepath.Glob` semantics for v0.7. Recursive `**`
-globbing (e.g. `build/**/*.o`) is **not supported** in v0.7 — `filepath.Glob`
-treats `**` as a single-level `*`, so a `**` pattern is rejected with a clear
-error rather than returning a misleading partial match. True recursion is
-deferred to v0.8 (requires the `github.com/bmatcuk/doublestar` dependency).
+Glob syntax follows Go's `filepath.Glob` semantics for single-level matching.
+Recursive `**` globbing (e.g. `build/**/*.o`) is **out of scope for this
+feature** — it is delivered by
+[`cli/rehearse/file-assertions-glob-recursive`](../file-assertions-glob-recursive/README.md)
+(v0.8, via `github.com/bmatcuk/doublestar`). Patterns without `**` are resolved
+here with the stdlib `filepath.Glob`.
 
 #### REQ: glob-matching-semantics
 
@@ -67,7 +68,6 @@ Unit tests for glob resolution and set-based assertions:
 - `TestEvalGlob_NoMatches_Exists` — glob matches zero files, exists fails
 - `TestEvalGlob_NoMatches_Missing` — glob matches zero files, missing passes
 - `TestEvalGlob_NoMatches_Contains` — glob matches zero files, contains passes (vacuously true)
-- `TestEvalGlob_Recursive_Rejected` — a `**` pattern is rejected with a clear error (recursion deferred to v0.8)
 - `TestEvalGlob_SetContains_AllMatch` — contains passes only if ALL files match
 - `TestEvalGlob_SetContains_PartialMatch` — contains fails if any file doesn't match
 
@@ -109,21 +109,13 @@ Given no `*.bak` files in directory
 When I run `### Assert: file *.bak missing`
 Then the assertion passes
 
-### AC: glob-recursive-rejected
-
-Scenario: recursive `**` pattern is rejected (deferred to v0.8)
-Given a file at `build/x86/obj.o`
-When I run `### Assert: file build/**/*.o exists`
-Then the assertion fails with an error that `**` is not supported until v0.8
-(rather than silently matching only one directory level)
-
 ## Open Questions
 
 - Should glob patterns be supported in other assertion kinds (not just file assertions)? Deferred to v0.8.
 
 ## Autonomous Decisions
 
-- Glob syntax follows Go's `filepath.Glob` (single-level) for v0.7 — standard and familiar to Go developers. Recursive `**` (via `doublestar`) is deferred to v0.8; a `**` pattern is rejected loudly in v0.7 to avoid a misleading partial match.
+- Glob syntax follows Go's `filepath.Glob` (single-level) — standard and familiar to Go developers. Recursive `**` (via `doublestar`) is delivered as its own feature, `cli/rehearse/file-assertions-glob-recursive` (v0.8), which supersedes this feature's original `**`-rejection behavior.
 - Set semantics (ALL files must satisfy) is intuitive for "ensure no outliers" use cases.
 - Vacuous truth for zero-match cases: `contains` on zero files passes rather than failing. Rationale: glob is a dynamic filter; if nothing matches, the assertion is vacuously satisfied.
 

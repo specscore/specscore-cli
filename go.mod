@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	charm.land/fang/v2 v2.0.1
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/dal-go/dalgo v0.62.10
 	github.com/dal-go/dalgo2sqlite v0.0.17
 	github.com/getsentry/sentry-go v0.46.2

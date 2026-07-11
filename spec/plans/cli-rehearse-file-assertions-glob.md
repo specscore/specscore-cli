@@ -23,7 +23,7 @@ Modify `internal/rehearse/blocks/fileblock/fileblock.go`: detect glob characters
 
 ### Task 1: Glob pattern support in fileblock
 
-**Verifies:** cli/rehearse/file-assertions-glob#ac:glob-single-match, cli/rehearse/file-assertions-glob#ac:glob-multiple-match, cli/rehearse/file-assertions-glob#ac:glob-partial-match-fail, cli/rehearse/file-assertions-glob#ac:glob-no-matches-missing, cli/rehearse/file-assertions-glob#ac:glob-recursive-rejected
+**Verifies:** cli/rehearse/file-assertions-glob#ac:glob-single-match, cli/rehearse/file-assertions-glob#ac:glob-multiple-match, cli/rehearse/file-assertions-glob#ac:glob-partial-match-fail, cli/rehearse/file-assertions-glob#ac:glob-no-matches-missing
 **Depends-On:** —
 **Status:** complete
 

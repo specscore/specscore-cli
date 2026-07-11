@@ -10,8 +10,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/specscore/specscore-cli/internal/rehearse/scenario"
 )
+
+// resolveGlob expands a glob pattern to matching paths. Patterns containing a
+// `**` segment are resolved recursively via doublestar; all others use the
+// stdlib filepath.Glob, so non-recursive glob behavior is byte-for-byte
+// unchanged from v0.7.1 (Feature: cli/rehearse/file-assertions-glob-recursive,
+// REQ: recursive-glob-support).
+func resolveGlob(pattern string) ([]string, error) {
+	if strings.Contains(pattern, "**") {
+		return doublestar.FilepathGlob(pattern)
+	}
+	return filepath.Glob(pattern)
+}
 
 // EvalExists returns (true, "") when path exists on the filesystem,
 // or (false, message) when it does not.
@@ -88,16 +102,8 @@ func Eval(fa scenario.FileAssertion, workDir string) (bool, string) {
 
 	// Check if path contains glob characters.
 	if strings.ContainsAny(fa.Path, "*?[") {
-		// Recursive `**` globbing is deferred to v0.8 (needs the doublestar
-		// dependency). Go's filepath.Glob treats `**` as a single-level `*`,
-		// which would silently match only one directory level, so reject it
-		// loudly rather than return a misleading partial result.
-		if strings.Contains(fa.Path, "**") {
-			return false, fmt.Sprintf("recursive glob (**) is not supported until v0.8: %s", fa.Path)
-		}
-
-		// Resolve glob pattern.
-		matches, err := filepath.Glob(path)
+		// Resolve the glob (recursive `**` via doublestar, else filepath.Glob).
+		matches, err := resolveGlob(path)
 		if err != nil {
 			return false, fmt.Sprintf("invalid glob pattern %q: %v", fa.Path, err)
 		}
