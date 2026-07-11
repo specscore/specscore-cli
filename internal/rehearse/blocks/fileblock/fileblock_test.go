@@ -381,3 +381,179 @@ func TestEvalContains_MismatchMessageShowsActual(t *testing.T) {
 	wantSeen := fmt.Sprintf("expected %q", "not present")
 	_ = wantSeen // Just ensuring the message contains the substring we searched for.
 }
+
+// ── Glob pattern tests ────────────────────────────────────────────────────────
+
+func TestEvalGlob_SingleMatch(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "single.txt", "data")
+
+	fa := scenario.FileAssertion{
+		Path:     "*.txt",
+		Kind:     "exists",
+		Expected: "",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval glob single match returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval glob single match returned msg=%q, want empty", msg)
+	}
+}
+
+func TestEvalGlob_MultipleMatches(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "file1.txt", "hello")
+	writeTempFile(t, dir, "file2.txt", "hello")
+	writeTempFile(t, dir, "file3.txt", "hello")
+
+	fa := scenario.FileAssertion{
+		Path:     "*.txt",
+		Kind:     "contains",
+		Expected: "hello",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval glob multiple matches returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval glob multiple matches returned msg=%q, want empty", msg)
+	}
+}
+
+func TestEvalGlob_PartialMatch_Fail(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "file1.txt", "hello")
+	writeTempFile(t, dir, "file2.txt", "hello")
+	writeTempFile(t, dir, "file3.txt", "goodbye")
+
+	fa := scenario.FileAssertion{
+		Path:     "*.txt",
+		Kind:     "contains",
+		Expected: "hello",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Errorf("Eval glob partial match returned passed=true, want false")
+	}
+	if msg == "" {
+		t.Error("Eval glob partial match returned empty msg, want non-empty")
+	}
+}
+
+func TestEvalGlob_NoMatches_Exists(t *testing.T) {
+	dir := t.TempDir()
+
+	fa := scenario.FileAssertion{
+		Path:     "*.txt",
+		Kind:     "exists",
+		Expected: "",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Errorf("Eval glob no matches exists returned passed=true, want false")
+	}
+	if msg == "" {
+		t.Error("Eval glob no matches exists returned empty msg, want non-empty")
+	}
+}
+
+func TestEvalGlob_NoMatches_Missing(t *testing.T) {
+	dir := t.TempDir()
+
+	fa := scenario.FileAssertion{
+		Path:     "*.txt",
+		Kind:     "missing",
+		Expected: "",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval glob no matches missing returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval glob no matches missing returned msg=%q, want empty", msg)
+	}
+}
+
+func TestEvalGlob_NoMatches_Contains(t *testing.T) {
+	dir := t.TempDir()
+
+	fa := scenario.FileAssertion{
+		Path:     "*.txt",
+		Kind:     "contains",
+		Expected: "anything",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval glob no matches contains returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval glob no matches contains returned msg=%q, want empty", msg)
+	}
+}
+
+func TestEvalGlob_Permissions_SetBased(t *testing.T) {
+	dir := t.TempDir()
+	path1 := writeTempFile(t, dir, "file1.txt", "data1")
+	path2 := writeTempFile(t, dir, "file2.txt", "data2")
+	if err := os.Chmod(path1, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if err := os.Chmod(path2, 0644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	fa := scenario.FileAssertion{
+		Path:     "*.txt",
+		Kind:     "permissions",
+		Expected: "0644",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval glob permissions all match returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval glob permissions all match returned msg=%q, want empty", msg)
+	}
+}
+
+func TestEvalGlob_Recursive(t *testing.T) {
+	dir := t.TempDir()
+	// Create nested directories and files
+	if err := os.MkdirAll(filepath.Join(dir, "sub", "nested"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeTempFile(t, dir, "root.txt", "root")
+	writeTempFile(t, filepath.Join(dir, "sub"), "sub.txt", "sub")
+	writeTempFile(t, filepath.Join(dir, "sub", "nested"), "nested.txt", "nested")
+
+	fa := scenario.FileAssertion{
+		Path:     "**/*.txt",
+		Kind:     "exists",
+		Expected: "",
+	}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval glob recursive returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval glob recursive returned msg=%q, want empty", msg)
+	}
+}

@@ -78,13 +78,72 @@ func EvalPermissions(path, expected string) (bool, string) {
 
 // Eval is the dispatcher: it resolves the path (relative paths are joined to
 // workDir; absolute paths are used as-is) and delegates to the appropriate
-// evaluation function based on fa.Kind.
+// evaluation function based on fa.Kind. If the path contains glob characters
+// (*?[), it expands the glob and applies set-based logic to all matched files.
 func Eval(fa scenario.FileAssertion, workDir string) (bool, string) {
 	path := filepath.Join(workDir, fa.Path)
 	if filepath.IsAbs(fa.Path) {
 		path = fa.Path
 	}
 
+	// Check if path contains glob characters.
+	if strings.ContainsAny(fa.Path, "*?[") {
+		// Resolve glob pattern.
+		matches, err := filepath.Glob(path)
+		if err != nil {
+			return false, fmt.Sprintf("invalid glob pattern %q: %v", fa.Path, err)
+		}
+
+		// Apply set-based logic based on kind.
+		switch fa.Kind {
+		case "exists":
+			// exists: return true only if at least one file matches
+			if len(matches) > 0 {
+				return true, ""
+			}
+			return false, fmt.Sprintf("glob pattern %q matches no files", fa.Path)
+
+		case "missing":
+			// missing: return true only if no files match (vacuously true)
+			if len(matches) == 0 {
+				return true, ""
+			}
+			return false, fmt.Sprintf("glob pattern %q matches %d files but was expected to match none", fa.Path, len(matches))
+
+		case "contains", "not-contains", "permissions":
+			// For these kinds: if zero matches, pass (vacuously true).
+			// If one or more matches, call the kind function on EACH file;
+			// ALL files must pass.
+			if len(matches) == 0 {
+				return true, ""
+			}
+
+			for _, matchedPath := range matches {
+				var passed bool
+				var msg string
+
+				switch fa.Kind {
+				case "contains":
+					passed, msg = EvalContains(matchedPath, fa.Expected)
+				case "not-contains":
+					passed, msg = EvalNotContains(matchedPath, fa.Expected)
+				case "permissions":
+					passed, msg = EvalPermissions(matchedPath, fa.Expected)
+				}
+
+				// If any file fails, the entire assertion fails.
+				if !passed {
+					return false, msg
+				}
+			}
+			return true, ""
+
+		default:
+			return false, fmt.Sprintf("unknown assertion kind: %s", fa.Kind)
+		}
+	}
+
+	// Non-glob path: proceed as normal.
 	switch fa.Kind {
 	case "exists":
 		return EvalExists(path)
