@@ -136,10 +136,7 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 	for _, fa := range sc.FileAssertions {
 		passed, message := fileblock.Eval(fa, workDir)
 		if !passed {
-			// Assertion failed: append message to output and set scenario to fail.
-			if rep.Steps == nil {
-				rep.Steps = []StepReport{}
-			}
+			// Assertion failed: append a synthetic file step and fail the scenario.
 			rep.Steps = append(rep.Steps, StepReport{
 				Kind:   "file",
 				Status: blocks.StatusFail,

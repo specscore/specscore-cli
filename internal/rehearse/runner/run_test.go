@@ -142,6 +142,42 @@ func TestRun_WorkDirIsScenarioScopedAndCleanedUp(t *testing.T) {
 	}
 }
 
+// TestRun_FileAssertionPasses covers the runScenario file-assertion loop when
+// a bash step creates a file that a `### Assert: file … exists` heading checks.
+func TestRun_FileAssertionPasses(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "assert-pass.md")
+	writeFile(t, file, "```bash\necho hi > out.txt\n```\n\n### Assert: file `out.txt` exists\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusPass {
+		t.Fatalf("status = %q, want pass (steps: %+v)", r.Status, r.Steps)
+	}
+	// A passing assertion is silent: only the bash step is reported.
+	if len(r.Steps) != 1 || r.Steps[0].Kind != "bash" {
+		t.Errorf("steps = %+v, want a single bash step", r.Steps)
+	}
+}
+
+// TestRun_FileAssertionFails covers the failure branch: a `### Assert: file …
+// exists` heading for a file no step created fails the scenario and appends a
+// synthetic "file" step carrying the assertion message.
+func TestRun_FileAssertionFails(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "assert-fail.md")
+	writeFile(t, file, "```bash\necho hi\n```\n\n### Assert: file `absent.txt` exists\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail (steps: %+v)", r.Status, r.Steps)
+	}
+	last := r.Steps[len(r.Steps)-1]
+	if last.Kind != "file" || last.Status != blocks.StatusFail {
+		t.Errorf("last step = %+v, want a failed file step", last)
+	}
+	if !strings.Contains(last.Detail, "absent.txt") {
+		t.Errorf("file step detail = %q, want it to name the missing file", last.Detail)
+	}
+}
+
 func TestRun_MkdirTempFailureIsScenarioFail(t *testing.T) {
 	swap(t, &mkdirTempFn, func(string, string) (string, error) {
 		return "", errors.New("tmp full")

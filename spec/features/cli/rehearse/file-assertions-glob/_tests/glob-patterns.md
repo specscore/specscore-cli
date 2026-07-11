@@ -1,34 +1,33 @@
 ---
-status: pending
+format: https://specscore.md/scenario-specification
 ---
 
 # Glob Patterns in File Assertions
 
+**Status:** pending
 **Verifies:** cli/rehearse/file-assertions-glob#ac:glob-multiple-match
 
-## Setup
+Scenario source: [../README.md](../README.md) → `### AC: glob-multiple-match`.
 
-Create fixture files using glob patterns.
+Given several `.json` files that each contain the substring "config", when the
+runner evaluates `### Assert: file *.json contains` with "config", then the
+assertion passes because every matched file satisfies the condition (set-based
+AND semantics). A parallel `*.json exists` heading confirms the glob resolves
+to at least one file.
 
 ```bash
-mkdir -p fixtures/data
-touch fixtures/data/config1.json
-touch fixtures/data/config2.json
-touch fixtures/data/config3.json
+printf 'config alpha\n' > alpha.json
+printf 'config beta\n' > beta.json
+printf 'config gamma\n' > gamma.json
 ```
 
-## Assertions
+### Assert: file `*.json` exists
 
-### Assert: file fixtures/data/*.json exists
-
-### Assert: file fixtures/data/*.json contains
+### Assert: file `*.json` contains
 
 ```
 config
 ```
 
-### Assert: file fixtures/data/*.json permissions
-
-```
-0644
-```
+---
+*This document follows the https://specscore.md/scenario-specification*

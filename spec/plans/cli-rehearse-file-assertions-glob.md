@@ -1,11 +1,11 @@
 ---
 format: https://specscore.md/plan-specification
-status: Approved
+status: Implemented
 ---
 
 # Plan: Cli Rehearse File Assertions Glob
 
-**Status:** Approved
+**Status:** Implemented
 **Source Feature:** cli/rehearse/file-assertions-glob
 **Date:** 2026-07-11
 **Owner:** ai
@@ -23,11 +23,11 @@ Modify `internal/rehearse/blocks/fileblock/fileblock.go`: detect glob characters
 
 ### Task 1: Glob pattern support in fileblock
 
-**Verifies:** cli/rehearse/file-assertions-glob#ac:glob-single-match, cli/rehearse/file-assertions-glob#ac:glob-multiple-match, cli/rehearse/file-assertions-glob#ac:glob-partial-match-fail, cli/rehearse/file-assertions-glob#ac:glob-no-matches-missing, cli/rehearse/file-assertions-glob#ac:glob-recursive
+**Verifies:** cli/rehearse/file-assertions-glob#ac:glob-single-match, cli/rehearse/file-assertions-glob#ac:glob-multiple-match, cli/rehearse/file-assertions-glob#ac:glob-partial-match-fail, cli/rehearse/file-assertions-glob#ac:glob-no-matches-missing, cli/rehearse/file-assertions-glob#ac:glob-recursive-rejected
 **Depends-On:** —
-**Status:** pending
+**Status:** Implemented
 
-Modify `Eval()` in `fileblock.go`: check if path contains glob characters; if yes, resolve via `filepath.Glob()`, apply kind function to each matched file, return (passed if all match, error message if any fail). Add 8 unit tests (glob-single, glob-multiple, glob-partial-fail, glob-no-match-exists, glob-no-match-missing, glob-no-match-contains, glob-permissions, glob-recursive). 100% coverage.
+Modify `Eval()` in `fileblock.go`: check if path contains glob characters; if yes, reject recursive `**` with a clear error, otherwise resolve via `filepath.Glob()`, apply the kind function to each matched file, return (passed if all match, error message if any fail). Unit tests cover glob-single, glob-multiple, glob-partial-fail, glob-no-match (exists/missing/contains), glob-permissions, not-contains, invalid-pattern, unknown-kind, and `**`-rejected. 100% coverage of the fileblock package.
 
 **Files:** `internal/rehearse/blocks/fileblock/fileblock.go`, `internal/rehearse/blocks/fileblock/fileblock_test.go`, 1 e2e scenario in `spec/features/cli/rehearse/file-assertions-glob/_tests/`
 

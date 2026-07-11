@@ -532,9 +532,11 @@ func TestEvalGlob_Permissions_SetBased(t *testing.T) {
 	}
 }
 
-func TestEvalGlob_Recursive(t *testing.T) {
+// TestEvalGlob_Recursive_Rejected asserts that recursive `**` patterns are
+// rejected loudly rather than silently matching only one directory level.
+// filepath.Glob does not support `**`; true recursion is deferred to v0.8.
+func TestEvalGlob_Recursive_Rejected(t *testing.T) {
 	dir := t.TempDir()
-	// Create nested directories and files
 	if err := os.MkdirAll(filepath.Join(dir, "sub", "nested"), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -542,18 +544,85 @@ func TestEvalGlob_Recursive(t *testing.T) {
 	writeTempFile(t, filepath.Join(dir, "sub"), "sub.txt", "sub")
 	writeTempFile(t, filepath.Join(dir, "sub", "nested"), "nested.txt", "nested")
 
-	fa := scenario.FileAssertion{
-		Path:     "**/*.txt",
-		Kind:     "exists",
-		Expected: "",
+	fa := scenario.FileAssertion{Path: "**/*.txt", Kind: "exists"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Error("Eval glob recursive returned passed=true, want false (** unsupported until v0.8)")
 	}
+	if !strings.Contains(msg, "recursive glob") {
+		t.Errorf("Eval glob recursive returned msg=%q, want it to mention 'recursive glob'", msg)
+	}
+}
+
+// TestEvalGlob_InvalidPattern covers the filepath.Glob error branch: an
+// unterminated character class is a malformed pattern.
+func TestEvalGlob_InvalidPattern(t *testing.T) {
+	dir := t.TempDir()
+
+	fa := scenario.FileAssertion{Path: "[", Kind: "exists"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Error("Eval invalid glob returned passed=true, want false")
+	}
+	if !strings.Contains(msg, "invalid glob pattern") {
+		t.Errorf("Eval invalid glob returned msg=%q, want it to mention 'invalid glob pattern'", msg)
+	}
+}
+
+// TestEvalGlob_Missing_WithMatches covers the missing kind when the glob
+// resolves to one or more files: the assertion must fail.
+func TestEvalGlob_Missing_WithMatches(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "leftover.txt", "data")
+
+	fa := scenario.FileAssertion{Path: "*.txt", Kind: "missing"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Error("Eval glob missing with matches returned passed=true, want false")
+	}
+	if msg == "" {
+		t.Error("Eval glob missing with matches returned empty msg, want non-empty")
+	}
+}
+
+// TestEvalGlob_NotContains_SetBased covers the not-contains kind across a
+// matched set: passes only if no matched file contains the substring.
+func TestEvalGlob_NotContains_SetBased(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "a.txt", "alpha")
+	writeTempFile(t, dir, "b.txt", "beta")
+
+	fa := scenario.FileAssertion{Path: "*.txt", Kind: "not-contains", Expected: "gamma"}
 
 	passed, msg := fileblock.Eval(fa, dir)
 
 	if !passed {
-		t.Errorf("Eval glob recursive returned passed=false; msg=%q", msg)
+		t.Errorf("Eval glob not-contains returned passed=false; msg=%q", msg)
 	}
 	if msg != "" {
-		t.Errorf("Eval glob recursive returned msg=%q, want empty", msg)
+		t.Errorf("Eval glob not-contains returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_UnknownKind covers the default branch of the glob dispatcher.
+func TestEvalGlob_UnknownKind(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "a.txt", "data")
+
+	fa := scenario.FileAssertion{Path: "*.txt", Kind: "bogus"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Error("Eval glob unknown kind returned passed=true, want false")
+	}
+	if !strings.Contains(msg, "unknown assertion kind") {
+		t.Errorf("Eval glob unknown kind returned msg=%q, want it to mention 'unknown assertion kind'", msg)
 	}
 }

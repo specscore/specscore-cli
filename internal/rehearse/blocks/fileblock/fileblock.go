@@ -88,6 +88,14 @@ func Eval(fa scenario.FileAssertion, workDir string) (bool, string) {
 
 	// Check if path contains glob characters.
 	if strings.ContainsAny(fa.Path, "*?[") {
+		// Recursive `**` globbing is deferred to v0.8 (needs the doublestar
+		// dependency). Go's filepath.Glob treats `**` as a single-level `*`,
+		// which would silently match only one directory level, so reject it
+		// loudly rather than return a misleading partial result.
+		if strings.Contains(fa.Path, "**") {
+			return false, fmt.Sprintf("recursive glob (**) is not supported until v0.8: %s", fa.Path)
+		}
+
 		// Resolve glob pattern.
 		matches, err := filepath.Glob(path)
 		if err != nil {

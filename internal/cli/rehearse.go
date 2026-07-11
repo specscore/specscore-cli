@@ -175,7 +175,7 @@ func runRehearseRun(cmd *cobra.Command, args []string, filters []string) error {
 		// Handle zero-match case: exit 0 with an informative message.
 		// Feature: cli/rehearse/run-filter (REQ: filter-no-matches)
 		if len(matchedFiles) == 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "No scenarios matched filter(s): %s\n", strings.Join(filters, ", "))
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No scenarios matched filter(s): %s\n", strings.Join(filters, ", "))
 			return nil
 		}
 
@@ -270,19 +270,20 @@ func renderHumanWithFilter(w io.Writer, reports []runner.ScenarioReport, filterA
 	for _, r := range reports {
 		counts[r.Status]++
 		label := ""
-		if r.FilterStatus == "match" {
+		switch r.FilterStatus {
+		case "match":
 			label = "[filter-match] "
-		} else if r.FilterStatus == "skip" {
+		case "skip":
 			label = "[filter-skip] "
 		}
-		fmt.Fprintf(w, "%s%-8s  %s  [%s]  %dms\n",
+		_, _ = fmt.Fprintf(w, "%s%-8s  %s  [%s]  %dms\n",
 			label, r.Status, r.File, strings.Join(r.Verifies, ", "), r.DurationMS)
 		if r.Status != runner.StatusFail && r.Status != runner.StatusSkipped {
 			continue
 		}
 		if r.Detail != "" {
 			for _, line := range strings.Split(strings.TrimRight(r.Detail, "\n"), "\n") {
-				fmt.Fprintf(w, "    %s\n", line)
+				_, _ = fmt.Fprintf(w, "    %s\n", line)
 			}
 		}
 		if r.Status != runner.StatusFail {
@@ -296,7 +297,7 @@ func renderHumanWithFilter(w io.Writer, reports []runner.ScenarioReport, filterA
 			writeFilterIndented(w, s.Output)
 		}
 	}
-	fmt.Fprintf(w, "Total: %d scenario(s) — %d pass, %d fail, %d skipped, %d no-steps\n",
+	_, _ = fmt.Fprintf(w, "Total: %d scenario(s) — %d pass, %d fail, %d skipped, %d no-steps\n",
 		len(reports), counts[runner.StatusPass], counts[runner.StatusFail],
 		counts[runner.StatusSkipped], counts[runner.StatusNoSteps])
 }
@@ -307,7 +308,7 @@ func writeFilterIndented(w io.Writer, text string) {
 		return
 	}
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-		fmt.Fprintf(w, "    %s\n", line)
+		_, _ = fmt.Fprintf(w, "    %s\n", line)
 	}
 }
 
@@ -383,7 +384,7 @@ func runRehearseNew(acRef string, force, commit, dryRun bool, out io.Writer) err
 	// 4. Dry-run: print to writer and return without writing files or committing.
 	// Feature: cli/rehearse/new-dry-run (AC: dry-run-flag, dry-run-ignores-flags)
 	if dryRun {
-		fmt.Fprint(out, content)
+		_, _ = fmt.Fprint(out, content)
 		return nil
 	}
 

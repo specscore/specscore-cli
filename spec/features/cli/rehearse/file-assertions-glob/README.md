@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Approved
+status: Implemented
 ---
 
 # Feature: rehearse file assertions with glob patterns
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=request-change) |
-**Status:** Draft
+**Status:** Implemented
 **Source Ideas:** —
 **Supersedes:** —
 
@@ -24,13 +24,16 @@ v0.6.2's file assertions verify individual files by exact path. Some scenarios n
 
 #### REQ: glob-pattern-support
 
-File assertion paths support glob patterns:
+File assertion paths support single-level glob patterns:
 - `*.ext` — all files with that extension in the current directory
 - `dir/*.txt` — all `.txt` files in a specific directory
-- `**/*.go` — all `.go` files recursively (Go-style globbing with `**`)
-- Mixed: `build/**/*.{o,a}` — all `.o` and `.a` files in build tree
+- `?` and `[…]` wildcards per Go's `filepath.Glob` semantics
 
-Glob syntax follows Go's `filepath.Glob` semantics for v0.7. Support for `**` recursive globbing is deferred to v0.8 (requires `github.com/bmatcuk/doublestar` dependency).
+Glob syntax follows Go's `filepath.Glob` semantics for v0.7. Recursive `**`
+globbing (e.g. `build/**/*.o`) is **not supported** in v0.7 — `filepath.Glob`
+treats `**` as a single-level `*`, so a `**` pattern is rejected with a clear
+error rather than returning a misleading partial match. True recursion is
+deferred to v0.8 (requires the `github.com/bmatcuk/doublestar` dependency).
 
 #### REQ: glob-matching-semantics
 
@@ -64,7 +67,7 @@ Unit tests for glob resolution and set-based assertions:
 - `TestEvalGlob_NoMatches_Exists` — glob matches zero files, exists fails
 - `TestEvalGlob_NoMatches_Missing` — glob matches zero files, missing passes
 - `TestEvalGlob_NoMatches_Contains` — glob matches zero files, contains passes (vacuously true)
-- `TestEvalGlob_RecursiveGlob` — `**/*.txt` pattern works across directories
+- `TestEvalGlob_Recursive_Rejected` — a `**` pattern is rejected with a clear error (recursion deferred to v0.8)
 - `TestEvalGlob_SetContains_AllMatch` — contains passes only if ALL files match
 - `TestEvalGlob_SetContains_PartialMatch` — contains fails if any file doesn't match
 
@@ -106,12 +109,13 @@ Given no `*.bak` files in directory
 When I run `### Assert: file *.bak missing`
 Then the assertion passes
 
-### AC: glob-recursive
+### AC: glob-recursive-rejected
 
-Scenario: recursive glob pattern
-Given files at `build/x86/obj.o`, `build/arm/obj.o`
+Scenario: recursive `**` pattern is rejected (deferred to v0.8)
+Given a file at `build/x86/obj.o`
 When I run `### Assert: file build/**/*.o exists`
-Then the assertion passes (both files exist)
+Then the assertion fails with an error that `**` is not supported until v0.8
+(rather than silently matching only one directory level)
 
 ## Open Questions
 
@@ -119,7 +123,7 @@ Then the assertion passes (both files exist)
 
 ## Autonomous Decisions
 
-- Glob syntax follows Go's `filepath.Glob` + `doublestar` for `**` support — standard and familiar to Go developers.
+- Glob syntax follows Go's `filepath.Glob` (single-level) for v0.7 — standard and familiar to Go developers. Recursive `**` (via `doublestar`) is deferred to v0.8; a `**` pattern is rejected loudly in v0.7 to avoid a misleading partial match.
 - Set semantics (ALL files must satisfy) is intuitive for "ensure no outliers" use cases.
 - Vacuous truth for zero-match cases: `contains` on zero files passes rather than failing. Rationale: glob is a dynamic filter; if nothing matches, the assertion is vacuously satisfied.
 
