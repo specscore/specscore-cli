@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks"
+	"github.com/specscore/specscore-cli/internal/rehearse/blocks/fileblock"
 	"github.com/specscore/specscore-cli/internal/rehearse/scenario"
 )
 
@@ -126,6 +127,27 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 		})
 		bag.Merge(res.Captures)
 		failed = failed || res.Status == blocks.StatusFail
+	}
+	if failed {
+		return finish(StatusFail)
+	}
+
+	// Evaluate file assertions after bash steps (REQ: runner-parses-file-blocks)
+	for _, fa := range sc.FileAssertions {
+		passed, message := fileblock.Eval(fa, workDir)
+		if !passed {
+			// Assertion failed: append message to output and set scenario to fail.
+			if rep.Steps == nil {
+				rep.Steps = []StepReport{}
+			}
+			rep.Steps = append(rep.Steps, StepReport{
+				Kind:   "file",
+				Status: blocks.StatusFail,
+				Detail: message,
+			})
+			failed = true
+		}
+		// Silent on pass (matching bash assert behavior)
 	}
 	if failed {
 		return finish(StatusFail)
