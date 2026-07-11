@@ -1,5 +1,6 @@
 # studio answers — benchmark
 
+> [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=request-change) |
 The Phase-1 exit gate for [`cli/studio/answers`](../README.md): 50 concrete
 question instances (`questions.jsonl`), one runner (`run.sh`), and a hermetic
 fixture workspace (`fixture/`). The runner scores **answered-with-citations /
@@ -81,3 +82,6 @@ Alongside the score, spot-check `specscore studio contradictions --workspace
 flood (≤20% noise), per the feature's `## Exit gate`. On the 52-repo dogfood
 store the scoped detectors yield 7 status-drift items (all genuine
 declared-vs-probed serves-status disagreements) and 0 naming-conflicts.
+
+---
+*This document follows the https://specscore.md/feature-specification*

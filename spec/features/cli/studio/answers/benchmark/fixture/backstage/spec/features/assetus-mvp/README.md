@@ -1,9 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
+status: Approved
 ---
 # Feature: assetus-mvp
 
+> [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark/fixture/backstage/spec/features/assetus-mvp?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark/fixture/backstage/spec/features/assetus-mvp?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark/fixture/backstage/spec/features/assetus-mvp?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark/fixture/backstage/spec/features/assetus-mvp?op=request-change) |
 **Status:** Approved
+**Source Ideas:** —
 
 ## Summary
 
