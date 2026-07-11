@@ -59,6 +59,9 @@ func Generate(featureSlug, acSlug string, extracted *ExtractedAC) string {
 func kebabToTitle(slug string) string {
 	words := strings.Split(slug, "-")
 	for i, w := range words {
+		if w == "" {
+			continue
+		}
 		words[i] = strings.ToUpper(w[:1]) + w[1:]
 	}
 	return strings.Join(words, " ")

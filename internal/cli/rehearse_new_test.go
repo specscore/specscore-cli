@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -257,11 +258,14 @@ func TestRehearseNew_MkdirFails(t *testing.T) {
 	}
 }
 
-// TestRehearseNew_CommitSuccess — --commit creates a git commit with the expected message and trailer.
+// TestRehearseNew_CommitSuccess — --commit stages the new scaffold (git add)
+// and then commits it with the expected message and trailer. Staging must
+// precede the commit: the scaffold is a new, untracked file, so a bare
+// `git commit <path>` would not include it.
 func TestRehearseNew_CommitSuccess(t *testing.T) {
-	var capturedArgs []string
+	var calls [][]string
 	git := func(args ...string) ([]byte, error) {
-		capturedArgs = args
+		calls = append(calls, args)
 		return []byte{}, nil
 	}
 
@@ -277,12 +281,74 @@ func TestRehearseNew_CommitSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success with --commit, got: %v", err)
 	}
-	combined := strings.Join(capturedArgs, " ")
-	if !strings.Contains(combined, "resolve-ac-reference") {
-		t.Errorf("git args do not mention the AC slug: %q", capturedArgs)
+	if len(calls) != 2 {
+		t.Fatalf("git called %d times, want 2 (add then commit): %v", len(calls), calls)
 	}
-	if !strings.Contains(combined, "Verifies:") {
-		t.Errorf("git args missing Verifies trailer: %q", capturedArgs)
+	if calls[0][0] != "add" {
+		t.Errorf("first git call = %v, want it to start with \"add\"", calls[0])
+	}
+	if calls[1][0] != "commit" {
+		t.Errorf("second git call = %v, want it to start with \"commit\"", calls[1])
+	}
+	// Both calls must reference the scaffold path; the commit carries the trailer.
+	commit := strings.Join(calls[1], " ")
+	if !strings.Contains(strings.Join(calls[0], " "), "resolve-ac-reference") {
+		t.Errorf("git add args do not mention the scaffold path: %q", calls[0])
+	}
+	if !strings.Contains(commit, "resolve-ac-reference") {
+		t.Errorf("git commit args do not mention the AC slug: %q", calls[1])
+	}
+	if !strings.Contains(commit, "Verifies:") {
+		t.Errorf("git commit args missing Verifies trailer: %q", calls[1])
+	}
+}
+
+// TestRehearseNew_CommitRealGit is an integration test against real git (not the
+// mocked seam): it proves --commit actually creates a commit containing the new
+// scaffold file. The mocked unit tests cannot catch a missing `git add` because
+// they stub git to succeed; this test would have caught it.
+func TestRehearseNew_CommitRealGit(t *testing.T) {
+	repo := t.TempDir()
+	t.Chdir(repo)
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "t@example.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "-q", "--allow-empty", "-m", "init"},
+	} {
+		if out, err := gitRunArgs(args...); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join("spec", "features", "demo"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	readme := "# Feature: demo\n\n### AC: my-case\n\nScenario: demo\nGiven a thing\nWhen I act\nThen it works\n\n## Next\n"
+	if err := os.WriteFile(filepath.Join("spec", "features", "demo", "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+
+	// Run with the real (default) seams: real fs + real gitRunArgs.
+	if err := runRehearseNew("demo#ac:my-case", false, true, false, io.Discard); err != nil {
+		t.Fatalf("runRehearseNew --commit: %v", err)
+	}
+
+	scaffold := filepath.Join("spec", "features", "demo", "_tests", "my-case.md")
+	// The scaffold must be committed (tracked, nothing pending for it).
+	status, err := gitRunArgs("status", "--porcelain", scaffold)
+	if err != nil {
+		t.Fatalf("git status: %v (%s)", err, status)
+	}
+	if strings.TrimSpace(string(status)) != "" {
+		t.Errorf("scaffold not committed; git status = %q", status)
+	}
+	// HEAD's subject must be the scaffold commit.
+	subject, err := gitRunArgs("log", "-1", "--pretty=%s")
+	if err != nil {
+		t.Fatalf("git log: %v", err)
+	}
+	if !strings.Contains(string(subject), "scaffold my-case scenario") {
+		t.Errorf("HEAD subject = %q, want the scaffold commit", subject)
 	}
 }
 
@@ -320,15 +386,19 @@ func TestRehearseNew_GitRunArgs(t *testing.T) {
 	_ = err
 }
 
-// TestRehearseNew_CommitFailsAfterWrite — exit 1 if commit fails but the file was already written.
+// TestRehearseNew_CommitFailsAfterWrite — exit 1 if `git commit` fails (after a
+// successful `git add`) but the file was already written.
 func TestRehearseNew_CommitFailsAfterWrite(t *testing.T) {
 	var written bool
 	write := func(_ string, _ []byte, _ os.FileMode) error {
 		written = true
 		return nil
 	}
-	git := func(_ ...string) ([]byte, error) {
-		return nil, errors.New("git commit failed: nothing to commit")
+	git := func(args ...string) ([]byte, error) {
+		if args[0] == "commit" {
+			return nil, errors.New("git commit failed: nothing to commit")
+		}
+		return []byte{}, nil // add succeeds
 	}
 
 	err := runRehearseNewCmd(t,
@@ -349,6 +419,42 @@ func TestRehearseNew_CommitFailsAfterWrite(t *testing.T) {
 	var ec interface{ ExitCode() int }
 	if !errors.As(err, &ec) || ec.ExitCode() != 1 {
 		t.Errorf("exit code = %v, want 1 (scaffold survives)", err)
+	}
+}
+
+// TestRehearseNew_AddFailsAfterWrite — exit 1 if `git add` fails; the scaffold
+// file still survives on disk.
+func TestRehearseNew_AddFailsAfterWrite(t *testing.T) {
+	var written bool
+	write := func(_ string, _ []byte, _ os.FileMode) error {
+		written = true
+		return nil
+	}
+	git := func(args ...string) ([]byte, error) {
+		if args[0] == "add" {
+			return nil, errors.New("git add failed: permission denied")
+		}
+		return []byte{}, nil
+	}
+
+	err := runRehearseNewCmd(t,
+		readFileOKForNew,
+		defaultMkdirOK,
+		write,
+		defaultStatNotExist,
+		git,
+		"--commit",
+		"cli/rehearse/new#ac:resolve-ac-reference",
+	)
+	if !written {
+		t.Error("file should have been written before git add was attempted")
+	}
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 1 {
+		t.Errorf("exit code = %v, want 1 (scaffold survives)", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "git add failed") {
+		t.Errorf("error = %v, want it to mention git add failure", err)
 	}
 }
 

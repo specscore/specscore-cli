@@ -88,26 +88,10 @@ func extractACBody(content, acSlug string) (body []string, available []string, f
 		}
 	}
 
-	// If we started collecting but haven't hit a terminator yet, body is
-	// already complete. Collect remaining AC slugs for the available list.
+	// `available` is only consumed on the not-found error path (below); on the
+	// found path the caller ignores it, so no second scan is needed.
 	if !found {
 		return nil, available, false
 	}
-
-	// Re-scan for remaining available ACs after the found one.
-	reachedFound := false
-	for _, line := range lines {
-		if strings.HasPrefix(line, acPrefix) {
-			slug := strings.TrimSpace(line[len(acPrefix):])
-			if slug == acSlug {
-				reachedFound = true
-				continue
-			}
-			if reachedFound {
-				available = append(available, slug)
-			}
-		}
-	}
-
 	return body, available, true
 }

@@ -414,8 +414,16 @@ func runRehearseNew(acRef string, force, commit, dryRun bool, out io.Writer) err
 		return exitcode.InvalidArgsErrorf("cannot write scaffold to %q: %v", outPath, writeErr)
 	}
 
-	// 9. Optionally create a git commit.
+	// 9. Optionally create a git commit. The scaffold is a new, untracked file,
+	// so stage it first — `git commit <path>` alone won't include an untracked
+	// pathspec.
 	if commit {
+		if _, addErr := rehearseNewGitExecFn("add", outPath); addErr != nil {
+			return exitcode.ConflictErrorf(
+				"scaffold written to %s but git add failed: %v",
+				outPath, addErr,
+			)
+		}
 		msg := fmt.Sprintf(
 			"feat(rehearse): scaffold %s scenario\n\nVerifies: %s#ac:%s",
 			result.ACSlug, result.FeatureSlug, result.ACSlug,

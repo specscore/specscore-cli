@@ -173,6 +173,17 @@ Given a feature that exists but the AC slug `nonexistent` does not
 When I run `specscore rehearse new cli/studio/index#ac:nonexistent`
 Then the command exits 2 and prints an error naming the missing AC
 
+### AC: commit-flag
+
+Scenario: --commit stages and commits the new scaffold
+Given a git repository with a feature that defines an AC
+When I run `specscore rehearse new <feature>#ac:<slug> --commit`
+Then the command stages the newly written scaffold (`git add`) and creates a
+commit whose subject is `feat(rehearse): scaffold <slug> scenario` with a
+`Verifies: <feature>#ac:<slug>` trailer, and the scaffold file is tracked with
+no pending changes (a bare `git commit <path>` without staging would not
+include the new file)
+
 ## Open Questions
 
 None at this time.

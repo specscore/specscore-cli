@@ -52,7 +52,7 @@ Implement `Generate(featureSlug, acSlug string, extracted ExtractedAC) string` r
 
 ### Task 4: CLI wiring
 
-**Verifies:** cli/rehearse/new#ac:resolve-ac-reference, cli/rehearse/new#ac:missing-ac-error
+**Verifies:** cli/rehearse/new#ac:resolve-ac-reference, cli/rehearse/new#ac:missing-ac-error, cli/rehearse/new#ac:commit-flag
 **Depends-On:** 3
 **Status:** planning
 

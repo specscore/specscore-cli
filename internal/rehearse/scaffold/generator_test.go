@@ -46,6 +46,9 @@ func TestGenerate_KebabToTitle(t *testing.T) {
 		{"resolve-ac-reference", "Resolve Ac Reference"},
 		{"extract-given-when-then", "Extract Given When Then"},
 		{"placeholder-bash-block", "Placeholder Bash Block"},
+		// Empty segments (trailing/leading/double dash) must not panic on w[:1].
+		{"trailing-dash-", "Trailing Dash "},
+		{"double--dash", "Double  Dash"},
 	}
 	for _, c := range cases {
 		extracted := &ExtractedAC{HasGWT: false, Text: []string{}}
