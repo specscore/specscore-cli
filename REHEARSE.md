@@ -63,3 +63,7 @@ Documentation drifts. Someone writes "the tool exits 0 and writes `output.json`,
 Rehearse closes that gap by making the promise *executable*. The acceptance criterion and the test that checks it are linked (`**Verifies:**`) and stored right next to each other. Run Rehearse and you get an honest, current answer to "does this still actually work?" — backed by real commands, not vibes.
 
 In short: **Rehearse keeps a project's claims and its reality in sync, by continuously running the claims for real.**
+
+## See also
+
+- [**Rehearse vs. Established Testing Frameworks**](REHEARSE-VS-TESTING.md) — why not just use pytest, `go test`, or Cucumber? Where Rehearse genuinely differs, where it doesn't, and when to reach for it.
