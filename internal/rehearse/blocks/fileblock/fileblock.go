@@ -15,13 +15,14 @@ import (
 	"github.com/specscore/specscore-cli/internal/rehearse/scenario"
 )
 
-// resolveGlob expands a glob pattern to matching paths. Patterns containing a
-// `**` segment are resolved recursively via doublestar; all others use the
-// stdlib filepath.Glob, so non-recursive glob behavior is byte-for-byte
-// unchanged from v0.7.1 (Feature: cli/rehearse/file-assertions-glob-recursive,
-// REQ: recursive-glob-support).
+// resolveGlob expands a glob pattern to matching paths. Patterns needing
+// doublestar semantics — recursive `**` (Feature:
+// cli/rehearse/file-assertions-glob-recursive) or `{a,b}` brace expansion
+// (Feature: cli/rehearse/file-assertions-glob-braces) — are resolved via
+// doublestar; all other globs use the stdlib filepath.Glob, so plain
+// single-level glob behavior is byte-for-byte unchanged from v0.7.1.
 func resolveGlob(pattern string) ([]string, error) {
-	if strings.Contains(pattern, "**") {
+	if strings.Contains(pattern, "**") || strings.Contains(pattern, "{") {
 		return doublestar.FilepathGlob(pattern)
 	}
 	return filepath.Glob(pattern)
@@ -100,8 +101,9 @@ func Eval(fa scenario.FileAssertion, workDir string) (bool, string) {
 		path = fa.Path
 	}
 
-	// Check if path contains glob characters.
-	if strings.ContainsAny(fa.Path, "*?[") {
+	// Check if path contains glob characters (`{` enables brace expansion via
+	// doublestar — Feature: cli/rehearse/file-assertions-glob-braces).
+	if strings.ContainsAny(fa.Path, "*?[{") {
 		// Resolve the glob (recursive `**` via doublestar, else filepath.Glob).
 		matches, err := resolveGlob(path)
 		if err != nil {

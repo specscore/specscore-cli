@@ -62,7 +62,7 @@ E2e: a scenario in `_tests/` creates a nested fixture tree and asserts `**` matc
 
 ## Not Doing / Out of Scope
 
-- No brace expansion (`{a,b}`) — doublestar supports it, but it stays out of scope for parity with v0.7.1's "Go glob syntax" contract; may be a later feature.
+- No brace expansion (`{a,b}`) in this feature — delivered separately by [`cli/rehearse/file-assertions-glob-braces`](../file-assertions-glob-braces/README.md).
 - No negation patterns (`!*.tmp`).
 - No change to single-level glob behavior — `*`/`?`/`[…]` without `**` still go through `filepath.Glob`.
 

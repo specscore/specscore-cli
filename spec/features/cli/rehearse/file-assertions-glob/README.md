@@ -77,7 +77,7 @@ E2e: scenario in `spec/features/cli/rehearse/file-assertions-glob/_tests/` creat
 
 - No **negation patterns** (e.g., `!*.tmp`)
 - No **character ranges** in glob (e.g., `[0-9]`) — keep to simple wildcards
-- No **brace expansion** (e.g., `{a,b}` treated as literal, not expanded) — use Go glob syntax only
+- No **brace expansion** in this feature (`{a,b}`) — delivered separately by [`cli/rehearse/file-assertions-glob-braces`](../file-assertions-glob-braces/README.md)
 
 ## Acceptance Criteria
 

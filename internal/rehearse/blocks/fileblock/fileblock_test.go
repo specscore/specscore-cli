@@ -635,6 +635,98 @@ func TestEvalGlob_Recursive_InvalidPattern(t *testing.T) {
 	}
 }
 
+// TestEvalGlob_Brace_MatchesAlternatives — `*.{o,a}` expands to both extensions.
+func TestEvalGlob_Brace_MatchesAlternatives(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "a.o", "x")
+	writeTempFile(t, dir, "b.a", "x")
+	writeTempFile(t, dir, "c.txt", "x") // must not affect the {o,a} match
+
+	fa := scenario.FileAssertion{Path: "*.{o,a}", Kind: "exists"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval brace alternatives returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval brace alternatives returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_Brace_Recursive — braces compose with `**` across depths.
+func TestEvalGlob_Brace_Recursive(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "build", "sub"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeTempFile(t, filepath.Join(dir, "build"), "a.o", "x")
+	writeTempFile(t, filepath.Join(dir, "build", "sub"), "b.a", "x")
+
+	fa := scenario.FileAssertion{Path: "build/**/*.{o,a}", Kind: "exists"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval brace recursive returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval brace recursive returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_Brace_ContainsAll — set-based contains over a brace match set.
+func TestEvalGlob_Brace_ContainsAll(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "a.log", "line INFO here")
+	writeTempFile(t, dir, "b.txt", "another INFO line")
+
+	fa := scenario.FileAssertion{Path: "*.{log,txt}", Kind: "contains", Expected: "INFO"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval brace contains-all returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval brace contains-all returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_Brace_SingleAlternative — a `{txt}` brace (no comma) is still
+// detected as a glob and resolved via doublestar.
+func TestEvalGlob_Brace_SingleAlternative(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "notes.txt", "x")
+
+	fa := scenario.FileAssertion{Path: "notes.{txt}", Kind: "exists"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if !passed {
+		t.Errorf("Eval single-alternative brace returned passed=false; msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("Eval single-alternative brace returned msg=%q, want empty", msg)
+	}
+}
+
+// TestEvalGlob_Brace_Malformed — an unbalanced brace is a clear error.
+func TestEvalGlob_Brace_Malformed(t *testing.T) {
+	dir := t.TempDir()
+
+	fa := scenario.FileAssertion{Path: "*.{o,a", Kind: "exists"}
+
+	passed, msg := fileblock.Eval(fa, dir)
+
+	if passed {
+		t.Error("Eval malformed brace returned passed=true, want false")
+	}
+	if !strings.Contains(msg, "invalid glob pattern") {
+		t.Errorf("Eval malformed brace returned msg=%q, want 'invalid glob pattern'", msg)
+	}
+}
+
 // TestEvalGlob_InvalidPattern covers the filepath.Glob error branch: an
 // unterminated character class is a malformed pattern.
 func TestEvalGlob_InvalidPattern(t *testing.T) {
