@@ -10,17 +10,29 @@ format: https://specscore.md/scenario-specification
 Scenario source: [../README.md](../README.md) → `### AC: resolve-ac-reference`.
 
 Scenario: valid AC reference resolves
-Given a feature `cli/studio/index` with an AC `index-two-repos`
-When I run `specscore rehearse new cli/studio/index#ac:index-two-repos`
-Then the command exits 0 and creates a file at `spec/features/cli/studio/index/_tests/index-two-repos.md`
-
-### Step: [TODO — implement the scenario steps]
-
-A placeholder bash block with guidance:
+Given a feature `demo` with an AC `sample-case`
+When I run `specscore rehearse new demo#ac:sample-case`
+Then the command exits 0 and creates a file at `spec/features/demo/_tests/sample-case.md`.
 
 ```bash
-# TODO: Implement steps to verify the scenario's Given/When/Then.
-# Use $SPECSCORE to invoke the CLI under test (e.g., $SPECSCORE rehearse new ...).
-# Assert exit codes and output as needed.
-echo "TODO: implement scenario steps"
+SPECSCORE="${SPECSCORE:-specscore}"
+mkdir -p spec/features/demo
+cat > spec/features/demo/README.md <<'MD'
+# Feature: demo
+
+### AC: sample-case
+
+Scenario: sample case
+Given a seeded workspace
+When I run the tool
+Then it exits 0
+
+## Next
+MD
+"$SPECSCORE" rehearse new demo#ac:sample-case
 ```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` exists
+
+---
+*This document follows the https://specscore.md/scenario-specification*

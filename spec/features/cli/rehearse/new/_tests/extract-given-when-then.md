@@ -10,17 +10,39 @@ format: https://specscore.md/scenario-specification
 Scenario source: [../README.md](../README.md) → `### AC: extract-given-when-then`.
 
 Scenario: AC text is extracted into the scaffold
-Given the AC whose `### AC: index-two-repos` body has `Scenario: index a two-repo workspace` followed by `Given a studio.yaml...`, `When I run specscore studio index`, `Then the command exits 0...`
-When I run the command above
-Then the file contains the verbatim Given/When/Then text under a `Scenario source:` heading
-
-### Step: [TODO — implement the scenario steps]
-
-A placeholder bash block with guidance:
+Given an AC whose body has `Given`/`When`/`Then` lines
+When I run `specscore rehearse new demo#ac:sample-case`
+Then the scaffold contains the verbatim Given/When/Then text.
 
 ```bash
-# TODO: Implement steps to verify the scenario's Given/When/Then.
-# Use $SPECSCORE to invoke the CLI under test (e.g., $SPECSCORE rehearse new ...).
-# Assert exit codes and output as needed.
-echo "TODO: implement scenario steps"
+SPECSCORE="${SPECSCORE:-specscore}"
+mkdir -p spec/features/demo
+cat > spec/features/demo/README.md <<'MD'
+# Feature: demo
+
+### AC: sample-case
+
+Scenario: sample case
+Given a seeded workspace
+When I run the tool
+Then it exits 0
+
+## Next
+MD
+"$SPECSCORE" rehearse new demo#ac:sample-case
 ```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` contains
+
+```
+Given a seeded workspace
+```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` contains
+
+```
+Then it exits 0
+```
+
+---
+*This document follows the https://specscore.md/scenario-specification*

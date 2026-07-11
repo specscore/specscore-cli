@@ -11,16 +11,39 @@ Scenario source: [../README.md](../README.md) → `### AC: placeholder-bash-bloc
 
 Scenario: bash block placeholder guides implementation
 Given the command from AC: resolve-ac-reference
-When I read the file's last 10 lines
-Then there is a `\`\`\`bash` block with `# TODO: Implement steps...` and `echo "TODO: implement scenario steps"`
-
-### Step: [TODO — implement the scenario steps]
-
-A placeholder bash block with guidance:
+When I inspect the scaffold's step section
+Then it contains a bash block with the `# TODO: Implement steps` guidance and the
+`echo "TODO: implement scenario steps"` placeholder line.
 
 ```bash
-# TODO: Implement steps to verify the scenario's Given/When/Then.
-# Use $SPECSCORE to invoke the CLI under test (e.g., $SPECSCORE rehearse new ...).
-# Assert exit codes and output as needed.
+SPECSCORE="${SPECSCORE:-specscore}"
+mkdir -p spec/features/demo
+cat > spec/features/demo/README.md <<'MD'
+# Feature: demo
+
+### AC: sample-case
+
+Scenario: sample case
+Given a seeded workspace
+When I run the tool
+Then it exits 0
+
+## Next
+MD
+"$SPECSCORE" rehearse new demo#ac:sample-case
+```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` contains
+
+```
+# TODO: Implement steps
+```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` contains
+
+```
 echo "TODO: implement scenario steps"
 ```
+
+---
+*This document follows the https://specscore.md/scenario-specification*

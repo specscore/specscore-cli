@@ -11,16 +11,45 @@ Scenario source: [../README.md](../README.md) → `### AC: frontmatter-verifies-
 
 Scenario: frontmatter and Verifies line are correct
 Given the command from AC: resolve-ac-reference
-When I check the file's first 10 lines
-Then `**Status:** pending` and `**Verifies:** cli/studio/index#ac:index-two-repos` are present
-
-### Step: [TODO — implement the scenario steps]
-
-A placeholder bash block with guidance:
+When I check the scaffold's metadata
+Then `**Status:** pending`, the `**Verifies:** demo#ac:sample-case` line, and the
+scenario-specification frontmatter are present.
 
 ```bash
-# TODO: Implement steps to verify the scenario's Given/When/Then.
-# Use $SPECSCORE to invoke the CLI under test (e.g., $SPECSCORE rehearse new ...).
-# Assert exit codes and output as needed.
-echo "TODO: implement scenario steps"
+SPECSCORE="${SPECSCORE:-specscore}"
+mkdir -p spec/features/demo
+cat > spec/features/demo/README.md <<'MD'
+# Feature: demo
+
+### AC: sample-case
+
+Scenario: sample case
+Given a seeded workspace
+When I run the tool
+Then it exits 0
+
+## Next
+MD
+"$SPECSCORE" rehearse new demo#ac:sample-case
 ```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` contains
+
+```
+format: https://specscore.md/scenario-specification
+```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` contains
+
+```
+**Status:** pending
+```
+
+### Assert: file `spec/features/demo/_tests/sample-case.md` contains
+
+```
+**Verifies:** demo#ac:sample-case
+```
+
+---
+*This document follows the https://specscore.md/scenario-specification*
