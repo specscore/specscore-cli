@@ -21,12 +21,6 @@ Studio's unit of UX is the **answered question** (design 01 §"Design around que
 
 The committed **benchmark** (`benchmark/questions.jsonl` + `benchmark/run.sh`) holds exactly 50 concrete question instances derived from design 01's harvested question list, mapped to templates, with genuinely out-of-Phase-1 questions marked `expected-unanswerable` so the file stays honest. The Phase-1 exit gate — **≥40/50 answered with citations** — is checkable mechanically: a deterministic CI assertion over a committed fixture workspace, plus a scripted human-runnable run against the Sneat dogfood workspace. This is the second half of Studio Phase 1 (`docs/continuations/studio-phase-1-evidence-freshness.md` §2 goals 3–5, §exit gate); the first half (`cli/studio/probe`) produced the `verified-behavior` facts these detectors and answers consume.
 
-## Contents
-
-| Child | Description |
-|---|---|
-| [benchmark](benchmark/README.md) | TODO: Add description. |
-
 ## Problem
 
 Phase 0 + `cli/studio/probe` built a fact store rich enough to answer real questions — 10,377 facts over ~85 Sneat repos, plus behavioral `serves-status`/`ci-status` and rehearse's `has-verification-status` — but nothing *reads* it as answers. Three gaps remain from the Sneat review, each named in design 01:
