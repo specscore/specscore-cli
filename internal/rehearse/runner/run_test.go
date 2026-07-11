@@ -178,6 +178,41 @@ func TestRun_FileAssertionFails(t *testing.T) {
 	}
 }
 
+// TestRun_ExpectFail_FailingScenarioReportsPass — a scenario with
+// `**Expect:** fail` whose step fails is inverted to pass; the report carries
+// Expect=="fail" and retains the failing step for transparency.
+func TestRun_ExpectFail_FailingScenarioReportsPass(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "neg.md")
+	writeFile(t, file, "**Expect:** fail\n\n```bash\nexit 3\n```\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusPass {
+		t.Fatalf("status = %q, want pass (expected-fail inversion)", r.Status)
+	}
+	if r.Expect != "fail" {
+		t.Errorf("Expect = %q, want \"fail\"", r.Expect)
+	}
+	if len(r.Steps) != 1 || r.Steps[0].Status != blocks.StatusFail {
+		t.Errorf("steps = %+v, want the failing step retained", r.Steps)
+	}
+}
+
+// TestRun_ExpectFail_PassingScenarioReportsFail — a scenario with
+// `**Expect:** fail` whose steps all pass is inverted to fail with an
+// explanatory detail.
+func TestRun_ExpectFail_PassingScenarioReportsFail(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "pos.md")
+	writeFile(t, file, "**Expect:** fail\n\n```bash\necho ok\n```\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail (expected fail but passed)", r.Status)
+	}
+	if !strings.Contains(r.Detail, "expected to fail") {
+		t.Errorf("detail = %q, want it to note the scenario was expected to fail", r.Detail)
+	}
+}
+
 func TestRun_MkdirTempFailureIsScenarioFail(t *testing.T) {
 	swap(t, &mkdirTempFn, func(string, string) (string, error) {
 		return "", errors.New("tmp full")

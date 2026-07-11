@@ -45,6 +45,10 @@ type ScenarioReport struct {
 	// FilterStatus is "match" or "skip" when --filter is active; omitted otherwise.
 	// Feature: cli/rehearse/run-filter (REQ: filter-output-labels)
 	FilterStatus string `json:"filter_status,omitempty"`
+	// Expect is "fail" when the scenario declared `**Expect:** fail`; omitted for
+	// the default. A reported "pass" with Expect=="fail" is a correctly-failing
+	// negative scenario. Feature: cli/rehearse/expected-fail (REQ: expect-in-report)
+	Expect string `json:"expect,omitempty"`
 }
 
 // Run executes the scenario files in order and returns one report per
@@ -69,7 +73,22 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 		Verifies: []string{},
 		Steps:    []StepReport{},
 	}
+	// expect is the scenario's declared expectation ("pass" until a successful
+	// parse says otherwise). finish inverts the terminal pass/fail outcome for
+	// expected-fail scenarios (Feature: cli/rehearse/expected-fail).
+	expect := "pass"
 	finish := func(status string) ScenarioReport {
+		if expect == "fail" {
+			switch status {
+			case StatusFail:
+				// Correctly failed → meets expectation; the failing step detail
+				// stays in rep.Steps for transparency.
+				status = StatusPass
+			case StatusPass:
+				status = StatusFail
+				rep.Detail = "scenario was expected to fail (**Expect:** fail) but passed"
+			}
+		}
 		rep.Status = status
 		rep.Bag = bag.Map()
 		rep.DurationMS = time.Since(start).Milliseconds()
@@ -78,11 +97,16 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 
 	sc, err := scenario.Parse(file)
 	if err != nil {
-		// An unparsable scenario is a reported fail, not a run abort.
+		// An unparsable scenario is a reported fail, not a run abort — and never
+		// inverted: a malformed scenario is a real defect regardless of Expect.
 		rep.Detail = err.Error()
 		return finish(StatusFail)
 	}
 	rep.Verifies = sc.Verifies
+	if sc.Expect == "fail" {
+		expect = "fail"
+		rep.Expect = "fail"
+	}
 
 	steps := stepBlocks(reg, sc.Blocks)
 	if len(steps) == 0 {

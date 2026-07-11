@@ -105,6 +105,36 @@ func TestParse_MetadataInsideFenceIgnored(t *testing.T) {
 	}
 }
 
+func TestParse_ExpectFail(t *testing.T) {
+	sc, err := scenario.ParseBytes("x.md", []byte("**Expect:** fail\n"))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if sc.Expect != "fail" {
+		t.Errorf("Expect = %q, want \"fail\"", sc.Expect)
+	}
+}
+
+func TestParse_ExpectDefaultsToPass(t *testing.T) {
+	sc, err := scenario.ParseBytes("x.md", []byte("**Verifies:** demo#ac:x\n"))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if sc.Expect != "pass" {
+		t.Errorf("Expect = %q, want \"pass\" (default)", sc.Expect)
+	}
+}
+
+func TestParse_ExpectUnknownValueIsPass(t *testing.T) {
+	sc, err := scenario.ParseBytes("x.md", []byte("**Expect:** maybe\n"))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if sc.Expect != "pass" {
+		t.Errorf("Expect = %q, want \"pass\" for an unknown value", sc.Expect)
+	}
+}
+
 func TestParse_VerifiesPlaceholderMeansNone(t *testing.T) {
 	sc, err := scenario.ParseBytes("x.md", []byte("**Verifies:** —\n"))
 	if err != nil {

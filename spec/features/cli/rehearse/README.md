@@ -25,6 +25,7 @@ Command group for the Rehearse acceptance-evidence layer (v0.3 fold-in per rehea
 | [run-filter](run-filter/README.md) | Run scenarios by acceptance criterion with --filter flag |
 | [file-assertions-glob](file-assertions-glob/README.md) | Glob patterns in file assertion paths for set-based matching |
 | [file-assertions-glob-recursive](file-assertions-glob-recursive/README.md) | Recursive `**` glob matching in file assertion paths via doublestar |
+| [expected-fail](expected-fail/README.md) | `**Expect:** fail` scenario directive so negative scenarios run green in the corpus |
 
 ## Problem
 

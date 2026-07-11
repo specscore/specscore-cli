@@ -120,6 +120,9 @@ jobs:
           spec/features/cli/studio/answers/_tests
           spec/features/cli/rehearse/run/_tests
           spec/features/cli/rehearse/evidence/_tests
+          spec/features/cli/rehearse/file-assertions/_tests
+          spec/features/cli/rehearse/file-assertions-glob/_tests
+          spec/features/cli/rehearse/file-assertions-glob-recursive/_tests
           --report-out .specscore/rehearse/latest.json
           --format json
 

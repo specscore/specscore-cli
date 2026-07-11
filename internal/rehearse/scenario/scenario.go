@@ -44,6 +44,10 @@ type Scenario struct {
 	Verifies []string
 	// Status is the `**Status:**` body metadata value (e.g. "pending").
 	Status string
+	// Expect is the `**Expect:**` body metadata value: "fail" when the scenario
+	// is expected to fail, "pass" otherwise (the default, and the value for any
+	// unrecognized directive). Feature: cli/rehearse/expected-fail.
+	Expect string
 	// Blocks are all fenced blocks in document order.
 	Blocks []Block
 	// FileAssertions are all `### Assert: file` headings in document order.
@@ -68,7 +72,7 @@ func Parse(path string) (*Scenario, error) {
 // ParseBytes parses scenario content already in memory. path is used for
 // error messages only.
 func ParseBytes(path string, data []byte) (*Scenario, error) {
-	sc := &Scenario{Path: path, Verifies: []string{}, FileAssertions: []FileAssertion{}}
+	sc := &Scenario{Path: path, Verifies: []string{}, FileAssertions: []FileAssertion{}, Expect: "pass"}
 
 	var (
 		inFence   bool
@@ -101,6 +105,13 @@ func ParseBytes(path string, data []byte) (*Scenario, error) {
 		}
 		if v, ok := metaValue(trimmed, "Status"); ok && sc.Status == "" {
 			sc.Status = v
+		}
+		if v, ok := metaValue(trimmed, "Expect"); ok {
+			// Only "fail" is meaningful; anything else keeps the "pass" default,
+			// so the directive is forward-compatible with unknown values.
+			if strings.EqualFold(strings.TrimSpace(v), "fail") {
+				sc.Expect = "fail"
+			}
 		}
 	}
 	if inFence {
