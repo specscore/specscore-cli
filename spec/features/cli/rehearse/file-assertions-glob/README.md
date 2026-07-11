@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Implemented
+status: Stable
 ---
 
 # Feature: rehearse file assertions with glob patterns
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions-glob?op=request-change) |
-**Status:** Implemented
+**Status:** Stable
 **Source Ideas:** —
 **Supersedes:** —
 

@@ -6,7 +6,7 @@ status: Stable
 # Feature: rehearse file assertions — verify filesystem state in scenarios
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/file-assertions?op=request-change) |
-**Status:** In Review
+**Status:** Stable
 **Source Ideas:** —
 **Supersedes:** —
 

@@ -25,7 +25,7 @@ Modify `internal/rehearse/blocks/fileblock/fileblock.go`: detect glob characters
 
 **Verifies:** cli/rehearse/file-assertions-glob#ac:glob-single-match, cli/rehearse/file-assertions-glob#ac:glob-multiple-match, cli/rehearse/file-assertions-glob#ac:glob-partial-match-fail, cli/rehearse/file-assertions-glob#ac:glob-no-matches-missing, cli/rehearse/file-assertions-glob#ac:glob-recursive-rejected
 **Depends-On:** —
-**Status:** Implemented
+**Status:** complete
 
 Modify `Eval()` in `fileblock.go`: check if path contains glob characters; if yes, reject recursive `**` with a clear error, otherwise resolve via `filepath.Glob()`, apply the kind function to each matched file, return (passed if all match, error message if any fail). Unit tests cover glob-single, glob-multiple, glob-partial-fail, glob-no-match (exists/missing/contains), glob-permissions, not-contains, invalid-pattern, unknown-kind, and `**`-rejected. 100% coverage of the fileblock package.
 

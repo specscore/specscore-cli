@@ -6,7 +6,7 @@ status: Stable
 # Feature: rehearse run --filter — run scenarios by acceptance criterion
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/run-filter?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/run-filter?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/run-filter?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/rehearse/run-filter?op=request-change) |
-**Status:** In Review
+**Status:** Stable
 **Source Ideas:** —
 **Supersedes:** —
 
