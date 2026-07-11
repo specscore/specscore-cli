@@ -163,3 +163,123 @@ func TestParse_NoMetadataNoBlocks(t *testing.T) {
 		t.Errorf("unexpected content parsed: %+v", sc)
 	}
 }
+
+// --- File assertion tests ---
+
+func TestParseFileAssertions_SingleBlock(t *testing.T) {
+	md := "### Assert: file `output/report.txt` contains\n\n```\nHello, world\n```\n"
+	sc, err := scenario.ParseBytes("x.md", []byte(md))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.FileAssertions) != 1 {
+		t.Fatalf("FileAssertions = %d, want 1", len(sc.FileAssertions))
+	}
+	fa := sc.FileAssertions[0]
+	if fa.Path != "output/report.txt" {
+		t.Errorf("Path = %q, want %q", fa.Path, "output/report.txt")
+	}
+	if fa.Kind != "contains" {
+		t.Errorf("Kind = %q, want contains", fa.Kind)
+	}
+	if fa.Expected != "Hello, world" {
+		t.Errorf("Expected = %q, want %q", fa.Expected, "Hello, world")
+	}
+}
+
+func TestParseFileAssertions_MultipleBlocks(t *testing.T) {
+	md := "### Assert: file `/tmp/a.txt` exists\n\n### Assert: file `/tmp/b.txt` missing\n\n"
+	sc, err := scenario.ParseBytes("x.md", []byte(md))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.FileAssertions) != 2 {
+		t.Fatalf("FileAssertions = %d, want 2", len(sc.FileAssertions))
+	}
+	if sc.FileAssertions[0].Path != "/tmp/a.txt" || sc.FileAssertions[0].Kind != "exists" {
+		t.Errorf("assertion 0 = %+v", sc.FileAssertions[0])
+	}
+	if sc.FileAssertions[1].Path != "/tmp/b.txt" || sc.FileAssertions[1].Kind != "missing" {
+		t.Errorf("assertion 1 = %+v", sc.FileAssertions[1])
+	}
+}
+
+func TestParseFileAssertions_AllKinds(t *testing.T) {
+	kinds := []string{"exists", "missing", "contains", "not-contains", "permissions"}
+	var sb strings.Builder
+	for _, k := range kinds {
+		sb.WriteString("### Assert: file `f.txt` " + k + "\n\n")
+	}
+	sc, err := scenario.ParseBytes("x.md", []byte(sb.String()))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.FileAssertions) != len(kinds) {
+		t.Fatalf("FileAssertions = %d, want %d", len(sc.FileAssertions), len(kinds))
+	}
+	for i, k := range kinds {
+		if sc.FileAssertions[i].Kind != k {
+			t.Errorf("assertion[%d].Kind = %q, want %q", i, sc.FileAssertions[i].Kind, k)
+		}
+	}
+}
+
+func TestParseFileAssertions_MultilineContent(t *testing.T) {
+	md := "### Assert: file `out.txt` contains\n\n```\nline one\nline two\nline three\n```\n"
+	sc, err := scenario.ParseBytes("x.md", []byte(md))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.FileAssertions) != 1 {
+		t.Fatalf("FileAssertions = %d, want 1", len(sc.FileAssertions))
+	}
+	want := "line one\nline two\nline three"
+	if sc.FileAssertions[0].Expected != want {
+		t.Errorf("Expected = %q, want %q", sc.FileAssertions[0].Expected, want)
+	}
+}
+
+func TestParseFileAssertions_NoCodeBlock(t *testing.T) {
+	// 'exists' needs no code block; heading alone is sufficient.
+	md := "### Assert: file `check.txt` exists\n\n### Assert: file `other.txt` exists\n\n"
+	sc, err := scenario.ParseBytes("x.md", []byte(md))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.FileAssertions) != 2 {
+		t.Fatalf("FileAssertions = %d, want 2", len(sc.FileAssertions))
+	}
+	if sc.FileAssertions[0].Expected != "" {
+		t.Errorf("Expected should be empty for exists with no code block, got %q", sc.FileAssertions[0].Expected)
+	}
+}
+
+func TestParseFileAssertions_InvalidKind(t *testing.T) {
+	// An unrecognised kind should still be parsed (stored as-is); callers
+	// validate the kind during evaluation — the parser does not error.
+	md := "### Assert: file `f.txt` reallybadkind\n\n"
+	sc, err := scenario.ParseBytes("x.md", []byte(md))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.FileAssertions) != 1 {
+		t.Fatalf("FileAssertions = %d, want 1", len(sc.FileAssertions))
+	}
+	if sc.FileAssertions[0].Kind != "reallybadkind" {
+		t.Errorf("Kind = %q, want reallybadkind", sc.FileAssertions[0].Kind)
+	}
+}
+
+func TestParseFileAssertions_EmptyAssertions(t *testing.T) {
+	md := "# Rehearse: no file assertions\n\n**Status:** pending\n\n```bash\necho hi\n```\n"
+	sc, err := scenario.ParseBytes("x.md", []byte(md))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.FileAssertions) != 0 {
+		t.Errorf("FileAssertions = %v, want empty", sc.FileAssertions)
+	}
+	if sc.FileAssertions == nil {
+		t.Error("FileAssertions is nil, want non-nil empty slice")
+	}
+}
