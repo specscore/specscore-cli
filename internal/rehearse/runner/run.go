@@ -41,6 +41,9 @@ type ScenarioReport struct {
 	Steps      []StepReport      `json:"steps"`
 	// Detail carries scenario-level failure detail (e.g. a parse error).
 	Detail string `json:"detail,omitempty"`
+	// FilterStatus is "match" or "skip" when --filter is active; omitted otherwise.
+	// Feature: cli/rehearse/run-filter (REQ: filter-output-labels)
+	FilterStatus string `json:"filter_status,omitempty"`
 }
 
 // Run executes the scenario files in order and returns one report per

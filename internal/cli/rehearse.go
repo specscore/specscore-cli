@@ -5,6 +5,9 @@ package cli
 // REQ: dtql-block, REQ: graphql-block, REQ: context-bag, REQ: run-report)
 // Feature: cli/rehearse/evidence (REQ: report-out, REQ: report-provenance)
 // Feature: cli/rehearse/new (REQ: scaffold-new)
+// Feature: cli/rehearse/run-filter (REQ: filter-flag-syntax, REQ: filter-matching-exact,
+// REQ: filter-multiple-or, REQ: no-filter-default, REQ: filter-invalid-syntax,
+// REQ: filter-output-labels, REQ: filter-no-matches)
 
 import (
 	"encoding/json"
@@ -13,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -24,6 +28,7 @@ import (
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/sqlblock"
 	"github.com/specscore/specscore-cli/internal/rehearse/runner"
 	"github.com/specscore/specscore-cli/internal/rehearse/scaffold"
+	"github.com/specscore/specscore-cli/internal/rehearse/scenario"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
@@ -82,6 +87,7 @@ func rehearseRegistry() blocks.Registry {
 }
 
 func rehearseRunCommand() *cobra.Command {
+	var filters []string
 	cmd := &cobra.Command{
 		Use:   "run [paths...]",
 		Short: "Run markdown scenario files and report per-scenario pass/fail",
@@ -100,19 +106,33 @@ Exit code: 0 when no scenario failed; 1 when any failed; 2 on usage or
 config errors — including when discovery matches zero scenario files.`,
 		Args:         cobra.ArbitraryArgs,
 		SilenceUsage: true,
-		RunE:         runRehearseRun,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRehearseRun(cmd, args, filters)
+		},
 	}
 	cmd.Flags().String("format", "human", "output format: human or json")
 	cmd.Flags().String("report-out", "", "persist the run report as a JSON envelope to this path (creates parent dirs; exit 2 if unwritable)")
+	// Feature: cli/rehearse/run-filter (REQ: filter-flag-syntax)
+	cmd.Flags().StringSliceVar(&filters, "filter", nil, "filter scenarios by AC reference (e.g., cli/studio/index#ac:index-two-repos); can be repeated")
 	return cmd
 }
 
-func runRehearseRun(cmd *cobra.Command, args []string) error {
+func runRehearseRun(cmd *cobra.Command, args []string, filters []string) error {
 	format, _ := cmd.Flags().GetString("format")
 	if format != "human" && format != "json" {
 		return exitcode.InvalidArgsErrorf("unknown --format %q: expected human or json", format)
 	}
 	reportOut, _ := cmd.Flags().GetString("report-out")
+
+	// Validate each filter format: must contain "#ac:" with non-empty parts
+	// on both sides. Feature: cli/rehearse/run-filter (REQ: filter-invalid-syntax)
+	for _, f := range filters {
+		if !isValidACRef(f) {
+			return exitcode.InvalidArgsErrorf(
+				"Invalid AC reference: %s (expected format: <feature-slug>#ac:<ac-slug>)", f,
+			)
+		}
+	}
 
 	// The working directory is needed for default discovery (no args) and for
 	// git provenance when --report-out is set.
@@ -131,7 +151,59 @@ func runRehearseRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	reports := runner.Run(rehearseRegistry(), files)
+
+	// When filters are active, parse each scenario file to check its Verifies
+	// slice. Matched files are executed; unmatched files produce a synthetic
+	// filter-skip report without execution.
+	// Feature: cli/rehearse/run-filter (REQ: filter-matching-exact, REQ: filter-multiple-or)
+	var reports []runner.ScenarioReport
+	if len(filters) == 0 {
+		// No filters: run all scenarios normally.
+		// Feature: cli/rehearse/run-filter (REQ: no-filter-default)
+		reports = runner.Run(rehearseRegistry(), files)
+	} else {
+		var matchedFiles []string
+		var skippedFiles []string
+		for _, file := range files {
+			if scenarioMatchesFilters(file, filters) {
+				matchedFiles = append(matchedFiles, file)
+			} else {
+				skippedFiles = append(skippedFiles, file)
+			}
+		}
+
+		// Handle zero-match case: exit 0 with an informative message.
+		// Feature: cli/rehearse/run-filter (REQ: filter-no-matches)
+		if len(matchedFiles) == 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "No scenarios matched filter(s): %s\n", strings.Join(filters, ", "))
+			return nil
+		}
+
+		// Run only the matched scenarios.
+		reports = runner.Run(rehearseRegistry(), matchedFiles)
+		// Label matched reports.
+		for i := range reports {
+			reports[i].FilterStatus = "match"
+		}
+
+		// Build synthetic skip reports for unmatched scenarios.
+		// Feature: cli/rehearse/run-filter (REQ: filter-output-labels)
+		for _, file := range skippedFiles {
+			sc, parseErr := scenario.Parse(file)
+			verifies := []string{}
+			if parseErr == nil {
+				verifies = sc.Verifies
+			}
+			reports = append(reports, runner.ScenarioReport{
+				File:         file,
+				Status:       runner.StatusSkipped,
+				Verifies:     verifies,
+				Bag:          map[string]string{},
+				Steps:        []runner.StepReport{},
+				FilterStatus: "skip",
+			})
+		}
+	}
 
 	w := cmd.OutOrStdout()
 	if format == "json" {
@@ -141,7 +213,7 @@ func runRehearseRun(cmd *cobra.Command, args []string) error {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
 	} else {
-		runner.RenderHuman(w, reports)
+		renderHumanWithFilter(w, reports, len(filters) > 0)
 	}
 
 	// Write the persisted report envelope after the stdout report is printed
@@ -157,6 +229,86 @@ func runRehearseRun(cmd *cobra.Command, args []string) error {
 		return exitcode.ConflictErrorf("%d of %d scenario(s) failed", failed, len(reports))
 	}
 	return nil
+}
+
+// isValidACRef reports whether s is a valid AC reference of the form
+// <feature-slug>#ac:<ac-slug> where both parts are non-empty.
+// Feature: cli/rehearse/run-filter (REQ: filter-invalid-syntax)
+func isValidACRef(s string) bool {
+	before, after, ok := strings.Cut(s, "#ac:")
+	return ok && before != "" && after != ""
+}
+
+// scenarioMatchesFilters reports whether any filter matches any entry in the
+// scenario file's Verifies slice. Returns false on parse errors (the file will
+// be skipped). Feature: cli/rehearse/run-filter (REQ: filter-matching-exact)
+func scenarioMatchesFilters(file string, filters []string) bool {
+	sc, err := scenario.Parse(file)
+	if err != nil {
+		return false
+	}
+	for _, v := range sc.Verifies {
+		for _, f := range filters {
+			if v == f {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// renderHumanWithFilter writes the human report, optionally prepending
+// [filter-match] or [filter-skip] labels when filterActive is true.
+// Feature: cli/rehearse/run-filter (REQ: filter-output-labels)
+func renderHumanWithFilter(w io.Writer, reports []runner.ScenarioReport, filterActive bool) {
+	if !filterActive {
+		runner.RenderHuman(w, reports)
+		return
+	}
+	// Custom render that prepends the filter label.
+	counts := map[string]int{}
+	for _, r := range reports {
+		counts[r.Status]++
+		label := ""
+		if r.FilterStatus == "match" {
+			label = "[filter-match] "
+		} else if r.FilterStatus == "skip" {
+			label = "[filter-skip] "
+		}
+		fmt.Fprintf(w, "%s%-8s  %s  [%s]  %dms\n",
+			label, r.Status, r.File, strings.Join(r.Verifies, ", "), r.DurationMS)
+		if r.Status != runner.StatusFail && r.Status != runner.StatusSkipped {
+			continue
+		}
+		if r.Detail != "" {
+			for _, line := range strings.Split(strings.TrimRight(r.Detail, "\n"), "\n") {
+				fmt.Fprintf(w, "    %s\n", line)
+			}
+		}
+		if r.Status != runner.StatusFail {
+			continue
+		}
+		for _, s := range r.Steps {
+			if s.Status != runner.StatusFail {
+				continue
+			}
+			writeFilterIndented(w, fmt.Sprintf("%s step: %s", s.Kind, s.Detail))
+			writeFilterIndented(w, s.Output)
+		}
+	}
+	fmt.Fprintf(w, "Total: %d scenario(s) — %d pass, %d fail, %d skipped, %d no-steps\n",
+		len(reports), counts[runner.StatusPass], counts[runner.StatusFail],
+		counts[runner.StatusSkipped], counts[runner.StatusNoSteps])
+}
+
+// writeFilterIndented writes each non-empty line indented by 4 spaces.
+func writeFilterIndented(w io.Writer, text string) {
+	if text == "" {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		fmt.Fprintf(w, "    %s\n", line)
+	}
 }
 
 // rehearseNewCommand returns the "rehearse new" subcommand that scaffolds a
