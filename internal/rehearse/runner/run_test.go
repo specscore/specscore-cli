@@ -281,3 +281,122 @@ func TestCountFailed(t *testing.T) {
 		t.Errorf("CountFailed = %d, want 2", got)
 	}
 }
+
+// --- reusable checks (**Use:**) ---
+
+func TestRun_Check_Passes(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "ok.check.md"), "# Check: ok\n\n```bash\nexit 0\n```\n")
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "```bash\necho hi\n```\n\n**Use:** [ok](./ok.check.md)\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusPass {
+		t.Fatalf("status = %q, want pass (steps %+v)", r.Status, r.Steps)
+	}
+	// A passing check is silent: only the bash step is reported.
+	if len(r.Steps) != 1 {
+		t.Errorf("steps = %+v, want just the bash step", r.Steps)
+	}
+}
+
+func TestRun_Check_Fails(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "bad.check.md"), "# Check: bad\n\n```bash\necho boom; exit 1\n```\n")
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "**Use:** [bad](./bad.check.md)\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail", r.Status)
+	}
+	last := r.Steps[len(r.Steps)-1]
+	if last.Kind != "use" || !strings.Contains(last.Detail, "bad.check.md") {
+		t.Errorf("last step = %+v, want a failed use naming the check", last)
+	}
+}
+
+func TestRun_Check_ParamBinding(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "contains.check.md"),
+		"# Check: contains\n**Params:** expected\n\n```bash\ngrep -q \"{{expected}}\" out.txt || exit 1\n```\n")
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "```bash\necho hello > out.txt\n```\n\n**Use:** [contains](./contains.check.md) with expected=hello\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusPass {
+		t.Fatalf("status = %q, want pass (steps %+v)", r.Status, r.Steps)
+	}
+}
+
+func TestRun_Check_ContextParam(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "tok.check.md"),
+		"# Check: tok\n**Params:** value\n\n```bash\n[ \"{{value}}\" = \"secret42\" ] || exit 1\n```\n")
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "```bash\necho \"token=secret42\" >> \"$REHEARSE_CAPTURES\"\n```\n\n**Use:** [tok](./tok.check.md) with value={{token}}\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusPass {
+		t.Fatalf("status = %q, want pass (steps %+v)", r.Status, r.Steps)
+	}
+}
+
+func TestRun_Check_MissingCheck(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "**Use:** [nope](./nope.check.md)\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail", r.Status)
+	}
+	if !strings.Contains(r.Steps[len(r.Steps)-1].Detail, "cannot load check") {
+		t.Errorf("detail = %q, want a load error", r.Steps[len(r.Steps)-1].Detail)
+	}
+}
+
+func TestRun_Check_MissingParam(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "needs.check.md"), "# Check: needs\n**Params:** expected\n\n```bash\ntrue\n```\n")
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "**Use:** [needs](./needs.check.md)\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail", r.Status)
+	}
+	if !strings.Contains(r.Steps[len(r.Steps)-1].Detail, "missing required param") {
+		t.Errorf("detail = %q, want a missing-param error", r.Steps[len(r.Steps)-1].Detail)
+	}
+}
+
+func TestRun_Check_BadParamRef(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "c.check.md"), "# Check: c\n**Params:** value\n\n```bash\ntrue\n```\n")
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "**Use:** [c](./c.check.md) with value={{unknown}}\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail", r.Status)
+	}
+	if !strings.Contains(r.Steps[len(r.Steps)-1].Detail, "unknown variable") {
+		t.Errorf("detail = %q, want an interpolation error", r.Steps[len(r.Steps)-1].Detail)
+	}
+}
+
+func TestRun_Check_BadBody(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "c.check.md"), "# Check: c\n\n```bash\necho {{unbound}}\n```\n")
+	file := filepath.Join(dir, "s.md")
+	writeFile(t, file, "**Use:** [c](./c.check.md)\n")
+
+	r := Run(bashRegistry(), []string{file})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail", r.Status)
+	}
+	if !strings.Contains(r.Steps[len(r.Steps)-1].Detail, "unknown variable") {
+		t.Errorf("detail = %q, want a body-interpolation error", r.Steps[len(r.Steps)-1].Detail)
+	}
+}

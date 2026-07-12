@@ -112,7 +112,9 @@ func collectScenarios(dir string, testsOnly bool) ([]string, error) {
 			return nil
 		}
 		name := d.Name()
-		if !strings.HasSuffix(name, ".md") || name == "README.md" {
+		// `.check.md` files are reusable checks (Feature: cli/rehearse/reusable-checks),
+		// not scenarios — they are invoked via `**Use:**`, never run directly.
+		if !strings.HasSuffix(name, ".md") || name == "README.md" || strings.HasSuffix(name, ".check.md") {
 			return nil
 		}
 		if testsOnly && !strings.Contains(filepath.ToSlash(path), "/_tests/") {

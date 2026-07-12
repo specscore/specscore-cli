@@ -62,6 +62,8 @@ func TestDiscover_DirRecursiveMDMinusREADME(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "README.md"), "x")
 	writeFile(t, filepath.Join(dir, "nested", "README.md"), "x")
 	writeFile(t, filepath.Join(dir, "notes.txt"), "x")
+	// `.check.md` files are reusable checks, not scenarios — never discovered.
+	writeFile(t, filepath.Join(dir, "helper.check.md"), "x")
 
 	got, err := Discover([]string{dir}, dir)
 	if err != nil {

@@ -3,9 +3,12 @@ package runner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks"
+	"github.com/specscore/specscore-cli/internal/rehearse/blocks/bash"
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/fileblock"
 	"github.com/specscore/specscore-cli/internal/rehearse/scenario"
 )
@@ -109,7 +112,9 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 	}
 
 	steps := stepBlocks(reg, sc.Blocks)
-	if len(steps) == 0 {
+	// A scenario is only "no-steps" when it has nothing to do at all — no step
+	// blocks, no file assertions, and no reusable-check invocations.
+	if len(steps) == 0 && len(sc.FileAssertions) == 0 && len(sc.Uses) == 0 {
 		return finish(StatusNoSteps)
 	}
 
@@ -170,10 +175,71 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 		}
 		// Silent on pass (matching bash assert behavior)
 	}
+
+	// Run reusable checks (**Use:**) after assertions, in the workdir, reusing
+	// the bash executor (Feature: cli/rehearse/reusable-checks).
+	scenarioDir := filepath.Dir(file)
+	for _, use := range sc.Uses {
+		if step := runCheck(bag, workDir, scenarioDir, use); step != nil {
+			rep.Steps = append(rep.Steps, *step)
+			failed = true
+		}
+	}
+
 	if failed {
 		return finish(StatusFail)
 	}
 	return finish(StatusPass)
+}
+
+// runCheck resolves and executes one `**Use:**` reusable check. It returns nil
+// when the check passes, or a failed StepReport (naming the check ref) on a
+// load/validation error or a non-zero verification (REQ: check-execution,
+// REQ: use-validation).
+func runCheck(bag *Bag, workDir, scenarioDir string, use scenario.CheckUse) *StepReport {
+	fail := func(detail, output string) *StepReport {
+		return &StepReport{Kind: "use", Status: blocks.StatusFail, Detail: detail, Output: output}
+	}
+
+	checkPath := use.Ref
+	if !filepath.IsAbs(checkPath) {
+		checkPath = filepath.Join(scenarioDir, use.Ref)
+	}
+	check, err := scenario.ParseCheck(checkPath)
+	if err != nil {
+		return fail(fmt.Sprintf("cannot load check %s: %v", use.Ref, err), "")
+	}
+
+	// Overlay the resolved params on a copy of the scenario bag; params are
+	// bound but do not leak back into the scenario bag.
+	pbag := NewBag()
+	pbag.Merge(bag.Snapshot())
+	var missing []string
+	for _, p := range check.Params {
+		raw, ok := use.Params[p]
+		if !ok {
+			missing = append(missing, p)
+			continue
+		}
+		val, ierr := bag.Interpolate(raw)
+		if ierr != nil {
+			return fail(fmt.Sprintf("check %s: param %s: %v", use.Ref, p, ierr), "")
+		}
+		pbag.Merge([]blocks.Capture{{Name: p, Value: val}})
+	}
+	if len(missing) > 0 {
+		return fail(fmt.Sprintf("check %s: missing required param(s): %s", use.Ref, strings.Join(missing, ", ")), "")
+	}
+
+	body, ierr := pbag.Interpolate(check.Body)
+	if ierr != nil {
+		return fail(fmt.Sprintf("check %s: %v", use.Ref, ierr), "")
+	}
+	res := runStep(bash.New(), blocks.StepCtx{WorkDir: workDir, Body: body, Vars: pbag.Snapshot()})
+	if res.Status == blocks.StatusFail {
+		return fail(fmt.Sprintf("check %s failed: %s", use.Ref, res.Detail), res.Output)
+	}
+	return nil
 }
 
 // textInterpolatedKinds are the block classes whose bodies and info-string

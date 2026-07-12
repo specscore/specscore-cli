@@ -313,3 +313,100 @@ func TestParseFileAssertions_EmptyAssertions(t *testing.T) {
 		t.Error("FileAssertions is nil, want non-nil empty slice")
 	}
 }
+
+// --- reusable-checks: **Use:** directive parsing ---
+
+func TestParse_Uses(t *testing.T) {
+	src := "**Use:** [ok](./a.check.md)\n\n" +
+		"**Use:** [c](./b.check.md) with x=1 y={{tok}}\n"
+	sc, err := scenario.ParseBytes("s.md", []byte(src))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.Uses) != 2 {
+		t.Fatalf("Uses = %d, want 2", len(sc.Uses))
+	}
+	if sc.Uses[0].Ref != "./a.check.md" || len(sc.Uses[0].Params) != 0 {
+		t.Errorf("use[0] = %+v", sc.Uses[0])
+	}
+	if sc.Uses[1].Ref != "./b.check.md" {
+		t.Errorf("use[1].Ref = %q", sc.Uses[1].Ref)
+	}
+	if sc.Uses[1].Params["x"] != "1" || sc.Uses[1].Params["y"] != "{{tok}}" {
+		t.Errorf("use[1].Params = %v", sc.Uses[1].Params)
+	}
+	if sc.Uses[1].Line == 0 {
+		t.Error("use[1].Line not set")
+	}
+}
+
+func TestParse_UseInFenceIgnored(t *testing.T) {
+	sc, err := scenario.ParseBytes("s.md", []byte("```bash\n**Use:** [x](./y.check.md)\n```\n"))
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+	if len(sc.Uses) != 0 {
+		t.Errorf("Uses = %d, want 0 (inside a fence)", len(sc.Uses))
+	}
+}
+
+func TestParse_MalformedUseErrors(t *testing.T) {
+	_, err := scenario.ParseBytes("s.md", []byte("**Use:** no-link-here\n"))
+	if err == nil {
+		t.Fatal("want error for a **Use:** with no [label](url) link")
+	}
+}
+
+// --- reusable-checks: check-file parsing ---
+
+func TestParseCheck(t *testing.T) {
+	src := "# Check: my-check\n**Params:** a, b\n\n```bash\necho {{a}} {{b}}\n```\n"
+	ch, err := scenario.ParseCheckBytes("c.check.md", []byte(src))
+	if err != nil {
+		t.Fatalf("ParseCheckBytes: %v", err)
+	}
+	if ch.Slug != "my-check" {
+		t.Errorf("Slug = %q", ch.Slug)
+	}
+	if !reflect.DeepEqual(ch.Params, []string{"a", "b"}) {
+		t.Errorf("Params = %v", ch.Params)
+	}
+	if strings.TrimSpace(ch.Body) != "echo {{a}} {{b}}" {
+		t.Errorf("Body = %q", ch.Body)
+	}
+}
+
+func TestParseCheck_NoSlugNoParams(t *testing.T) {
+	ch, err := scenario.ParseCheckBytes("c.check.md", []byte("```bash\ntrue\n```\n"))
+	if err != nil {
+		t.Fatalf("ParseCheckBytes: %v", err)
+	}
+	if ch.Slug != "" || len(ch.Params) != 0 {
+		t.Errorf("want empty slug and no params; got slug=%q params=%v", ch.Slug, ch.Params)
+	}
+}
+
+func TestParseCheck_NoBodyErrors(t *testing.T) {
+	_, err := scenario.ParseCheckBytes("c.check.md", []byte("# Check: x\n**Params:** a\n"))
+	if err == nil {
+		t.Fatal("want error for a check with no verification block")
+	}
+}
+
+func TestParseCheck_File(t *testing.T) {
+	path := write(t, "# Check: f\n\n```bash\ntrue\n```\n")
+	ch, err := scenario.ParseCheck(path)
+	if err != nil {
+		t.Fatalf("ParseCheck: %v", err)
+	}
+	if ch.Slug != "f" {
+		t.Errorf("Slug = %q, want f", ch.Slug)
+	}
+}
+
+func TestParseCheck_MissingFile(t *testing.T) {
+	_, err := scenario.ParseCheck(filepath.Join(t.TempDir(), "nope.check.md"))
+	if err == nil {
+		t.Fatal("want error for a missing check file")
+	}
+}

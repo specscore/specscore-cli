@@ -53,6 +53,31 @@ type Scenario struct {
 	// FileAssertions are all `### Assert: file` headings in document order.
 	// Never nil.
 	FileAssertions []FileAssertion
+	// Uses are all `**Use:**` reusable-check invocations in document order.
+	// Feature: cli/rehearse/reusable-checks. Never nil.
+	Uses []CheckUse
+}
+
+// CheckUse is one `**Use:** [label](url) with name=value …` invocation of a
+// reusable check. Feature: cli/rehearse/reusable-checks.
+type CheckUse struct {
+	// Ref is the check URL from the Markdown link (relative to the scenario).
+	Ref string
+	// Params maps each `name=value` binding; values may be `{{context}}` refs.
+	Params map[string]string
+	// Line is the 1-based line number of the directive.
+	Line int
+}
+
+// Check is a parsed reusable check (`<slug>.check.md`): a named, parameterized
+// verification unit. Feature: cli/rehearse/reusable-checks.
+type Check struct {
+	// Slug is the check id from its `# Check: <slug>` heading (may be empty).
+	Slug string
+	// Params are the names declared on the `**Params:**` line. Never nil.
+	Params []string
+	// Body is the verbatim content of the check's first fenced block.
+	Body string
 }
 
 // parenthetical matches one "(...)" annotation inside a Verifies value; the
@@ -72,7 +97,7 @@ func Parse(path string) (*Scenario, error) {
 // ParseBytes parses scenario content already in memory. path is used for
 // error messages only.
 func ParseBytes(path string, data []byte) (*Scenario, error) {
-	sc := &Scenario{Path: path, Verifies: []string{}, FileAssertions: []FileAssertion{}, Expect: "pass"}
+	sc := &Scenario{Path: path, Verifies: []string{}, FileAssertions: []FileAssertion{}, Uses: []CheckUse{}, Expect: "pass"}
 
 	var (
 		inFence   bool
@@ -112,6 +137,14 @@ func ParseBytes(path string, data []byte) (*Scenario, error) {
 			if strings.EqualFold(strings.TrimSpace(v), "fail") {
 				sc.Expect = "fail"
 			}
+		}
+		if v, ok := metaValue(trimmed, "Use"); ok {
+			use, uerr := parseUse(v)
+			if uerr != nil {
+				return nil, fmt.Errorf("%s:%d: %v", path, i+1, uerr)
+			}
+			use.Line = i + 1
+			sc.Uses = append(sc.Uses, use)
 		}
 	}
 	if inFence {
@@ -218,4 +251,84 @@ func parseVerifies(value string) []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// useLink matches the Markdown link in a `**Use:**` directive; group 1 is the
+// check URL. Feature: cli/rehearse/reusable-checks (REQ: use-directive).
+var useLink = regexp.MustCompile(`\[[^\]]*\]\(([^)]+)\)`)
+
+// parseUse parses a `**Use:** [label](url) with a=1 b=2` directive value into a
+// CheckUse. The link target is the check ref; `with` params are space-separated
+// name=value pairs (values may be `{{context}}` refs). A value with no link is
+// malformed (REQ: use-validation).
+func parseUse(value string) (CheckUse, error) {
+	loc := useLink.FindStringSubmatchIndex(value)
+	if loc == nil {
+		return CheckUse{}, fmt.Errorf("malformed **Use:** directive (need a [label](url) link): %q", strings.TrimSpace(value))
+	}
+	use := CheckUse{Ref: value[loc[2]:loc[3]], Params: map[string]string{}}
+	rest := value[loc[1]:]
+	if i := strings.Index(rest, "with"); i >= 0 {
+		for _, tok := range strings.Fields(rest[i+len("with"):]) {
+			if k, v, ok := strings.Cut(tok, "="); ok && k != "" {
+				use.Params[k] = v
+			}
+		}
+	}
+	return use, nil
+}
+
+// checkHeading matches a check file's `# Check: <slug>` heading; group 1 is the
+// slug. Feature: cli/rehearse/reusable-checks (REQ: check-artifact).
+var checkHeading = regexp.MustCompile(`(?m)^#\s*Check:\s*(\S+)`)
+
+// ParseCheck reads and parses the reusable-check file at path.
+func ParseCheck(path string) (*Check, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading check: %w", err)
+	}
+	return ParseCheckBytes(path, data)
+}
+
+// ParseCheckBytes parses check content already in memory: the `# Check:` slug,
+// the `**Params:**` declaration, and the body of the first fenced block (the
+// verification). A check with no fenced block is an error.
+func ParseCheckBytes(path string, data []byte) (*Check, error) {
+	ch := &Check{Params: []string{}}
+	if m := checkHeading.FindSubmatch(data); m != nil {
+		ch.Slug = string(m[1])
+	}
+	var (
+		inFence bool
+		body    []string
+		hasBody bool
+	)
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if inFence {
+			if isClosingFence(trimmed) {
+				break
+			}
+			body = append(body, line)
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = true
+			hasBody = true
+			continue
+		}
+		if v, ok := metaValue(trimmed, "Params"); ok && len(ch.Params) == 0 {
+			for _, p := range strings.Split(v, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					ch.Params = append(ch.Params, p)
+				}
+			}
+		}
+	}
+	if !hasBody {
+		return nil, fmt.Errorf("%s: check has no verification block", path)
+	}
+	ch.Body = strings.Join(body, "\n")
+	return ch, nil
 }
