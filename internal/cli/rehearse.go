@@ -77,6 +77,7 @@ Running "specscore rehearse" with no subcommand prints this help and exits 0.`,
 	}
 	cmd.AddCommand(rehearseRunCommand())
 	cmd.AddCommand(rehearseNewCommand())
+	cmd.AddCommand(rehearseACsCommand())
 	return cmd
 }
 

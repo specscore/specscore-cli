@@ -27,6 +27,7 @@ Command group for Rehearse — SpecScore's acceptance-evidence layer. Rehearse e
 | [file-assertions-glob-recursive](file-assertions-glob-recursive/README.md) | Recursive `**` glob matching in file assertion paths via doublestar |
 | [expected-fail](expected-fail/README.md) | `**Expect:** fail` scenario directive so negative scenarios run green in the corpus |
 | [reusable-checks](reusable-checks/README.md) | `**Use:**` directive to invoke reusable, parameterized verification units (checks) — write verification once, reuse across scenarios |
+| [thin-acs](thin-acs/README.md) | Thin acceptance criteria (`_acs/*.ac.md`) + `rehearse acs` generated `## Acceptance Criteria` summary (read-model) |
 | [file-assertions-glob-braces](file-assertions-glob-braces/README.md) | Brace expansion (`{a,b}`) in file assertion glob paths via doublestar |
 
 ## Problem
