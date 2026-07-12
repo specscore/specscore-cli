@@ -2,21 +2,21 @@
 format: https://specscore.md/scenario-specification
 ---
 
-# Rehearse: Email sign-in hardens the session and lands on the dashboard
+# Rehearse: Google OAuth sign-in hardens the session and lands on the dashboard
 
 **Status:** pending
 **Verifies:** cli/rehearse/reusable-checks#ac:use-reused-across-scenarios
 
-## Given a registered user with an email and password
+## Given a Google OAuth authorization code
 ```bash
-echo 'email=ada@example.com' > form.txt
-echo 'password=s3cr3t' >> form.txt
+echo 'code=google-auth-code-123' > callback.txt
+echo 'provider=google' >> callback.txt
 ```
 
-## When the email form is POSTed to the sign-in endpoint
+## When the Google OAuth callback exchanges the code for a session
 ```bash
-# Simulate the server response to a successful form POST.
-printf 'HTTP/1.1 302 Found\r\nLocation: /dashboard\r\nSet-Cookie: session=abc; HttpOnly; Secure\r\n\r\n' > out.txt
+# Simulate the server response to the Google OAuth callback.
+printf 'HTTP/1.1 302 Found\r\nLocation: /dashboard\r\nSet-Cookie: session=goog; HttpOnly; Secure\r\n\r\n' > out.txt
 ```
 
 ## Then the session is hardened
