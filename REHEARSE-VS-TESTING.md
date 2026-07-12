@@ -1,6 +1,8 @@
 # Rehearse vs. Established Testing Frameworks
 
 > A companion to [`REHEARSE.md`](REHEARSE.md). If that document explains *what* Rehearse is, this one answers the fair, skeptical question: **why not just use pytest, `go test`, Jest, or Cucumber?**
+>
+> 📖 Also published on the docs site: [specscore.md/rehearse-vs-testing-frameworks](https://specscore.md/rehearse-vs-testing-frameworks).
 
 The honest starting point: **Rehearse is not competing with unit-test frameworks.** Those are white-box tools that test functions inside a codebase. Rehearse is an *acceptance-evidence layer*. Its real neighbour is **Cucumber/Gherkin-style BDD plus an integration harness** — and that's the comparison worth making.
 

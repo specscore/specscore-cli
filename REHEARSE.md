@@ -2,6 +2,8 @@
 
 > A companion to the formal spec under [`spec/features/cli/rehearse/`](spec/features/cli/rehearse/README.md).
 > This document explains Rehearse the way you'd explain it to someone who has never seen the project. The specs are the source of truth; this is the mental model.
+>
+> 📖 Also published on the docs site: [specscore.md/rehearse](https://specscore.md/rehearse).
 
 ## What it is
 
