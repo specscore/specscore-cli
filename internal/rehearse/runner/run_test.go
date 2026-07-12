@@ -243,6 +243,8 @@ func TestRenderHuman_LinesAndTotals(t *testing.T) {
 				{Kind: "bash", Status: StatusPass, Output: "fine"},
 				{Kind: "bash", Status: StatusFail, Detail: "exit status 2"},
 			}},
+		// A nested-suite case is labelled `file › When …`.
+		{File: "e.md", Case: "When it branches", Status: StatusPass, Verifies: []string{}, DurationMS: 5},
 	})
 	out := buf.String()
 	for _, want := range []string{
@@ -254,7 +256,8 @@ func TestRenderHuman_LinesAndTotals(t *testing.T) {
 		"    line2",
 		"no-steps", "c.md",
 		"    bash step: exit status 2",
-		"Total: 4 scenario(s) — 1 pass, 2 fail, 0 skipped, 1 no-steps",
+		"e.md › When it branches",
+		"Total: 5 scenario(s) — 2 pass, 2 fail, 0 skipped, 1 no-steps",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("human report missing %q; got:\n%s", want, out)
@@ -398,5 +401,72 @@ func TestRun_Check_BadBody(t *testing.T) {
 	}
 	if !strings.Contains(r.Steps[len(r.Steps)-1].Detail, "unknown variable") {
 		t.Errorf("detail = %q, want a body-interpolation error", r.Steps[len(r.Steps)-1].Detail)
+	}
+}
+
+// --- nested scenario suites (describe/context/it) ---
+
+func TestRun_Suite_TwoBranchesEachACase(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "suite.md")
+	// Shared Given writes a seed file; each When (branch) reads it — proving the
+	// Given setup runs per branch, in that branch's own workdir.
+	writeFile(t, file, "**Verifies:** demo#ac:x\n\n"+
+		"## Given a seed file\n\n```bash\necho seed > s.txt\n```\n\n"+
+		"### When the file is present\n\n```bash\ntest -f s.txt\n```\n\n"+
+		"### When the seed is read\n\n```bash\ngrep -q seed s.txt\n```\n")
+
+	reports := Run(bashRegistry(), []string{file})
+	if len(reports) != 2 {
+		t.Fatalf("reports = %d, want 2 (one per When branch)", len(reports))
+	}
+	for _, r := range reports {
+		if r.Status != StatusPass {
+			t.Errorf("case %q status = %q, want pass (steps %+v)", r.Case, r.Status, r.Steps)
+		}
+		if r.Case == "" || r.File != file {
+			t.Errorf("case report = %+v, want File+Case set", r)
+		}
+		if len(r.Verifies) != 1 || r.Verifies[0] != "demo#ac:x" {
+			t.Errorf("case %q Verifies = %v, want the file-level AC", r.Case, r.Verifies)
+		}
+	}
+	if reports[0].Case == reports[1].Case {
+		t.Errorf("both cases share a label: %q", reports[0].Case)
+	}
+}
+
+func TestRun_Suite_BranchesRunIsolated(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "suite.md")
+	// One branch passes, one fails: they must be reported independently, and the
+	// failing branch's fresh workdir must not affect the passing one.
+	writeFile(t, file, "## Given nothing special\n\n```bash\necho ok\n```\n\n"+
+		"### When it passes\n\n```bash\ntrue\n```\n\n"+
+		"### When it fails\n\n```bash\nexit 1\n```\n")
+
+	reports := Run(bashRegistry(), []string{file})
+	if len(reports) != 2 {
+		t.Fatalf("reports = %d, want 2", len(reports))
+	}
+	var pass, fail int
+	for _, r := range reports {
+		switch r.Status {
+		case StatusPass:
+			pass++
+		case StatusFail:
+			fail++
+		}
+	}
+	if pass != 1 || fail != 1 {
+		t.Errorf("want exactly 1 pass + 1 fail, got pass=%d fail=%d: %+v", pass, fail, reports)
+	}
+}
+
+func TestRun_MissingFileIsReportedFail(t *testing.T) {
+	r := Run(bashRegistry(), []string{filepath.Join(t.TempDir(), "nope.md")})[0]
+	if r.Status != StatusFail {
+		t.Fatalf("status = %q, want fail", r.Status)
+	}
+	if !strings.Contains(r.Detail, "reading scenario") {
+		t.Errorf("detail = %q, want a read error", r.Detail)
 	}
 }

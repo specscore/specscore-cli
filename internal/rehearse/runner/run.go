@@ -52,6 +52,10 @@ type ScenarioReport struct {
 	// the default. A reported "pass" with Expect=="fail" is a correctly-failing
 	// negative scenario. Feature: cli/rehearse/expected-fail (REQ: expect-in-report)
 	Expect string `json:"expect,omitempty"`
+	// Case is the `### When …` branch label when this report is one case of a
+	// nested scenario suite; omitted for a flat scenario. Feature:
+	// cli/rehearse/nested-suites.
+	Case string `json:"case,omitempty"`
 }
 
 // Run executes the scenario files in order and returns one report per
@@ -59,20 +63,50 @@ type ScenarioReport struct {
 func Run(reg blocks.Registry, files []string) []ScenarioReport {
 	reports := make([]ScenarioReport, 0, len(files))
 	for _, file := range files {
-		reports = append(reports, runScenario(reg, file))
+		reports = append(reports, runScenarioFile(reg, file)...)
 	}
 	return reports
 }
 
-// runScenario parses and executes one scenario file: steps run in order in
-// one scenario-scoped temp working dir; the first failing step fails the
-// scenario and the remaining steps are skipped-after-failure; a scenario
-// with zero step blocks is no-steps (REQ: scenario-shape).
-func runScenario(reg blocks.Registry, file string) ScenarioReport {
+// runScenarioFile reads and runs one scenario file. A flat scenario yields one
+// report; a nested *suite* (with `### When` branches) yields one report per
+// branch — each Given+When path executed as an isolated case in its own working
+// directory (Feature: cli/rehearse/nested-suites).
+func runScenarioFile(reg blocks.Registry, file string) []ScenarioReport {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return []ScenarioReport{{
+			File:     file,
+			Verifies: []string{},
+			Steps:    []StepReport{},
+			Status:   StatusFail,
+			Detail:   fmt.Sprintf("reading scenario: %v", err),
+		}}
+	}
+	given, whens, nested := scenario.SplitSuite(data)
+	if !nested {
+		return []ScenarioReport{runScenarioData(reg, file, "", data)}
+	}
+	reports := make([]ScenarioReport, 0, len(whens))
+	for _, w := range whens {
+		caseData := []byte(given + "\n" + w.Content)
+		reports = append(reports, runScenarioData(reg, file, w.Label, caseData))
+	}
+	return reports
+}
+
+// runScenarioData parses and executes one scenario (flat, or a single case of a
+// nested suite) from its raw markdown: steps run in order in one scenario-scoped
+// temp working dir; the first failing step fails the scenario and the remaining
+// steps are skipped-after-failure; a scenario with zero step blocks is no-steps
+// (REQ: scenario-shape). caseLabel is the `### When` branch label for a suite
+// case, or "" for a flat scenario.
+func runScenarioData(reg blocks.Registry, file, caseLabel string, data []byte) ScenarioReport {
 	start := time.Now()
 	bag := NewBag()
 	rep := ScenarioReport{
 		File:     file,
+		Case:     caseLabel,
 		Verifies: []string{},
 		Steps:    []StepReport{},
 	}
@@ -98,7 +132,7 @@ func runScenario(reg blocks.Registry, file string) ScenarioReport {
 		return rep
 	}
 
-	sc, err := scenario.Parse(file)
+	sc, err := scenario.ParseBytes(file, data)
 	if err != nil {
 		// An unparsable scenario is a reported fail, not a run abort — and never
 		// inverted: a malformed scenario is a real defect regardless of Expect.

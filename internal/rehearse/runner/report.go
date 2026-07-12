@@ -14,8 +14,13 @@ func RenderHuman(w io.Writer, reports []ScenarioReport) {
 	counts := map[string]int{}
 	for _, r := range reports {
 		counts[r.Status]++
+		label := r.File
+		if r.Case != "" {
+			// One case of a nested suite — distinguish it by its `### When` branch.
+			label += " › " + r.Case
+		}
 		_, _ = fmt.Fprintf(w, "%-8s  %s  [%s]  %dms\n",
-			r.Status, r.File, strings.Join(r.Verifies, ", "), r.DurationMS)
+			r.Status, label, strings.Join(r.Verifies, ", "), r.DurationMS)
 		if r.Status != StatusFail && r.Status != StatusSkipped {
 			continue
 		}

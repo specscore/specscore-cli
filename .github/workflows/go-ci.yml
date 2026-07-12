@@ -124,6 +124,7 @@ jobs:
           spec/features/cli/rehearse/new-dry-run/_tests
           spec/features/cli/rehearse/reusable-checks/_tests
           spec/features/cli/rehearse/thin-acs/_tests
+          spec/features/cli/rehearse/nested-suites/_tests
           spec/features/cli/rehearse/run-filter/_tests
           spec/features/cli/rehearse/file-assertions/_tests
           spec/features/cli/rehearse/file-assertions-glob/_tests
