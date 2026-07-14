@@ -7,11 +7,11 @@
 {"id": "q07", "question": "what repos implement assetus", "template": "what-repos-implement", "parameter": "assetus", "expectation": "answerable"}
 {"id": "q08", "question": "what repos implement listus", "template": "what-repos-implement", "parameter": "listus", "expectation": "answerable"}
 {"id": "q09", "question": "what repos implement logistus", "template": "what-repos-implement", "parameter": "logistus", "expectation": "answerable"}
-{"id": "q10", "question": "status of backstage#debtus", "template": "status-of", "parameter": "backstage#debtus", "expectation": "answerable"}
-{"id": "q11", "question": "status of backstage#assetus-mvp", "template": "status-of", "parameter": "backstage#assetus-mvp", "expectation": "answerable"}
-{"id": "q12", "question": "status of backstage#calendarius/calendarius-rename", "template": "status-of", "parameter": "backstage#calendarius/calendarius-rename", "expectation": "answerable"}
-{"id": "q13", "question": "status of backstage#anymeter/standalone-product", "template": "status-of", "parameter": "backstage#anymeter/standalone-product", "expectation": "answerable"}
-{"id": "q14", "question": "status of backstage#ideas/assetus", "template": "status-of", "parameter": "backstage#ideas/assetus", "expectation": "answerable"}
+{"id": "q10", "question": "status of github.com/sneat-co/backstage#debtus", "template": "status-of", "parameter": "github.com/sneat-co/backstage#debtus", "expectation": "answerable"}
+{"id": "q11", "question": "status of github.com/sneat-co/backstage#assetus-mvp", "template": "status-of", "parameter": "github.com/sneat-co/backstage#assetus-mvp", "expectation": "answerable"}
+{"id": "q12", "question": "status of github.com/sneat-co/backstage#calendarius/calendarius-rename", "template": "status-of", "parameter": "github.com/sneat-co/backstage#calendarius/calendarius-rename", "expectation": "answerable"}
+{"id": "q13", "question": "status of github.com/sneat-co/backstage#anymeter/standalone-product", "template": "status-of", "parameter": "github.com/sneat-co/backstage#anymeter/standalone-product", "expectation": "answerable"}
+{"id": "q14", "question": "status of github.com/sneat-co/backstage#ideas/assetus", "template": "status-of", "parameter": "github.com/sneat-co/backstage#ideas/assetus", "expectation": "answerable"}
 {"id": "q15", "question": "aliases of anymeter", "template": "aliases-of", "parameter": "anymeter", "expectation": "answerable"}
 {"id": "q16", "question": "aliases of assetus", "template": "aliases-of", "parameter": "assetus", "expectation": "answerable"}
 {"id": "q17", "question": "aliases of gameboard", "template": "aliases-of", "parameter": "gameboard", "expectation": "answerable"}

@@ -158,6 +158,29 @@ func TestStudioResolve_AmbiguousJSONFormat(t *testing.T) {
 	}
 }
 
+// JSON encoder failures are returned before the command constructs its normal
+// ambiguous-name exit error.
+func TestStudioResolve_AmbiguousJSONWriteError(t *testing.T) {
+	wsPath := newStudioWorkspace(t, "repo-a")
+	seedProbeStore(t, wsPath, []fact.Fact{
+		declaredFact("product-a", "aliased-as", "shared", "a.yaml"),
+		declaredFact("product-b", "aliased-as", "shared", "b.yaml"),
+	})
+
+	cmd := studioResolveCommand()
+	cmd.SetOut(covErrWriter{})
+	if err := cmd.Flags().Set("workspace", wsPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("format", "json"); err != nil {
+		t.Fatal(err)
+	}
+	err := runStudioResolve(cmd, []string{"shared"})
+	if err == nil || !strings.Contains(err.Error(), "cov write error") {
+		t.Fatalf("runStudioResolve error = %v, want encoder write error", err)
+	}
+}
+
 // --- AC: resolve-unknown-guides ---
 
 // An unknown name exits 3 with guidance naming what was searched.

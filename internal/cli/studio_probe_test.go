@@ -397,6 +397,32 @@ func TestStudioProbe_KindCIWorkspaceLoadError(t *testing.T) {
 	}
 }
 
+// Two distinct workspace paths that claim the same remote identity must fail
+// target construction instead of silently merging their CI facts.
+func TestProbeCITargets_DuplicateRemoteIdentityError(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"one", "two"} {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, dir, "init", "-q")
+		runGit(t, dir, "remote", "add", "origin", "https://github.com/acme/shared.git")
+	}
+	wsPath := filepath.Join(root, "studio.yaml")
+	if err := os.WriteFile(wsPath, []byte("name: demo\nrepos:\n  - one\n  - two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := studioProbeCommand()
+	if err := cmd.Flags().Set("workspace", wsPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeCITargets(cmd); err == nil || !strings.Contains(err.Error(), "identity collision") {
+		t.Fatalf("probeCITargets error = %v, want identity collision", err)
+	}
+}
+
 // The human run summary lists each per-target/per-kind warning under the count
 // line (REQ: probe-verb) — the ci kind here is stubbed to surface one warning.
 func TestStudioProbe_HumanSummaryListsWarnings(t *testing.T) {

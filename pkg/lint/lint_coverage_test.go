@@ -106,16 +106,43 @@ func TestCov_LintWithResult_AfterSnapshotError(t *testing.T) {
 	}
 }
 
-// covImmutabilityParseError exercises checkDecisionImmutability's
-// parseDecisionFromContent error branch via the parseDecisionFromContentFn seam.
-// The decision must be Accepted and committed so the parse call is reached.
-func TestCov_CheckDecisionImmutability_ParseError(t *testing.T) {
+func TestCov_DiscoverDecisionFiles_ParseError(t *testing.T) {
 	root := setupGitRepo(t, map[string]string{
 		"decisions/0001-test.md": acceptedDecisionContent(),
 	})
 
 	orig := parseDecisionFromContentFn
 	parseDecisionFromContentFn = func(content, relPath string, archived bool) (*parsedDecision, error) {
+		return nil, errors.New("forced parse error")
+	}
+	t.Cleanup(func() { parseDecisionFromContentFn = orig })
+
+	decisions, err := discoverDecisionFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 0 {
+		t.Fatalf("expected invalid decision to be skipped, got %v", decisions)
+	}
+}
+
+// covImmutabilityParseError exercises the committed-content parse-error branch
+// via the parseDecisionFromContentFn seam. The working-tree discovery parse
+// must succeed first so the second parse of HEAD reaches the target branch.
+func TestCov_CheckDecisionImmutability_ParseError(t *testing.T) {
+	root := setupGitRepo(t, map[string]string{
+		"decisions/0001-test.md": acceptedDecisionContent(),
+	})
+
+	orig := parseDecisionFromContentFn
+	calls := 0
+	parseDecisionFromContentFn = func(content, relPath string, archived bool) (*parsedDecision, error) {
+		calls++
+		if calls == 1 {
+			// The first call parses the working-tree file during discovery. The
+			// error branch under test is the second call, which parses HEAD.
+			return orig(content, relPath, archived)
+		}
 		return nil, errors.New("forced parse error")
 	}
 	t.Cleanup(func() { parseDecisionFromContentFn = orig })
@@ -127,5 +154,11 @@ func TestCov_CheckDecisionImmutability_ParseError(t *testing.T) {
 	// On parse error the decision is skipped, so no violations.
 	if len(vs) != 0 {
 		t.Fatalf("expected no violations on parse error, got %v", vs)
+	}
+}
+
+func TestCov_FrontmatterEndIndex_UnclosedBlock(t *testing.T) {
+	if got := frontmatterEndIndex([]string{"---", "format: x", "# Title"}); got != 0 {
+		t.Fatalf("frontmatterEndIndex() = %d, want 0 for an unclosed block", got)
 	}
 }

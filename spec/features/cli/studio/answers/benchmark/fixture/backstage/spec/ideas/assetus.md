@@ -15,7 +15,8 @@ status: Specified
 ## Problem Statement
 
 The assetus idea — a real Sneat backstage idea slug mirrored into the fixture
-so the `backstage#ideas/assetus` status-of instance answers on both stores.
+so the `github.com/sneat-co/backstage#ideas/assetus` status-of instance answers
+on both stores.
 
 ## Open Questions
 

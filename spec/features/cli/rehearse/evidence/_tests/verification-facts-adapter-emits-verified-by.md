@@ -69,8 +69,10 @@ forbid() { # forbid <needle> <label>
   esac
 }
 
-# Then the JSON contains a fact with subject repo-a#x#ac:y
-require '"subject": "repo-a#x#ac:y"' "subject repo-a#x#ac:y"
+# Then the JSON contains a local-only repository ID whose entity suffix is
+# x#ac:y. The hash derives from the fixture's temporary absolute path.
+require '"subject": "local/repo-a-' "local-only repository ID"
+require '#x#ac:y"' "entity suffix x#ac:y"
 # predicate verified-by
 require '"predicate": "verified-by"' "predicate verified-by"
 # object spec/features/x/_tests/s.md

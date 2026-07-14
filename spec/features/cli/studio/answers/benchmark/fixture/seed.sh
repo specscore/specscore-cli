@@ -25,6 +25,13 @@ DB="${3:?usage: seed.sh <specscore-bin> <fixture-dir> <db-path>}"
 
 command -v sqlite3 >/dev/null 2>&1 || { echo "seed.sh: sqlite3 not on PATH" >&2; exit 1; }
 
+# Give the Backstage fixture the same canonical remote identity as the real
+# repository. Repo IDs are remote-derived, so indexing an unconfigured scratch
+# copy would otherwise produce a local/<name>-<path-hash> ID that cannot match
+# the real-workspace benchmark questions.
+git -C "$FIXTURE/backstage" init -q
+git -C "$FIXTURE/backstage" remote add origin git@github.com:sneat-co/backstage.git
+
 # 1. Index the fixture (declared + derived facts).
 ( cd "$FIXTURE" && "$SS" studio index --db "$DB" --no-ingr >/dev/null )
 
