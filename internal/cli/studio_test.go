@@ -14,6 +14,7 @@ import (
 	"github.com/specscore/specscore-cli/internal/studio/adapters"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/ingr"
+	"github.com/specscore/specscore-cli/internal/studio/repoid"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
@@ -458,13 +459,14 @@ func TestStudioIndex_IngrExportDefaultDirAndCounts(t *testing.T) {
 	if !strings.Contains(out, "INGR export: "+ingrDir) {
 		t.Errorf("summary does not name the INGR export dir %q; got:\n%s", ingrDir, out)
 	}
-	for slug, want := range map[string]int{"repo-a": 1, "repo-b": 0} {
+	for name, want := range map[string]int{"repo-a": 1, "repo-b": 0} {
+		slug := repoid.LocalID(filepath.Join(wsDir, name))
 		got := ingrRecordCount(t, filepath.Join(ingrDir, slug, "facts.ingr"))
 		if got != want {
 			t.Errorf("%s record count = %d, want %d (the summary fact count)", slug, got, want)
 		}
-		if !strings.Contains(out, fmt.Sprintf("%s: %d facts", filepath.Join(wsDir, slug), want)) {
-			t.Errorf("summary lacks %q fact count %d; got:\n%s", slug, want, out)
+		if !strings.Contains(out, fmt.Sprintf("%s: %d facts", filepath.Join(wsDir, name), want)) {
+			t.Errorf("summary lacks %q fact count %d; got:\n%s", name, want, out)
 		}
 	}
 }
@@ -480,7 +482,8 @@ func TestStudioIndex_IngrDirFlagOverridesDefault(t *testing.T) {
 	if !strings.Contains(out, "INGR export: "+ingrDir) {
 		t.Errorf("summary does not use --ingr-dir path %q; got:\n%s", ingrDir, out)
 	}
-	if _, err := os.Stat(filepath.Join(ingrDir, "repo-a", "facts.ingr")); err != nil {
+	repoID := repoid.LocalID(filepath.Join(filepath.Dir(wsPath), "repo-a"))
+	if _, err := os.Stat(filepath.Join(ingrDir, repoID, "facts.ingr")); err != nil {
 		t.Errorf("recordset missing under --ingr-dir: %v", err)
 	}
 }

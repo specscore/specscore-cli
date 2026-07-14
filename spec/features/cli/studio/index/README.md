@@ -39,7 +39,11 @@ Every `studio index` run rebuilds the fact store from scratch: facts from previo
 
 #### REQ: fact-shape
 
-Every stored fact carries: `subject`, `predicate`, `object` (entity ref or scalar), `evidence_class` (`declared` or `derived` in this feature; amended by `cli/rehearse/evidence`, which adds `verified-behavior`), `evidence_pointer` (repo-relative file path, plus a line or record locator where cheap), `adapter` (id + version), `observed_at`, and the ecosystem name. Entity references use stable IDs: repo (`host/org/name`, or an absolute-path-derived slug for local-only repos), spec (`<repo>#<path-slug>`), package/module (registry coordinates), domain (fqdn).
+Every stored fact carries: `subject`, `predicate`, `object` (entity ref or scalar), `evidence_class` (`declared` or `derived` in this feature; amended by `cli/rehearse/evidence`, which adds `verified-behavior`), `evidence_pointer` (repo-relative file path, plus a line or record locator where cheap), `adapter` (id + version), `observed_at`, and the ecosystem name. Entity references use stable IDs: repo (`host/org/name`, or an absolute-path-derived ID for local-only repos), spec (`<repo>#<path-slug>`), package/module (registry coordinates), domain (fqdn).
+
+#### REQ: repo-identity
+
+Repository identity is independent of workspace order and checkout directory name. When `git remote get-url origin` returns a supported HTTPS, HTTP, SSH, git-protocol, or SCP-style remote, Studio normalizes it to `host/org/name` (including any intermediate namespace segments): transport, credentials, trailing slash, and trailing `.git` are discarded; the host is lower-cased, and GitHub path segments are lower-cased because GitHub coordinates are case-insensitive. A repository without a supported origin receives `local/<basename>-<path-hash>`, where the hash is derived from its normalized absolute checkout path. Two different workspace paths resolving to the same repository ID are an explicit identity collision: indexing warns and skips the second source rather than silently merging it or assigning an input-order suffix.
 
 #### REQ: partial-tolerance
 
@@ -75,14 +79,15 @@ The adapter emits **no duplicate facts**: when two registry files of the same re
 
 #### REQ: ingr-export
 
-Every `studio index` run also writes the facts as INGR recordsets, one directory per repo, under `<workspace-dir>/.specscore-studio/ingr/<repo-slug>/` (overridable with `--ingr-dir`; `--no-ingr` disables). The record count per repo equals the number of facts attributed to that repo in the store for the same run.
+Every `studio index` run also writes the facts as INGR recordsets, one directory per repo, under `<workspace-dir>/.specscore-studio/ingr/<repo-id>/` (overridable with `--ingr-dir`; `--no-ingr` disables). The record count per repo equals the number of facts attributed to that repo in the store for the same run.
 
 ## Architecture & Components
 
 Go packages inside specscore-cli (no new binary):
 
 - `internal/studio/workspace` — `studio.yaml` parsing + repo resolution (globs).
-- `internal/studio/fact` — Fact/Entity/Evidence types and stable-ID helpers. Depends on nothing else in studio.
+- `internal/studio/fact` — Fact/Entity/Evidence types and non-repository stable-ID helpers. Depends on nothing else in studio.
+- `internal/studio/repoid` — shared git-remote normalization, local path-derived IDs, and collision detection used by index and probe.
 - `internal/studio/store` — SQLite (pure-Go driver, house precedent) schema, atomic rebuild transaction, query filters. Consumes `fact`.
 - `internal/studio/adapters/{specscore,codegraph,manifests,registries}` — each implements `Adapter{ ID() string; Version() string; Ingest(repoPath string) ([]fact.Fact, []Warning) }`. Pure functions of the repo path; no store access; independently unit-testable against fixture repos.
 - `internal/studio/ingr` — INGR recordset writer (reuses the encoding already used by codegraph snapshots).
@@ -121,6 +126,13 @@ Scenario: index a two-repo workspace
 Given a `studio.yaml` naming ecosystem `demo` and listing two fixture repos, one with a `spec/` tree and one with a `codegraph/` snapshot
 When I run `specscore studio index --workspace studio.yaml`
 Then the command exits 0, prints a summary with both repos and per-adapter fact counts, and `<workspace-dir>/.specscore-studio/facts.db` exists
+
+### AC: stable-remote-repo-ids
+
+Scenario: same-basename repositories keep globally stable IDs
+Given two workspace repositories both checked out into directories named `backstage`, with origins `https://github.com/sneat-co/backstage.git` and `git@github.com:dal-go/backstage.git`
+When I index them in either workspace order
+Then their facts use repository IDs `github.com/sneat-co/backstage` and `github.com/dal-go/backstage` in both runs, with no basename collision suffix
 
 ### AC: rebuild-drops-removed-repo
 
@@ -201,7 +213,6 @@ Then the command exits 2 with a message naming the expected store path and sugge
 
 ## Open Questions
 
-- Repo-slug scheme for local-only paths (no remote): basename with a collision counter, or short hash suffix? (Implementation detail; decide in plan.)
 - Should `facts` support a `--repo <name>` convenience filter over subject prefixes in v1? (Nice-to-have; not required by the ACs.)
 
 ---

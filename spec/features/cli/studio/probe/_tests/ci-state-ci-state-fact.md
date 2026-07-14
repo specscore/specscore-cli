@@ -9,7 +9,7 @@ format: https://specscore.md/scenario-specification
 
 Scenario source: [../README.md](../README.md) → `### AC: ci-state-fact`.
 
-Given an indexed workspace repo `widget` whose `origin` remote is `https://github.com/acme/widget.git`, and `git`/`gh` PATH shims where `git remote get-url origin` returns that URL and `gh api` returns a latest default-branch run with conclusion `success`, when I run `specscore studio probe --kind ci` and then `specscore studio facts --predicate ci-status --format json`, then the command exits 0 and the JSON contains a fact with subject `widget` (the store's repo slug), object `success`, evidence_class `verified-behavior`, adapter id `probe-ci`, and an evidence_pointer naming the queried `gh api` path.
+Given an indexed workspace repo `widget` whose `origin` remote is `https://github.com/acme/widget.git`, and `git`/`gh` PATH shims where `git remote get-url origin` returns that URL and `gh api` returns a latest default-branch run with conclusion `success`, when I run `specscore studio probe --kind ci` and then `specscore studio facts --predicate ci-status --format json`, then the command exits 0 and the JSON contains a fact with subject `github.com/acme/widget` (the store's stable repository ID), object `success`, evidence_class `verified-behavior`, adapter id `probe-ci`, and an evidence_pointer naming the queried `gh api` path.
 
 Seam note: the plan pins the git/gh seams to PATH-shim fake executables (no
 cross-process Go-var stubbing). The fake `git` prints the GitHub remote URL; the
@@ -45,6 +45,8 @@ cat > widget/spec/features/x/README.md <<'MD'
 
 **Status:** Approved
 MD
+git -C widget init -q
+git -C widget remote add origin https://github.com/acme/widget.git
 cat > studio.yaml <<'YAML'
 name: demo
 repos:
@@ -91,14 +93,14 @@ import json, os
 facts = json.loads(os.environ["FACTS_JSON"])
 match = [
     f for f in facts
-    if f.get("subject") == "widget"
+    if f.get("subject") == "github.com/acme/widget"
     and f.get("predicate") == "ci-status"
     and f.get("object") == "success"
     and f.get("evidence_class") == "verified-behavior"
     and f.get("adapter", {}).get("id") == "probe-ci"
     and "repos/acme/widget/actions/runs" in f.get("evidence_pointer", "")
 ]
-assert match, f"FAIL: no probe-ci ci-status=success fact for `widget` naming the gh api path; got {facts}"
+assert match, f"FAIL: no probe-ci ci-status=success fact for `github.com/acme/widget` naming the gh api path; got {facts}"
 PY
 
 echo "PASS: ci-state-fact"

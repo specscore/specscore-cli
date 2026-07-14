@@ -21,6 +21,7 @@ import (
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/ingr"
 	"github.com/specscore/specscore-cli/internal/studio/probe"
+	"github.com/specscore/specscore-cli/internal/studio/repoid"
 	"github.com/specscore/specscore-cli/internal/studio/resolve"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 	"github.com/specscore/specscore-cli/internal/studio/workspace"
@@ -329,12 +330,10 @@ func runStudioProbe(cmd *cobra.Command, _ []string) error {
 
 // probeCITargets resolves the ci kind's targets: the workspace's repos, in the
 // same order the index run resolved them (ResolveRepos plus the missing literal
-// paths appended), with their slugs re-minted via a fresh fact.RepoSlugger so
-// the emitted ci-status fact subjects join the store's existing repo slugs (the
-// slug-join invariant: identical order in, identical `-N` collision suffixes
-// out). The ci kind runs `git remote get-url origin` per repo, so a repo dir
-// need not exist here — a missing dir simply fails the git call and is skipped
-// as a non-GitHub repo with a per-repo notice (REQ: ci-state).
+// paths appended), with IDs resolved through the same remote-coordinate/local-
+// path algorithm as indexing. The emitted ci-status fact subjects therefore
+// join the store without depending on workspace order. A missing repo falls
+// back to a local ID, then the probe's git lookup skips it visibly (REQ: ci-state).
 func probeCITargets(cmd *cobra.Command) ([]probe.CIRepo, error) {
 	workspaceFlag, _ := cmd.Flags().GetString("workspace")
 	ws, err := workspace.Load(workspaceFlag)
@@ -345,15 +344,18 @@ func probeCITargets(cmd *cobra.Command) ([]probe.CIRepo, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Mirror the index run's ordering: existing repos then missing literals,
-	// slugged in that exact order so the collision counter matches.
+	// Mirror the index run's repository set: existing repos then missing literals.
 	repos = append(repos, missing...)
-	slugger := fact.NewRepoSlugger()
+	idResolver := repoid.NewResolver()
 	targets := make([]probe.CIRepo, 0, len(repos))
 	for _, dir := range repos {
+		id, err := idResolver.ID(dir)
+		if err != nil {
+			return nil, err
+		}
 		targets = append(targets, probe.CIRepo{
 			Dir:       dir,
-			Slug:      slugger.Slug(dir),
+			Slug:      id,
 			Ecosystem: ws.Name,
 		})
 	}
