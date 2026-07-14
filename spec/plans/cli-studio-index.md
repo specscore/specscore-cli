@@ -34,7 +34,7 @@ Foundations before consumers: workspace loading and the command skeleton first, 
 **Depends-On:** 1
 **Status:** complete
 
-`internal/studio/fact` (Fact/Evidence types, stable-ID helpers), `internal/studio/store` (schema, atomic temp-file-swap rebuild, filter queries), and the `facts` verb with table/JSON/`--count` output plus the exit-2 missing-store path. Resolves the Feature's open questions as implementation details: local repo-slug = basename with `-N` collision counter; no `--repo` sugar in v1.
+`internal/studio/fact` (Fact/Evidence types, stable-ID helpers), `internal/studio/store` (schema, atomic temp-file-swap rebuild, filter queries), and the `facts` verb with table/JSON/`--count` output plus the exit-2 missing-store path. The initial basename-with-`-N` repository scheme was subsequently replaced by Task 9; no `--repo` sugar ships in v1.
 
 ### Task 3: SpecScore adapter
 
@@ -83,6 +83,14 @@ Warning collection at file→adapter→repo granularity across all adapters, ada
 **Status:** complete
 
 `internal/studio/ingr` recordset writer (reusing the codegraph snapshot encoding), `--ingr-dir`/`--no-ingr` flags, per-repo record-count parity with the store, the full two-repo fixture workspace end-to-end scenario, and command docs (README section for `studio index`/`facts`).
+
+### Task 9: Stable remote-coordinate repository IDs
+
+**Verifies:** cli/studio/index#ac:stable-remote-repo-ids
+**Depends-On:** 2, 8
+**Status:** complete
+
+Replace input-order basename suffixes with a shared `internal/studio/repoid` resolver used by index and CI probe: supported origin remotes normalize to `host/org/name`, local-only repositories use an absolute-path-derived hash, and duplicate identities warn and skip rather than silently merging. Add order-reversal and same-basename remote regression tests and update probe joins to use the same stable identity.
 
 ## Open Questions
 

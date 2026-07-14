@@ -9,8 +9,6 @@
 package fact
 
 import (
-	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -80,36 +78,6 @@ type Warning struct {
 }
 
 // --- stable-ID helpers ---
-
-// RepoSlugger mints stable IDs for local-only repos (no remote host/org/name
-// coordinates): the directory basename, with a `-N` collision counter when
-// two paths share a basename. The same path always returns the same slug
-// within one slugger; the first path to claim a basename keeps it bare.
-type RepoSlugger struct {
-	byPath map[string]string
-	taken  map[string]bool
-}
-
-// NewRepoSlugger returns an empty slugger.
-func NewRepoSlugger() *RepoSlugger {
-	return &RepoSlugger{byPath: map[string]string{}, taken: map[string]bool{}}
-}
-
-// Slug returns the stable slug for the local repo directory at path.
-func (s *RepoSlugger) Slug(path string) string {
-	clean := filepath.Clean(path)
-	if slug, ok := s.byPath[clean]; ok {
-		return slug
-	}
-	base := filepath.Base(clean)
-	slug := base
-	for n := 2; s.taken[slug]; n++ {
-		slug = fmt.Sprintf("%s-%d", base, n)
-	}
-	s.byPath[clean] = slug
-	s.taken[slug] = true
-	return slug
-}
 
 // SpecID returns the stable ID of a spec artifact: `<repo>#<path-slug>`.
 func SpecID(repoID, pathSlug string) string {

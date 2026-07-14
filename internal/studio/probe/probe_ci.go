@@ -4,12 +4,11 @@ package probe
 //
 // The ci kind (adapter id `probe-ci`) reads each workspace repo's latest
 // default-branch Actions run via `gh api` (the GitHub CLI, house exec-seam
-// pattern) and emits a `(<repo-slug>, ci-status, <conclusion>)`
-// verified-behavior fact. Targets are the workspace repos, not store facts:
-// the store's repo ids are `fact.RepoSlugger` basename slugs with no remote
-// coordinates, so the ci probe re-mints those same slugs over the same
-// ResolveRepos order the index run used (the slug-join invariant) and resolves
-// each repo's GitHub coordinate from `git remote get-url origin`. A repo with
+// pattern) and emits a `(<repo-id>, ci-status, <conclusion>)`
+// verified-behavior fact. Targets are the workspace repos, not store facts;
+// target IDs are resolved through the same shared remote-coordinate resolver
+// as indexing. The probe resolves each repo's GitHub coordinate from
+// `git remote get-url origin`. A repo with
 // no `origin` remote or a non-GitHub remote is skipped with a visible per-repo
 // notice; a repo whose `gh api` call fails records a per-repo warning and no
 // fact. `gh` absent from PATH skips the whole kind upfront with one warning,
@@ -23,6 +22,7 @@ import (
 	"time"
 
 	"github.com/specscore/specscore-cli/internal/studio/fact"
+	"github.com/specscore/specscore-cli/internal/studio/repoid"
 )
 
 // Test seams — package-level vars wrapping external functions.
@@ -69,10 +69,8 @@ const (
 )
 
 // CIRepo is one CI target: the local repo directory to run git/gh in, and the
-// store slug the emitted fact's subject must carry so consumers can join CI
-// state against the repo's other facts (REQ: ci-state — the slug-join
-// invariant). The verb re-mints slugs over the same ResolveRepos order the
-// index run used.
+// stable store ID the emitted fact's subject must carry so consumers can join
+// CI state against the repo's other facts (REQ: ci-state).
 type CIRepo struct {
 	// Dir is the absolute repo directory `git remote get-url origin` runs in.
 	Dir string
@@ -162,40 +160,16 @@ func githubCoordinate(dir string) (org, name string, ok bool) {
 // ssh form. A non-GitHub host, or a URL that does not name an org/name pair,
 // returns ok=false.
 func parseGitHubRemote(url string) (org, name string, ok bool) {
-	const host = "github.com"
-	var path string
-	switch {
-	case strings.HasPrefix(url, "git@"):
-		// git@github.com:acme/widget.git — the case guard guarantees the prefix.
-		rest := strings.TrimPrefix(url, "git@")
-		h, p, found := strings.Cut(rest, ":")
-		if !found || h != host {
-			return "", "", false
-		}
-		path = p
-	case strings.HasPrefix(url, "https://"), strings.HasPrefix(url, "http://"), strings.HasPrefix(url, "ssh://"):
-		rest := url
-		for _, scheme := range []string{"https://", "http://", "ssh://"} {
-			if r, found := strings.CutPrefix(rest, scheme); found {
-				rest = r
-				break
-			}
-		}
-		// rest is now host[/or user@host]/org/name; drop any user@ prefix.
-		if _, after, found := strings.Cut(rest, "@"); found {
-			rest = after
-		}
-		h, p, found := strings.Cut(rest, "/")
-		if !found || h != host {
-			return "", "", false
-		}
-		path = p
-	default:
+	id, ok := repoid.ParseRemote(url)
+	if !ok {
 		return "", "", false
 	}
-	path = strings.TrimSuffix(strings.TrimSuffix(path, "/"), ".git")
-	org, name, found := strings.Cut(path, "/")
-	if !found || org == "" || name == "" || strings.Contains(name, "/") {
+	path, ok := strings.CutPrefix(id, "github.com/")
+	if !ok {
+		return "", "", false
+	}
+	org, name, ok = strings.Cut(path, "/")
+	if !ok || strings.Contains(name, "/") {
 		return "", "", false
 	}
 	return org, name, true

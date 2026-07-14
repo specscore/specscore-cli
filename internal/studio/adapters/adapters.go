@@ -21,6 +21,7 @@ import (
 	"github.com/specscore/specscore-cli/internal/studio/adapters/rehearse"
 	"github.com/specscore/specscore-cli/internal/studio/adapters/specscore"
 	"github.com/specscore/specscore-cli/internal/studio/fact"
+	"github.com/specscore/specscore-cli/internal/studio/repoid"
 )
 
 // Test seams — package-level vars wrapping external functions.
@@ -92,7 +93,8 @@ type Result struct {
 type RepoSummary struct {
 	// Path is the repo path as passed to Run.
 	Path string
-	// Slug is the stable repo slug minted for the path.
+	// Slug is the stable repository ID minted for the path. Remoted repos use
+	// normalized forge coordinates; local-only repos use a path-derived ID.
 	Slug string
 	// Facts is the number of facts ingested from the repo.
 	Facts int
@@ -114,7 +116,7 @@ type RepoSummary struct {
 // adapter and repo, and the remaining adapters still run.
 func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 	observedAt := nowFn().UTC().Format(time.RFC3339)
-	slugger := fact.NewRepoSlugger()
+	idResolver := repoid.NewResolver()
 	res := Result{
 		FactsByAdapter: make(map[string]int, len(adapters)),
 		FactsByRepo:    make(map[string][]fact.Fact, len(repos)),
@@ -123,8 +125,15 @@ func Run(adapters []Adapter, repos []string, ecosystem string) Result {
 		res.FactsByAdapter[a.ID()] = 0
 	}
 	for _, repo := range repos {
-		slug := slugger.Slug(repo)
+		slug, identityErr := idResolver.ID(repo)
 		summary := RepoSummary{Path: repo, Slug: slug}
+		if identityErr != nil {
+			res.Warnings = append(res.Warnings, Warning{Repo: slug,
+				Message: identityErr.Error() + " — repo skipped"})
+			summary.Warnings++
+			res.Repos = append(res.Repos, summary)
+			continue
+		}
 		if info, err := os.Stat(repo); err != nil || !info.IsDir() {
 			res.Warnings = append(res.Warnings, Warning{Repo: slug,
 				Message: fmt.Sprintf("repo directory does not exist: %s — repo skipped", repo)})

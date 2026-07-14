@@ -89,39 +89,6 @@ func TestFact_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-// --- stable-ID helpers ---
-
-func TestRepoSlugger_BasenameAndCollisions(t *testing.T) {
-	s := NewRepoSlugger()
-	tests := []struct{ path, want string }{
-		{"/Users/alex/projects/app", "app"},
-		{"/Users/alex/projects/app", "app"}, // same path → same slug
-		{"/srv/mirrors/app", "app-2"},       // collision → -N counter
-		{"/tmp/checkouts/app", "app-3"},
-		{"/Users/alex/projects/other", "other"},
-		{"/srv/mirrors/app/", "app-2"}, // trailing slash → same dir as the mirror
-	}
-	for _, tt := range tests {
-		if got := s.Slug(tt.path); got != tt.want {
-			t.Errorf("Slug(%q) = %q, want %q", tt.path, got, tt.want)
-		}
-	}
-}
-
-func TestRepoSlugger_CounterSlugAlreadyTaken(t *testing.T) {
-	s := NewRepoSlugger()
-	if got := s.Slug("/a/app-2"); got != "app-2" {
-		t.Fatalf("Slug(/a/app-2) = %q, want app-2", got)
-	}
-	if got := s.Slug("/a/app"); got != "app" {
-		t.Fatalf("Slug(/a/app) = %q, want app", got)
-	}
-	// app-2 is taken by a literal basename, so the collision counter skips it.
-	if got := s.Slug("/b/app"); got != "app-3" {
-		t.Errorf("Slug(/b/app) = %q, want app-3", got)
-	}
-}
-
 func TestSpecID(t *testing.T) {
 	if got := SpecID("github.com/acme/app", "cli/studio/index"); got != "github.com/acme/app#cli/studio/index" {
 		t.Errorf("SpecID = %q", got)

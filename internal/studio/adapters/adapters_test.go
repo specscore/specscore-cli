@@ -2,12 +2,14 @@ package adapters
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/specscore/specscore-cli/internal/studio/fact"
+	"github.com/specscore/specscore-cli/internal/studio/repoid"
 )
 
 // fakeAdapter emits a fixed set of facts and warnings for every repo and
@@ -45,6 +47,17 @@ func mkRepoDir(t *testing.T, dir, name string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func setOrigin(t *testing.T, repo, remote string) {
+	t.Helper()
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", remote}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v: %s", args, repo, err, out)
+		}
+	}
 }
 
 func TestAll_RegistersBuiltinsWithUniqueIDs(t *testing.T) {
@@ -153,17 +166,20 @@ func TestRun_StampsFactsCentrally(t *testing.T) {
 				Evidence: fact.Evidence{Class: fact.Declared, Pointer: "spec/ideas/idea.md"}},
 		},
 	}
-	// Two repos sharing a basename: the slugger disambiguates the second.
+	// Two repos sharing a basename use their normalized remote coordinates,
+	// independently of workspace ordering.
 	dir := t.TempDir()
 	repoA := mkRepoDir(t, dir, filepath.Join("a", "repo"))
 	repoB := mkRepoDir(t, dir, filepath.Join("b", "repo"))
+	setOrigin(t, repoA, "https://github.com/acme-a/repo.git")
+	setOrigin(t, repoB, "git@github.com:acme-b/repo.git")
 	res := Run([]Adapter{a}, []string{repoA, repoB}, "demo")
 
 	if got := len(res.Facts); got != 4 {
 		t.Fatalf("len(Facts) = %d, want 4", got)
 	}
-	wantSubjects := []string{"repo#x", "repo#idea", "repo-2#x", "repo-2#idea"}
-	wantObjects := []string{"Approved", "repo#x", "Approved", "repo-2#x"}
+	wantSubjects := []string{"github.com/acme-a/repo#x", "github.com/acme-a/repo#idea", "github.com/acme-b/repo#x", "github.com/acme-b/repo#idea"}
+	wantObjects := []string{"Approved", "github.com/acme-a/repo#x", "Approved", "github.com/acme-b/repo#x"}
 	for i, f := range res.Facts {
 		if f.Subject != wantSubjects[i] {
 			t.Errorf("Facts[%d].Subject = %q, want %q", i, f.Subject, wantSubjects[i])
@@ -187,8 +203,8 @@ func TestRun_StampsFactsCentrally(t *testing.T) {
 	// Per-repo fact attribution (REQ: ingr-export): each repo's group holds
 	// exactly the facts its adapter runs produced, matching the summary count.
 	for slug, want := range map[string][]string{
-		"repo":   {"repo#x", "repo#idea"},
-		"repo-2": {"repo-2#x", "repo-2#idea"},
+		"github.com/acme-a/repo": {"github.com/acme-a/repo#x", "github.com/acme-a/repo#idea"},
+		"github.com/acme-b/repo": {"github.com/acme-b/repo#x", "github.com/acme-b/repo#idea"},
 	} {
 		group := res.FactsByRepo[slug]
 		if len(group) != len(want) {
@@ -205,8 +221,8 @@ func TestRun_StampsFactsCentrally(t *testing.T) {
 		t.Fatalf("len(Repos) = %d, want 2", len(res.Repos))
 	}
 	wantRepos := []RepoSummary{
-		{Path: repoA, Slug: "repo", Facts: 2, Warnings: 0},
-		{Path: repoB, Slug: "repo-2", Facts: 2, Warnings: 0},
+		{Path: repoA, Slug: "github.com/acme-a/repo", Facts: 2, Warnings: 0},
+		{Path: repoB, Slug: "github.com/acme-b/repo", Facts: 2, Warnings: 0},
 	}
 	for i, want := range wantRepos {
 		if res.Repos[i] != want {
@@ -229,8 +245,8 @@ func TestRun_StampsWarningsAndCountsIdleAdapters(t *testing.T) {
 		t.Fatalf("len(Warnings) = %d, want 1", len(res.Warnings))
 	}
 	w := res.Warnings[0]
-	if w.Repo != "repo-a" || w.Adapter != "noisy" || w.Message != "file boom" {
-		t.Errorf("Warning = %+v, want repo-a/noisy/file boom", w)
+	if w.Repo != repoid.LocalID(repoA) || w.Adapter != "noisy" || w.Message != "file boom" {
+		t.Errorf("Warning = %+v, want %s/noisy/file boom", w, repoid.LocalID(repoA))
 	}
 	for _, id := range []string{"noisy", "idle"} {
 		if n, ok := res.FactsByAdapter[id]; !ok || n != 0 {
@@ -264,15 +280,15 @@ func TestRun_MissingRepoDirWarnsAndSkips(t *testing.T) {
 		t.Fatalf("len(Warnings) = %d, want 1", len(res.Warnings))
 	}
 	w := res.Warnings[0]
-	if w.Repo != "gone" || w.Adapter != "" {
+	if w.Repo != repoid.LocalID(missing) || w.Adapter != "" {
 		t.Errorf("Warning = %+v, want repo-level warning (Repo gone, empty Adapter)", w)
 	}
 	if !strings.Contains(w.Message, missing) {
 		t.Errorf("Warning message %q does not name the missing path %q", w.Message, missing)
 	}
 	wantRepos := []RepoSummary{
-		{Path: healthy, Slug: "repo-a", Facts: 1, Warnings: 0},
-		{Path: missing, Slug: "gone", Facts: 0, Warnings: 1},
+		{Path: healthy, Slug: repoid.LocalID(healthy), Facts: 1, Warnings: 0},
+		{Path: missing, Slug: repoid.LocalID(missing), Facts: 0, Warnings: 1},
 	}
 	for i, want := range wantRepos {
 		if res.Repos[i] != want {
@@ -321,8 +337,8 @@ func TestRun_AdapterPanicRecoveredAsWarning(t *testing.T) {
 		t.Fatalf("len(Warnings) = %d, want 1", len(res.Warnings))
 	}
 	w := res.Warnings[0]
-	if w.Repo != "repo-a" || w.Adapter != "panicky" {
-		t.Errorf("Warning = %+v, want it stamped with repo-a/panicky", w)
+	if w.Repo != repoid.LocalID(repoA) || w.Adapter != "panicky" {
+		t.Errorf("Warning = %+v, want it stamped with %s/panicky", w, repoid.LocalID(repoA))
 	}
 	for _, want := range []string{"panic", "boom"} {
 		if !strings.Contains(w.Message, want) {
@@ -334,5 +350,30 @@ func TestRun_AdapterPanicRecoveredAsWarning(t *testing.T) {
 	}
 	if len(res.Repos) != 1 || res.Repos[0].Facts != 1 || res.Repos[0].Warnings != 1 {
 		t.Errorf("Repos = %+v, want one summary with 1 fact, 1 warning", res.Repos)
+	}
+}
+
+func TestRun_DuplicateRemoteIdentityWarnsAndSkipsSecondCheckout(t *testing.T) {
+	dir := t.TempDir()
+	first := mkRepoDir(t, dir, "first")
+	second := mkRepoDir(t, dir, "second")
+	setOrigin(t, first, "https://github.com/acme/widget.git")
+	setOrigin(t, second, "git@github.com:ACME/WIDGET.git")
+	a := &fakeAdapter{id: "fake", version: "1",
+		facts: []fact.Fact{{Subject: "#x", Predicate: "p", Object: "o"}}}
+
+	res := Run([]Adapter{a}, []string{first, second}, "demo")
+
+	if len(a.ingested) != 1 || a.ingested[0] != first {
+		t.Fatalf("adapter ingested %v, want only the first checkout", a.ingested)
+	}
+	if len(res.Facts) != 1 || res.Facts[0].Subject != "github.com/acme/widget#x" {
+		t.Fatalf("Facts = %+v, want one fact under the canonical remote ID", res.Facts)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Message, "identity collision") {
+		t.Fatalf("Warnings = %+v, want one explicit identity collision", res.Warnings)
+	}
+	if len(res.Repos) != 2 || res.Repos[1].Facts != 0 || res.Repos[1].Warnings != 1 {
+		t.Fatalf("Repos = %+v, want the second checkout skipped", res.Repos)
 	}
 }

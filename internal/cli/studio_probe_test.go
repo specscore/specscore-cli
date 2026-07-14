@@ -14,6 +14,7 @@ import (
 
 	"github.com/specscore/specscore-cli/internal/studio/fact"
 	"github.com/specscore/specscore-cli/internal/studio/probe"
+	"github.com/specscore/specscore-cli/internal/studio/repoid"
 	"github.com/specscore/specscore-cli/internal/studio/store"
 )
 
@@ -298,6 +299,9 @@ func TestStudioProbe_BadKindExits2(t *testing.T) {
 // subjects join the store's existing repo facts.
 func TestStudioProbe_KindCIRunsCIOnly(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a", "repo-b")
+	wsDir := filepath.Dir(wsPath)
+	wantA := repoid.LocalID(filepath.Join(wsDir, "repo-a"))
+	wantB := repoid.LocalID(filepath.Join(wsDir, "repo-b"))
 	seedProbeStore(t, wsPath, []fact.Fact{declaredServesStatusFact("example.app", "200")})
 	stubProbeHTTP(t, func(string) (*http.Response, error) {
 		t.Fatal("the ci kind must not issue an HTTP request")
@@ -312,7 +316,7 @@ func TestStudioProbe_KindCIRunsCIOnly(t *testing.T) {
 		return probe.Result{
 			Kinds: []string{probe.KindCI},
 			Facts: []fact.Fact{{
-				Subject:    "repo-a",
+				Subject:    wantA,
 				Predicate:  probe.CIStatusPredicate,
 				Object:     "success",
 				Evidence:   fact.Evidence{Class: fact.VerifiedBehavior, Pointer: "repos/acme/repo-a/actions/runs?branch=main&per_page=1"},
@@ -329,10 +333,9 @@ func TestStudioProbe_KindCIRunsCIOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("studio probe --kind ci: %v", err)
 	}
-	// The verb re-mints the store's repo slugs over the same ResolveRepos order
-	// the index run used (the slug-join invariant).
-	if len(gotSlugs) != 2 || gotSlugs[0] != "repo-a" || gotSlugs[1] != "repo-b" {
-		t.Errorf("ci target slugs = %v, want [repo-a repo-b] (store slugs, resolve order)", gotSlugs)
+	// Local-only repository IDs use the same path-derived algorithm as index.
+	if len(gotSlugs) != 2 || gotSlugs[0] != wantA || gotSlugs[1] != wantB {
+		t.Errorf("ci target slugs = %v, want [%s %s] (stable store IDs)", gotSlugs, wantA, wantB)
 	}
 	var s struct {
 		Kinds        []string `json:"kinds"`
