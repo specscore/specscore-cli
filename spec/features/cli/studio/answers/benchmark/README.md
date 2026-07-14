@@ -9,7 +9,7 @@ fixture workspace (`fixture/`). The runner scores **answered-with-citations /
 - `questions.jsonl` — exactly 50 instances (`{id, question, template, parameter,
   expectation}`); **41 answerable / 9 expected-unanswerable**. Every parameter
   is a REAL Sneat-ecosystem entity verified against the dogfood store (anymeter,
-  assetus, backstage#debtus, fillless.com, github.com/sneat-co/sneat-go-core,
+  assetus, github.com/sneat-co/backstage#debtus, fillless.com, github.com/sneat-co/sneat-go-core,
   …), so the same file scores against a live Sneat index and the committed
   fixture alike. The 9 unanswerables are genuinely out-of-Phase-1 shapes
   (why-exists, gotchas, deploy-method, commercial) marked

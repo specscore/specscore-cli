@@ -47,7 +47,7 @@ YAML
 "$SPECSCORE" studio index >/dev/null
 
 # Sanity: the store holds facts for repo-b before it is removed.
-before="$("$SPECSCORE" studio facts --subject 'repo-b*' --count)"
+before="$("$SPECSCORE" studio facts --subject 'local/repo-b-*' --count)"
 if [ "$before" -eq 0 ]; then
   echo "FAIL: expected repo-b facts before removal, got $before"
   exit 1
@@ -62,10 +62,10 @@ YAML
 "$SPECSCORE" studio index >/dev/null
 
 # Then `specscore studio facts --subject <removed-repo>*` reports zero facts
-after="$("$SPECSCORE" studio facts --subject 'repo-b*' --count)"
+after="$("$SPECSCORE" studio facts --subject 'local/repo-b-*' --count)"
 if [ "$after" -ne 0 ]; then
   echo "FAIL: expected zero repo-b facts after re-index, got $after"
-  "$SPECSCORE" studio facts --subject 'repo-b*'
+  "$SPECSCORE" studio facts --subject 'local/repo-b-*'
   exit 1
 fi
 

@@ -128,6 +128,15 @@ func TestGitProvenance_EmptySHAOutput(t *testing.T) {
 	}
 }
 
+func TestNowFnReturnsCurrentTime(t *testing.T) {
+	before := time.Now()
+	got := NowFn()
+	after := time.Now()
+	if got.Before(before) || got.After(after) {
+		t.Fatalf("NowFn() = %s, want a time between %s and %s", got, before, after)
+	}
+}
+
 // TestWriteReport_CreatesFileWithEnvelope verifies the JSON envelope fields.
 func TestWriteReport_CreatesFileWithEnvelope(t *testing.T) {
 	stubExecCommand(t, "abc1234", false)

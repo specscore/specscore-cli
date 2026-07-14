@@ -9,7 +9,7 @@ format: https://specscore.md/scenario-specification
 
 Scenario source: [../README.md](../README.md) → `### AC: corpus-green`.
 
-Given the specscore-cli repo checkout, when I run `specscore rehearse run spec/features/cli/studio/index/_tests --format json`, then the command exits 0 and the JSON lists 11 scenarios all with status `pass` and non-empty `verifies` arrays.
+Given the specscore-cli repo checkout, when I run `specscore rehearse run spec/features/cli/studio/index/_tests --format json`, then the command exits 0 and the JSON lists 13 scenarios all with status `pass` and non-empty `verifies` arrays.
 
 ```bash
 #!/usr/bin/env bash
@@ -61,7 +61,7 @@ with open(sys.argv[1]) as f:
     reports = json.load(f)
 
 assert isinstance(reports, list), "FAIL: report is not a JSON array"
-assert len(reports) == 12, f"FAIL: {len(reports)} scenarios, want 12"
+assert len(reports) == 13, f"FAIL: {len(reports)} scenarios, want 13"
 for r in reports:
     assert r["status"] == "pass", f"FAIL: {r['file']} is {r['status']!r}, want pass: {r.get('detail', '')}"
     verifies = r["verifies"]

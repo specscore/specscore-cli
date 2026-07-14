@@ -83,8 +83,14 @@ for slug in repo-spec repo-graph; do
   [ -n "$summary_count" ] \
     || { echo "FAIL: summary has no per-repo fact count for $slug: $out"; exit 1; }
 
-  recordset=".specscore-studio/ingr/$slug/facts.ingr"
-  [ -f "$recordset" ] || { echo "FAIL: $recordset does not exist"; exit 1; }
+  # Local-only repository IDs include an absolute-path hash and are used as
+  # nested export paths (`local/<basename>-<hash>/facts.ingr`). Resolve the one
+  # recordset for this fixture basename without hard-coding its temp-dir hash.
+  recordset="$(find .specscore-studio/ingr/local -type f \
+    -path "*/$slug-*/facts.ingr" -print)"
+  recordset_count="$(printf '%s\n' "$recordset" | sed '/^$/d' | wc -l | tr -d ' ')"
+  [ "$recordset_count" -eq 1 ] \
+    || { echo "FAIL: expected one INGR recordset for $slug, got $recordset_count: $recordset"; exit 1; }
   record_count="$(tail -n 1 "$recordset" \
     | sed -n 's|^# \([0-9][0-9]*\) records$|\1|p')"
   [ -n "$record_count" ] \

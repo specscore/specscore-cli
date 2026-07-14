@@ -112,7 +112,10 @@ func TestTemplates_ThirteenWithIDsAndForms(t *testing.T) {
 // --- who-fronts ---
 
 func TestWhoFronts(t *testing.T) {
-	facts := []fact.Fact{declared("acme.app", "fronts", "acme", "domains.json")}
+	facts := []fact.Fact{
+		declared("noise", "has-status", "draft", "products.json"),
+		declared("acme.app", "fronts", "acme", "domains.json"),
+	}
 	tests := []struct {
 		name      string
 		question  string

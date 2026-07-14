@@ -18,6 +18,8 @@ import (
 // represented by a non-nil error and makes the resolver use the local-only ID.
 type OriginURLFunc func(dir string) (string, error)
 
+var absolutePath = filepath.Abs
+
 // Resolver mints stable repository IDs and detects two different paths that
 // resolve to the same identity. It is intentionally stateful for one workspace
 // run so an identity collision cannot silently merge two ingestion sources.
@@ -47,7 +49,7 @@ func NewResolverWithOriginURL(originURL OriginURLFunc) *Resolver {
 // absolute path. If another path already claimed the same ID, ID returns that
 // ID alongside an error instead of assigning an input-order suffix.
 func (r *Resolver) ID(repoPath string) (string, error) {
-	clean, err := filepath.Abs(filepath.Clean(repoPath))
+	clean, err := absolutePath(filepath.Clean(repoPath))
 	if err != nil {
 		return "", fmt.Errorf("resolving absolute repository path %s: %w", repoPath, err)
 	}
@@ -73,7 +75,7 @@ func (r *Resolver) ID(repoPath string) (string, error) {
 // readable basename is paired with a short hash of the normalized absolute
 // path, so same-basename repositories remain distinct without `-2` aliases.
 func LocalID(repoPath string) string {
-	clean, err := filepath.Abs(filepath.Clean(repoPath))
+	clean, err := absolutePath(filepath.Clean(repoPath))
 	if err != nil {
 		clean = filepath.Clean(repoPath)
 	}

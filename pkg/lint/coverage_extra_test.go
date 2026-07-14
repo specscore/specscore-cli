@@ -1492,9 +1492,9 @@ func TestIdeaRules_IdeaMissingMustBeTrue(t *testing.T) {
 // =============================================================================
 
 // driftingP007Plan returns plan bytes whose body Status is Approved but whose
-// two tasks are both done, so the rollup derives Implemented (a P-007 drift).
+// two tasks are both complete, so the rollup derives Implemented (a P-007 drift).
 const driftingP007Plan = "# Plan: P\n\n**Status:** Approved\n**Source:** none\n\n" +
-	"## Tasks\n\n### Task 1: A\n\n**Status:** done\n\n### Task 2: B\n\n**Status:** done\n"
+	"## Tasks\n\n### Task 1: A\n\n**Status:** complete\n\n### Task 2: B\n\n**Status:** complete\n"
 
 func TestP007Fix_NonExistentRoot(t *testing.T) {
 	c := newPlanRulesChecker()

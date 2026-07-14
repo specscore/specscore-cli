@@ -522,6 +522,34 @@ func TestDecisionNew_MkdirAllError(t *testing.T) {
 	}
 }
 
+// A filesystem error while materializing a missing ancestor index is wrapped
+// with both the failing index path and the decision-new operation context.
+func TestDecisionNew_AncestorIndexWriteError(t *testing.T) {
+	root := setupDecisionRoot(t)
+	withCwd(t, root)
+
+	// Replace the otherwise-valid decisions index with a self-referential
+	// symlink. os.Stat reports ELOOP (rather than "not exists"), which drives
+	// writeMissingIndex's deterministic error path without permission tricks.
+	index := filepath.Join(root, "spec", "decisions", "README.md")
+	if err := os.Remove(index); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("README.md", index); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := runDecision(t, "new", "index-error")
+	if err == nil {
+		t.Fatal("expected ancestor-index write error")
+	}
+	for _, want := range []string{"materializing decision indexes", "spec/decisions/README.md"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
 // =============================================================================
 // runDecisionNew os.WriteFile error path — line 105-107.
 // =============================================================================

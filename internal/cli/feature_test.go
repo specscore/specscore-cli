@@ -1209,6 +1209,29 @@ func TestFeatureNew_LintClean(t *testing.T) {
 	}
 }
 
+// A post-scaffold lint-fix failure is surfaced as an Unexpected error instead
+// of reporting a successful feature creation.
+func TestFeatureNew_LintFixError(t *testing.T) {
+	setupFeatureSpec(t, "Draft")
+
+	orig := lintLintFn
+	lintLintFn = func(lint.Options) ([]lint.Violation, error) {
+		return nil, errors.New("synthetic lint failure")
+	}
+	t.Cleanup(func() { lintLintFn = orig })
+
+	_, _, err := runFeature(t, "new", "--title=Lint Failure", "--description=non-bare fixture")
+	if err == nil {
+		t.Fatal("expected lint-fix error")
+	}
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("exit code = %d, want %d", got, exitcode.Unexpected)
+	}
+	if !strings.Contains(err.Error(), "running lint fix") {
+		t.Errorf("error %q does not identify the lint-fix operation", err)
+	}
+}
+
 func TestFeatureNew_WithParent(t *testing.T) {
 	setupFeatureSpec(t, "Draft")
 

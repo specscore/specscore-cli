@@ -62,8 +62,10 @@ require() { # require <needle> <label>
   esac
 }
 
-# Then the JSON contains a fact with subject repo-a#x#ac:y and object fail
-require '"subject": "repo-a#x#ac:y"' "subject repo-a#x#ac:y"
+# Then the JSON contains a local-only repository ID whose entity suffix is
+# x#ac:y, and object fail. The hash derives from the temporary absolute path.
+require '"subject": "local/repo-a-' "local-only repository ID"
+require '#x#ac:y"' "entity suffix x#ac:y"
 require '"object": "fail"' "object fail"
 
 echo "PASS: fail-status-fact"

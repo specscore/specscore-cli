@@ -59,8 +59,11 @@ forbid() { # forbid <needle> <label>
   esac
 }
 
-# Then the JSON contains a fact with subject ending #x
-require '"subject": "repo-a#x"' "subject ending #x"
+# Then the JSON contains a local-only repository ID whose subject ends in #x.
+# The path hash is intentionally derived from the fixture's absolute path, so
+# only the readable prefix and entity suffix are stable across temp dirs.
+require '"subject": "local/repo-a-' "local-only repository ID"
+require '#x"' "subject ending #x"
 # object Approved
 require '"object": "Approved"' "object Approved"
 # evidence_class declared

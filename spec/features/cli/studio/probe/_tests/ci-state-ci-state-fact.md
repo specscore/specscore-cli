@@ -59,6 +59,12 @@ YAML
 mkdir -p shims
 cat > shims/git <<'SH'
 #!/usr/bin/env bash
+# Stable repository identity is resolved with
+# `git -C <repo> config --get remote.origin.url` before the probe performs its
+# own `git remote get-url origin` lookup. Model both CLI forms.
+if [ "$1" = "-C" ] && [ "$3" = "config" ] && [ "$4" = "--get" ] && [ "$5" = "remote.origin.url" ]; then
+  echo "https://github.com/acme/widget.git"; exit 0
+fi
 if [ "$1" = "remote" ] && [ "$2" = "get-url" ] && [ "$3" = "origin" ]; then
   echo "https://github.com/acme/widget.git"; exit 0
 fi

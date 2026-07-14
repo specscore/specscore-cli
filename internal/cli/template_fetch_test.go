@@ -205,6 +205,15 @@ func TestFetchTemplate_Non200IsError(t *testing.T) {
 	}
 }
 
+// A type containing a control character cannot form an HTTP request URL; the
+// construction error is returned without attempting a network call.
+func TestFetchTemplate_InvalidRequestURL(t *testing.T) {
+	t.Setenv("SPECSCORE_TEMPLATE_BASE_URL", "https://specscore.md")
+	if _, err := fetchTemplate("bad\nname"); err == nil {
+		t.Fatal("expected request-construction error")
+	}
+}
+
 // AC:timeout-bounds-the-wait — a server that accepts but never responds must
 // not hang the fetch; it aborts near the timeout and the error drives fallback.
 func TestFetchTemplate_TimesOut(t *testing.T) {

@@ -79,8 +79,8 @@ require() { # require <needle> <label>
     *) echo "FAIL: imports row lacks $2 ($1): $row"; exit 1 ;;
   esac
 }
-require 'repo-a#a' "subject package a"
-require 'repo-a#b' "object package b"
+require '#a' "subject package a"
+require '#b' "object package b"
 require 'derived' "evidence_class derived"
 
 echo "PASS: codegraph-import-fact"
