@@ -92,11 +92,16 @@ func ExtractReference(line string) string {
 	for _, p := range prefixes {
 		prefix := p + ":"
 		if idx := strings.Index(line, prefix); idx != -1 {
-			extracted := line[idx:]
-			if endIdx := strings.IndexAny(extracted, " \t\n\r"); endIdx != -1 {
-				extracted = extracted[:endIdx]
+			// Skip optional whitespace between the prefix colon and the
+			// reference body, so the readable "specscore: feature/x" form is
+			// accepted alongside the tight "specscore:feature/x" form. The
+			// prefix is re-attached so the returned token stays canonical
+			// (no interior space) for ParseReference.
+			body := strings.TrimLeft(line[idx+len(prefix):], " \t")
+			if endIdx := strings.IndexAny(body, " \t\n\r"); endIdx != -1 {
+				body = body[:endIdx]
 			}
-			return extracted
+			return prefix + body
 		}
 	}
 	for _, d := range domains {

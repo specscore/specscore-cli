@@ -69,6 +69,62 @@ func main() {}
 	}
 }
 
+// TestCodeDeps_SpaceAfterColon reproduces the ingitdb-go annotation style
+// `// specscore: feature/<slug>` (a space between the prefix colon and the
+// reference body). These annotations were silently dropped before the fix.
+func TestCodeDeps_SpaceAfterColon(t *testing.T) {
+	tmp := t.TempDir()
+	goFile := filepath.Join(tmp, "foreign_key.go")
+	content := `package ingitdb
+
+// specscore: feature/column-validation
+type ForeignKey struct{}
+`
+	if err := os.WriteFile(goFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("write go file: %v", err)
+	}
+	withCwd(t, tmp)
+	out, _, err := runCode(t, "deps", "--path=foreign_key.go")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "spec/features/column-validation") {
+		t.Errorf("expected space-form annotation to be reported, got: %q", out)
+	}
+}
+
+// TestCodeDeps_RecursiveGlobMatchesDirectChildren ensures a `dir/**/*.go`
+// glob reports annotations in files that are direct children of dir, not only
+// in deeper subdirectories (cli/code/deps#req:path-glob).
+func TestCodeDeps_RecursiveGlobMatchesDirectChildren(t *testing.T) {
+	tmp := t.TempDir()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.MkdirAll(filepath.Join(tmp, "ingitdb", "validator"), 0o755))
+	// Direct child of ingitdb/
+	must(os.WriteFile(filepath.Join(tmp, "ingitdb", "foreign_key.go"),
+		[]byte("package ingitdb\n// specscore: feature/column-validation\n"), 0o644))
+	// Nested under ingitdb/validator/
+	must(os.WriteFile(filepath.Join(tmp, "ingitdb", "validator", "def_validator.go"),
+		[]byte("package validator\n// specscore: feature/definition-inheritance\n"), 0o644))
+	withCwd(t, tmp)
+
+	out, _, err := runCode(t, "deps", "--path=ingitdb/**/*.go", "--type=feature")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "spec/features/column-validation") {
+		t.Errorf("expected direct-child annotation reported, got: %q", out)
+	}
+	if !strings.Contains(out, "spec/features/definition-inheritance") {
+		t.Errorf("expected nested annotation reported, got: %q", out)
+	}
+}
+
 func TestCodeDeps_TypeFilter(t *testing.T) {
 	tmp := t.TempDir()
 	goFile := filepath.Join(tmp, "svc.go")
