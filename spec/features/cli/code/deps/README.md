@@ -51,6 +51,10 @@ The scanner recognizes two forms of reference in comments:
 
 The scanner MUST detect both forms. A reference that appears in either form MUST be reported exactly once per source file.
 
+#### REQ: prefix-body-whitespace
+
+The scanner MUST accept optional whitespace between the annotation prefix colon and the reference body: `// specscore: feature/x` MUST resolve identically to `// specscore:feature/x`. An annotation whose reference body cannot resolve locally MUST still be listed as a dependency (resolution is by convention, not filtered against the local spec tree).
+
 ### Output
 
 Output lists, per source file, the resources it depends on.
@@ -98,6 +102,12 @@ Supplying `--type feature` causes the output to contain only feature references;
 **Requirements:** cli/code/deps#req:both-forms
 
 A file containing both a `specscore:` annotation and a bare `https://specscore.md/...` URL in comments reports the referenced resources without duplication.
+
+### AC: whitespace-after-prefix-tolerated
+
+**Requirements:** cli/code/deps#req:prefix-body-whitespace
+
+A comment `// specscore: feature/column-validation` (a space between the colon and the body) reports `spec/features/column-validation`, identical to the no-space `// specscore:feature/column-validation` form. The dependency is listed even when the feature resolves to another repo's spec tree.
 
 ## Open Questions
 

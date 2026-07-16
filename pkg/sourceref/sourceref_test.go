@@ -53,6 +53,9 @@ func TestExtractReference(t *testing.T) {
 		{"// specscore:feature/cli/task/claim more text", "specscore:feature/cli/task/claim", "With trailing text"},
 		{"  //  specscore:doc/api/rest  ", "specscore:doc/api/rest", "Whitespace handling"},
 		{"// specscore:feature/cli", "specscore:feature/cli", "specscore prefix"},
+		{"// specscore: feature/column-validation", "specscore:feature/column-validation", "Space after colon"},
+		{"// specscore:  feature/x  ", "specscore:feature/x", "Multiple spaces after colon"},
+		{"# specscore: plan/v2 trailing text", "specscore:plan/v2", "Space after colon with trailing text"},
 		{"", "", "Empty line"},
 		{"// just a comment", "", "No reference marker"},
 	}

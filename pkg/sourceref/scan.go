@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -73,11 +74,11 @@ func scanFile(filePath string) ([]*Reference, error) {
 //
 // Supported patterns:
 //   - "**/*" or "**" — matches all files recursively (special-cased)
-//   - Standard filepath.Match patterns (e.g. "*.go", "src/*.txt")
-//
-// Note: arbitrary recursive glob patterns like "src/**/*.go" are NOT
-// supported. Only the exact literals "**" and "**/*" trigger recursive
-// matching; all other patterns are matched per-segment via filepath.Match.
+//   - "**" as a path segment — matches any number of directory segments
+//     (including zero), so "pkg/**/*.go" matches "pkg/a.go", "pkg/sub/b.go",
+//     and "pkg/sub/deep/c.go" (cli/code/deps#req:path-glob).
+//   - Standard filepath.Match patterns (e.g. "*.go", "src/*.txt"); a single
+//     "*" or "?" never crosses a "/" separator.
 func ExpandGlobPattern(pattern string) ([]string, error) {
 	if pattern == "" {
 		pattern = "**/*"
@@ -110,10 +111,21 @@ func ExpandGlobPattern(pattern string) ([]string, error) {
 }
 
 // matchGlobPattern matches a file path against a glob pattern.
-// Supports * (matches within a path segment) and ** (matches across segments).
+// Supports * and ? (matching within a single path segment) and ** (matching
+// across segments, including zero segments).
 func matchGlobPattern(path string, pattern string) (bool, error) {
 	if pattern == "**/*" || pattern == "**" {
 		return true, nil
+	}
+
+	// Patterns containing "**" need a matcher that lets it span "/" separators,
+	// which filepath.Match cannot do. Translate them to an anchored regexp.
+	if strings.Contains(pattern, "**") {
+		re, err := doubleStarRegexp(pattern)
+		if err != nil {
+			return false, err
+		}
+		return re.MatchString(path), nil
 	}
 
 	matched, err := filepath.Match(pattern, path)
@@ -121,6 +133,41 @@ func matchGlobPattern(path string, pattern string) (bool, error) {
 		return false, err
 	}
 	return matched, nil
+}
+
+// doubleStarRegexp compiles a glob pattern containing "**" into an anchored
+// regexp. Translation rules:
+//   - "**/"  → matches zero or more leading path segments
+//   - "**"   → matches any run of characters, including "/"
+//   - "*"    → matches any run of non-separator characters
+//   - "?"    → matches a single non-separator character
+//   - every other character is matched literally
+func doubleStarRegexp(pattern string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				// "**" — optionally followed by "/" to allow zero segments.
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					b.WriteString("(?:.*/)?")
+					i += 2
+				} else {
+					b.WriteString(".*")
+					i++
+				}
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(pattern[i])))
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
 }
 
 // GetUniqueReferences extracts unique references from a ScanResult, optionally filtered by type.

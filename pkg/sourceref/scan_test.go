@@ -42,6 +42,14 @@ func TestMatchGlobPattern(t *testing.T) {
 		{"main.txt", "*.go", false, "simple glob no match"},
 		{"src/main.go", "*.go", false, "glob does not cross directories"},
 		{"foo.go", "foo.go", true, "exact match"},
+		// Recursive "**" must match direct children as well as nested files
+		// (cli/code/deps#req:path-glob, AC path-filter-works).
+		{"pkg/main.go", "pkg/**/*.go", true, "double-star matches direct child"},
+		{"pkg/sub/main.go", "pkg/**/*.go", true, "double-star matches nested"},
+		{"pkg/sub/deep/x.go", "pkg/**/*.go", true, "double-star matches deeply nested"},
+		{"other/main.go", "pkg/**/*.go", false, "double-star respects leading prefix"},
+		{"pkg/main.txt", "pkg/**/*.go", false, "double-star respects trailing pattern"},
+		{"pkg/handler.go", "pkg/**", true, "trailing double-star matches child"},
 	}
 
 	for _, tt := range tests {
