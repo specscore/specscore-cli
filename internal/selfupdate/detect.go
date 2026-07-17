@@ -47,10 +47,15 @@ func Classify(execPath string) Detection {
 	p := strings.ToLower(execPath)
 	p = strings.ReplaceAll(p, `\`, "/")
 
-	// Managed: Homebrew.
+	// Managed: Homebrew. A cask install (GoReleaser homebrew_casks) resolves,
+	// via symlink, into a Caskroom path: on Apple Silicon that is
+	// /opt/homebrew/Caskroom/... (caught by "/homebrew/"), but on Intel it is
+	// /usr/local/Caskroom/..., which matches none of the other markers — so
+	// "/caskroom/" is required to classify Intel cask installs as Homebrew.
 	if strings.Contains(p, "/cellar/") ||
 		strings.Contains(p, "/homebrew/") ||
-		strings.Contains(p, "/linuxbrew/") {
+		strings.Contains(p, "/linuxbrew/") ||
+		strings.Contains(p, "/caskroom/") {
 		return Detection{Method: Managed, Manager: Homebrew}
 	}
 
