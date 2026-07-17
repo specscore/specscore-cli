@@ -68,8 +68,9 @@ changelog:
       - Merge branch
 
 # Homebrew tap — https://brew.sh
-# Reuses SPECSCORE_GORELEASER_GITHUB_TOKEN. The tap repo must exist at
-# specscore/homebrew-tap with a `main` branch.
+# Uses $GORELEASER_GITHUB_TOKEN, which the shared strongo/cicd release workflow
+# forwards from the repo's SPECSCORE_GORELEASER_GITHUB_TOKEN secret. The tap
+# repo must exist at specscore/homebrew-tap with a `main` branch.
 brews:
   - name: specscore
     ids:
@@ -81,14 +82,15 @@ brews:
       owner: specscore
       name: homebrew-tap
       branch: main
-      token: "{{ .Env.SPECSCORE_GORELEASER_GITHUB_TOKEN }}"
+      token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
     install: |
       bin.install "specscore"
     test: |
       system "#{bin}/specscore", "--version"
 
 # Scoop bucket — https://scoop.sh
-# Requires SPECSCORE_GORELEASER_GITHUB_TOKEN — a classic PAT with `public_repo`
+# Uses $GORELEASER_GITHUB_TOKEN (forwarded by the shared release workflow from
+# the SPECSCORE_GORELEASER_GITHUB_TOKEN secret) — a classic PAT with `public_repo`
 # scope (see release.yml for the rationale; cross-fork PRs to microsoft/winget-pkgs
 # rule out a fine-grained PAT). The bucket repo must exist at
 # specscore/scoop-bucket with a `main` branch.
@@ -104,10 +106,11 @@ scoops:
       owner: specscore
       name: scoop-bucket
       branch: main
-      token: "{{ .Env.SPECSCORE_GORELEASER_GITHUB_TOKEN }}"
+      token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
 
 # WinGet — https://github.com/microsoft/winget-pkgs
-# Reuses SPECSCORE_GORELEASER_GITHUB_TOKEN. GoReleaser pushes a manifest branch
+# Uses $GORELEASER_GITHUB_TOKEN (forwarded by the shared release workflow from
+# the SPECSCORE_GORELEASER_GITHUB_TOKEN secret). GoReleaser pushes a manifest branch
 # to specscore/winget-pkgs (a fork of microsoft/winget-pkgs), then opens a
 # PR upstream. The cross-fork PR step requires a classic PAT with `public_repo`
 # scope — fine-grained PATs cannot grant Pull-requests:write on third-party
@@ -134,7 +137,7 @@ winget:
       owner: specscore
       name: winget-pkgs
       branch: "specscore-{{.Version}}"
-      token: "{{ .Env.SPECSCORE_GORELEASER_GITHUB_TOKEN }}"
+      token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
       pull_request:
         enabled: true
         base:

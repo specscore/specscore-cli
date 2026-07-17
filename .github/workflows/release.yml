@@ -1,64 +1,42 @@
 name: Release
 
-# Two triggers, one shared composite action (.github/actions/release):
+# Releases are cut by pushing a vX.Y.Z tag — the explicit, human-gated action
+# that has always been this repo's primary path ("push a tag to release"):
 #
-#   1. Tag push (v*) — release that tag as-is, no svu.
-#   2. workflow_dispatch — manual trigger with optional explicit bump.
+#   git tag v0.20.0 && git push origin v0.20.0
 #
-# Push-to-main auto-release was removed deliberately. Previously a `feat:`
-# or `fix:` commit on main fired an auto-tag-and-release; that meant
-# every conventional-commit merge could ship a new version without an
-# explicit human gate. Releases are now an explicit action: either push
-# a vX.Y.Z tag, or click "Run workflow" in the Actions UI and pick
-# auto/patch/minor/major/vX.Y.Z.
+# The shared strongo/cicd release workflow then runs GoReleaser against this
+# repo's own .goreleaser.yml. Because we trigger on a tag (github.ref_type ==
+# 'tag'), the shared workflow SKIPS its auto-bump step and releases the exact
+# tag pushed — no version is ever chosen automatically (important on 0.x, where
+# a `feat!:` must never silently jump to 1.0.0).
+#
+# NOTE: this replaces the previous local composite action (.github/actions/
+# release) whose workflow_dispatch path offered svu bump-selection
+# (patch/minor/major) and a snapshot-only fallback build. Those conveniences on
+# the dispatch path are dropped in favour of sharing the org release core; the
+# version is now always the tag you push. Release-build validation on PRs, if
+# wanted, belongs in go-ci.yml rather than here.
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: |
-          Release tag. Accepts:
-            (empty) or "auto"            — next version from conventional commits since last tag
-            "patch" / "minor" / "major"  — force a specific bump
-            "vX.Y.Z" or "vX.Y.Z-rc.1"   — use this exact tag (must not exist yet)
-        required: false
-        type: string
-        default: 'auto'
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}-${{ inputs.release_tag }}
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
-    name: Release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Resolve and run release
-        id: release
-        uses: ./.github/actions/release
-        with:
-          release_tag: ${{ inputs.release_tag || 'auto' }}
-          goreleaser_github_token: ${{ secrets.SPECSCORE_GORELEASER_GITHUB_TOKEN }}
-
-      - name: Upload snapshot artifacts
-        if: ${{ steps.release.outputs.released == 'false' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: snapshot-binaries
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/*_checksums.txt
-          retention-days: 7
+    uses: strongo/cicd/.github/workflows/release.yml@v1
+    permissions:
+      contents: write
+    secrets:
+      # Cross-repo PAT (classic, public_repo) for the Homebrew tap, Scoop
+      # bucket, and WinGet fork. Forwarded to GoReleaser as
+      # $GORELEASER_GITHUB_TOKEN and referenced by .goreleaser.yml.
+      GORELEASER_GITHUB_TOKEN: ${{ secrets.SPECSCORE_GORELEASER_GITHUB_TOKEN }}
