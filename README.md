@@ -36,7 +36,7 @@ powershell -c "irm https://specscore.md/install/get-cli.ps1 | iex"
 ### macOS — Homebrew
 
 ```bash
-brew install specscore/tap/specscore
+brew install --cask specscore/tap/specscore
 ```
 
 ### Windows — Scoop / WinGet

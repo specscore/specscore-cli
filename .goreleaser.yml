@@ -67,11 +67,26 @@ changelog:
       - Merge pull request
       - Merge branch
 
-# Homebrew tap — https://brew.sh
-# Uses $GORELEASER_GITHUB_TOKEN, which the shared strongo/cicd release workflow
-# forwards from the repo's SPECSCORE_GORELEASER_GITHUB_TOKEN secret. The tap
-# repo must exist at specscore/homebrew-tap with a `main` branch.
-brews:
+# Homebrew cask — https://brew.sh
+# Modern binary-distribution path (migrated from the deprecated `brews:`
+# formula key, which `goreleaser check` hard-fails on). This publishes a
+# Homebrew *cask* that installs the prebuilt darwin binary from the release
+# archive, rather than a formula that builds/installs from source. Install with:
+#   brew install --cask specscore/tap/specscore
+# (the tap-qualified `brew install specscore/tap/specscore` also resolves it).
+#
+# The cask manifest is pushed to specscore/homebrew-tap under Casks/specscore.rb
+# (GoReleaser's default cask `directory`), so the tap now carries a Casks/ tree
+# alongside any pre-existing Formula/. Uses $GORELEASER_GITHUB_TOKEN, which the
+# shared strongo/cicd release workflow forwards from the repo's
+# SPECSCORE_GORELEASER_GITHUB_TOKEN secret. The tap repo must exist at
+# specscore/homebrew-tap with a `main` branch.
+#
+# Fidelity note: cask manifests have no `install`/`test` stanzas, so the former
+# `bin.install "specscore"` and `system "#{bin}/specscore", "--version"` smoke
+# test do not carry over — GoReleaser auto-installs the `specscore` binary from
+# the archive, and casks provide no per-manifest test hook.
+homebrew_casks:
   - name: specscore
     ids:
       - specscore
@@ -83,10 +98,6 @@ brews:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
-    install: |
-      bin.install "specscore"
-    test: |
-      system "#{bin}/specscore", "--version"
 
 # Scoop bucket — https://scoop.sh
 # Uses $GORELEASER_GITHUB_TOKEN (forwarded by the shared release workflow from
