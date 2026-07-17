@@ -1,27 +1,29 @@
 name: Release
 
-# Releases are cut by pushing a vX.Y.Z tag — the explicit, human-gated action
-# that has always been this repo's primary path ("push a tag to release"):
+# Continuous delivery: every merge to `main` runs the shared strongo/cicd
+# release workflow, which bumps the version from conventional commits and
+# releases it in one run. Pushing an explicit `vX.Y.Z` tag also works and
+# releases that exact version (the shared workflow skips the bump on a tag ref).
+# A docs/chore-only merge cuts no tag and publishes nothing.
 #
-#   git tag v0.20.0 && git push origin v0.20.0
-#
-# The shared strongo/cicd release workflow then runs GoReleaser against this
-# repo's own .goreleaser.yml. Because we trigger on a tag (github.ref_type ==
-# 'tag'), the shared workflow SKIPS its auto-bump step and releases the exact
-# tag pushed — no version is ever chosen automatically (important on 0.x, where
-# a `feat!:` must never silently jump to 1.0.0).
+# specscore is pre-1.0: allow_major_version_bump stays false, so a stray
+# `feat!:` is CAPPED to a minor bump (0.x -> 0.(x+1)) by the shared workflow's
+# guard instead of jumping to v1.0.0. Cut v1.0.0 deliberately by pushing that
+# tag.
 #
 # NOTE: this replaces the previous local composite action (.github/actions/
 # release) whose workflow_dispatch path offered svu bump-selection
-# (patch/minor/major) and a snapshot-only fallback build. Those conveniences on
-# the dispatch path are dropped in favour of sharing the org release core; the
-# version is now always the tag you push. Release-build validation on PRs, if
-# wanted, belongs in go-ci.yml rather than here.
+# (patch/minor/major) and a snapshot-only fallback build. Those conveniences are
+# dropped in favour of sharing the org release core. Release-build validation on
+# PRs, if wanted, belongs in go-ci.yml rather than here.
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -35,6 +37,10 @@ jobs:
     uses: strongo/cicd/.github/workflows/release.yml@v1
     permissions:
       contents: write
+    with:
+      # Pre-1.0: cap an accidental major (feat!:) to a minor bump. Cut v1.0.0
+      # only by pushing that tag explicitly.
+      allow_major_version_bump: false
     secrets:
       # Cross-repo PAT (classic, public_repo) for the Homebrew tap, Scoop
       # bucket, and WinGet fork. Forwarded to GoReleaser as
