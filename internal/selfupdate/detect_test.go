@@ -46,6 +46,21 @@ func TestClassify(t *testing.T) {
 			wantManager: Homebrew,
 		},
 		{
+			// GoReleaser homebrew_casks install: the run path resolves into the
+			// Caskroom. Apple Silicon is also under /opt/homebrew, but Intel is
+			// under /usr/local/Caskroom and matches no other Homebrew marker.
+			name:        "homebrew cask apple silicon",
+			execPath:    "/opt/homebrew/Caskroom/specscore/0.6.0/specscore",
+			wantMethod:  Managed,
+			wantManager: Homebrew,
+		},
+		{
+			name:        "homebrew cask intel",
+			execPath:    "/usr/local/Caskroom/specscore/0.6.0/specscore",
+			wantMethod:  Managed,
+			wantManager: Homebrew,
+		},
+		{
 			name:        "scoop apps",
 			execPath:    `C:\Users\u\scoop\apps\specscore\current\specscore.exe`,
 			wantMethod:  Managed,
