@@ -624,6 +624,50 @@ None at this time.
 	}
 }
 
+// A root idea whose features have been migrated to another repo carries a
+// cross-repo **Promotes To:** (URL form). Because those features cannot be seen
+// locally, the idea's Promotes To and Status are author-managed: idea-sync must
+// NOT report drift (it must not try to drag Promotes To back to "—" or the
+// Status back to Approved), and a --fix pass must preserve the cross-repo entry.
+func TestCheckIdeas_CrossRepoPromotesToNotDrift(t *testing.T) {
+	const crossRepoURL = "https://github.com/sneat-co/sourcer/blob/main/spec/features/README.md"
+	body := validIdeaBody("Sourcer", "Specifying", map[string]string{
+		"Promotes To": "[Sourcer features](" + crossRepoURL + ")",
+	})
+	// Index row mirrors the idea so idea-index-row-sync is not the thing firing.
+	index := "# SpecScore Ideas\n\n## Index\n\n" +
+		"| Idea | Status | Date | Owner | Promotes To |\n" +
+		"|------|--------|------|-------|-------------|\n" +
+		"| [sourcer](sourcer.md) | Specifying | 2026-04-10 | alice | [Sourcer features](" + crossRepoURL + ") |\n" +
+		"\n## Open Questions\n\nNone at this time.\n"
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":          index,
+		"ideas/archived/README.md": archivedIndex,
+		"ideas/sourcer.md":         body,
+		// No local features reference this idea — they live cross-repo.
+	})
+
+	vs, _ := CheckIdeas(specRoot, false)
+	if hasRule(vs, "idea-sync-lint-strict") {
+		t.Errorf("cross-repo Promotes To must not fire idea-sync-lint-strict; got %+v", vs)
+	}
+
+	// --fix must not blank the cross-repo Promotes To.
+	if _, err := CheckIdeas(specRoot, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "ideas", "sourcer.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), crossRepoURL) {
+		t.Errorf("--fix dropped the cross-repo Promotes To entry:\n%s", string(data))
+	}
+	if strings.Contains(string(data), "**Promotes To:** —") {
+		t.Errorf("--fix blanked Promotes To to — despite a cross-repo entry:\n%s", string(data))
+	}
+}
+
 // A bare unresolved slug (not a URL) still fires — cross-repo tolerance is
 // URL-form only, so a typo'd local slug is still caught.
 func TestCheckIdeas_FeatureReferencesUnknownLocalSlug(t *testing.T) {

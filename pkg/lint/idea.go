@@ -791,8 +791,25 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 		refs := reverse[slug]
 		expectedPromotes := append([]string{}, refs...)
 		sort.Strings(expectedPromotes)
-		actualPromotes := p.PromotesTo()
-		sort.Strings(actualPromotes)
+
+		// Split actual Promotes To into local slugs and cross-repo references.
+		// A cross-repo entry (URL form) promotes to a Feature in ANOTHER repo;
+		// it resolves via the linkage system and cannot be derived from — nor
+		// validated against — the local spec tree. Such entries are
+		// author-managed: excluded from the local promotes comparison, and their
+		// presence makes the idea's Status author-managed too, since the
+		// cross-repo Feature statuses that would drive derivation aren't visible
+		// here.
+		var localActual, crossPromotes []string
+		for _, e := range p.PromotesTo() {
+			if idea.IsCrossRepoRef(e) {
+				crossPromotes = append(crossPromotes, e)
+			} else {
+				localActual = append(localActual, e)
+			}
+		}
+		sort.Strings(localActual)
+		hasCrossPromotes := len(crossPromotes) > 0
 
 		var expectedStatus string
 		if len(refs) == 0 {
@@ -835,7 +852,16 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 			}
 		}
 
-		promotesDrift := !stringSliceEq(expectedPromotes, actualPromotes)
+		// Cross-repo promotions make Status author-managed: skip derivation so a
+		// mid-flight idea specified via features in another repo is not dragged
+		// back to Approved.
+		if hasCrossPromotes {
+			expectedStatus = ""
+		}
+
+		// Compare the local-derived set against only the LOCAL Promotes To
+		// entries; cross-repo entries are always allowed and never count as drift.
+		promotesDrift := !stringSliceEq(expectedPromotes, localActual)
 		statusDrift := expectedStatus != "" && p.Status() != expectedStatus
 
 		if !promotesDrift && !statusDrift {
@@ -848,7 +874,10 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 			if statusDrift {
 				newStatus = expectedStatus
 			}
-			newPromotes := strings.Join(expectedPromotes, ", ")
+			// Preserve cross-repo promotions verbatim; only the local set is
+			// derived from the reverse index.
+			newList := append(append([]string{}, expectedPromotes...), crossPromotes...)
+			newPromotes := strings.Join(newList, ", ")
 			if newPromotes == "" {
 				newPromotes = "—"
 			}
