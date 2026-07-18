@@ -196,6 +196,22 @@ func emitInvocationEvent(runErr error) {
 	telemetry.Emit(rootContext(), event)
 }
 
+// silentSignalErrorHandler renders command errors like fang's default, EXCEPT
+// for a "pure exit-code signal" — an exitcode.Error whose message is empty. Some
+// commands (e.g. `self-update --check`, which exits 10 to report "update
+// available" per cli/self-update#req:check-exit-codes) print their human-readable
+// status to stdout themselves and return an empty-message error only to carry the
+// exit code. fang's default handler would render that empty message as a lone
+// styled "." box; suppress it so the exit code is delivered without spurious
+// output. Everything with a real message renders normally.
+func silentSignalErrorHandler(w io.Writer, styles fang.Styles, err error) {
+	var ec *exitcode.Error
+	if errors.As(err, &ec) && strings.TrimSpace(ec.Error()) == "" {
+		return // exit code only — nothing to render
+	}
+	fang.DefaultErrorHandler(w, styles, err)
+}
+
 // executeWithPanicRecovery wraps fang.Execute with a panic-recovery
 // boundary. Captures any panic into invocation.Panic for the crash-reports
 // channel's transmitErrors to consume, emits the telemetry event, prints
@@ -217,7 +233,10 @@ func executeWithPanicRecovery(rootCmd *cobra.Command) (returnErr error) {
 				panicStack = debug.Stack()
 			}
 		}()
-		returnErr = fang.Execute(context.Background(), rootCmd, fang.WithoutVersion())
+		returnErr = fang.Execute(context.Background(), rootCmd,
+			fang.WithoutVersion(),
+			fang.WithErrorHandler(silentSignalErrorHandler),
+		)
 	}()
 
 	if panicVal != nil {
