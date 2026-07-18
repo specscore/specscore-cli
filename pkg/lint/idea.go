@@ -699,10 +699,15 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 	var vs []Violation
 	fixed := false
 
-	// Build reverse index: idea slug -> []feature slug.
+	// Build reverse index: idea slug -> []feature slug. Cross-repo references
+	// (URL form) name an Idea in another repo and are excluded — they resolve
+	// via the linkage system, not the local spec tree.
 	reverse := make(map[string][]string)
 	for feature, ideas := range featureIdeas {
 		for _, slug := range ideas {
+			if idea.IsCrossRepoRef(slug) {
+				continue
+			}
 			reverse[slug] = append(reverse[slug], feature)
 		}
 	}
@@ -722,6 +727,12 @@ func ideaSyncRules(specRoot string, parsed map[string]*idea.Idea, archivedMap ma
 	}
 	for featureSlug, ideas := range featureIdeas {
 		for _, slug := range ideas {
+			// Cross-repo references (URL form) point at an Idea in another
+			// repository; they resolve via the linkage system and are not checked
+			// against the local spec tree.
+			if idea.IsCrossRepoRef(slug) {
+				continue
+			}
 			p, ok := parsed[slug]
 			if !ok {
 				rel := filepath.Join("features", featureSlug, "README.md")

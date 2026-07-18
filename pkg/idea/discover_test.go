@@ -439,3 +439,29 @@ func TestIsSidekickSeedFile_Edges(t *testing.T) {
 		t.Error("promoted seed should be detected")
 	}
 }
+
+func TestIsCrossRepoRef(t *testing.T) {
+	cross := []string{
+		"https://github.com/sneat-co/backstage/blob/main/spec/ideas/sourcer.md",
+		"http://example.com/spec/ideas/x.md",
+		"[sourcer](https://github.com/sneat-co/backstage/blob/main/spec/ideas/sourcer.md)",
+		"[Paywall Bot](https://github.com/sneat-co/backstage/blob/main/spec/ideas/paywallbot.md)",
+	}
+	for _, c := range cross {
+		if !IsCrossRepoRef(c) {
+			t.Errorf("IsCrossRepoRef(%q) = false, want true", c)
+		}
+	}
+	local := []string{
+		"consilium-command-group",
+		"cli-self-update",
+		"[local idea](../../ideas/offline-mode.md)", // relative link, not cross-repo
+		"—",
+		"",
+	}
+	for _, l := range local {
+		if IsCrossRepoRef(l) {
+			t.Errorf("IsCrossRepoRef(%q) = true, want false", l)
+		}
+	}
+}

@@ -184,6 +184,29 @@ func isSidekickSeedFile(path string) bool {
 // sourceIdeasRe extracts the value portion of the **Source Ideas:** line.
 var sourceIdeasRe = regexp.MustCompile(`^\*\*Source Ideas:\*\*\s*(.*)$`)
 
+// mdLinkTargetRe captures the target of a `[label](target)` markdown link.
+var mdLinkTargetRe = regexp.MustCompile(`^\[[^\]]*\]\(\s*([^)\s]+)\s*\)$`)
+
+// IsCrossRepoRef reports whether a single comma-separated idea reference (from a
+// **Source Ideas:** / **Related Ideas:** / **Supersedes:** value) points at an
+// Idea in ANOTHER repository rather than a local idea slug. Cross-repo references
+// use the URL form the linkage system already permits (entity#req:ref-target-exists,
+// "the URL form is permitted when cross-repo imports land"): either a bare
+// http(s) URL or a markdown link whose target is an http(s) URL. Such references
+// cannot — and must not — be resolved against the local spec tree, so the local
+// idea-cross-reference lint leaves them alone.
+func IsCrossRepoRef(entry string) bool {
+	e := strings.TrimSpace(entry)
+	if strings.HasPrefix(e, "http://") || strings.HasPrefix(e, "https://") {
+		return true
+	}
+	if m := mdLinkTargetRe.FindStringSubmatch(e); m != nil {
+		t := m[1]
+		return strings.HasPrefix(t, "http://") || strings.HasPrefix(t, "https://")
+	}
+	return false
+}
+
 // fpRel is a testable indirection for filepath.Rel used in FeatureSourceIdeas.
 var fpRel = filepath.Rel
 

@@ -600,6 +600,53 @@ None at this time.
 	}
 }
 
+// A cross-repo Source Idea (URL form / markdown link to another repo) must NOT
+// fire idea-feature-cross-reference: it resolves via the linkage system, not the
+// local spec tree.
+func TestCheckIdeas_FeatureReferencesCrossRepoIdea(t *testing.T) {
+	feature := `# Feature: pricing-ladder
+
+**Status:** Draft
+**Source Ideas:** [sourcer](https://github.com/sneat-co/backstage/blob/main/spec/ideas/sourcer.md)
+
+## Open Questions
+
+None at this time.
+`
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":                   activeIndex, // empty — no local ideas
+		"ideas/archived/README.md":          archivedIndex,
+		"features/pricing-ladder/README.md": feature,
+	})
+	vs, _ := CheckIdeas(specRoot, false)
+	if hasRule(vs, "idea-feature-cross-reference") {
+		t.Errorf("cross-repo Source Idea must not fire idea-feature-cross-reference; got %+v", vs)
+	}
+}
+
+// A bare unresolved slug (not a URL) still fires — cross-repo tolerance is
+// URL-form only, so a typo'd local slug is still caught.
+func TestCheckIdeas_FeatureReferencesUnknownLocalSlug(t *testing.T) {
+	feature := `# Feature: pricing-ladder
+
+**Status:** Draft
+**Source Ideas:** no-such-local-idea
+
+## Open Questions
+
+None at this time.
+`
+	specRoot := writeSpec(t, map[string]string{
+		"ideas/README.md":                   activeIndex,
+		"ideas/archived/README.md":          archivedIndex,
+		"features/pricing-ladder/README.md": feature,
+	})
+	vs, _ := CheckIdeas(specRoot, false)
+	if !hasRule(vs, "idea-feature-cross-reference") {
+		t.Errorf("an unknown local slug must still fire idea-feature-cross-reference")
+	}
+}
+
 func TestCheckIdeas_UnlistedIdeaInIndex(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/README.md":          activeIndex, // empty index

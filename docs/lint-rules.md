@@ -154,7 +154,7 @@ Total rules: 150
 | idea-archived-index-chronological | error | Requires the archived idea index to be in chronological order. |
 | idea-archived-location | error | Requires archived ideas to live under the archived directory. |
 | idea-change-request-location | error | Requires change-request ideas to live in the expected location. |
-| idea-feature-cross-reference | error | Requires idea-to-feature cross-references to resolve. |
+| idea-feature-cross-reference | error | Requires idea-to-feature cross-references to resolve locally; a Source Idea in URL form (link to another repo) is treated as a cross-repo reference and left alone. |
 | idea-header-fields | error | Requires the idea header to declare all mandatory fields. |
 | idea-hmw-framing | error | Requires the idea to use How-Might-We framing. |
 | idea-id-is-slug | error | Requires the idea Id field to match its filename slug. |
