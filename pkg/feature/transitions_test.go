@@ -137,6 +137,8 @@ func TestResolveFeatureID(t *testing.T) {
 //   - under-review-to-approved-happy-path
 //   - implementing-to-stable-happy-path
 //   - stable-to-deprecated-happy-path
+//   - draft-to-deprecated-happy-path
+//   - implementing-to-deprecated-happy-path
 //   - approved-to-implementing-happy-path (not numbered in AC list but
 //     part of the matrix — guarded so the matrix stays complete).
 func TestChangeStatus_HappyPaths(t *testing.T) {
@@ -155,6 +157,8 @@ func TestChangeStatus_HappyPaths(t *testing.T) {
 		{"stable → amending", "Stable", "amending", "Amending"},
 		{"amending → stable", "Amending", "stable", "Stable"},
 		{"stable → deprecated", "Stable", "deprecated", "Deprecated"},
+		{"draft → deprecated", "Draft", "deprecated", "Deprecated"},
+		{"implementing → deprecated", "Implementing", "deprecated", "Deprecated"},
 	}
 	for _, tc := range cases {
 		tc := tc

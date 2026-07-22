@@ -214,6 +214,40 @@ func TestFeatureChangeStatus_StableToDeprecated(t *testing.T) {
 	}
 }
 
+// AC: draft-to-deprecated-happy-path — a Draft feature can be retired
+// directly, without ever passing through review/approval/implementation.
+func TestFeatureChangeStatus_DraftToDeprecated(t *testing.T) {
+	root := setupFeatureSpec(t, "Draft")
+
+	out, _, err := runFeature(t, "change-status", "auth", "--to=deprecated")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got, want := out, "auth: Draft → Deprecated\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	if got := readAuthStatus(t, root); got != "Deprecated" {
+		t.Errorf("Status = %q, want Deprecated", got)
+	}
+}
+
+// AC: implementing-to-deprecated-happy-path — an Implementing feature can
+// be honestly retired without first reaching Stable.
+func TestFeatureChangeStatus_ImplementingToDeprecated(t *testing.T) {
+	root := setupFeatureSpec(t, "Implementing")
+
+	out, _, err := runFeature(t, "change-status", "auth", "--to=deprecated")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got, want := out, "auth: Implementing → Deprecated\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	if got := readAuthStatus(t, root); got != "Deprecated" {
+		t.Errorf("Status = %q, want Deprecated", got)
+	}
+}
+
 // AC: nested-feature-id-resolves — a sub-feature at
 // spec/features/cli/idea/change-status/README.md transitions correctly
 // via the slash-bearing id.

@@ -38,15 +38,17 @@ Only the transitions in the table below are accepted. Any other `(from, to)` pai
 |---|---|---|
 | `Draft` | `In Review` | Status rewrite + features-index sync |
 | `Draft` | `Approved` | Status rewrite + features-index sync |
+| `Draft` | `Deprecated` | Status rewrite + features-index sync |
 | `In Review` | `Approved` | Status rewrite + features-index sync |
 | `In Review` | `Rejected` | Status rewrite + features-index sync |
 | `Approved` | `Implementing` | Status rewrite + features-index sync |
 | `Implementing` | `Stable` | Status rewrite + features-index sync |
+| `Implementing` | `Deprecated` | Status rewrite + features-index sync |
 | `Stable` | `Amending` | Status rewrite + features-index sync |
 | `Amending` | `Stable` | Status rewrite + features-index sync |
 | `Stable` | `Deprecated` | Status rewrite + features-index sync |
 
-The `Draft → Approved` direct path is permitted: not every Feature requires a review phase. Reverse transitions (e.g., `Approved → Draft`, `Deprecated → Stable`) are NOT in the matrix and exit `4`. They MAY land in a follow-on revision once concrete reuse patterns surface.
+The `Draft → Approved` direct path is permitted: not every Feature requires a review phase. `Draft → Deprecated` and `Implementing → Deprecated` are also direct paths: a Feature abandoned before or during implementation MUST be honestly retirable without first detouring through `Stable` — the only prior route to `Deprecated`. Reverse transitions (e.g., `Approved → Draft`, `Deprecated → Stable`) are NOT in the matrix and exit `4`. They MAY land in a follow-on revision once concrete reuse patterns surface.
 
 #### REQ: legal-transition-matrix
 
@@ -136,6 +138,18 @@ Given `spec/features/auth/README.md` containing `**Status:** Implementing`, runn
 
 Given `spec/features/auth/README.md` containing `**Status:** Stable`, running `specscore feature change-status auth --to=deprecated` exits `0`, with stdout `auth: Stable → Deprecated\n`.
 
+### AC: draft-to-deprecated-happy-path
+
+**Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/features/auth/README.md` containing `**Status:** Draft`, running `specscore feature change-status auth --to=deprecated` exits `0`, with stdout `auth: Draft → Deprecated\n`. A Feature abandoned before review or approval can be honestly retired without a detour through `Stable`.
+
+### AC: implementing-to-deprecated-happy-path
+
+**Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/features/auth/README.md` containing `**Status:** Implementing`, running `specscore feature change-status auth --to=deprecated` exits `0`, with stdout `auth: Implementing → Deprecated\n`. A Feature abandoned mid-implementation can be honestly retired without first reaching `Stable`.
+
 ### AC: nested-feature-id-resolves
 
 **Requirements:** [cli/feature/change-status#req:feature-id-resolves-to-spec-features](#req-feature-id-resolves-to-spec-features)
@@ -199,7 +213,7 @@ A `feature-index-row-sync` failure after a successful rewrite triggers rollback 
 ## Open Questions
 
 - Should `feature change-status --to=approved` enforce a prior `In Review` for projects that nominally require review, via a `--require-review` flag or repo-config? Deferred; today both `Draft → Approved` and `In Review → Approved` are unconditionally accepted.
-- Should `feature change-status --to=deprecated` require `--reason "<text>"` and/or `--successor <feature_id>` to record why and what supersedes? The source Idea Open Question. Lean: defer to a follow-on revision once usage demands it.
+- Should `feature change-status --to=deprecated` require `--reason "<text>"` and/or `--successor <feature_id>` to record why and what supersedes? The source Idea Open Question. Still unresolved even after `Draft → Deprecated` and `Implementing → Deprecated` widened the matrix (2026-07-22): the verb has no `--note` flag today (unlike `sidekick change-status`, which designates its own negative arc reason-required via `lifecycle.GuardReason`), so all three routes into `Deprecated` remain reason-free. Lean: defer to a follow-on revision once usage demands it — adding `--note` is an additive, non-breaking change to this verb whenever it lands.
 - Should reverse transitions (`feature undeprecate`, `feature unstabilize`) be added as legal pairs in a future revision, or remain hand-edit territory? Lean: defer.
 - `change-status --help` rendering of the legal-transition matrix: same UX question as the Idea sibling's Outstanding Question. Lean: render it.
 

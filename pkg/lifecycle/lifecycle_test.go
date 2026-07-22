@@ -37,10 +37,12 @@ var expectedLegal = map[Kind][]transitionRow{
 	KindFeature: {
 		{From: FeatureDraft, To: FeatureInReview},
 		{From: FeatureDraft, To: FeatureApproved},
+		{From: FeatureDraft, To: FeatureDeprecated},
 		{From: FeatureInReview, To: FeatureApproved},
 		{From: FeatureInReview, To: FeatureRejected},
 		{From: FeatureApproved, To: FeatureImplementing},
 		{From: FeatureImplementing, To: FeatureStable},
+		{From: FeatureImplementing, To: FeatureDeprecated},
 		{From: FeatureStable, To: FeatureAmending},
 		{From: FeatureAmending, To: FeatureStable},
 		{From: FeatureStable, To: FeatureDeprecated},

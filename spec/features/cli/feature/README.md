@@ -34,7 +34,7 @@ The feature tree is the primary organizing structure of a SpecScore repository. 
 
 ### change-status
 
-Transitions a Feature per the kind's legal-transition matrix: `Draft → In Review`, `{Draft, In Review} → Approved`, `In Review → Rejected`, `Approved → Implementing`, `Implementing → Stable`, `Stable ↔ Amending`, `Stable → Deprecated`. Implements the [lifecycle-transitions](../lifecycle-transitions/README.md) shared contract. Illegal pairs (including re-running on the target status, skipping phases, or reverse transitions) exit `4` (InvalidTransition).
+Transitions a Feature per the kind's legal-transition matrix: `Draft → In Review`, `{Draft, In Review} → Approved`, `In Review → Rejected`, `Approved → Implementing`, `Implementing → Stable`, `Stable ↔ Amending`, `{Draft, Implementing, Stable} → Deprecated`. Implements the [lifecycle-transitions](../lifecycle-transitions/README.md) shared contract. Illegal pairs (including re-running on the target status, skipping phases, or reverse transitions) exit `4` (InvalidTransition).
 
 ### deps
 
