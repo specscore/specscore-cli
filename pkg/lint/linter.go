@@ -98,6 +98,9 @@ func newLinter(opts Options) *linter {
 	frc.autofix = opts.fixRequested("feature-source-ideas-required")
 	l.ruleSet["feature-source-ideas-required"] = frc
 
+	// Register the AC-heading-format checker.
+	l.registerChecker(newACHeadingFormatChecker())
+
 	// Register decision-rules checker under all D-* rule IDs.
 	dc := newDecisionRulesChecker()
 	dc.fixLegacy = opts.fixRequested("D-status-values")

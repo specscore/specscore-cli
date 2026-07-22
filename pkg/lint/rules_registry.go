@@ -137,6 +137,7 @@ var builtinRules = []Rule{
 
 	// Feature lint rules.
 	{ID: "feature-source-ideas-required", Family: "feature", Severity: "error", Description: "Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel."},
+	{ID: "ac-heading-format", Family: "feature", Severity: "error", Description: "Requires Acceptance Criteria headings to read `### AC: <id>` with one space after the colon and a kebab-case id; --fix repairs whitespace-only deviations."},
 
 	// Decision lint rules.
 	{ID: "D-title-format", Family: "decision", Severity: "error", Description: "Requires the decision H1 title to follow the canonical format."},

@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 150
+Total rules: 151
 
 ## capability
 
@@ -90,6 +90,7 @@ Total rules: 150
 
 | Rule | Severity | Description |
 | --- | --- | --- |
+| ac-heading-format | error | Requires Acceptance Criteria headings to read `### AC: <id>` with one space after the colon and a kebab-case id; --fix repairs whitespace-only deviations. |
 | feature-source-ideas-required | error | Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel. |
 
 ## feature-index
@@ -154,7 +155,7 @@ Total rules: 150
 | idea-archived-index-chronological | error | Requires the archived idea index to be in chronological order. |
 | idea-archived-location | error | Requires archived ideas to live under the archived directory. |
 | idea-change-request-location | error | Requires change-request ideas to live in the expected location. |
-| idea-feature-cross-reference | error | Requires idea-to-feature cross-references to resolve locally; a Source Idea in URL form (link to another repo) is treated as a cross-repo reference and left alone. |
+| idea-feature-cross-reference | error | Requires idea-to-feature cross-references to resolve. |
 | idea-header-fields | error | Requires the idea header to declare all mandatory fields. |
 | idea-hmw-framing | error | Requires the idea to use How-Might-We framing. |
 | idea-id-is-slug | error | Requires the idea Id field to match its filename slug. |

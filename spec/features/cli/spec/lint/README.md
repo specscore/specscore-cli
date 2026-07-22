@@ -24,6 +24,7 @@ status: Approved
 | [issue-rules](issue-rules/README.md) | Adds 15 lint rules (`I-001`–`I-015`) and the underlying `issue` artifact parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `issue-artifact-type` Feature in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo. |
 | [feature-rules](feature-rules/README.md) | Adds feature-level lint rules to specscore spec lint — starting with feature-source-ideas-required, which enforces that every Feature carries a **Source Ideas:** line (with an explicit-empty sentinel) and backfills it via --fix. |
 | [legacy-status-autofix](legacy-status-autofix/README.md) | Idempotent --fix rewrites of a closed, documented set of legacy artifact status tokens (plan, decision, idea) to their canonical replacements; unknown/free-form values stay non-autofixable errors. |
+| [ac-heading-format](ac-heading-format/README.md) | Enforces the canonical Acceptance Criteria heading shape `### AC: <id>` (one space after the colon, kebab-case id) on Feature READMEs; --fix repairs whitespace-only deviations. A pre-existing `(verifies REQ:...)` trailing annotation is grandfathered as a second accepted form. |
 
 ## Synopsis
 
