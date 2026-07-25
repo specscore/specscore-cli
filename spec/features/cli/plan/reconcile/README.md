@@ -44,6 +44,18 @@ Reconciliation MUST be a separate verb (`plan reconcile`), never a flag or an ac
 
 `--tasks=complete` MUST be required and, today, is the ONLY accepted value: every `### Task N:` block's `**Status:**` is set to `complete`. A missing `--tasks` or any other value MUST exit `2` (InvalidArgs) naming the offending value; matching is case-insensitive. Per-task selection (reconciling a subset of tasks to a mix of statuses) is deferred — see Open Questions.
 
+### REQ: terminal-task-requires-acknowledgement
+
+`--tasks=complete` MUST NOT silently overwrite a task recorded as `failed` or `aborted`. A task in either terminal status is a deliberate, meaningful claim about what happened — reconcile exists to make the record TRUE, and silently flipping a recorded failure to `complete` just because `--tasks=complete` asked for "every" task would make the record false in exactly the tool whose whole purpose is honest correction.
+
+A task in `blocked` is NOT covered by this REQ: `blocked` has outgoing arcs in the task state machine and is not a terminal claim, so completing it needs no acknowledgement (it is treated the same as `planning`/`queued`/`in_progress`).
+
+Concretely:
+
+- If any task is `failed` or `aborted` and its task number does NOT appear in `--force-tasks`, the whole reconciliation MUST be refused with exit `4` (InvalidState), before any mutation. The error MUST name every offending task by number and current status (e.g. `Task 3 (failed)`) and MUST suggest the exact `--force-tasks=<n>[,<n>...]` value that would acknowledge them.
+- `--force-tasks=<n>[,<n>...]` (a comma-separated list of task numbers) is the caller's explicit, per-task acknowledgement that a specific failed/aborted task should be overridden to `complete` anyway. A task number named in `--force-tasks` that does NOT correspond to an actual failed/aborted task is a harmless no-op (not an error) — it simply has nothing to acknowledge.
+- Every task actually overridden this way MUST be itemized — by number and prior status — in the `## Resolution` paragraph (see [resolution-paragraph](#req-resolution-paragraph)), in addition to being counted in the aggregate "N task(s) marked complete" figure. An override is never disclosed as an aggregate count ALONE.
+
 ### REQ: derived-not-asserted-target
 
 The verb MUST NOT accept a `--to` flag. The plan's target status is always DERIVED from the reconciled task rollup via the same [plan#req:status-rollup](https://specscore.md/plan-specification) precedence `spec lint`'s P-007 rule uses (canonical `DeriveExecutionBand`), never asserted independently. With `--tasks=complete` this derivation always yields `Implemented` (every task complete). This guarantees the plan-level status and the task-level rollup can never disagree after a successful reconciliation — the exact self-contradiction a naive "just rewrite the Status line" fix would risk.
@@ -58,7 +70,7 @@ On the first successful reconciliation of a plan, a `**Reconciled:** <date>` hea
 
 ### REQ: resolution-paragraph
 
-Every successful reconciliation MUST append a `## Resolution` paragraph (per the shared [lifecycle-transitions](../../lifecycle-transitions/README.md) note mechanism) containing: a fixed preamble naming the `<from> → <to>` jump and stating explicitly that it did not walk the legal-transition matrix, the caller's `--note` text verbatim, and — when supplied — the `--evidence` list. Multiple reconciliations over a plan's life each get their own paragraph; none are overwritten.
+Every successful reconciliation MUST append a `## Resolution` paragraph (per the shared [lifecycle-transitions](../../lifecycle-transitions/README.md) note mechanism) containing: a fixed preamble naming the `<from> → <to>` jump and stating explicitly that it did not walk the legal-transition matrix, the caller's `--note` text verbatim, the itemized `--force-tasks` overrides when any (per [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement)), and — when supplied — the `--evidence` list. Multiple reconciliations over a plan's life each get their own paragraph; none are overwritten.
 
 ### REQ: disposition-not-resurrected
 
@@ -101,6 +113,7 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 | `--tasks` | Yes | Which embedded tasks to reconcile. Only supported value: `complete` (case-insensitive). |
 | `--note` | Yes | Justification for the reconciliation; written verbatim into a `## Resolution` paragraph. Missing/blank exits `2`. |
 | `--evidence` | No | Comma-separated commit SHAs / PR URLs / file paths backing the reconciliation; appended to the same paragraph as `--note`. |
+| `--force-tasks` | Conditional | Comma-separated task numbers explicitly acknowledging the override of a `failed`/`aborted` task to `complete`. Required only when such a task exists and is not named here (see [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement)); otherwise unused. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
 
 ## Exit codes
@@ -108,9 +121,9 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 | Code | Condition |
 |---|---|
 | `0` | Reconciliation succeeded; plan and task Status lines rewritten; Resolution paragraph and (on first run) Reconciled marker written; plans index synced. |
-| `2` | Missing/malformed `<slug>`; missing or unrecognized `--tasks`; missing/blank `--note`. |
+| `2` | Missing/malformed `<slug>`; missing or unrecognized `--tasks`; missing/blank `--note`; malformed `--force-tasks` value (not a comma-separated list of positive integers). |
 | `3` | No Plan file at `spec/plans/<slug>.md` (nor the directory form). |
-| `4` | Plan resolves only to the directory form; plan is in a terminal disposition status; plan has no embedded tasks; a task is missing an explicit `**Status:**` line; or the plan is already reconciled (re-run no-op). |
+| `4` | Plan resolves only to the directory form; plan is in a terminal disposition status; plan has no embedded tasks; a task is missing an explicit `**Status:**` line; a task is `failed`/`aborted` and not acknowledged via `--force-tasks`; or the plan is already reconciled (re-run no-op). |
 | `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
 
 ## Interaction with Other Features
@@ -186,6 +199,38 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 **When** the user runs `specscore plan reconcile auth --tasks=complete --note "x"`
 **Then** the command exits `4`, naming the offending task number.
 
+### AC: failed-task-refused
+
+**Requirements:** [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement)
+
+**Given** a plan with one task at `**Status:** failed` and no `--force-tasks`
+**When** the user runs `specscore plan reconcile auth --tasks=complete --note "x"`
+**Then** the command exits `4` before any mutation, naming the offending task by number and status (e.g. `Task 2 (failed)`) and suggesting the `--force-tasks` value that would acknowledge it. The plan is unchanged.
+
+### AC: aborted-task-refused
+
+**Requirements:** [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement)
+
+**Given** a plan with one task at `**Status:** aborted` and no `--force-tasks`
+**When** the user runs `specscore plan reconcile auth --tasks=complete --note "x"`
+**Then** the command exits `4`, naming the offending task, and the plan is unchanged.
+
+### AC: force-tasks-override-succeeds
+
+**Requirements:** [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement), [resolution-paragraph](#req-resolution-paragraph)
+
+**Given** a plan with `### Task 2:` at `**Status:** failed`
+**When** the user runs `specscore plan reconcile auth --tasks=complete --note "task 2 actually landed on retry" --force-tasks=2`
+**Then** the command exits `0`, Task 2's `**Status:**` becomes `complete`, and the `## Resolution` paragraph names the override explicitly (e.g. "Task 2 (was failed)") — not just as part of the aggregate "N task(s) marked complete" count.
+
+### AC: blocked-task-not-guarded
+
+**Requirements:** [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement)
+
+**Given** a plan with one task at `**Status:** blocked` and no `--force-tasks`
+**When** the user runs `specscore plan reconcile auth --tasks=complete --note "x"`
+**Then** the command exits `0`; a `blocked` task needs no acknowledgement and is completed the same as `planning`/`queued`/`in_progress`.
+
 ### AC: re-run-refused
 
 **Requirements:** [not-idempotent](#req-not-idempotent)
@@ -220,7 +265,7 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 
 ## Open Questions
 
-- **Per-task selection.** Today `--tasks` accepts only `complete` (every embedded task). A plan where only SOME tasks were actually delivered — the rest genuinely still pending — cannot be partially reconciled; the caller must wait until everything is done, or reconcile is extended with per-task syntax (e.g. `--tasks=1,2,5=complete`). Deferred until a real use case demands it.
+- **Per-task selection.** Today `--tasks` accepts only `complete` (every embedded task). A plan where only SOME tasks were actually delivered — the rest genuinely still pending — cannot be partially reconciled; the caller must wait until everything is done, or reconcile is extended with per-task syntax (e.g. `--tasks=1,2,5=complete`). Deferred until a real use case demands it. Note this is distinct from `--force-tasks`: that flag is an ACKNOWLEDGEMENT mechanism (which failed/aborted tasks may be overridden), not a target-selection mechanism — it never causes a task to be left untouched.
 - **Non-`Implemented` targets.** Because the only supported `--tasks` value forces every task to `complete`, the derived target is always `Implemented`. Reconciling a plan to `Blocked`/`Failed`/`Executing` (a status stuck out of sync mid-flight, not because the work finished) is out of scope for this MVP and would need its own `--tasks` shape.
 - **Per-task `--evidence` / `Implemented-by` stamping.** `task change-status --to=complete` stamps a structured `**Implemented-by:**` provenance field per task from `--commit`/`--repo`/`--branch`. Reconcile's `--evidence` is plan-level free text in `## Resolution` only; it does not stamp per-task provenance. Revisit if reconciled plans need the same machine-checkable provenance as normally-completed ones.
 

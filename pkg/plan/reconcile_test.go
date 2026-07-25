@@ -270,6 +270,141 @@ func TestReconcile_TaskMissingStatusLine_Refused(t *testing.T) {
 	}
 }
 
+// AC: failed-task-refused — --tasks=complete must never silently overwrite a
+// task recorded as failed; the error names the task number and its status.
+func TestReconcile_FailedTask_RefusedWithoutForceTasks(t *testing.T) {
+	root, path := stageReconcilePlan(t, "auth", "Approved", "complete", "failed")
+	before, _ := os.ReadFile(path)
+
+	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "Task 2 (failed)") {
+		t.Errorf("expected message to name Task 2 (failed), got: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "--force-tasks=2") {
+		t.Errorf("expected message to suggest --force-tasks=2, got: %q", err.Error())
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Errorf("plan must be unchanged on refusal:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+// AC: aborted-task-refused — same guard for the aborted terminal status.
+func TestReconcile_AbortedTask_RefusedWithoutForceTasks(t *testing.T) {
+	root, _ := stageReconcilePlan(t, "auth", "Approved", "aborted")
+	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "Task 1 (aborted)") {
+		t.Errorf("expected message to name Task 1 (aborted), got: %q", err.Error())
+	}
+}
+
+// AC: multiple-terminal-tasks-all-named — the refusal names every offending
+// task, not just the first.
+func TestReconcile_MultipleTerminalTasks_AllNamed(t *testing.T) {
+	root, _ := stageReconcilePlan(t, "auth", "Approved", "failed", "planning", "aborted")
+	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	for _, want := range []string{"Task 1 (failed)", "Task 3 (aborted)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected message to name %q, got: %q", want, err.Error())
+		}
+	}
+	if strings.Contains(err.Error(), "Task 2") {
+		t.Errorf("planning task must not be named as a blocker: %q", err.Error())
+	}
+}
+
+// AC: blocked-task-not-guarded — a blocked task needs no acknowledgement; it
+// is not a terminal claim (REQ: leave blocked as-is).
+func TestReconcile_BlockedTask_NoGuardNeeded(t *testing.T) {
+	root, _ := stageReconcilePlan(t, "auth", "Approved", "blocked")
+	res, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(res.Overrides) != 0 {
+		t.Errorf("blocked task must not be treated as an override: %+v", res.Overrides)
+	}
+}
+
+// AC: force-tasks-override-succeeds — naming the failed task's number via
+// ForceTasks lets reconcile proceed, and the override is reported both in the
+// result and, itemized by number and prior status, in the Resolution
+// paragraph — never folded silently into the aggregate count alone.
+func TestReconcile_ForceTasks_OverrideSucceeds(t *testing.T) {
+	root, path := stageReconcilePlan(t, "auth", "Approved", "complete", "failed", "aborted")
+	res, err := Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "both actually landed on retry",
+		ForceTasks: []int{2, 3}, PostMutation: okHook,
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.TasksReconciled != 2 {
+		t.Errorf("TasksReconciled = %d, want 2", res.TasksReconciled)
+	}
+	if len(res.Overrides) != 2 {
+		t.Fatalf("Overrides = %+v, want 2 entries", res.Overrides)
+	}
+	if res.Overrides[0].Number != 2 || res.Overrides[0].From != StatusFailed {
+		t.Errorf("Overrides[0] = %+v, want {2 failed}", res.Overrides[0])
+	}
+	if res.Overrides[1].Number != 3 || res.Overrides[1].From != StatusAborted {
+		t.Errorf("Overrides[1] = %+v, want {3 aborted}", res.Overrides[1])
+	}
+
+	body, _ := os.ReadFile(path)
+	s := string(body)
+	if strings.Count(s, "**Status:** complete") != 3 {
+		t.Errorf("expected all 3 tasks complete:\n%s", s)
+	}
+	if !strings.Contains(s, "**Overridden from a terminal failure state via --force-tasks:** Task 2 (was failed), Task 3 (was aborted).") {
+		t.Errorf("Resolution must itemize the overridden tasks by number and prior status:\n%s", s)
+	}
+}
+
+// AC: force-tasks-partial-ack — naming only SOME of the failed/aborted tasks
+// still blocks on the un-acknowledged one.
+func TestReconcile_ForceTasks_PartialAcknowledgement_StillBlocked(t *testing.T) {
+	root, _ := stageReconcilePlan(t, "auth", "Approved", "failed", "aborted")
+	_, err := Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "only task 1 actually landed",
+		ForceTasks: []int{1}, PostMutation: okHook,
+	})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "Task 2 (aborted)") {
+		t.Errorf("expected message to still name Task 2 (aborted), got: %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "Task 1") {
+		t.Errorf("acknowledged Task 1 must not be named as a blocker: %q", err.Error())
+	}
+}
+
+// AC: force-tasks-irrelevant-numbers-are-harmless — a --force-tasks entry
+// that does not correspond to a failed/aborted task is a no-op, not an error.
+func TestReconcile_ForceTasks_IrrelevantNumberIsHarmless(t *testing.T) {
+	root, _ := stageReconcilePlan(t, "auth", "Approved", "planning")
+	res, err := Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "x", ForceTasks: []int{99}, PostMutation: okHook,
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(res.Overrides) != 0 {
+		t.Errorf("expected no overrides for an irrelevant --force-tasks number, got %+v", res.Overrides)
+	}
+}
+
 // AC: re-run-refused — running reconcile again on an already-reconciled plan
 // is a no-op refusal (exit 4), not a silent success.
 func TestReconcile_ReRun_Refused(t *testing.T) {

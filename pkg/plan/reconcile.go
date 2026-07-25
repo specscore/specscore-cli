@@ -16,7 +16,10 @@
 // header marker plus a dated, clearly-labeled `## Resolution` paragraph are
 // written every time, and a caller-supplied --note justification is
 // mandatory. There is no silent-bypass path: every field this function
-// requires is enforced before any byte is written.
+// requires is enforced before any byte is written. A task recorded as failed
+// or aborted is never swept into "every task" by default either — --tasks=complete
+// refuses to touch it unless the caller names its number via ForceTasks, and
+// every such override is itemized (not just aggregated) in the record.
 //
 // Cross-references:
 //
@@ -29,6 +32,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,10 +83,31 @@ type ReconcileOptions struct {
 	// paragraph as Note.
 	Evidence []string
 
+	// ForceTasks is the caller's explicit, per-task-number acknowledgement
+	// that a task recorded as failed or aborted should be overridden to
+	// complete anyway. --tasks=complete never silently force-completes a
+	// failed/aborted task: a task in either terminal state whose number does
+	// NOT appear here blocks the whole reconciliation (exit 4), naming the
+	// offending task numbers and their current statuses. Tasks named here
+	// that are NOT actually failed/aborted are harmless no-ops. Every task
+	// number that IS overridden this way is recorded — by number and prior
+	// status — in the `## Resolution` paragraph, never folded silently into
+	// the aggregate "N task(s) marked complete" count.
+	ForceTasks []int
+
 	// PostMutation is the post-rewrite hook (typically a spec-lint pass,
 	// which also syncs the frontmatter `status:` mirror and the plans
 	// index). Required; Reconcile returns exit 10 if nil.
 	PostMutation PostMutationHook
+}
+
+// TaskOverride names an embedded task whose recorded terminal failure state
+// (failed or aborted) was overridden to complete via --force-tasks, and what
+// it was before. Reconcile never invents these silently — a TaskOverride only
+// exists because the caller named that exact task number.
+type TaskOverride struct {
+	Number int
+	From   TaskStatus
 }
 
 // ReconcileResult is the success payload returned on exit 0.
@@ -97,8 +122,13 @@ type ReconcileResult struct {
 	To lifecycle.Status
 	// TasksReconciled is the count of embedded tasks whose **Status:** line
 	// was actually rewritten (tasks already at the target status are left
-	// byte-untouched and do not count).
+	// byte-untouched and do not count). This INCLUDES any tasks named in
+	// Overrides — they are both counted here and itemized there.
 	TasksReconciled int
+	// Overrides lists every task whose failed/aborted status was overridden
+	// via --force-tasks, by number and prior status. Empty when no task was
+	// in a terminal failure state (the common case).
+	Overrides []TaskOverride
 }
 
 // Reconcile performs a Plan-kind out-of-band status correction end-to-end.
@@ -111,7 +141,10 @@ type ReconcileResult struct {
 //  2. Parse the plan and reject artifact shapes reconcile cannot handle: a
 //     terminal disposition status (Rejected/Withdrawn/Superseded/Deprecated —
 //     no resurrection via this verb), zero embedded tasks, or any task
-//     missing an explicit **Status:** line. Each exits 4.
+//     missing an explicit **Status:** line. Each exits 4. A task recorded as
+//     failed or aborted is ALSO refused unless its number appears in
+//     ForceTasks — --tasks=complete never silently force-completes a
+//     recorded failure (exit 4, naming the offending tasks and statuses).
 //  3. Compute the hypothetical all-complete task rollup and its derived
 //     execution band. If nothing would actually change — every task is
 //     already complete AND the plan is already at the derived band — exit 4
@@ -181,6 +214,43 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		}
 	}
 
+	// A task recorded as failed or aborted is a deliberate, meaningful claim
+	// — reconcile must never silently overwrite it just because --tasks=complete
+	// asked for "every" task. Only a task number the caller explicitly named
+	// via ForceTasks may be overridden; every other failed/aborted task blocks
+	// the whole reconciliation. `blocked` are refused; `overrides` are the
+	// ones the caller acknowledged, itemized (never just aggregated) in the
+	// Resolution paragraph below. Blocked is deliberately excluded from this
+	// guard — it has outgoing arcs in the task state machine and is not a
+	// terminal claim, so completing it is not the same category of override.
+	forceSet := make(map[int]bool, len(opts.ForceTasks))
+	for _, n := range opts.ForceTasks {
+		forceSet[n] = true
+	}
+	var blocked []Task
+	var overrides []TaskOverride
+	for _, t := range p.Tasks {
+		if t.Status != StatusFailed && t.Status != StatusAborted {
+			continue
+		}
+		if forceSet[t.Number] {
+			overrides = append(overrides, TaskOverride{Number: t.Number, From: t.Status})
+			continue
+		}
+		blocked = append(blocked, t)
+	}
+	if len(blocked) > 0 {
+		descs := make([]string, len(blocked))
+		nums := make([]string, len(blocked))
+		for i, t := range blocked {
+			descs[i] = fmt.Sprintf("Task %d (%s)", t.Number, string(t.Status))
+			nums[i] = strconv.Itoa(t.Number)
+		}
+		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+			"plan %q has task(s) recorded as failed/aborted that --tasks=complete would silently overwrite: %s; pass --force-tasks=%s to explicitly acknowledge overriding these specific task(s)",
+			opts.Slug, strings.Join(descs, ", "), strings.Join(nums, ","))
+	}
+
 	hypothetical := make([]Task, len(p.Tasks))
 	copy(hypothetical, p.Tasks)
 	changedTasks := 0
@@ -218,7 +288,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing plan: %v", err)
 	}
 
-	noteText := reconcileNoteText(from, to, changedTasks, opts.Note, opts.Evidence)
+	noteText := reconcileNoteText(from, to, changedTasks, opts.Note, opts.Evidence, overrides)
 	if _, _, err := appendNoteFn(flatPath, noteText); err != nil {
 		rollback()
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
@@ -229,7 +299,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, err
 	}
 
-	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks}, nil
+	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides}, nil
 }
 
 // insertReconciledMarkerIfAbsent inserts a `**Reconciled:** <date>` header
@@ -256,14 +326,22 @@ func insertReconciledMarkerIfAbsent(lines []string, statusIdx int, date string) 
 // reconcileNoteText composes the `## Resolution` paragraph written by a
 // reconciliation: a fixed preamble that names the jump explicitly (so a
 // reader can never mistake this for a normal, one-arc-at-a-time
-// change-status transition), the caller's own justification, and — when
-// supplied — the evidence references.
-func reconcileNoteText(from, to lifecycle.Status, tasksReconciled int, note string, evidence []string) string {
+// change-status transition), the caller's own justification, any
+// --force-tasks overrides (named individually — NEVER folded silently into
+// the aggregate count), and — when supplied — the evidence references.
+func reconcileNoteText(from, to lifecycle.Status, tasksReconciled int, note string, evidence []string, overrides []TaskOverride) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"**Reconciled %s → %s outside the tracked `change-status` flow** (%d task(s) marked complete to match delivered code; this did not walk the legal-transition matrix).\n\n",
 		string(from), string(to), tasksReconciled)
 	b.WriteString(strings.TrimSpace(note))
+	if len(overrides) > 0 {
+		parts := make([]string, len(overrides))
+		for i, o := range overrides {
+			parts[i] = fmt.Sprintf("Task %d (was %s)", o.Number, string(o.From))
+		}
+		b.WriteString("\n\n**Overridden from a terminal failure state via --force-tasks:** " + strings.Join(parts, ", ") + ".")
+	}
 	if len(evidence) > 0 {
 		b.WriteString("\n\nEvidence: " + strings.Join(evidence, ", "))
 	}

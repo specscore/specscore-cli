@@ -170,6 +170,8 @@ func TestPlanReconcile_ArgErrors_CLI(t *testing.T) {
 		{"missing-tasks", []string{"reconcile", "auth", "--note", "x"}, exitcode.InvalidArgs},
 		{"unrecognized-tasks", []string{"reconcile", "auth", "--tasks=some", "--note", "x"}, exitcode.InvalidArgs},
 		{"missing-note", []string{"reconcile", "auth", "--tasks=complete"}, exitcode.InvalidArgs},
+		{"bad-force-tasks", []string{"reconcile", "auth", "--tasks=complete", "--note", "x", "--force-tasks=abc"}, exitcode.InvalidArgs},
+		{"negative-force-tasks", []string{"reconcile", "auth", "--tasks=complete", "--note", "x", "--force-tasks=-1"}, exitcode.InvalidArgs},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,6 +189,53 @@ func TestPlanReconcile_TasksFlagCaseInsensitive_CLI(t *testing.T) {
 	_, stderr, err := runPlan(t, "reconcile", "auth", "--tasks=COMPLETE", "--note", "x")
 	if err != nil {
 		t.Fatalf("reconcile: %v (stderr=%s)", err, stderr)
+	}
+}
+
+// AC: a task recorded as failed is never silently force-completed; the
+// refusal names the task number and its status. Staged at Draft (not
+// Approved) because Approved is P-007 derivation-eligible: the fixture
+// helper's own lint --fix pass would otherwise re-derive the body status to
+// Failed before reconcile even runs, given a task already at failed.
+func TestPlanReconcile_FailedTask_Refused_CLI(t *testing.T) {
+	stageReconcilablePlan(t, "auth", "Draft", "complete", "failed")
+	_, stderr, err := runPlan(t, "reconcile", "auth", "--tasks=complete", "--note", "x")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "Task 2 (failed)") && !strings.Contains(stderr, "Task 2 (failed)") {
+		t.Errorf("expected error to name Task 2 (failed), got err=%q stderr=%q", err, stderr)
+	}
+}
+
+// AC: --force-tasks acknowledges the override end-to-end through the CLI:
+// the command succeeds, the stdout line discloses the forced task, and
+// spec lint still passes on the result. Staged at Draft for the same reason
+// as FailedTask_Refused_CLI above.
+func TestPlanReconcile_ForceTasks_OverrideSucceeds_CLI(t *testing.T) {
+	root := stageReconcilablePlan(t, "auth", "Draft", "complete", "failed")
+	stdout, stderr, err := runPlan(t, "reconcile", "auth", "--tasks=complete",
+		"--note", "task 2 actually landed on retry", "--force-tasks=2")
+	if err != nil {
+		t.Fatalf("reconcile: %v (stderr=%s)", err, stderr)
+	}
+	if want := "auth: Draft → Implemented (reconciled, 1 task(s) marked complete, including 1 forced from a terminal state: Task 2 was failed)\n"; stdout != want {
+		t.Errorf("stdout = %q; want %q", stdout, want)
+	}
+
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	if !strings.Contains(string(body), "Overridden from a terminal failure state via --force-tasks:** Task 2 (was failed)") {
+		t.Errorf("Resolution must itemize the override:\n%s", body)
+	}
+
+	vs, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
+	if err != nil {
+		t.Fatalf("lint: %v", err)
+	}
+	for _, v := range vs {
+		if v.Severity == "error" {
+			t.Errorf("unexpected lint error after reconcile with override: %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message)
+		}
 	}
 }
 

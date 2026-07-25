@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -44,10 +45,18 @@ explaining why the record is being corrected. --evidence is optional — a
 comma-separated list of commit SHAs, PR URLs, or file paths backing the
 claim — and is recorded alongside --note when supplied.
 
+A task recorded as failed or aborted is NEVER silently swept into "every
+task": --tasks=complete refuses (exit 4) to touch it unless its number is
+named via --force-tasks=<n>[,<n>...], and every task overridden this way is
+itemized by number and prior status in the ` + "`## Resolution`" + ` paragraph,
+not just folded into the aggregate count. A blocked task has no such
+guard — it is not a terminal claim, so completing it needs no acknowledgement.
+
 Reconcile refuses (exit 4) when: the plan has no embedded tasks; any task is
-missing an explicit **Status:** line; the plan is in a terminal disposition
-status (Rejected/Withdrawn/Superseded/Deprecated — reconcile does not
-resurrect those); the plan uses the directory form (spec/plans/<slug>/README.md,
+missing an explicit **Status:** line; a task is failed/aborted and not named
+in --force-tasks; the plan is in a terminal disposition status
+(Rejected/Withdrawn/Superseded/Deprecated — reconcile does not resurrect
+those); the plan uses the directory form (spec/plans/<slug>/README.md,
 unsupported by this verb); or nothing would actually change — the plan is
 already reconciled, so re-running is a no-op refusal rather than a silent
 success.
@@ -56,6 +65,7 @@ Examples:
 
   specscore plan reconcile auth --tasks=complete --note "implemented directly during the incident; tracked flow was skipped"
   specscore plan reconcile auth --tasks=complete --note "shipped ahead of the record" --evidence a1b2c3d,https://github.com/org/repo/pull/42
+  specscore plan reconcile auth --tasks=complete --note "task 3 actually landed after all, on a later attempt" --force-tasks=3
 `,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
@@ -65,6 +75,7 @@ Examples:
 	cmd.Flags().String("tasks", "", "which embedded tasks to reconcile (required). Only supported value: complete")
 	cmd.Flags().String("note", "", "required justification for the reconciliation; written to a ## Resolution section")
 	cmd.Flags().String("evidence", "", "optional comma-separated commit SHAs / PR URLs / file paths backing the reconciliation")
+	cmd.Flags().String("force-tasks", "", "comma-separated task numbers to explicitly acknowledge overriding from failed/aborted to complete; required only when such tasks exist")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	return cmd
 }
@@ -107,6 +118,21 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	forceTasksRaw, _ := cmd.Flags().GetString("force-tasks")
+	var forceTasks []int
+	for _, tok := range strings.Split(forceTasksRaw, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		n, convErr := strconv.Atoi(tok)
+		if convErr != nil || n <= 0 {
+			return exitcode.InvalidArgsErrorf(
+				"invalid --force-tasks value %q: must be a comma-separated list of positive task numbers", tok)
+		}
+		forceTasks = append(forceTasks, n)
+	}
+
 	projectFlag, _ := cmd.Flags().GetString("project")
 	specRoot, err := resolveSpecRoot(projectFlag)
 	if err != nil {
@@ -118,13 +144,23 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		Slug:         slug,
 		Note:         note,
 		Evidence:     evidence,
+		ForceTasks:   forceTasks,
 		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
 	})
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s (reconciled, %d task(s) marked complete)\n",
+	msg := fmt.Sprintf("%s: %s → %s (reconciled, %d task(s) marked complete",
 		result.Slug, string(result.From), string(result.To), result.TasksReconciled)
+	if len(result.Overrides) > 0 {
+		parts := make([]string, len(result.Overrides))
+		for i, o := range result.Overrides {
+			parts[i] = fmt.Sprintf("Task %d was %s", o.Number, string(o.From))
+		}
+		msg += fmt.Sprintf(", including %d forced from a terminal state: %s", len(result.Overrides), strings.Join(parts, "; "))
+	}
+	msg += ")\n"
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), msg)
 	return nil
 }
