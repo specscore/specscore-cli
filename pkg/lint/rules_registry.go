@@ -204,6 +204,12 @@ var builtinRules = []Rule{
 	{ID: "property-required-sections", Family: "property", Severity: "error", Description: "Requires every mandatory property body section to be present."},
 	{ID: "property-referenced-by-managed", Family: "property", Severity: "error", Description: "Requires the property Referenced by section to be managed."},
 
+	// Lesson lint rules.
+	{ID: "L-001", Family: "lesson", Severity: "error", Description: "Requires every Lesson body to declare its four required sections (Incident, Process gap, Check, Enforcement); checks presence only, never content."},
+	{ID: "L-002", Family: "lesson", Severity: "error", Description: "Requires a Lesson's body **Status:** value to be one of the canonical enforcement-ladder statuses (Recorded, Stated, Enforced, Withdrawn, Superseded)."},
+	{ID: "L-003", Family: "lesson", Severity: "error", Description: "Requires the lessons index to list every lesson; --fix inserts missing rows."},
+	{ID: "L-004", Family: "lesson", Severity: "error", Description: "Requires each lessons index row's Status/Recurred/Date/Owner cells to mirror the corresponding Lesson file; --fix regenerates drifted rows."},
+
 	// Entity lint rules.
 	{ID: "entity-location", Family: "entity", Severity: "error", Description: "Requires entity files to live in the expected location."},
 	{ID: "entity-slug-format", Family: "entity", Severity: "error", Description: "Requires entity filenames to use kebab-case slugs."},

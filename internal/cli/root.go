@@ -53,6 +53,7 @@ func newRootCommand() *cobra.Command {
 		entityCommand(),
 		featureCommand(),
 		graphCommand(),
+		lessonCommand(),
 		planCommand(),
 		propertyCommand(),
 		rehearseCommand(),

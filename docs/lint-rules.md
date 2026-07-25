@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 151
+Total rules: 155
 
 ## capability
 
@@ -199,6 +199,15 @@ Total rules: 151
 | I-013 | error | Requires issue cross-references to resolve. |
 | I-014 | error | Requires the issue index to list every issue. |
 | I-015 | error | Requires the issue body to contain its mandatory sections. |
+
+## lesson
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| L-001 | error | Requires every Lesson body to declare its four required sections (Incident, Process gap, Check, Enforcement); checks presence only, never content. |
+| L-002 | error | Requires a Lesson's body **Status:** value to be one of the canonical enforcement-ladder statuses (Recorded, Stated, Enforced, Withdrawn, Superseded). |
+| L-003 | error | Requires the lessons index to list every lesson; --fix inserts missing rows. |
+| L-004 | error | Requires each lessons index row's Status/Recurred/Date/Owner cells to mirror the corresponding Lesson file; --fix regenerates drifted rows. |
 
 ## plan
 

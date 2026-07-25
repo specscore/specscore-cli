@@ -329,6 +329,29 @@ None at this time.
 `
 }
 
+func lessonsIndexContent(_ projectdef.SpecConfig) string {
+	return `---
+format: https://specscore.md/lessons-index-specification
+---
+
+# Lessons
+
+Canonical index of all lessons in this repository. Each lesson is a single Markdown file under ` + "`spec/lessons/`" + ` recording a gap in process — a missing check, gate, convention, or review step — and the enforcement mechanism that closes it. Ask "what have we learned but not yet enforced?" with ` + "`specscore lesson list --status=recorded`" + `.
+
+## Index
+
+| Lesson | Status | Recurred | Date | Owner |
+|---|---|---|---|---|
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/lessons-index-specification*
+`
+}
+
 func decisionsIndexContent(_ projectdef.SpecConfig) string {
 	return `---
 format: https://specscore.md/decisions-index-specification
