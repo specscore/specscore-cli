@@ -64,7 +64,7 @@ The verb MUST accept only the human-authored `(from, to)` pairs in the matrix ab
 
 #### REQ: execution-band-not-settable
 
-The execution-band statuses (`Executing`, `Blocked`, `Implemented`, `Failed`) are recognized Plan statuses but are **lint-derived**, not human-settable. Passing one as `--to` MUST exit `2` (InvalidArgs) BEFORE state-machine validation, with a stderr message stating the value is a lint-derived execution-band status set by `specscore spec lint --fix` from the task rollup, not via `change-status`. This is the verb-level guard that keeps the authority handoff at `Approved` (canonical [plan#req:execution-status-derived](https://specscore.md/plan-specification)).
+The execution-band statuses (`Executing`, `Blocked`, `Implemented`, `Failed`) are recognized Plan statuses but are **lint-derived**, not human-settable. Passing one as `--to` MUST exit `2` (InvalidArgs) BEFORE state-machine validation, with a stderr message stating the value is a lint-derived execution-band status set by `specscore spec lint --fix` from the task rollup, not via `change-status`, and naming [`specscore plan reconcile`](../reconcile/README.md) as the corrective path when the work was actually delivered outside the tracked flow. This is the verb-level guard that keeps the authority handoff at `Approved` (canonical [plan#req:execution-status-derived](https://specscore.md/plan-specification)).
 
 #### REQ: target-status-flag
 
@@ -118,6 +118,7 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies; this verb declares no relocation side effect and consumes the `reason-required-transitions` mechanism for `Withdrawn`/`Superseded`. |
 | [`cli/feature/change-status`](../../feature/change-status/README.md) | Closest sibling — also a flat, relocation-free `change-status`. Mirrors its structure and its index-sync coupling. |
 | [`cli/idea/change-status`](../../idea/change-status/README.md) | Sibling verb for the Idea kind (which DOES relocate on archive). |
+| [`cli/plan/reconcile`](../reconcile/README.md) | Deliberately separate verb for the out-of-band correction path: when work was delivered outside the tracked flow, this verb's execution-band-rejection error points there instead of letting a caller hand-edit the file. |
 | [plan (CLI group)](../README.md) | Parent group (`info`/`list`/`new`); this adds the lifecycle verb. |
 | [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rule P-007 derives the execution band that this verb refuses to set. |
 | [plan (upstream Feature)](https://specscore.md/plan-specification) | The canonical lifecycle: `status-transitions`, `valid-statuses`, `execution-status-derived`, and `status-rollup` are the source of truth this verb realizes for the human band. |
@@ -158,7 +159,7 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 
 **Given** `spec/plans/auth.md` in `**Status:** Approved`
 **When** the user runs `specscore plan change-status auth --to=executing` (or `blocked`, `implemented`, `failed`)
-**Then** the command exits `2` BEFORE any state-machine check, with a stderr message stating the value is a lint-derived execution-band status set by `specscore spec lint --fix`, not via `change-status`. The plan is unchanged.
+**Then** the command exits `2` BEFORE any state-machine check, with a stderr message stating the value is a lint-derived execution-band status set by `specscore spec lint --fix`, not via `change-status`, and naming `specscore plan reconcile` as the path for recording work already delivered outside the tracked flow. The plan is unchanged.
 
 ### AC: withdrawn-requires-reason
 

@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore plan` commands work with Plan artifacts in `spec/plans/` — listing them, inspecting one plan's metadata and task rollup, scaffolding a new plan, and transitioning a plan's lifecycle status — so agents and humans can answer "what plans exist and what status do they hold?", create new ones, and advance them through one stable entry point. The `list` and `info` subcommands are read-only; `new` scaffolds a fresh plan; `change-status` transitions an existing plan's `**Status:**` without creating one.
+`specscore plan` commands work with Plan artifacts in `spec/plans/` — listing them, inspecting one plan's metadata and task rollup, scaffolding a new plan, transitioning a plan's lifecycle status, and correcting the record when work landed outside the tracked flow — so agents and humans can answer "what plans exist and what status do they hold?", create new ones, advance them through one stable entry point, and fix the record when it fell behind reality. The `list` and `info` subcommands are read-only; `new` scaffolds a fresh plan; `change-status` transitions an existing plan's `**Status:**` without creating one; `reconcile` corrects an existing plan's `**Status:**` (and its embedded tasks') out of band, when `change-status`'s legal-transition matrix cannot reach where the work actually already is.
 
 ## Contents
 
@@ -24,6 +24,7 @@ status: Approved
 | [info](info/README.md) | Metadata and task rollup for a single plan |
 | [new](new/README.md) | Scaffold a lint-clean plan (body + `format:`/`status:` frontmatter) against a Source Feature or Idea |
 | [change-status](change-status/README.md) | Transition a plan's `**Status:**` through the human-authored prep band and dispositions |
+| [reconcile](reconcile/README.md) | Correct a plan's `**Status:**` and embedded task statuses to match work delivered outside the tracked flow — evidence-gated, never a silent bypass |
 
 ## Problem
 
@@ -37,11 +38,11 @@ The `plan` group is additive. Its query verbs introduce no changes to how plans 
 
 #### REQ: subcommands
 
-`specscore plan` MUST expose the `list`, `info`, and `new` subcommands. Invoking `specscore plan` with no subcommand MUST print the group help and exit `0` (not error as an unknown command).
+`specscore plan` MUST expose the `list`, `info`, `new`, `change-status`, and `reconcile` subcommands. Invoking `specscore plan` with no subcommand MUST print the group help and exit `0` (not error as an unknown command).
 
 #### REQ: mutation-scope
 
-The `list` and `info` subcommands MUST NOT create, edit, or transition plan files — they read `spec/plans/*.md` only. The `new` subcommand (see [new](new/README.md)) MAY create a new plan file but MUST NOT edit or transition existing plans. The `change-status` subcommand (see [change-status](change-status/README.md)) is the group's only verb that transitions a plan's lifecycle status, and it never creates a plan.
+The `list` and `info` subcommands MUST NOT create, edit, or transition plan files — they read `spec/plans/*.md` only. The `new` subcommand (see [new](new/README.md)) MAY create a new plan file but MUST NOT edit or transition existing plans. The `change-status` subcommand (see [change-status](change-status/README.md)) transitions a plan's lifecycle status through the legal-transition matrix; the `reconcile` subcommand (see [reconcile](reconcile/README.md)) corrects a plan's status and embedded task statuses OUTSIDE that matrix, for work already delivered but never recorded. Neither `change-status` nor `reconcile` ever creates a plan.
 
 ### Shared flags
 
@@ -84,7 +85,7 @@ The reported status of a plan MUST be the literal value of its `**Status:**` lin
 
 **Given** a project with a `spec/plans/` directory
 **When** the user runs `specscore plan`
-**Then** the group help is printed listing `list`, `info`, and `new`, and the command exits `0`.
+**Then** the group help is printed listing `list`, `info`, `new`, `change-status`, and `reconcile`, and the command exits `0`.
 
 ### AC: invalid-format-rejected (verifies REQ:format-selection)
 
