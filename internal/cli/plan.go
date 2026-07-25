@@ -28,6 +28,7 @@ func planCommand() *cobra.Command {
 		planInfoCommand(),
 		planNewCommand(),
 		planChangeStatusCommand(),
+		planReconcileCommand(),
 	)
 	return cmd
 }
@@ -52,7 +53,11 @@ below; illegal (from, to) pairs exit 4. On success, the verb runs
 This verb owns only the human-authored transitions. The execution-band
 statuses (Executing, Blocked, Implemented, Failed) are derived by
 ` + "`specscore spec lint --fix`" + ` from the task-status rollup and cannot be
-set here — passing one as --to exits 2.
+set here — passing one as --to exits 2. If the plan was actually implemented
+outside the tracked flow (so the task rollup is already there but the record
+never caught up), use ` + "`specscore plan reconcile`" + ` instead — it corrects
+the record directly and marks the jump as a reconciliation rather than a
+normal transition.
 
 Both dispositions require a reason: --to=withdrawn and --to=superseded
 require --note. --to=superseded additionally requires --successor naming the
@@ -111,7 +116,8 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 	// KindPlan matrix), so no further target filtering is needed here.
 	if plan.IsExecutionBandStatus(to) {
 		return exitcode.InvalidArgsErrorf(
-			"%s is a lint-derived execution-band status; it is set by `specscore spec lint --fix` from task rollup, not via change-status",
+			"%s is a lint-derived execution-band status; it is set by `specscore spec lint --fix` from task rollup, not via change-status. "+
+				"If the work was actually delivered outside the tracked flow, use `specscore plan reconcile` to record it.",
 			string(to))
 	}
 
