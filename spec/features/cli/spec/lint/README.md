@@ -25,6 +25,7 @@ status: Approved
 | [feature-rules](feature-rules/README.md) | Adds feature-level lint rules to specscore spec lint — starting with feature-source-ideas-required, which enforces that every Feature carries a **Source Ideas:** line (with an explicit-empty sentinel) and backfills it via --fix. |
 | [legacy-status-autofix](legacy-status-autofix/README.md) | Idempotent --fix rewrites of a closed, documented set of legacy artifact status tokens (plan, decision, idea) to their canonical replacements; unknown/free-form values stay non-autofixable errors. |
 | [ac-heading-format](ac-heading-format/README.md) | Enforces the canonical Acceptance Criteria heading shape `### AC: <id>` (one space after the colon, kebab-case id) on Feature READMEs; --fix repairs whitespace-only deviations. A pre-existing `(verifies REQ:...)` trailing annotation is grandfathered as a second accepted form. |
+| [lesson-rules](lesson-rules/README.md) | Adds lint rules L-001-L-004 and the underlying Lesson parser to specscore spec lint |
 
 ## Synopsis
 

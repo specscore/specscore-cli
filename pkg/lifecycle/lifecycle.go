@@ -37,6 +37,7 @@ const (
 	KindFeature Kind = "feature"
 	KindPlan    Kind = "plan"
 	KindTask    Kind = "task"
+	KindLesson  Kind = "lesson"
 )
 
 // Status is a domain-scoped status value. The set of legal Status values is
@@ -102,6 +103,20 @@ const (
 	TaskComplete   Status = "complete"
 	TaskFailed     Status = "failed"
 	TaskAborted    Status = "aborted"
+)
+
+// Lesson statuses. A Lesson climbs the enforcement ladder — Recorded (Tier 0,
+// written down), Stated (Tier 1, loaded by an agent before acting), Enforced
+// (Tier 2, a machine refuses) — and may reach one of two terminal
+// dispositions at any rung: Withdrawn (turned out wrong / not applicable) or
+// Superseded (replaced by a newer lesson). The vocabulary deliberately
+// mirrors the Plan disposition set rather than inventing new terms.
+const (
+	LessonRecorded   Status = "Recorded"
+	LessonStated     Status = "Stated"
+	LessonEnforced   Status = "Enforced"
+	LessonWithdrawn  Status = "Withdrawn"
+	LessonSuperseded Status = "Superseded"
 )
 
 // ErrInvalidTransition is returned by Transition (and Validate) when the
@@ -229,6 +244,27 @@ var transitionMatrix = map[Kind][]transitionRow{
 
 		{From: TaskBlocked, To: TaskInProgress},
 		{From: TaskBlocked, To: TaskAborted},
+	},
+	// KindLesson: forward-only motion up the enforcement ladder
+	// (Recorded -> Stated -> Enforced), including a direct Recorded ->
+	// Enforced skip-ahead arc for a lesson that reaches a machine gate
+	// without ever passing through an advisory Stated stage. Both
+	// dispositions (Withdrawn, Superseded) are reachable from every rung —
+	// mirroring how Plan's dispositions are reachable from every one of its
+	// active statuses — so a lesson can be retired regardless of how far up
+	// the ladder it climbed.
+	KindLesson: {
+		{From: LessonRecorded, To: LessonStated},
+		{From: LessonRecorded, To: LessonEnforced},
+		{From: LessonStated, To: LessonEnforced},
+
+		{From: LessonRecorded, To: LessonWithdrawn},
+		{From: LessonStated, To: LessonWithdrawn},
+		{From: LessonEnforced, To: LessonWithdrawn},
+
+		{From: LessonRecorded, To: LessonSuperseded},
+		{From: LessonStated, To: LessonSuperseded},
+		{From: LessonEnforced, To: LessonSuperseded},
 	},
 }
 

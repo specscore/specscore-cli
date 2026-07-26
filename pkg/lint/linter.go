@@ -143,6 +143,13 @@ func newLinter(opts Options) *linter {
 		l.ruleSet[n] = ec
 	}
 
+	// Register lesson-rules checker under all rule IDs (L-001..L-004).
+	lc := newLessonRulesChecker()
+	lc.fixIndex = opts.fixRequested(lessonRuleIDs...)
+	for _, n := range lessonRuleIDs {
+		l.ruleSet[n] = lc
+	}
+
 	// Register custom checkers
 	for _, c := range customCheckers {
 		l.ruleSet[c.Name()] = &customCheckerAdapter{c}

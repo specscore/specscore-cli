@@ -1,0 +1,168 @@
+package cli
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lint"
+)
+
+func TestLessonRecur_HappyPath(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Stated")
+
+	stdout, stderr, err := runLesson(t, "recur", "kinder-fake", "--note", "happened again")
+	if err != nil {
+		t.Fatalf("lesson recur: %v (stderr=%s)", err, stderr)
+	}
+	if stdout != "kinder-fake: recurred 1\n" {
+		t.Errorf("stdout = %q", stdout)
+	}
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
+	if !strings.Contains(string(body), "**Recurred:** 1") || !strings.Contains(string(body), "happened again") {
+		t.Errorf("recurrence not recorded:\n%s", body)
+	}
+}
+
+func TestLessonRecur_NoNote(t *testing.T) {
+	stageLesson(t, "kinder-fake", "Stated")
+	stdout, _, err := runLesson(t, "recur", "kinder-fake")
+	if err != nil {
+		t.Fatalf("lesson recur: %v", err)
+	}
+	if stdout != "kinder-fake: recurred 1\n" {
+		t.Errorf("stdout = %q", stdout)
+	}
+}
+
+// TestLessonRecur_NoWarningOnActiveStatuses covers the non-terminal branch of
+// warnIfLessonRetired: Recorded, Stated, and Enforced are all legitimate
+// targets for a recurrence and must not print a warning.
+func TestLessonRecur_NoWarningOnActiveStatuses(t *testing.T) {
+	for _, status := range []string{"Recorded", "Stated", "Enforced"} {
+		t.Run(status, func(t *testing.T) {
+			stageLesson(t, "kinder-fake", status)
+			_, stderr, err := runLesson(t, "recur", "kinder-fake")
+			if err != nil {
+				t.Fatalf("lesson recur: %v", err)
+			}
+			if strings.Contains(stderr, "warning") {
+				t.Errorf("unexpected warning for status %q: %q", status, stderr)
+			}
+		})
+	}
+}
+
+// AC: a recurrence against a retired lesson (Withdrawn or Superseded) exits
+// 0 and still records the occurrence — the evidence is worth keeping — but
+// warns on stderr rather than succeeding silently, since it is evidence the
+// retirement itself was wrong.
+func TestLessonRecur_WarnsOnRetiredStatuses(t *testing.T) {
+	for _, status := range []string{"Withdrawn", "Superseded"} {
+		t.Run(status, func(t *testing.T) {
+			root := stageLesson(t, "kinder-fake", status)
+			stdout, stderr, err := runLesson(t, "recur", "kinder-fake", "--note", "happened again anyway")
+			if err != nil {
+				t.Fatalf("lesson recur: %v (stderr=%s)", err, stderr)
+			}
+			if stdout != "kinder-fake: recurred 1\n" {
+				t.Errorf("stdout = %q", stdout)
+			}
+			if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, status) {
+				t.Errorf("expected a warning naming %q, got stderr=%q", status, stderr)
+			}
+			body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
+			if !strings.Contains(string(body), "**Recurred:** 1") || !strings.Contains(string(body), "happened again anyway") {
+				t.Errorf("recurrence must still be recorded despite the warning:\n%s", body)
+			}
+		})
+	}
+}
+
+// TestLessonRecur_ParseError covers runLessonRecur's lesson.Parse error
+// branch via the lessonParseFn seam.
+func TestLessonRecur_ParseError(t *testing.T) {
+	stageLesson(t, "kinder-fake", "Stated")
+	orig := lessonParseFn
+	lessonParseFn = func(string) (*lesson.Lesson, error) {
+		return nil, errors.New("parse boom")
+	}
+	t.Cleanup(func() { lessonParseFn = orig })
+
+	_, _, err := runLesson(t, "recur", "kinder-fake")
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	}
+}
+
+func TestLessonRecur_MissingSlugExits2(t *testing.T) {
+	setupLessonsSpec(t)
+	_, _, err := runLesson(t, "recur")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
+	}
+}
+
+func TestLessonRecur_TooManyArgsExits2(t *testing.T) {
+	setupLessonsSpec(t)
+	_, _, err := runLesson(t, "recur", "a", "b")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
+	}
+}
+
+func TestLessonRecur_InvalidSlugExits2(t *testing.T) {
+	setupLessonsSpec(t)
+	_, _, err := runLesson(t, "recur", "Bad_Slug")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
+	}
+}
+
+func TestLessonRecur_ProjectResolveError(t *testing.T) {
+	bare := t.TempDir()
+	_, _, err := runLesson(t, "recur", "kinder-fake", "--project", bare)
+	if err == nil {
+		t.Fatal("expected resolveSpecRoot error, got nil")
+	}
+}
+
+func TestLessonRecur_NotFoundExits3(t *testing.T) {
+	setupLessonsSpec(t)
+	_, _, err := runLesson(t, "recur", "ghost")
+	if got := exitCodeOfErr(err); got != exitcode.NotFound {
+		t.Errorf("exit = %d, want %d", got, exitcode.NotFound)
+	}
+}
+
+func TestLessonRecur_RecurFnFails(t *testing.T) {
+	stageLesson(t, "kinder-fake", "Stated")
+	orig := lessonRecurFn
+	lessonRecurFn = func(string, string) (int, error) {
+		return 0, errors.New("boom")
+	}
+	t.Cleanup(func() { lessonRecurFn = orig })
+
+	_, _, err := runLesson(t, "recur", "kinder-fake")
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	}
+}
+
+func TestLessonRecur_LintFixFails(t *testing.T) {
+	stageLesson(t, "kinder-fake", "Stated")
+	orig := lintLintFn
+	lintLintFn = func(lint.Options) ([]lint.Violation, error) {
+		return nil, errors.New("fix boom")
+	}
+	t.Cleanup(func() { lintLintFn = orig })
+
+	_, _, err := runLesson(t, "recur", "kinder-fake")
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	}
+}

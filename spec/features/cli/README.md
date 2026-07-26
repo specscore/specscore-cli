@@ -66,6 +66,10 @@ Scaffolds Idea artifacts at `spec/ideas/<slug>.md` and hosts lifecycle verbs (`i
 
 Manages Issue artifacts — reported observations of broken behavior. `issue new` scaffolds a lint-clean Issue skeleton at `spec/issues/<slug>.md` or Feature-scoped at `spec/features/<feature>/issues/<slug>.md`. `issue change-status` transitions an issue through its lifecycle (`open → investigating → resolved|rejected`) with severity and rejection-reason gating. `issue list` aggregates issues from both locations with status, severity, and Feature filters. Lifecycle verbs follow the [lifecycle-transitions](lifecycle-transitions/README.md) shared contract.
 
+### lesson
+
+Records and queries process-gap lessons — `spec/lessons/<slug>.md` files climbing a three-rung enforcement ladder (`Recorded` → `Stated` → `Enforced`) or retired via `Withdrawn`/`Superseded`. `lesson new` scaffolds a lint-clean skeleton with its four required sections (`Incident`, `Process gap`, `Check`, `Enforcement`); `lesson list --status=recorded` answers "what have we learned but not yet enforced?" in one command; `lesson recur` records that a gap manifested again without itself changing status. `change-status` follows the [lifecycle-transitions](lifecycle-transitions/README.md) shared contract.
+
 ### proposal
 
 Convenience alias group for change-request Ideas. `proposal new <feature-slug> <slug>` delegates to `idea new <slug> --type change-request --targets <feature-slug>`. All `idea new` flags are forwarded.
@@ -99,6 +103,7 @@ Reports the CLI's build identity. `specscore version` prints the full human-read
 | [sidekick](sidekick/README.md) | Scaffold sidekick-seed artifacts |
 | [studio](studio/README.md) | Command group for SpecScore Studio: index, facts (Phase 0); ask, serve, mcp (later features). Design: specstudio-skills/spec/research/studio-design-2026-07/. |
 | [rehearse](rehearse/README.md) | Command group for the Rehearse acceptance-evidence layer (v0.3 fold-in per rehearse repo spec/ideas/rehearse-evidence-layer.md). |
+| [lesson](lesson/README.md) | Record and query process-gap lessons — what we learned but not yet enforced |
 
 ## Behavior
 

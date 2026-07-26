@@ -159,7 +159,8 @@ func (c *indexEntriesChecker) fix(specRoot string) error {
 		var actualChildren []string
 		actualSet := make(map[string]bool)
 		for _, e := range entries {
-			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || strings.HasPrefix(e.Name(), "_") {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || strings.HasPrefix(e.Name(), "_") ||
+				e.Name() == reservedFeatureSubtree {
 				continue
 			}
 			if _, err := os.Stat(filepath.Join(path, e.Name(), "README.md")); err != nil {
