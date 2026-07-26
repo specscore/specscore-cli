@@ -1,17 +1,17 @@
 ---
 format: https://specscore.md/feature-specification
-status: Draft
+status: Approved
 ---
 
 # Feature: Lesson Recur
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/recur?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/recur?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/recur?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/recur?op=request-change) |
-**Status:** Draft
+**Status:** Approved
 **Source Ideas:** —
 
 ## Summary
 
-`specscore lesson recur <slug> [--note <text>]` records that a lesson's process gap manifested again: it increments the lesson's `**Recurred:** N` header count and appends a dated entry (with the optional note) to a `## Recurrences` section. It does NOT change `**Status:**` — a recurrence is a signal that a lesson needs to graduate, not a graduation itself.
+`specscore lesson recur <slug> [--note <text>]` records that a lesson's process gap manifested again: it increments the lesson's `**Recurred:** N` header count and appends a dated entry (with the optional note) to a `## Recurrences` section. It does NOT change `**Status:**` — a recurrence is a signal that a lesson needs to graduate, not a graduation itself. A recurrence against a lesson already retired (`Withdrawn` or `Superseded`) is evidence the retirement itself was wrong; the verb still records it and exits `0` — the evidence is worth keeping — but prints a warning to stderr rather than succeeding silently.
 
 ## Synopsis
 
@@ -38,6 +38,12 @@ The verb MUST append a dated bullet — `- <YYYY-MM-DD>` plus the `--note` text 
 #### REQ: recur-does-not-change-status
 
 The verb MUST NOT modify `**Status:**`. Acting on a recurrence (promoting the lesson up the ladder) is a separate, deliberate `change-status` call.
+
+### Retired-lesson guard
+
+#### REQ: recur-warns-on-retired-status
+
+When the target lesson's `**Status:**` is a terminal disposition (`Withdrawn` or `Superseded` — a recognized status with no legal outgoing transition), the verb MUST print a warning to stderr naming the slug and its status, stating that a recurrence against a retired lesson suggests the retirement should be revisited. The verb MUST still record the recurrence (increment the count, append the entry) and exit `0` — the recurrence is itself evidence worth keeping, and this verb never blocks on it. A non-terminal status (`Recorded`, `Stated`, `Enforced`) MUST NOT produce this warning. An unrecognized or absent `**Status:**` value MUST NOT produce this warning either — status vocabulary validity is rule `L-002`'s concern, not this verb's.
 
 ### Slug resolution
 
@@ -101,6 +107,24 @@ After the rewrite, the verb MUST run `specscore spec lint --fix` so the lessons 
 **Given** no lesson named `ghost`
 **When** the user runs `specscore lesson recur ghost`
 **Then** the command exits `3` naming `ghost`.
+
+### AC: warns-on-withdrawn (verifies REQ:recur-warns-on-retired-status)
+
+**Given** a lesson in `**Status:** Withdrawn`
+**When** the user runs `specscore lesson recur <slug>`
+**Then** the command exits `0`, the `**Recurred:**` count still increments, and stderr contains a warning naming the slug and `Withdrawn`.
+
+### AC: warns-on-superseded (verifies REQ:recur-warns-on-retired-status)
+
+**Given** a lesson in `**Status:** Superseded`
+**When** the user runs `specscore lesson recur <slug>`
+**Then** the command exits `0` and stderr contains a warning naming the slug and `Superseded`.
+
+### AC: no-warning-on-active-statuses (verifies REQ:recur-warns-on-retired-status)
+
+**Given** a lesson in `**Status:** Recorded`, `Stated`, or `Enforced`
+**When** the user runs `specscore lesson recur <slug>`
+**Then** stderr contains no warning.
 
 ## Open Questions
 

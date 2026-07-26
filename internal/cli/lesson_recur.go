@@ -2,10 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/spf13/cobra"
 )
@@ -22,7 +25,12 @@ func lessonRecurCommand() *cobra.Command {
 (with the optional --note) to its ## Recurrences section. It does NOT change
 **Status:** — a recurrence is a signal that a lesson needs to graduate, not a
 graduation itself. Run "specscore lesson change-status <slug> --to=<status>"
-separately to act on the signal. A missing lesson exits 3.`,
+separately to act on the signal. A missing lesson exits 3.
+
+A recurrence against a lesson already retired (Withdrawn or Superseded) is
+evidence the retirement itself was wrong — it still exits 0 and records the
+occurrence (the evidence is worth keeping), but prints a warning to stderr
+rather than succeeding silently.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -31,6 +39,20 @@ separately to act on the signal. A missing lesson exits 3.`,
 	cmd.Flags().String("note", "", "free-form note describing this occurrence")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	return cmd
+}
+
+// warnIfLessonRetired prints a stderr warning when l's status is terminal
+// (Withdrawn or Superseded — recognized statuses with no legal outgoing
+// arc). An unrecognized or missing status is not this verb's concern (L-002
+// already governs status validity), so it is left silent.
+func warnIfLessonRetired(w io.Writer, slug string, status string) {
+	canonical, ok := lifecycle.ParseStatus(lifecycle.KindLesson, strings.TrimSpace(status))
+	if !ok || len(lifecycle.LegalTargets(lifecycle.KindLesson, canonical)) > 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w,
+		"warning: %s is %s — recording a recurrence against a retired lesson suggests the retirement should be revisited (consider recording a fresh lesson referencing this one) rather than continuing to log against it\n",
+		slug, string(canonical))
 }
 
 func runLessonRecur(cmd *cobra.Command, args []string) error {
@@ -58,6 +80,12 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	before, err := lessonParseFn(path)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("parsing lesson %s: %v", slug, err)
+	}
+	warnIfLessonRetired(cmd.ErrOrStderr(), slug, before.Status)
 
 	count, err := lessonRecurFn(path, note)
 	if err != nil {

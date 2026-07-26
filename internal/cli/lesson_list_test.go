@@ -24,11 +24,16 @@ func TestLessonList_DefaultListingPipeable(t *testing.T) {
 	}
 }
 
-// AC: the single most-valuable query — recorded-but-not-enforced.
+// TestLessonList_StatusFilterRecorded asserts --status=recorded is a strict
+// single-status match: a Stated lesson (also unenforced, but a different
+// rung) must NOT appear. Without a Stated fixture here, this test cannot
+// distinguish "exact match" from "matches anything not Enforced" — the
+// distinction the --not-enforced tests below depend on.
 func TestLessonList_StatusFilterRecorded(t *testing.T) {
 	lessonsDir := setupLessonsSpec(t)
 
 	writeLessonInDir(t, lessonsDir, "recorded-one", "Recorded")
+	writeLessonInDir(t, lessonsDir, "stated-one", "Stated")
 	writeLessonInDir(t, lessonsDir, "enforced-one", "Enforced")
 
 	stdout, _, err := runLesson(t, "list", "--status", "recorded")
@@ -37,7 +42,128 @@ func TestLessonList_StatusFilterRecorded(t *testing.T) {
 	}
 	lines := nonEmptyLines(stdout)
 	if len(lines) != 1 || lines[0] != "recorded-one" {
-		t.Errorf("expected [recorded-one], got %v", lines)
+		t.Errorf("expected [recorded-one] only (stated-one must not match an exact --status=recorded filter), got %v", lines)
+	}
+}
+
+// AC: the single most-valuable query — everything below Enforced, regardless
+// of which of the two advisory rungs it sits on.
+func TestLessonList_NotEnforced_UnionsRecordedAndStated(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+
+	writeLessonInDir(t, lessonsDir, "recorded-one", "Recorded")
+	writeLessonInDir(t, lessonsDir, "stated-one", "Stated")
+	writeLessonInDir(t, lessonsDir, "enforced-one", "Enforced")
+	writeLessonInDir(t, lessonsDir, "withdrawn-one", "Withdrawn")
+
+	stdout, _, err := runLesson(t, "list", "--not-enforced")
+	if err != nil {
+		t.Fatalf("lesson list --not-enforced: %v", err)
+	}
+	lines := nonEmptyLines(stdout)
+	want := map[string]bool{"recorded-one": true, "stated-one": true}
+	if len(lines) != len(want) {
+		t.Fatalf("expected %d slugs, got %v", len(want), lines)
+	}
+	for _, l := range lines {
+		if !want[l] {
+			t.Errorf("unexpected slug %q in --not-enforced output", l)
+		}
+	}
+}
+
+// TestLessonList_StatusCommaListUnions covers the comma-separated --status
+// form, which --not-enforced is documented as shorthand for.
+func TestLessonList_StatusCommaListUnions(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+
+	writeLessonInDir(t, lessonsDir, "recorded-one", "Recorded")
+	writeLessonInDir(t, lessonsDir, "stated-one", "Stated")
+	writeLessonInDir(t, lessonsDir, "enforced-one", "Enforced")
+
+	// A stray empty part (trailing/doubled comma) must be skipped silently,
+	// mirroring parseLessonFields.
+	stdout, _, err := runLesson(t, "list", "--status", "recorded,, stated,")
+	if err != nil {
+		t.Fatalf("lesson list --status recorded,,stated,: %v", err)
+	}
+	lines := nonEmptyLines(stdout)
+	want := map[string]bool{"recorded-one": true, "stated-one": true}
+	if len(lines) != len(want) {
+		t.Fatalf("expected %d slugs, got %v", len(want), lines)
+	}
+	for _, l := range lines {
+		if !want[l] {
+			t.Errorf("unexpected slug %q", l)
+		}
+	}
+}
+
+// AC: an unrecognized --status value must exit 2 naming it, never silently
+// resolve to an empty (and misleadingly reassuring) result.
+func TestLessonList_StatusUnrecognizedValueExits2(t *testing.T) {
+	setupLessonsSpec(t)
+
+	_, _, err := runLesson(t, "list", "--status", "recorded,bogus")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidArgs, err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should name the offending value: %v", err)
+	}
+}
+
+// --status and --not-enforced together must be rejected rather than one
+// silently winning.
+func TestLessonList_StatusAndNotEnforcedMutuallyExclusive(t *testing.T) {
+	setupLessonsSpec(t)
+
+	_, _, err := runLesson(t, "list", "--status", "recorded", "--not-enforced")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidArgs, err)
+	}
+}
+
+// TestLessonList_MinRecurredFilters covers the recurrence filter, and its
+// combination with --not-enforced — "which lessons have recurred and are
+// still not enforced?" as one command.
+func TestLessonList_MinRecurredFilters(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+
+	writeLessonRaw(t, lessonsDir, "recurring-stated",
+		"# Lesson: Recurring Stated\n\n**Status:** Stated\n**Recurred:** 2\n\n"+
+			"## Incident\n\nx\n\n## Process gap\n\nx\n\n## Check\n\nx\n\n## Enforcement\n\nx\n")
+	writeLessonInDir(t, lessonsDir, "quiet-stated", "Stated")
+	writeLessonRaw(t, lessonsDir, "recurring-enforced",
+		"# Lesson: Recurring Enforced\n\n**Status:** Enforced\n**Recurred:** 1\n\n"+
+			"## Incident\n\nx\n\n## Process gap\n\nx\n\n## Check\n\nx\n\n## Enforcement\n\nx\n")
+
+	stdout, _, err := runLesson(t, "list", "--min-recurred", "1")
+	if err != nil {
+		t.Fatalf("lesson list --min-recurred 1: %v", err)
+	}
+	lines := nonEmptyLines(stdout)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 recurring lessons, got %v", lines)
+	}
+
+	stdout2, _, err := runLesson(t, "list", "--not-enforced", "--min-recurred", "1")
+	if err != nil {
+		t.Fatalf("lesson list --not-enforced --min-recurred 1: %v", err)
+	}
+	lines2 := nonEmptyLines(stdout2)
+	if len(lines2) != 1 || !strings.Contains(lines2[0], "recurring-stated") {
+		t.Errorf("expected only recurring-stated, got %v", lines2)
+	}
+}
+
+// TestLessonList_MinRecurredNegativeExits2 covers the negative-value guard.
+func TestLessonList_MinRecurredNegativeExits2(t *testing.T) {
+	setupLessonsSpec(t)
+
+	_, _, err := runLesson(t, "list", "--min-recurred", "-1")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidArgs, err)
 	}
 }
 

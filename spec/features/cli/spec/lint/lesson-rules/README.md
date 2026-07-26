@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Draft
+status: Approved
 ---
 
 # Feature: Lesson Lint Rules
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec/lint/lesson-rules?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec/lint/lesson-rules?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec/lint/lesson-rules?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/spec/lint/lesson-rules?op=request-change) |
-**Status:** Draft
+**Status:** Approved
 **Source Ideas:** —
 
 ## Summary

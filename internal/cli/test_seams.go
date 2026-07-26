@@ -23,6 +23,7 @@ var (
 	planScaffoldFn       = plan.Scaffold
 	lessonScaffoldFn     = lesson.Scaffold
 	lessonRecurFn        = lesson.Recur
+	lessonParseFn        = lesson.Parse
 	issueScaffoldFn      = issue.Scaffold
 	issueParseFn         = issue.Parse
 	featureFindRefsFn    = feature.FindFeatureRefs

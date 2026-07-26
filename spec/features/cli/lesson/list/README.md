@@ -1,27 +1,27 @@
 ---
 format: https://specscore.md/feature-specification
-status: Draft
+status: Approved
 ---
 
 # Feature: Lesson List
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/list?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/list?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/list?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson/list?op=request-change) |
-**Status:** Draft
+**Status:** Approved
 **Source Ideas:** —
 
 ## Summary
 
-`specscore lesson list [--status=<status>]` lists lesson slugs, one per line, sorted alphabetically. `--status` filters case-insensitively on the exact status value, so `--status=recorded` answers the single most valuable question a lessons log must answer — "what have we learned but not yet enforced?" — in one command instead of a hand read of prose. `--fields` and `--format` expose structured output (including the `recurred` count) for scripts.
+`specscore lesson list` lists lesson slugs, one per line, sorted alphabetically. `--not-enforced` is the headline query — "what have we learned but not yet enforced?" — matching every lesson in `Recorded` **or** `Stated` (only `Enforced`, Tier 2, actually binds; a filter that matched only `Recorded` would silently miss every advisory-but-unenforced lesson sitting at `Stated`, which is most of them in practice). `--status` accepts one or more statuses, comma-separated and case-insensitive, and rejects an unrecognized value outright rather than silently matching nothing. `--min-recurred <N>` composes with either status filter so "which lessons have recurred and are still not enforced?" is `--not-enforced --min-recurred=1`, not eyeballing a listing. `--fields` and `--format` expose structured output (including the `recurred` count) for scripts.
 
 ## Synopsis
 
 ```
-specscore lesson list [--status <status>] [--fields <list>] [--format <text|yaml|json>] [--project <path>]
+specscore lesson list [--not-enforced | --status <status>[,<status>...]] [--min-recurred <N>] [--fields <list>] [--format <text|yaml|json>] [--project <path>]
 ```
 
 ## Problem
 
-Before this verb, "what have we learned but not yet enforced?" required opening `LESSONS-LEARNED.md`, reading every `**Status:**` line by eye, and trusting the hand-maintained "Open: needs to graduate" list was current. A flat, filterable, scriptable listing — mirroring [cli/plan/list](../../plan/list/README.md) and [cli/idea/list](../../idea/list/README.md) exactly — makes the query mechanical.
+Before this verb, "what have we learned but not yet enforced?" required opening `LESSONS-LEARNED.md`, reading every `**Status:**` line by eye, and trusting the hand-maintained "Open: needs to graduate" list was current. A flat, filterable, scriptable listing — mirroring [cli/plan/list](../../plan/list/README.md) and [cli/idea/list](../../idea/list/README.md) exactly — makes the query mechanical. A single-value, exact-match `--status` is not enough on its own: "not yet enforced" spans two of the ladder's three rungs (`Recorded` and `Stated`), and a query that only reaches one of them returns a confidently wrong "nothing needs attention" the moment any lesson sits at `Stated` — which the real `LESSONS-LEARNED.md` this feature formalizes shows is the common case, not the exception.
 
 ## Behavior
 
@@ -31,11 +31,21 @@ Before this verb, "what have we learned but not yet enforced?" required opening 
 
 With no flags, `lesson list` MUST print every lesson's slug, one per line, sorted alphabetically, to stdout, with a single trailing newline and no extra blank lines. Output MUST be empty (not an error) when no lessons exist.
 
-### Status filter
+### Status filters
 
 #### REQ: status-filter-selects
 
-`--status <value>` MUST restrict output to lessons whose `**Status:**` matches `value` case-insensitively (exact match after trimming). A filter matching zero lessons MUST print nothing and exit `0` — not an error.
+`--status <value>[,<value>...]` MUST restrict output to lessons whose `**Status:**` matches ANY of the given values, case-insensitively (each compared after trimming) — a union, not a single exact match. Empty parts from stray commas MUST be skipped silently. A filter matching zero lessons MUST print nothing and exit `0` — not an error. An unrecognized status name in the list MUST exit `2` (InvalidArgs) naming the offending value and the legal set — it MUST NOT be treated as "matches nothing," since a silently empty result reads as good news (nothing left to graduate) rather than a malformed query.
+
+#### REQ: not-enforced-flag
+
+`--not-enforced` MUST be accepted as a boolean flag equivalent to `--status=recorded,stated` — the headline query this verb exists to answer. `--status` and `--not-enforced` MUST be mutually exclusive: supplying both MUST exit `2` before any output.
+
+### Recurrence filter
+
+#### REQ: min-recurred-filter
+
+`--min-recurred <N>` MUST restrict output to lessons whose `**Recurred:**` count is at least `N` (default `0`, meaning no filter). It MUST compose with either status filter (AND semantics), not replace it. A negative `N` MUST exit `2`.
 
 ### Recurrence surfaced in text output
 
@@ -53,7 +63,9 @@ In the default `text` format, a lesson with `**Recurred:** N` where `N > 0` MUST
 
 | Flag | Required | Description |
 |---|---|---|
-| `--status` | No | Filter by status (case-insensitive exact match): `recorded`, `stated`, `enforced`, `withdrawn`, `superseded`. |
+| `--status` | No | Filter by one or more statuses, comma-separated, case-insensitive: `recorded`, `stated`, `enforced`, `withdrawn`, `superseded`. Mutually exclusive with `--not-enforced`. An unrecognized value exits `2`. |
+| `--not-enforced` | No | The headline query: shorthand for `--status=recorded,stated`. Mutually exclusive with `--status`. |
+| `--min-recurred` | No | Restrict to lessons with `**Recurred:** >= N` (default `0` = no filter). Composes with either status filter. |
 | `--fields` | No | Comma-separated: `status`, `recurred`, `date`, `owner`. Upgrades output to structured form. |
 | `--format` | No | `text` (default), `yaml`, `json`. |
 | `--project` | No | Project root (autodetected). |
@@ -63,7 +75,7 @@ In the default `text` format, a lesson with `**Recurred:** N` where `N > 0` MUST
 | Code | Condition |
 |---|---|
 | `0` | Listing succeeded (possibly empty). |
-| `2` | Invalid `--format` or an unrecognized `--fields` name. |
+| `2` | Invalid `--format`; an unrecognized `--fields` name; an unrecognized `--status` value; `--status` combined with `--not-enforced`; a negative `--min-recurred`. |
 
 ## Interaction with Other Features
 
@@ -80,17 +92,44 @@ In the default `text` format, a lesson with `**Recurred:** N` where `N > 0` MUST
 **When** the user runs `specscore lesson list`
 **Then** stdout is exactly `alpha-check\nzebra-fix\n`.
 
-### AC: status-filter-recorded (verifies REQ:status-filter-selects)
+### AC: status-filter-is-exact-single-value (verifies REQ:status-filter-selects)
 
-**Given** a lesson `stale-check` with `**Status:** Recorded` and a lesson `old-check` with `**Status:** Enforced`
+**Given** a lesson `stale-check` with `**Status:** Recorded`, a lesson `advisory-check` with `**Status:** Stated`, and a lesson `old-check` with `**Status:** Enforced`
 **When** the user runs `specscore lesson list --status=recorded`
-**Then** stdout is exactly `stale-check\n`.
+**Then** stdout is exactly `stale-check\n` — `advisory-check` (also unenforced, but a different rung) does NOT appear.
+
+### AC: not-enforced-unions-recorded-and-stated (verifies REQ:not-enforced-flag)
+
+**Given** the same three lessons as above
+**When** the user runs `specscore lesson list --not-enforced`
+**Then** stdout contains exactly `advisory-check` and `stale-check`, and does NOT contain `old-check`.
+
+### AC: status-comma-list-unions (verifies REQ:status-filter-selects)
+
+**When** the user runs `specscore lesson list --status=recorded,stated`
+**Then** the result is identical to `--not-enforced`.
+
+### AC: unrecognized-status-exits-2 (verifies REQ:status-filter-selects)
+
+**When** the user runs `specscore lesson list --status=recorded,bogus`
+**Then** the command exits `2`, naming `bogus`, with empty stdout — never an empty-but-successful result.
+
+### AC: status-and-not-enforced-conflict (verifies REQ:not-enforced-flag)
+
+**When** the user runs `specscore lesson list --status=recorded --not-enforced`
+**Then** the command exits `2` before producing any output.
 
 ### AC: empty-match-exits-zero (verifies REQ:status-filter-selects)
 
 **Given** no lesson with `**Status:** Withdrawn`
 **When** the user runs `specscore lesson list --status=Withdrawn`
 **Then** the command exits `0` with empty stdout.
+
+### AC: min-recurred-composes-with-not-enforced (verifies REQ:min-recurred-filter)
+
+**Given** a `Stated` lesson `flaky-check` with `**Recurred:** 2` and a `Stated` lesson `quiet-check` with `**Recurred:** 0`
+**When** the user runs `specscore lesson list --not-enforced --min-recurred=1`
+**Then** stdout is exactly `flaky-check\n`.
 
 ### AC: text-shows-recurrence (verifies REQ:text-shows-recurrence)
 

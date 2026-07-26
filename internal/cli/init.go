@@ -336,7 +336,7 @@ format: https://specscore.md/lessons-index-specification
 
 # Lessons
 
-Canonical index of all lessons in this repository. Each lesson is a single Markdown file under ` + "`spec/lessons/`" + ` recording a gap in process — a missing check, gate, convention, or review step — and the enforcement mechanism that closes it. Ask "what have we learned but not yet enforced?" with ` + "`specscore lesson list --status=recorded`" + `.
+Canonical index of all lessons in this repository. Each lesson is a single Markdown file under ` + "`spec/lessons/`" + ` recording a gap in process — a missing check, gate, convention, or review step — and the enforcement mechanism that closes it. Ask "what have we learned but not yet enforced?" with ` + "`specscore lesson list --not-enforced`" + `.
 
 ## Index
 

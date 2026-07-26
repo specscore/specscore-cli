@@ -7,6 +7,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/spf13/cobra"
 )
 
@@ -16,17 +17,81 @@ func lessonListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List all lesson slugs, one per line",
 		Long: `Lists lessons in a project as slugs, one per line, sorted
-alphabetically. Use --status to filter by status (case-insensitive exact
-match) — --status=recorded answers "what have we learned but not yet
-enforced?" in one command. Output is empty (exit 0) when no lessons match.`,
+alphabetically.
+
+--not-enforced is the headline query — "what have we learned but not yet
+enforced?" — matching every lesson in Recorded or Stated (Tier 0/1 of the
+ladder; only Enforced binds). It is shorthand for --status=recorded,stated.
+
+--status filters by one or more statuses, comma-separated and
+case-insensitive (recorded, stated, enforced, withdrawn, superseded); an
+unrecognized value exits 2 naming it rather than silently matching nothing.
+--status and --not-enforced are mutually exclusive.
+
+--min-recurred N additionally restricts to lessons whose **Recurred:** count
+is at least N, so "which lessons have recurred and are still not enforced?"
+is one command: --not-enforced --min-recurred=1.
+
+Output is empty (exit 0) when no lessons match.`,
 		Args: cobra.NoArgs,
 		RunE: runLessonList,
 	}
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
-	cmd.Flags().String("status", "", "filter by status (case-insensitive exact match): recorded, stated, enforced, withdrawn, superseded")
+	cmd.Flags().String("status", "", "filter by one or more statuses, comma-separated, case-insensitive: recorded, stated, enforced, withdrawn, superseded")
+	cmd.Flags().Bool("not-enforced", false, `the headline query: shorthand for --status=recorded,stated ("what have we learned but not yet enforced?")`)
+	cmd.Flags().Int("min-recurred", 0, "restrict to lessons whose Recurred count is at least N (0 = no filter)")
 	cmd.Flags().String("format", "text", "output format: text, yaml, json")
 	cmd.Flags().String("fields", "", "comma-separated metadata fields: status, recurred, date, owner")
 	return cmd
+}
+
+// notEnforcedStatuses is the status set --not-enforced expands to: every rung
+// of the ladder below Enforced (Tier 2, the only tier that binds).
+var notEnforcedStatuses = []lifecycle.Status{lifecycle.LessonRecorded, lifecycle.LessonStated}
+
+// parseLessonStatusFilter validates a comma-separated --status value against
+// the canonical Lesson status set, case-insensitively, and returns the
+// matching set as lowercased canonical names. Empty parts (from stray commas)
+// are skipped silently, mirroring parseLessonFields. An unrecognized status
+// name yields an exit-2 error naming it — the filter must never silently
+// resolve to "match nothing" because the caller mistyped a value.
+func parseLessonStatusFilter(raw string) (map[string]bool, error) {
+	set := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		v := strings.TrimSpace(part)
+		if v == "" {
+			continue
+		}
+		canonical, ok := lifecycle.ParseStatus(lifecycle.KindLesson, v)
+		if !ok {
+			return nil, exitcode.InvalidArgsErrorf(
+				"unrecognized --status value %q; legal values: %s",
+				v, strings.Join(lessonStatusNames(), ", "))
+		}
+		set[strings.ToLower(string(canonical))] = true
+	}
+	return set, nil
+}
+
+// lessonStatusNames returns every canonical Lesson status name, for
+// rendering in --status error messages.
+func lessonStatusNames() []string {
+	statuses := lifecycle.LegalStatuses(lifecycle.KindLesson)
+	out := make([]string, len(statuses))
+	for i, s := range statuses {
+		out[i] = string(s)
+	}
+	return out
+}
+
+// lessonStatusSet renders a slice of lifecycle.Status values as a lowercased
+// name set, matching parseLessonStatusFilter's output shape.
+func lessonStatusSet(statuses []lifecycle.Status) map[string]bool {
+	set := make(map[string]bool, len(statuses))
+	for _, s := range statuses {
+		set[strings.ToLower(string(s))] = true
+	}
+	return set
 }
 
 // validLessonFields lists the recognized --fields names, in canonical order.
@@ -72,7 +137,9 @@ type lessonListEntry struct {
 
 func runLessonList(cmd *cobra.Command, _ []string) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
-	statusFilter, _ := cmd.Flags().GetString("status")
+	statusFlag, _ := cmd.Flags().GetString("status")
+	notEnforced, _ := cmd.Flags().GetBool("not-enforced")
+	minRecurred, _ := cmd.Flags().GetInt("min-recurred")
 	format, _ := cmd.Flags().GetString("format")
 	fieldsFlag, _ := cmd.Flags().GetString("fields")
 
@@ -83,6 +150,27 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 
 	if err := validateFormat(format); err != nil {
 		return err
+	}
+
+	if notEnforced && cmd.Flags().Changed("status") {
+		return exitcode.InvalidArgsError("--status and --not-enforced are mutually exclusive")
+	}
+	if minRecurred < 0 {
+		return exitcode.InvalidArgsErrorf("--min-recurred must be >= 0, got %d", minRecurred)
+	}
+
+	// A nil statusSet means "no status filter" (list every status), matching
+	// the pre-existing default. --not-enforced and a non-empty --status each
+	// populate it; an explicitly empty/unset --status leaves it nil.
+	var statusSet map[string]bool
+	switch {
+	case notEnforced:
+		statusSet = lessonStatusSet(notEnforcedStatuses)
+	case strings.TrimSpace(statusFlag) != "":
+		statusSet, err = parseLessonStatusFilter(statusFlag)
+		if err != nil {
+			return err
+		}
 	}
 
 	effFormat := format
@@ -100,10 +188,14 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 		return exitcode.UnexpectedErrorf("discovering lessons: %v", err)
 	}
 
-	statusFilterLower := strings.ToLower(strings.TrimSpace(statusFilter))
 	matched := func(l *lesson.Lesson) bool {
-		status := strings.TrimSpace(l.Status)
-		return statusFilter == "" || strings.ToLower(status) == statusFilterLower
+		if statusSet != nil && !statusSet[strings.ToLower(strings.TrimSpace(l.Status))] {
+			return false
+		}
+		if minRecurred > 0 && l.Recurred < minRecurred {
+			return false
+		}
+		return true
 	}
 
 	w := cmd.OutOrStdout()

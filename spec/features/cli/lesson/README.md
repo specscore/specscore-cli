@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Draft
+status: Approved
 ---
 
 # Feature: Lesson (CLI)
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/lesson?op=request-change) |
-**Status:** Draft
+**Status:** Approved
 **Source Ideas:** —
 
 ## Summary
@@ -27,7 +27,7 @@ Record and query process-gap lessons — what we learned but not yet enforced
 
 `chatwright/backstage/LESSONS-LEARNED.md` is a hand-maintained, append-only markdown log where AI agents record process gaps they hit and how they should be prevented. Its own thesis is that a lesson written as prose decays; only a machine-checked rule holds — yet the document's single mechanism for tracking which lessons still need to graduate is a hand-maintained "Open: lessons that need to graduate" list at the bottom, which rots exactly the way the document warns against. Its `L1`, `L2`, … numbering collides when multiple agents append in parallel. And nothing stops an agent recording an entry with no proposed enforcement path — the exact shape of a useless entry.
 
-`specscore lesson` makes the lesson a first-class SpecScore artifact — slugged (not numbered, so parallel agents never collide), lint-checked for structure (never content), and queryable by lifecycle status — so "what have we learned but not yet enforced?" is `specscore lesson list --status=recorded`, not a grep of hand-maintained prose.
+`specscore lesson` makes the lesson a first-class SpecScore artifact — slugged (not numbered, so parallel agents never collide), lint-checked for structure (never content), and queryable by lifecycle status — so "what have we learned but not yet enforced?" is `specscore lesson list --not-enforced`, not a grep of hand-maintained prose. "Not yet enforced" means Recorded **or** Stated — the log's own thesis is that only Tier 2 (Enforced) binds, so a filter that only matched `Recorded` would miss every advisory-but-unenforced lesson sitting at `Stated`.
 
 ## Behavior
 
@@ -49,11 +49,15 @@ A Lesson's `**Status:**` climbs three rungs — `Recorded` (Tier 0: written down
 
 ### Recurrence is the strongest graduation signal
 
-A lesson that recurs while still `Recorded` or `Stated` is the strongest possible evidence it needs to graduate — the original `check-tags-before-tagging` lesson in `LESSONS-LEARNED.md` recurred twice in one session as prose before anyone acted on it. `specscore lesson recur <slug>` records exactly that: it increments a `**Recurred:** N` header count and appends a dated (optionally noted) entry to a `## Recurrences` section, without itself changing `**Status:**` — recurrence is a signal, not an automatic promotion; a human or agent still runs `change-status` deliberately once the signal is acted on. `lesson list` and `lesson info` both surface the count so "which advisory lessons keep recurring" is a direct query, not something read off prose.
+A lesson that recurs while still `Recorded` or `Stated` is the strongest possible evidence it needs to graduate — the original `check-tags-before-tagging` lesson in `LESSONS-LEARNED.md` recurred twice in one session as prose before anyone acted on it. `specscore lesson recur <slug>` records exactly that: it increments a `**Recurred:** N` header count and appends a dated (optionally noted) entry to a `## Recurrences` section, without itself changing `**Status:**` — recurrence is a signal, not an automatic promotion; a human or agent still runs `change-status` deliberately once the signal is acted on. `lesson recur` against a lesson already `Withdrawn` or `Superseded` is evidence the retirement itself was wrong, so it warns on stderr (still exiting `0` and recording the occurrence) rather than succeeding silently. `lesson list --min-recurred <N>` makes the count directly queryable — combined with `--not-enforced`, "which lessons have recurred and are still not enforced?" is one command, not eyeballing a listing.
 
 #### REQ: mutation-scope
 
 The `list` and `info` subcommands MUST NOT create, edit, or transition lesson files — they read `spec/lessons/*.md` only. The `new` subcommand MAY create a new lesson file but MUST NOT edit or transition existing lessons. The `change-status` subcommand transitions a lesson's lifecycle status. The `recur` subcommand mutates a lesson's `**Recurred:**` count and its `## Recurrences` section but MUST NOT touch `**Status:**`.
+
+#### REQ: recurrence-is-queryable
+
+`lesson list` MUST accept a `--min-recurred <N>` filter restricting output to lessons whose `**Recurred:**` count is at least `N`, composable with the status filters (`--status`, `--not-enforced`) rather than mutually exclusive with them.
 
 ### Shared flags
 
@@ -88,10 +92,22 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 **When** the user runs `specscore lesson recur <slug>`
 **Then** the lesson's `**Recurred:**` count increments and a dated entry is appended to `## Recurrences`, but `**Status:**` remains `Stated`.
 
+### AC: not-enforced-and-min-recurred-compose (verifies REQ:recurrence-is-queryable)
+
+**Given** a lesson `flaky-check` in `**Status:** Stated` with `**Recurred:** 2`, and a lesson `quiet-check` in `**Status:** Stated` with `**Recurred:** 0`
+**When** the user runs `specscore lesson list --not-enforced --min-recurred=1`
+**Then** stdout lists only `flaky-check`.
+
+### AC: recur-against-retired-lesson-warns (verifies the recurrence-graduation-signal behavior)
+
+**Given** a lesson in `**Status:** Withdrawn`
+**When** the user runs `specscore lesson recur <slug>`
+**Then** the command exits `0`, the `**Recurred:**` count still increments, and stderr carries a warning naming the lesson and its retired status.
+
 ## Open Questions
 
 - Should a Lesson ever record a structured link to the code change that closed its `## Process gap` (mirroring a Plan task's `**Implemented-by:**`), or does the free-form `## Enforcement` prose stay sufficient? Deferred until a second consumer repo shows the need.
-- Should `lesson recur` past some threshold count refuse to exit `0` (turning "this keeps recurring" into a CI-visible signal on its own), or does the visibility from `lesson list` stay sufficient? Left to lint/CI policy in the consuming repo for now — this group only records the count.
+- Should `lesson recur` past some threshold count refuse to exit `0` for an *active* (non-terminal) lesson — turning "this keeps recurring" into a CI-visible signal on its own — or does `lesson list --min-recurred` stay sufficient for a human/agent to act on deliberately? Recurrence against a *retired* lesson already warns (see `recur`'s own spec); this question is only about the active-lesson case. Left to lint/CI policy in the consuming repo for now.
 
 ---
 *This document follows the https://specscore.md/feature-specification*
