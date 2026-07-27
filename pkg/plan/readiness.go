@@ -1,14 +1,22 @@
 package plan
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
 // parseReadinessPlan is a test seam for the otherwise rare read failures that
 // can occur between a successful path resolution and parsing its file.
 var parseReadinessPlan = Parse
+
+// resolveReadinessPlanFile is a test seam over the shared flat-first plan
+// resolver. It lets readiness prove that only a genuine NotFound is rendered
+// as a missing prerequisite; filesystem failures remain operational errors.
+var resolveReadinessPlanFile = resolvePlanFile
 
 // PrerequisiteReadiness describes whether a Plan may begin execution with
 // respect to its declared same-repository prerequisite Plans. It deliberately
@@ -28,7 +36,10 @@ type PrerequisiteReadiness struct {
 type UnmetPrerequisite struct {
 	Slug          string `yaml:"slug" json:"slug"`
 	Status        string `yaml:"status" json:"status"`
-	DerivedStatus string `yaml:"derived_status" json:"derived_status"`
+	DerivedStatus string `yaml:"derived_status,omitempty" json:"derived_status,omitempty"`
+	// Reason is set only for invalid prerequisite graphs or declarations. It
+	// keeps derived_status reserved for a determinate task-rollup result.
+	Reason string `yaml:"reason,omitempty" json:"reason,omitempty"`
 }
 
 // PrerequisiteReadiness evaluates p's declared prerequisites using plansDir
@@ -42,44 +53,128 @@ type UnmetPrerequisite struct {
 // used by plan lifecycle commands, so a valid legacy directory-form Plan can
 // satisfy a prerequisite while it remains supported by those commands.
 func (p *Plan) PrerequisiteReadiness(plansDir string) (PrerequisiteReadiness, error) {
-	result := PrerequisiteReadiness{Ready: true, Unmet: []UnmetPrerequisite{}}
+	return newPrerequisiteReadinessEvaluator(plansDir).evaluatePlan(p, p.Slug)
+}
+
+func newPrerequisiteReadinessEvaluator(plansDir string) *prerequisiteReadinessEvaluator {
+	return &prerequisiteReadinessEvaluator{
+		plansDir: plansDir,
+		visited:  make(map[string]prerequisiteEvaluation),
+		active:   make(map[string]int),
+	}
+}
+
+type prerequisiteEvaluation struct {
+	derived   string
+	derivedOK bool
+	status    string
+	unmet     []UnmetPrerequisite
+}
+
+// prerequisiteReadinessEvaluator walks the complete reachable prerequisite
+// graph. visited bounds repeated DAG branches; active identifies a back edge
+// before an apparently-Implemented direct prerequisite can bypass a cycle.
+type prerequisiteReadinessEvaluator struct {
+	plansDir string
+	visited  map[string]prerequisiteEvaluation
+	active   map[string]int
+	stack    []string
+}
+
+func (e *prerequisiteReadinessEvaluator) evaluatePlan(p *Plan, slug string) (PrerequisiteReadiness, error) {
+	if slug == "" {
+		slug = "<current plan>"
+	}
+	e.active[slug] = len(e.stack)
+	e.stack = append(e.stack, slug)
+	evaluation, err := e.evaluateContents(p)
+	e.stack = e.stack[:len(e.stack)-1]
+	delete(e.active, slug)
+	if err != nil {
+		return PrerequisiteReadiness{}, err
+	}
+	return PrerequisiteReadiness{Ready: len(evaluation.unmet) == 0, Unmet: evaluation.unmet}, nil
+}
+
+func (e *prerequisiteReadinessEvaluator) evaluateContents(p *Plan) (prerequisiteEvaluation, error) {
+	result := prerequisiteEvaluation{unmet: []UnmetPrerequisite{}}
 	if reason := malformedPrerequisiteDeclaration(p); reason != "" {
-		result.Ready = false
-		result.Unmet = append(result.Unmet, UnmetPrerequisite{
-			Slug:          "<malformed prerequisite declaration>",
-			Status:        "invalid",
-			DerivedStatus: reason,
+		result.unmet = append(result.unmet, UnmetPrerequisite{
+			Slug:   "<malformed prerequisite declaration>",
+			Status: "invalid",
+			Reason: reason,
 		})
 	}
 	for _, slug := range p.PrerequisitePlans {
-		path, err := resolvePlanFile(plansDir, slug)
+		prerequisite, err := e.evaluateSlug(slug)
 		if err != nil {
-			result.Ready = false
-			result.Unmet = append(result.Unmet, UnmetPrerequisite{Slug: slug, Status: "missing"})
+			if isNotFound(err) {
+				result.unmet = append(result.unmet, UnmetPrerequisite{Slug: slug, Status: "missing"})
+				continue
+			}
+			return prerequisiteEvaluation{}, err
+		}
+		if !prerequisite.derivedOK || prerequisite.derived != "Implemented" {
+			// A cycle/invalid child already carries its actionable diagnostic;
+			// avoid adding a duplicate synthetic direct prerequisite beside it.
+			if len(prerequisite.unmet) == 0 {
+				result.unmet = append(result.unmet, UnmetPrerequisite{
+					Slug: slug, Status: prerequisite.status, DerivedStatus: prerequisite.derived,
+				})
+			} else {
+				result.unmet = append(result.unmet, prerequisite.unmet...)
+			}
 			continue
 		}
-
-		prerequisite, err := parseReadinessPlan(path)
-		if err != nil {
-			return PrerequisiteReadiness{}, fmt.Errorf("parsing prerequisite plan %q at %s: %w", slug, path, err)
+		if len(prerequisite.unmet) > 0 {
+			result.unmet = append(result.unmet, prerequisite.unmet...)
 		}
-		derived, derivedOK := prerequisite.DeriveExecutionBand()
-		if derivedOK && derived == "Implemented" {
-			continue
-		}
-
-		status := strings.TrimSpace(prerequisite.Status)
-		if status == "" {
-			status = "unset"
-		}
-		result.Ready = false
-		result.Unmet = append(result.Unmet, UnmetPrerequisite{
-			Slug:          slug,
-			Status:        status,
-			DerivedStatus: derived,
-		})
+	}
+	result.derived, result.derivedOK = p.DeriveExecutionBand()
+	result.status = strings.TrimSpace(p.Status)
+	if result.status == "" {
+		result.status = "unset"
 	}
 	return result, nil
+}
+
+func (e *prerequisiteReadinessEvaluator) evaluateSlug(slug string) (prerequisiteEvaluation, error) {
+	if start, active := e.active[slug]; active {
+		cycle := append(append([]string{}, e.stack[start:]...), slug)
+		return prerequisiteEvaluation{unmet: []UnmetPrerequisite{{
+			Slug:   slug,
+			Status: "invalid",
+			Reason: "prerequisite cycle: " + strings.Join(cycle, " -> "),
+		}}}, nil
+	}
+	if cached, ok := e.visited[slug]; ok {
+		return cached, nil
+	}
+
+	path, err := resolveReadinessPlanFile(e.plansDir, slug)
+	if err != nil {
+		return prerequisiteEvaluation{}, err
+	}
+	p, err := parseReadinessPlan(path)
+	if err != nil {
+		return prerequisiteEvaluation{}, exitcode.UnexpectedErrorf("parsing prerequisite plan %q at %s: %v", slug, path, err)
+	}
+
+	e.active[slug] = len(e.stack)
+	e.stack = append(e.stack, slug)
+	evaluation, err := e.evaluateContents(p)
+	e.stack = e.stack[:len(e.stack)-1]
+	delete(e.active, slug)
+	if err != nil {
+		return prerequisiteEvaluation{}, err
+	}
+	e.visited[slug] = evaluation
+	return evaluation, nil
+}
+
+func isNotFound(err error) bool {
+	var coded interface{ ExitCode() int }
+	return errors.As(err, &coded) && coded.ExitCode() == exitcode.NotFound
 }
 
 // malformedPrerequisiteDeclaration is deliberately conservative: lint P-009
@@ -123,6 +218,10 @@ func (r PrerequisiteReadiness) UnmetMessage() string {
 		if derived == "" {
 			derived = "indeterminate"
 		}
+		if prerequisite.Reason != "" {
+			parts[i] = fmt.Sprintf("%s (status %q; %s)", prerequisite.Slug, prerequisite.Status, prerequisite.Reason)
+			continue
+		}
 		parts[i] = fmt.Sprintf("%s (status %q; derived %q)", prerequisite.Slug, prerequisite.Status, derived)
 	}
 	return strings.Join(parts, ", ")
@@ -138,7 +237,9 @@ func PlanReadiness(specRoot, slug string) (PrerequisiteReadiness, error) {
 	}
 	p, err := parseReadinessPlan(path)
 	if err != nil {
-		return PrerequisiteReadiness{}, fmt.Errorf("parsing plan %q: %w", slug, err)
+		return PrerequisiteReadiness{}, exitcode.UnexpectedErrorf("parsing plan %q: %v", slug, err)
 	}
-	return p.PrerequisiteReadiness(plansDir)
+	// Use the command argument as the root identity. A title can be stale or
+	// malformed, but the prerequisite graph's edges name filesystem slugs.
+	return newPrerequisiteReadinessEvaluator(plansDir).evaluatePlan(p, slug)
 }

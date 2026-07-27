@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -63,7 +64,7 @@ func runPlanReadiness(cmd *cobra.Command, args []string) error {
 	}
 	readiness, err := plan.PlanReadiness(specRoot, args[0])
 	if err != nil {
-		return err
+		return readinessCLIError(err)
 	}
 	doc := planReadinessDoc{
 		Slug:               args[0],
@@ -84,6 +85,17 @@ func runPlanReadiness(cmd *cobra.Command, args []string) error {
 	}
 }
 
+// readinessCLIError keeps library errors that already carry a CLI exit code
+// intact, and turns every other parse/I/O failure into the documented
+// Unexpected (10) result rather than Cobra's generic exit 1.
+func readinessCLIError(err error) error {
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return err
+	}
+	return exitcode.UnexpectedErrorf("checking plan readiness: %v", err)
+}
+
 func writePlanReadinessText(w io.Writer, doc planReadinessDoc) error {
 	bw := bufio.NewWriter(w)
 	_, _ = fmt.Fprintf(bw, "Slug:  %s\n", doc.Slug)
@@ -94,6 +106,10 @@ func writePlanReadinessText(w io.Writer, doc planReadinessDoc) error {
 	}
 	_, _ = fmt.Fprintln(bw, "Unmet prerequisites:")
 	for _, unmet := range doc.UnmetPrerequisites {
+		if unmet.Reason != "" {
+			_, _ = fmt.Fprintf(bw, "  - %s (status %s; %s)\n", unmet.Slug, unmet.Status, unmet.Reason)
+			continue
+		}
 		derived := unmet.DerivedStatus
 		if derived == "" {
 			derived = "indeterminate"

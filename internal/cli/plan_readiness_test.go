@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 func writeReadinessPlanCLI(t *testing.T, plansDir, slug, status, prerequisite, taskStatus string) {
@@ -97,6 +99,35 @@ func TestPlanReadiness_NoPrerequisitesAndMalformedDeclaration(t *testing.T) {
 	}
 }
 
+func TestPlanReadiness_CycleIsStableUnreadyQueryData(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+	writeReadinessPlanCLI(t, plansDir, "alpha", "Implemented", "beta", "complete")
+	writeReadinessPlanCLI(t, plansDir, "beta", "Implemented", "alpha", "complete")
+
+	stdout, _, err := runPlan(t, "readiness", "alpha", "--format", "json")
+	if err != nil {
+		t.Fatalf("cycle readiness: %v", err)
+	}
+	var doc struct {
+		Ready bool `json:"ready"`
+		Unmet []struct {
+			Slug          string `json:"slug"`
+			Status        string `json:"status"`
+			DerivedStatus string `json:"derived_status"`
+			Reason        string `json:"reason"`
+		} `json:"unmet_prerequisites"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Ready || len(doc.Unmet) != 1 || doc.Unmet[0].Status != "invalid" || !strings.Contains(doc.Unmet[0].Reason, "alpha -> beta -> alpha") {
+		t.Fatalf("cycle response = %s", stdout)
+	}
+	if doc.Unmet[0].DerivedStatus != "" || strings.Contains(stdout, "derived_status") {
+		t.Errorf("indeterminate cycle must omit derived_status: %s", stdout)
+	}
+}
+
 func TestPlanReadiness_ArgumentErrors(t *testing.T) {
 	setupPlansSpec(t)
 	for _, args := range [][]string{{"readiness"}, {"readiness", "a", "b"}, {"readiness", "Bad_Slug"}, {"readiness", "a", "--format", "xml"}} {
@@ -129,5 +160,32 @@ func TestPlanReadiness_ResolveAndEncodeErrors(t *testing.T) {
 	_, _, err := runPlan(t, "readiness", "ready", "--project", bare)
 	if err == nil {
 		t.Fatal("expected project resolution error")
+	}
+}
+
+func TestReadinessCLIError_PreservesTypedErrorsAndMapsUntypedFailures(t *testing.T) {
+	typed := exitcode.NotFoundError("missing")
+	if got := readinessCLIError(typed); got != typed {
+		t.Errorf("typed error = %v, want original %v", got, typed)
+	}
+	if got := exitCodeOfErr(readinessCLIError(errors.New("read failed"))); got != exitcode.Unexpected {
+		t.Errorf("untyped readiness error exit = %d, want %d", got, exitcode.Unexpected)
+	}
+}
+
+func TestWritePlanReadinessText_InvalidGraphReason(t *testing.T) {
+	var out bytes.Buffer
+	err := writePlanReadinessText(&out, planReadinessDoc{
+		Slug:  "alpha",
+		Ready: false,
+		UnmetPrerequisites: []plan.UnmetPrerequisite{{
+			Slug: "beta", Status: "invalid", Reason: "prerequisite cycle: alpha -> beta -> alpha",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "status invalid; prerequisite cycle") {
+		t.Errorf("text output = %q", out.String())
 	}
 }

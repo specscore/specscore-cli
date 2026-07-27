@@ -1,10 +1,13 @@
 package plan
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
 func readinessPlanBody(status, prerequisite, taskStatus string) string {
@@ -21,8 +24,71 @@ func readinessPlanBody(status, prerequisite, taskStatus string) string {
 
 func writeReadinessPlan(t *testing.T, plansDir, slug, status, prerequisite, taskStatus string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(plansDir, slug+".md"), []byte(readinessPlanBody(status, prerequisite, taskStatus)), 0o644); err != nil {
+	body := strings.Replace(readinessPlanBody(status, prerequisite, taskStatus), "# Plan: Test", "# Plan: "+slug, 1)
+	if err := os.WriteFile(filepath.Join(plansDir, slug+".md"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write plan %s: %v", slug, err)
+	}
+}
+
+func TestPlanReadiness_TraversesMultiHopUnmetPrerequisite(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "foundation", "Approved", "", "queued")
+	writeReadinessPlan(t, plansDir, "integration", "Implemented", "foundation", "complete")
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "integration", "queued")
+
+	got, err := PlanReadiness(root, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Ready || len(got.Unmet) != 1 || got.Unmet[0].Slug != "foundation" || got.Unmet[0].Status != "Approved" {
+		t.Fatalf("readiness = %+v, want reachable foundation prerequisite", got)
+	}
+}
+
+func TestPlanReadiness_CycleIsUnreadyEvenWhenDirectPrerequisiteIsImplemented(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "alpha", "Implemented", "beta", "complete")
+	writeReadinessPlan(t, plansDir, "beta", "Implemented", "alpha", "complete")
+
+	got, err := PlanReadiness(root, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Ready || len(got.Unmet) != 1 || got.Unmet[0].Status != "invalid" || !strings.Contains(got.Unmet[0].Reason, "alpha -> beta -> alpha") {
+		t.Fatalf("readiness = %+v, want invalid cycle", got)
+	}
+	if got.Unmet[0].DerivedStatus != "" {
+		t.Errorf("cycle derived status = %q, want omitted/indeterminate", got.Unmet[0].DerivedStatus)
+	}
+	if !strings.Contains(got.UnmetMessage(), "prerequisite cycle: alpha -> beta -> alpha") {
+		t.Errorf("cycle diagnostic = %q", got.UnmetMessage())
+	}
+}
+
+func TestPrerequisiteReadiness_BoundsSharedDependencyAndAcceptsEmptyRootSlug(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "foundation", "Implemented", "", "complete")
+	writeReadinessPlan(t, plansDir, "alpha", "Implemented", "foundation", "complete")
+	writeReadinessPlan(t, plansDir, "beta", "Implemented", "foundation", "complete")
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "alpha, beta", "queued")
+	p, err := Parse(filepath.Join(plansDir, "delivery.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Slug = ""
+	if got, err := p.PrerequisiteReadiness(plansDir); err != nil || !got.Ready {
+		t.Fatalf("readiness = %+v, %v; want ready DAG", got, err)
 	}
 }
 
@@ -204,6 +270,8 @@ func TestPlanReadiness_ResolvesAndReportsReadError(t *testing.T) {
 	t.Cleanup(func() { parseReadinessPlan = originalParse })
 	if _, err := PlanReadiness(root, "blocked"); err == nil {
 		t.Fatal("expected parse error")
+	} else if !isUnexpected(err) {
+		t.Fatalf("parse error = %v, want typed Unexpected", err)
 	}
 	parseReadinessPlan = originalParse
 	if _, err := PlanReadiness(root, "missing"); err == nil {
@@ -227,5 +295,64 @@ func TestPrerequisiteReadiness_PrerequisiteParseFailure(t *testing.T) {
 	t.Cleanup(func() { parseReadinessPlan = originalParse })
 	if _, err := p.PrerequisiteReadiness(plansDir); err == nil {
 		t.Fatal("expected prerequisite parse error")
+	} else if !isUnexpected(err) {
+		t.Fatalf("parse error = %v, want typed Unexpected", err)
 	}
+}
+
+func TestPrerequisiteReadiness_OnlyNotFoundIsRenderedMissing(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "foundation", "queued")
+	p, err := Parse(filepath.Join(plansDir, "delivery.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalResolve := resolveReadinessPlanFile
+	resolveReadinessPlanFile = func(string, string) (string, error) {
+		return "", exitcode.UnexpectedError("permission denied")
+	}
+	t.Cleanup(func() { resolveReadinessPlanFile = originalResolve })
+	if _, err := p.PrerequisiteReadiness(plansDir); !isUnexpected(err) {
+		t.Fatalf("resolution error = %v, want typed Unexpected", err)
+	}
+
+	resolveReadinessPlanFile = func(string, string) (string, error) {
+		return "", exitcode.NotFoundError("missing")
+	}
+	got, err := p.PrerequisiteReadiness(plansDir)
+	if err != nil || got.Ready || len(got.Unmet) != 1 || got.Unmet[0].Status != "missing" {
+		t.Fatalf("NotFound readiness = %+v, %v; want normal missing prerequisite", got, err)
+	}
+}
+
+func TestPrerequisiteReadiness_PropagatesNestedResolutionFailure(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "alpha", "Implemented", "foundation", "complete")
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "alpha", "queued")
+	p, err := Parse(filepath.Join(plansDir, "delivery.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalResolve := resolveReadinessPlanFile
+	resolveReadinessPlanFile = func(dir, slug string) (string, error) {
+		if slug == "foundation" {
+			return "", exitcode.UnexpectedError("I/O failure")
+		}
+		return resolvePlanFile(dir, slug)
+	}
+	t.Cleanup(func() { resolveReadinessPlanFile = originalResolve })
+	if _, err := p.PrerequisiteReadiness(plansDir); !isUnexpected(err) {
+		t.Fatalf("nested resolution error = %v, want typed Unexpected", err)
+	}
+}
+
+func isUnexpected(err error) bool {
+	var coded interface{ ExitCode() int }
+	return errors.As(err, &coded) && coded.ExitCode() == exitcode.Unexpected
 }

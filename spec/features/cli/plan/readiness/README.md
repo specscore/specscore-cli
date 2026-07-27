@@ -31,6 +31,7 @@ A prerequisite satisfies readiness only if its embedded task-status rollup deriv
 Before writing a plan-inline task to `in_progress`, `task change-status --plan` MUST reject an unready Plan with exit `4`, naming every unmet prerequisite slug and status. `plan reconcile`, which directly records an `Implemented` Plan, MUST use the same guard and refuse before any mutation. `plan change-status` MUST NOT gate the human `In Review → Approved` arc: approval is not execution readiness.
 
 Malformed declarations are authored-data errors owned by lint rule `P-009`; readiness MUST conservatively report them unready rather than treating a parser-recovered partial list as ready.
+Reachable prerequisite cycles are likewise unready even where every direct task rollup derives `Implemented`; their unmet record has `status: invalid`, omits indeterminate `derived_status`, and includes a `reason` naming the cycle.
 
 ## Acceptance Criteria
 
