@@ -505,6 +505,22 @@ func TestP009_PrerequisitePlansResolveAndExposeCycles(t *testing.T) {
 		}
 	})
 
+	t.Run("explicit empty sentinel", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** —\n")
+		if got := hasViolation(runRules(t, e), "P-009", ""); got != nil {
+			t.Fatalf("em dash must be accepted as the explicit empty sentinel: %+v", got)
+		}
+	})
+
+	t.Run("blank field", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:**    \n")
+		if got := hasViolation(runRules(t, e), "P-009", "comma-separated list"); got == nil {
+			t.Fatal("expected blank prerequisite field violation")
+		}
+	})
+
 	t.Run("dangling", func(t *testing.T) {
 		e := newPlanRulesEnv(t)
 		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** missing\n")

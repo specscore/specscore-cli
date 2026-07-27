@@ -64,3 +64,37 @@ func TestPlanIndexChecker_FlagsAndFixesPlanRowDrift(t *testing.T) {
 		t.Errorf("fixed index retained stale beta metadata:\n%s", content)
 	}
 }
+
+func TestPlanIndexChecker_AbsentAndMalformedIndexes(t *testing.T) {
+	c := newPlanIndexChecker()
+	if c.name() != "plan-index-sync" || c.severity() != "error" {
+		t.Fatalf("unexpected checker identity: name=%q severity=%q", c.name(), c.severity())
+	}
+
+	root := t.TempDir()
+	if vs, err := c.check(root); err != nil || len(vs) != 0 {
+		t.Fatalf("absent plans dir: violations=%+v err=%v", vs, err)
+	}
+	if err := c.fix(root); err != nil {
+		t.Fatalf("fix must ignore an absent plans dir: %v", err)
+	}
+
+	plansDir := filepath.Join(root, "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if vs, err := c.check(root); err != nil || len(vs) != 0 {
+		t.Fatalf("missing index is owned by readme-exists, got violations=%+v err=%v", vs, err)
+	}
+	malformed := "# Plans\n\n| Plan | Status | Source | Date | Owner |\n| not a separator |\n"
+	if err := os.WriteFile(filepath.Join(plansDir, "README.md"), []byte(malformed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := c.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 1 || !strings.Contains(vs[0].Message, "canonical table") {
+		t.Fatalf("malformed index must surface as one lint violation: %+v", vs)
+	}
+}

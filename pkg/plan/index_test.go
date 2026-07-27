@@ -51,3 +51,79 @@ func TestSyncIndex_DerivesAndRepairsPlanRows(t *testing.T) {
 		t.Fatal("second sync must be idempotent")
 	}
 }
+
+func TestIndexContent_PreservesLegacyIndexesAndValidatesCanonicalTable(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	legacy := []byte("# Plans\n\n- historical hand-maintained index\n")
+	updated, changed, err := IndexContent(plansDir, legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || string(updated) != string(legacy) {
+		t.Fatalf("legacy index changed=%v content=%q, want byte-for-byte preservation", changed, updated)
+	}
+
+	malformed := []byte("# Plans\n\n" + plansIndexHeader + "\n| not a separator |\n")
+	if _, _, err := IndexContent(plansDir, malformed); err == nil {
+		t.Fatal("canonical header without its separator must be rejected")
+	}
+}
+
+func TestIndexContent_RendersMetadataFallbacks(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for slug, body := range map[string]string{
+		"minimal": "# Plan: Minimal\n",
+		"idea":    "# Plan: Idea\n\n**Source:** idea:seed\n",
+	} {
+		if err := os.WriteFile(filepath.Join(plansDir, slug+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	content := []byte("# Plans\n\n" + plansIndexHeader + "\n|---|---|---|---|---|\n")
+	updated, changed, err := IndexContent(plansDir, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("derived rows must be added")
+	}
+	got := string(updated)
+	if !strings.Contains(got, "| [minimal](minimal.md) | — | — | — | — |") {
+		t.Errorf("minimal plan must render metadata fallbacks:\n%s", got)
+	}
+	if !strings.Contains(got, "| [idea](idea.md) | — | idea:seed | — | — |") {
+		t.Errorf("source-form plan must preserve its source value:\n%s", got)
+	}
+}
+
+func TestSyncIndex_MissingIndexReturnsReadError(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := SyncIndex(plansDir); err == nil || changed {
+		t.Fatalf("missing index changed=%v err=%v, want read error", changed, err)
+	}
+}
+
+func TestIsPlansIndexSeparator(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"|---|---|---|---|---|", true},
+		{"|---|---|", false},
+		{"|---| text |---|---|---|", false},
+	} {
+		if got := isPlansIndexSeparator(tc.line); got != tc.want {
+			t.Errorf("isPlansIndexSeparator(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
