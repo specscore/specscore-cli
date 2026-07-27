@@ -174,6 +174,45 @@ func TestReconcile_TasksAlreadyComplete_OnlyPlanStatusChanges(t *testing.T) {
 	}
 }
 
+func TestReconcile_PrerequisiteReadinessRefusesAndReportsReadFailure(t *testing.T) {
+	root, path := stageReconcilePlan(t, "delivery", "Draft", "planning")
+	plansDir := filepath.Join(root, "spec", "plans")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "**Source:** none", "**Source:** none\n**Prerequisite Plans:** foundation", 1))
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plansDir, "foundation.md"), []byte(reconcilePlanBody("Approved", "queued")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Reconcile(ReconcileOptions{SpecRoot: root, Slug: "delivery", Note: "x", PostMutation: okHook})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Errorf("unmet prerequisite exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "foundation") || !strings.Contains(err.Error(), "Approved") {
+		t.Errorf("unmet prerequisite diagnostic = %q", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(original) {
+		t.Errorf("plan changed on prerequisite refusal")
+	}
+
+	originalParse := parseReadinessPlan
+	parseReadinessPlan = func(string) (*Plan, error) { return nil, os.ErrPermission }
+	t.Cleanup(func() { parseReadinessPlan = originalParse })
+	_, err = Reconcile(ReconcileOptions{SpecRoot: root, Slug: "delivery", Note: "x", PostMutation: okHook})
+	if got := codeOf(t, err); got != exitcode.Unexpected {
+		t.Errorf("readiness parse failure exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+}
+
 // AC: missing-note-refused — Reconcile refuses without a justification.
 func TestReconcile_MissingNote_Refused(t *testing.T) {
 	root, _ := stageReconcilePlan(t, "auth", "Draft", "planning")

@@ -552,6 +552,20 @@ func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug,
 	if target.StatusLine == 0 {
 		return nil, exitcode.UnexpectedErrorf("task %q in plan %s has no **Status:** line", taskSlug, planSlug)
 	}
+	// Moving a plan-inline task into in_progress is the first execution-band
+	// entrypoint. Keep the check before the file rewrite so an unmet
+	// prerequisite leaves the task byte-for-byte untouched.
+	if to == lifecycle.TaskInProgress {
+		readiness, readinessErr := p.PrerequisiteReadiness(filepath.Join(specRoot, "spec", "plans"))
+		if readinessErr != nil {
+			return exitcode.UnexpectedErrorf("checking prerequisite readiness for plan %q: %v", planSlug, readinessErr)
+		}
+		if !readiness.Ready {
+			return exitcode.InvalidStateErrorf(
+				"plan %q is not ready to begin execution; unmet prerequisite plan(s): %s; each must derive Implemented from its task rollup",
+				planSlug, readiness.UnmetMessage())
+		}
+	}
 	// Provenance is written ONLY when completing, in the same atomic write that
 	// sets the status; values come ONLY from flags (never ambient git HEAD).
 	// --note/--evidence are independent optional annotations, valid on ANY

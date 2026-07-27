@@ -34,6 +34,7 @@ func planCommand() *cobra.Command {
 		planChangeStatusCommand(),
 		planReconcileCommand(),
 		planTransitionsCommand(),
+		planReadinessCommand(),
 	)
 	return cmd
 }

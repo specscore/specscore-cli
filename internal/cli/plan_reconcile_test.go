@@ -264,6 +264,52 @@ func TestPlanReconcile_LintFailureRollsBack_CLI(t *testing.T) {
 	}
 }
 
+// Reconcile is an out-of-band record correction, not a way around a Plan's
+// execution prerequisites. Its readiness refusal happens before any rewrite.
+func TestPlanReconcile_UnmetPrerequisiteRefusesWithoutMutation_CLI(t *testing.T) {
+	root := stageReconcilablePlan(t, "delivery", "Draft", "planning")
+	deliveryPath := filepath.Join(root, "spec", "plans", "delivery.md")
+	body, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "**Status:** Draft", "**Status:** Draft\n**Prerequisite Plans:** foundation", 1))
+	if err := os.WriteFile(deliveryPath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foundation := `# Plan: Foundation
+
+**Status:** Approved
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** queued
+`
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte(foundation), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runPlan(t, "reconcile", "delivery", "--tasks=complete", "--note", "x")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "foundation") || !strings.Contains(err.Error(), "Approved") {
+		t.Errorf("diagnostic must name unmet prerequisite/status: %v", err)
+	}
+	after, readErr := os.ReadFile(deliveryPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(original) {
+		t.Errorf("reconcile changed plan despite readiness refusal:\n%s", after)
+	}
+}
+
 // A --project that does not resolve to a spec repo surfaces the
 // resolveSpecRoot error (covers the error-return branch after flag
 // validation passes).

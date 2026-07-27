@@ -527,7 +527,8 @@ func parseDeferredACs(lines []string, start, end int) []DeferredAC {
 	return out
 }
 
-// slugFromPath returns the filename without `.md`.
+// slugFromPath returns the filename without `.md`, or the containing directory
+// name for the legacy directory form (`spec/plans/<slug>/README.md`).
 func slugFromPath(path string) string {
 	base := path
 	for i := len(path) - 1; i >= 0; i-- {
@@ -535,6 +536,18 @@ func slugFromPath(path string) string {
 			base = path[i+1:]
 			break
 		}
+	}
+	if base == "README.md" {
+		dir := strings.TrimSuffix(path, string(os.PathSeparator)+base)
+		if dir == path {
+			dir = strings.TrimSuffix(path, "/"+base)
+		}
+		for i := len(dir) - 1; i >= 0; i-- {
+			if dir[i] == os.PathSeparator || dir[i] == '/' {
+				return dir[i+1:]
+			}
+		}
+		return dir
 	}
 	return strings.TrimSuffix(base, ".md")
 }

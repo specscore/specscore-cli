@@ -8,7 +8,7 @@ status: Specified
 **Status:** Specified
 **Date:** 2026-06-04
 **Owner:** alexander.trakhimenok
-**Promotes To:** cli/plan, cli/plan/info, cli/plan/list
+**Promotes To:** cli/plan, cli/plan/info, cli/plan/list, cli/plan/readiness
 **Supersedes:** —
 **Related Ideas:** —
 

@@ -316,6 +316,21 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, updated, nil
 	}
 
+	// Reconcile writes the Plan directly to the Implemented execution band.
+	// It is an out-of-band history correction, not a prerequisite bypass: the
+	// same readiness evaluator used by dispatch entrypoints must pass before
+	// any bytes are read for mutation or written, preserving atomic refusal.
+	readiness, err := p.PrerequisiteReadiness(plansDir)
+	if err != nil {
+		return ReconcileResult{}, exitcode.UnexpectedErrorf(
+			"checking prerequisite readiness for plan %q: %v", opts.Slug, err)
+	}
+	if !readiness.Ready {
+		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+			"plan %q is not ready to reconcile to Implemented; unmet prerequisite plan(s): %s; each must derive Implemented from its task rollup",
+			opts.Slug, readiness.UnmetMessage())
+	}
+
 	// A task recorded as failed or aborted is a deliberate, meaningful claim
 	// — reconcile must never silently overwrite it just because --tasks=complete
 	// asked for "every" task. Only a task number the caller explicitly named

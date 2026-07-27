@@ -102,6 +102,15 @@ func TestParse_PrerequisitePlansRetainsASCIIDashForLint(t *testing.T) {
 	}
 }
 
+func TestSlugFromPath_DirectoryAndBareReadmeForms(t *testing.T) {
+	if got := slugFromPath(filepath.Join("spec", "plans", "auth", "README.md")); got != "auth" {
+		t.Errorf("directory-form slug = %q, want auth", got)
+	}
+	if got := slugFromPath("README.md"); got != "README.md" {
+		t.Errorf("bare README slug = %q, want README.md", got)
+	}
+}
+
 func TestParse_TaskIdField(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, "plans")

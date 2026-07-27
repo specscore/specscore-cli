@@ -142,6 +142,79 @@ func TestTaskChangeStatus_PlanInline_IllegalTransition(t *testing.T) {
 	}
 }
 
+// A plan-inline task enters execution only after every declared prerequisite
+// derives Implemented. The refusal is before the rewrite, so the target plan
+// stays byte-identical and the diagnostic lists the prerequisite and status.
+func TestTaskChangeStatus_PlanInline_InProgressRequiresImplementedPrerequisites(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	plansDir := filepath.Join(root, "spec", "plans")
+	foundation := `# Plan: Foundation
+
+**Status:** Approved
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** queued
+`
+	if err := os.WriteFile(filepath.Join(plansDir, "foundation.md"), []byte(foundation), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d (InvalidState); err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "foundation") || !strings.Contains(err.Error(), "Approved") {
+		t.Errorf("diagnostic must name unmet prerequisite/status: %v", err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(original) {
+		t.Errorf("task plan changed despite readiness refusal:\n%s", after)
+	}
+}
+
+func TestTaskChangeStatus_PlanInline_ReadinessReadFailureIsAtomic(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission denial is not enforceable for root")
+	}
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	foundationPath := filepath.Join(root, "spec", "plans", "foundation.md")
+	if err := os.WriteFile(foundationPath, []byte("# Plan: Foundation\n\n**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(foundationPath, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(foundationPath, 0o644) })
+	original, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(original) {
+		t.Errorf("task plan changed despite readiness read failure")
+	}
+}
+
 // A resolved block with no **Status:** line surfaces an Unexpected (10) error.
 func TestTaskChangeStatus_PlanInline_NoStatusLine(t *testing.T) {
 	body := `# Plan: Auth
