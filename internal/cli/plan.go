@@ -281,6 +281,9 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	if err := os.WriteFile(target, body, 0o644); err != nil {
 		return exitcode.UnexpectedErrorf("writing %s: %v", target, err)
 	}
+	if _, err := plan.SyncIndex(filepath.Dir(target)); err != nil {
+		return exitcode.UnexpectedErrorf("syncing plans index: %v", err)
+	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)
 	return nil
@@ -318,7 +321,7 @@ func buildPlanBody(cmd *cobra.Command, slug, title, owner, featureSrc, ideaSrc s
 		repl["**Supersedes:** —"] = "**Supersedes:** —\n**Parent:** " + parent
 	}
 
-	return bareOrEmbedded(true, "plan", repl, cmd.ErrOrStderr(), func() ([]byte, error) {
+	body, err := bareOrEmbedded(true, "plan", repl, cmd.ErrOrStderr(), func() ([]byte, error) {
 		return planScaffoldFn(plan.ScaffoldOptions{
 			Slug:          slug,
 			Title:         title,
@@ -328,11 +331,30 @@ func buildPlanBody(cmd *cobra.Command, slug, title, owner, featureSrc, ideaSrc s
 			Parent:        parent,
 		})
 	})
+	if err != nil {
+		return nil, err
+	}
+	return normalizePlanTaskStatusVocabulary(body), nil
+}
+
+// normalizePlanTaskStatusVocabulary protects the generated Plan contract when
+// a cached or self-hosted gallery still contains the retired `pending` task
+// status. The gallery remains the source of the template, while plan new
+// guarantees its output uses the linter's canonical `planning` vocabulary.
+func normalizePlanTaskStatusVocabulary(body []byte) []byte {
+	lines := strings.Split(string(body), "\n")
+	for i, line := range lines {
+		if line == "**Status:** pending" {
+			lines[i] = "**Status:** planning"
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // ensurePlanAncestorIndexes materializes spec/README.md and spec/plans/README.md
 // when they don't already exist, using the same templates as `specscore init`.
-// Existing files are left untouched (cli/plan/new#req:ancestor-indexes-materialized).
+// Existing files are left untouched except that the plans index receives the
+// derived row for each newly scaffolded Plan.
 func ensurePlanAncestorIndexes(root string) error {
 	cfg, err := projectdef.ReadSpecConfig(root)
 	if err != nil {

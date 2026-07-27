@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore plan info <slug>` returns structured metadata for a single plan: its status, source feature, mode, date, owner, and a rollup of its task statuses (e.g., 6 of 8 tasks done).
+`specscore plan info <slug>` returns structured metadata for a single plan: its status, source feature, mode, date, owner, same-repository prerequisite plans, and a rollup of its task statuses.
 
 ## Synopsis
 
@@ -42,17 +42,18 @@ The output MUST include, at minimum:
 - `mode` — the `**Mode:**` value (empty when absent)
 - `date` — the `**Date:**` value (empty when absent)
 - `owner` — the `**Owner:**` value (empty when absent)
+- `prerequisite_plans` — the ordered list from `**Prerequisite Plans:**` (an empty collection when absent; JSON renders `[]`, never `null`)
 - `tasks` — a rollup object (see REQ:task-rollup)
 
 Additional fields MAY be added in later releases; consumers MUST tolerate unknown fields.
 
 ### Task rollup
 
-A plan's tasks each carry a `**Status:**` drawn from `pending`, `in-progress`, `done`, `blocked`. The rollup summarizes them.
+A plan's tasks each carry a `**Status:**` drawn from `planning`, `queued`, `in_progress`, `blocked`, `complete`, `failed`, `aborted`. The rollup summarizes them.
 
 #### REQ: task-rollup
 
-The `tasks` field MUST include `total` (count of tasks in the plan) and a per-status breakdown covering `done`, `in-progress`, `pending`, and `blocked` (each `0` when none). The counts MUST be derived from the parsed task `**Status:**` values, not from the plan-level status.
+The `tasks` field MUST include `total` (count of tasks in the plan) and a per-status breakdown covering `complete`, `in_progress`, `planning`, `queued`, and `blocked` (each `0` when none). The counts MUST be derived from the parsed task `**Status:**` values, not from the plan-level status.
 
 ### Format selection
 
@@ -92,9 +93,15 @@ The `tasks` field MUST include `total` (count of tasks in the plan) and a per-st
 
 ### AC: info-returns-task-rollup (verifies REQ:task-rollup)
 
-**Given** a plan with 8 tasks of which 8 are `done`
+**Given** a plan with 8 tasks of which 8 are `complete`
 **When** the user runs `specscore plan info <slug>`
-**Then** the output's `tasks` field reports `total: 8` and `done: 8`, with `in-progress`, `pending`, and `blocked` each `0`.
+**Then** the output's `tasks` field reports `total: 8` and `complete: 8`, with `in_progress`, `planning`, `queued`, and `blocked` each `0`.
+
+### AC: info-returns-prerequisites (verifies REQ:required-fields)
+
+**Given** a plan with `**Prerequisite Plans:** foundation, integration`
+**When** the user runs `specscore plan info <slug>`
+**Then** structured output contains `prerequisite_plans` with `foundation` and `integration`, and text output renders both slugs. Given an absent `**Prerequisite Plans:**` header, JSON emits `"prerequisite_plans": []` (never `null`) and text renders `Prerequisite plans: none`.
 
 ### AC: not-found-exits-3 (verifies REQ:format-and-not-found)
 

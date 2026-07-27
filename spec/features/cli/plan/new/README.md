@@ -76,7 +76,7 @@ If `spec/plans/<slug>.md` already exists, the command MUST exit `1` (Conflict) w
 
 #### REQ: ancestor-indexes-materialized
 
-When `plan new` writes `spec/plans/<slug>.md`, the command MUST also materialize `spec/README.md` and `spec/plans/README.md` when they do not already exist, using the same templates as `specscore init`. Existing files MUST be left untouched (idempotent). The plan file MUST NOT be written until both ancestor indexes are in place.
+When `plan new` writes `spec/plans/<slug>.md`, the command MUST also materialize `spec/README.md` and `spec/plans/README.md` when they do not already exist, using the same templates as `specscore init`. Existing index prose MUST be left untouched, while the canonical Plan table is synchronized to include the new Plan's derived row. The plan file MUST NOT be written until both ancestor indexes are in place.
 
 ## Parameters
 
@@ -154,7 +154,7 @@ Running the command twice for the same slug without `--force` exits `1` on the s
 
 **Given** a project with `specscore.yaml` but no `spec/plans/` tree
 **When** the user runs `specscore plan new my-plan --feature some-feature`
-**Then** `spec/README.md`, `spec/plans/README.md`, and `spec/plans/my-plan.md` are created; a subsequent `specscore spec lint` reports no error-severity violations outside the new plan file; and re-running the command leaves the pre-existing indexes untouched.
+**Then** `spec/README.md`, `spec/plans/README.md`, and `spec/plans/my-plan.md` are created; a subsequent `specscore spec lint` reports no error-severity violations outside the new plan file; and re-running the command preserves pre-existing index prose while synchronizing canonical Plan rows.
 
 ## Open Questions
 

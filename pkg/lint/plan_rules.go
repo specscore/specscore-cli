@@ -103,6 +103,9 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 	// P-005 validates **Parent:** references across the full single-file plan
 	// set (resolution + cycle detection need every plan's parent edge).
 	violations = append(violations, lintP005(parsedPlans, relPaths)...)
+	// P-009 validates same-repo cross-plan prerequisites as a separate graph;
+	// Parent remains composition, while task Depends-On remains intra-plan.
+	violations = append(violations, lintP009(parsedPlans, relPaths)...)
 	// Stable order: by file, line, rule name.
 	sort.SliceStable(violations, func(i, j int) bool {
 		if violations[i].File != violations[j].File {
@@ -1112,4 +1115,137 @@ func renderCyclePath(cycle []string) string {
 	}
 	rotated = append(rotated, cycle[start])
 	return strings.Join(rotated, " → ")
+}
+
+// ----- P-009 cross-plan prerequisite validity -----
+
+// lintP009 validates the optional `**Prerequisite Plans:**` header as a
+// same-repository dependency graph. It is intentionally separate from P-005:
+// Parent expresses composition, whereas prerequisites express execution order.
+func lintP009(parsedPlans map[string]*plan.Plan, relPaths map[string]string) []Violation {
+	var out []Violation
+	edges := make(map[string][]string, len(parsedPlans))
+
+	slugs := make([]string, 0, len(parsedPlans))
+	for slug := range parsedPlans {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+
+	for _, slug := range slugs {
+		p := parsedPlans[slug]
+		if p.PrerequisiteLine == 0 {
+			continue
+		}
+		raw := strings.TrimSpace(p.PrerequisiteRaw)
+		if raw == "" {
+			out = append(out, Violation{
+				File: relPaths[slug], Line: p.PrerequisiteLine, Severity: "error", Rule: "P-009",
+				Message: "**Prerequisite Plans:** must be a comma-separated list of plan slugs or —",
+			})
+			continue
+		}
+		if raw == "—" {
+			continue
+		}
+
+		seen := map[string]bool{}
+		for _, part := range strings.Split(raw, ",") {
+			prerequisite := strings.TrimSpace(part)
+			if prerequisite == "" {
+				out = append(out, Violation{
+					File: relPaths[slug], Line: p.PrerequisiteLine, Severity: "error", Rule: "P-009",
+					Message: "**Prerequisite Plans:** must not contain an empty list entry",
+				})
+				continue
+			}
+			if err := plan.ValidateSlug(prerequisite); err != nil {
+				out = append(out, Violation{
+					File: relPaths[slug], Line: p.PrerequisiteLine, Severity: "error", Rule: "P-009",
+					Message: fmt.Sprintf("invalid prerequisite plan slug %q: %v", prerequisite, err),
+				})
+				continue
+			}
+			if seen[prerequisite] {
+				out = append(out, Violation{
+					File: relPaths[slug], Line: p.PrerequisiteLine, Severity: "error", Rule: "P-009",
+					Message: fmt.Sprintf("**Prerequisite Plans:** lists %q more than once", prerequisite),
+				})
+				continue
+			}
+			seen[prerequisite] = true
+			if prerequisite == slug {
+				out = append(out, Violation{
+					File: relPaths[slug], Line: p.PrerequisiteLine, Severity: "error", Rule: "P-009",
+					Message: fmt.Sprintf("**Prerequisite Plans:** %q references the plan itself", slug),
+				})
+				continue
+			}
+			if _, ok := parsedPlans[prerequisite]; !ok {
+				out = append(out, Violation{
+					File: relPaths[slug], Line: p.PrerequisiteLine, Severity: "error", Rule: "P-009",
+					Message: fmt.Sprintf("prerequisite plan %q does not resolve to spec/plans/%s.md", prerequisite, prerequisite),
+				})
+				continue
+			}
+			edges[slug] = append(edges[slug], prerequisite)
+		}
+	}
+
+	if cycle := findPrerequisiteCycle(edges); len(cycle) > 0 {
+		first := cycleFirst(cycle)
+		out = append(out, Violation{
+			File: relPaths[first], Line: parsedPlans[first].PrerequisiteLine, Severity: "error", Rule: "P-009",
+			Message: fmt.Sprintf("**Prerequisite Plans:** graph forms a cycle: %s", renderCyclePath(cycle)),
+		})
+	}
+	return out
+}
+
+func findPrerequisiteCycle(edges map[string][]string) []string {
+	const (
+		white = iota
+		gray
+		black
+	)
+	color := map[string]int{}
+	stack := []string{}
+	position := map[string]int{}
+	var cycle []string
+
+	var visit func(string) bool
+	visit = func(slug string) bool {
+		color[slug] = gray
+		position[slug] = len(stack)
+		stack = append(stack, slug)
+		next := append([]string(nil), edges[slug]...)
+		sort.Strings(next)
+		for _, prerequisite := range next {
+			switch color[prerequisite] {
+			case white:
+				if visit(prerequisite) {
+					return true
+				}
+			case gray:
+				cycle = append([]string(nil), stack[position[prerequisite]:]...)
+				return true
+			}
+		}
+		stack = stack[:len(stack)-1]
+		delete(position, slug)
+		color[slug] = black
+		return false
+	}
+
+	starts := make([]string, 0, len(edges))
+	for slug := range edges {
+		starts = append(starts, slug)
+	}
+	sort.Strings(starts)
+	for _, slug := range starts {
+		if color[slug] == white && visit(slug) {
+			return cycle
+		}
+	}
+	return nil
 }

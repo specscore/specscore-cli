@@ -495,6 +495,76 @@ func TestP004_CanonicalStatusAccepted(t *testing.T) {
 	}
 }
 
+func TestP009_PrerequisitePlansResolveAndExposeCycles(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "foundation", "# Plan: Foundation\n\n**Source:** none\n")
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** foundation\n")
+		if got := hasViolation(runRules(t, e), "P-009", ""); got != nil {
+			t.Fatalf("valid prerequisite must not be flagged: %+v", got)
+		}
+	})
+
+	t.Run("dangling", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** missing\n")
+		if got := hasViolation(runRules(t, e), "P-009", "does not resolve"); got == nil {
+			t.Fatal("expected dangling prerequisite violation")
+		}
+	})
+
+	t.Run("empty entry", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "foundation", "# Plan: Foundation\n\n**Source:** none\n")
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** foundation,\n")
+		if got := hasViolation(runRules(t, e), "P-009", "empty list entry"); got == nil {
+			t.Fatal("expected empty prerequisite entry violation")
+		}
+	})
+
+	t.Run("malformed slug", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** Bad_Slug\n")
+		if got := hasViolation(runRules(t, e), "P-009", "invalid prerequisite plan slug"); got == nil {
+			t.Fatal("expected malformed prerequisite slug violation")
+		}
+	})
+
+	t.Run("ASCII dash is not the empty sentinel", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** -\n")
+		if got := hasViolation(runRules(t, e), "P-009", "invalid prerequisite plan slug"); got == nil {
+			t.Fatal("expected ASCII dash prerequisite violation")
+		}
+	})
+
+	t.Run("duplicate", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "foundation", "# Plan: Foundation\n\n**Source:** none\n")
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** foundation, foundation\n")
+		if got := hasViolation(runRules(t, e), "P-009", "more than once"); got == nil {
+			t.Fatal("expected duplicate prerequisite violation")
+		}
+	})
+
+	t.Run("self", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** application\n")
+		if got := hasViolation(runRules(t, e), "P-009", "itself"); got == nil {
+			t.Fatal("expected self prerequisite violation")
+		}
+	})
+
+	t.Run("cycle", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "alpha", "# Plan: Alpha\n\n**Source:** none\n**Prerequisite Plans:** beta\n")
+		e.writePlan(t, "beta", "# Plan: Beta\n\n**Source:** none\n**Prerequisite Plans:** alpha\n")
+		if got := hasViolation(runRules(t, e), "P-009", "alpha → beta → alpha"); got == nil {
+			t.Fatal("expected prerequisite cycle violation with the full cycle path")
+		}
+	})
+}
+
 // AC lint-fix-migrates-legacy: --fix rewrites each legacy task **Status:**
 // value-for-value to canonical, leaving all other content untouched, and is
 // idempotent.

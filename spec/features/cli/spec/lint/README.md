@@ -14,13 +14,13 @@ status: Approved
 
 ## Summary
 
-`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit. `--fix=<targets>` scopes the pass to named fixes (e.g. `--fix=no-source`); some fixes are opt-in and run only when named. When a reported violation is fixable, a `How to fix:` section names the exact `--fix=<target>` command.
+`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories, and canonical Plans-index rows). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit. `--fix=<targets>` scopes the pass to named fixes (e.g. `--fix=no-source`); some fixes are opt-in and run only when named. When a reported violation is fixable, a `How to fix:` section names the exact `--fix=<target>` command.
 
 ## Contents
 
 | Directory | Description |
 |---|---|
-| [plan-rules/](plan-rules/README.md) | Lint rules `P-001`–`P-005` and parser extensions for single-file Plans (`**Mode:**`, `**Status:**`, `**Depends-On:**`, `**Parent:**`, placeholder body token) |
+| [plan-rules/](plan-rules/README.md) | Lint rules `P-001`–`P-009` and parser extensions for single-file Plans (`**Mode:**`, `**Status:**`, `**Depends-On:**`, `**Parent:**`, `**Prerequisite Plans:**`, placeholder body token) |
 | [issue-rules](issue-rules/README.md) | Adds 15 lint rules (`I-001`–`I-015`) and the underlying `issue` artifact parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `issue-artifact-type` Feature in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo. |
 | [feature-rules](feature-rules/README.md) | Adds feature-level lint rules to specscore spec lint — starting with feature-source-ideas-required, which enforces that every Feature carries a **Source Ideas:** line (with an explicit-empty sentinel) and backfills it via --fix. |
 | [legacy-status-autofix](legacy-status-autofix/README.md) | Idempotent --fix rewrites of a closed, documented set of legacy artifact status tokens (plan, decision, idea) to their canonical replacements; unknown/free-form values stay non-autofixable errors. |
@@ -86,6 +86,18 @@ When `index-entries` reports `Child directory not listed in index: <name>` and `
 The fixer MUST NOT mutate any cell beyond the inserted row; existing rows are preserved byte-for-byte. The deletion direction (phantom rows) runs first so the insertion phase reads a phantom-free index.
 
 This REQ does NOT violate `fix-is-safe-subset`. Status flows from a structurally-parsed field; Kind and Description use placeholders the project has already codified for `feature new`, so the autofix is byte-identical to user-driven scaffolding. The placeholders are visibly under-filled (`—`, `TODO: ...`), inviting the author to populate them rather than masking missing intent.
+
+### Plans index synchronization
+
+The `plan-index-sync` rule keeps the canonical Plans table in `spec/plans/README.md` a derived projection of direct single-file Plans in `spec/plans/*.md`. It owns only that table's rows: prose such as `## Recently Closed` remains author-maintained. Legacy index-table schemas are out of scope until explicitly migrated.
+
+#### REQ: plan-index-sync-detects-canonical-row-drift
+
+For a `spec/plans/README.md` whose table header is exactly `| Plan | Status | Source | Date | Owner |`, `plan-index-sync` MUST report one error-severity, fixable violation when the rendered table differs from the canonical rows derived from direct single-file Plan artifacts. Drift includes a missing Plan row, a stale row value, or duplicate rows for the same Plan. The violation MUST use rule and fix target `plan-index-sync`; a missing `spec/plans/README.md` remains owned by the existing index-document rule.
+
+#### REQ: plan-index-sync-fix-regenerates-canonical-rows
+
+`specscore spec lint --fix` and `specscore spec lint --fix=plan-index-sync` MUST regenerate the canonical table rows from `spec/plans/*.md`, producing exactly one row per direct single-file Plan and replacing stale metadata. The fix MUST preserve surrounding prose and non-table sections byte-for-byte, and a second identical fix pass MUST make no changes.
 
 ### Open Questions section
 
@@ -377,6 +389,12 @@ Given a root features index that lists `auth` while a `billing/` directory with 
 **Requirements:** cli/spec/lint#req:index-entries-bidirectional
 
 Given a feature tree where `spec/features/orphan/README.md` exists on disk but `spec/features/README.md` does not link to `orphan/`, running `specscore spec lint` exits `1` with an `index-entries` violation on `features/README.md` whose message names the unlisted child directory.
+
+### AC: plan-index-sync-detects-and-fixes-row-drift
+
+**Requirements:** cli/spec/lint#req:plan-index-sync-detects-canonical-row-drift, cli/spec/lint#req:plan-index-sync-fix-regenerates-canonical-rows
+
+Given a canonical Plans index where `alpha.md` has no row and `beta.md` has two rows with stale metadata, `specscore spec lint` reports one fixable `plan-index-sync` violation. Running `specscore spec lint --fix=plan-index-sync` restores exactly one current row for each plan, preserves prose outside the table, and leaves the next lint/fix pass clean and unchanged.
 
 ### AC: oq-section-missing-flagged
 
