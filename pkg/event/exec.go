@@ -76,7 +76,12 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 	if err != nil {
 		return fmt.Errorf("exec: configure process tree: %w", err)
 	}
-	defer processTree.close()
+	defer func() {
+		// Cleanup happens after Cmd.Wait has released its process handle. Its
+		// error cannot change the delivery result, but must be made explicit so
+		// static analysis does not mistake this intentional best-effort release.
+		_ = processTree.close()
+	}()
 
 	// Additive env: inherit parent environment, then append configured pairs.
 	env := os.Environ()

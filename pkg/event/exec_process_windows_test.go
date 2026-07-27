@@ -83,6 +83,57 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 	}
 }
 
+// TestExecSuccessfulCommandLeavesBackgroundProcessRunning proves that closing
+// the private Job Object after a successful command does not turn success into
+// timeout-style cleanup. The child remains in the job but must stay alive once
+// SpecScore releases its final job handle.
+func TestExecSuccessfulCommandLeavesBackgroundProcessRunning(t *testing.T) {
+	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
+	script := `$child = Start-Process -FilePath 'powershell.exe' ` +
+		`-ArgumentList '-NoLogo -NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' ` +
+		`-PassThru; ` +
+		`[System.IO.File]::WriteAllText($env:SPECSCORE_CHILD_PID_FILE, [string]$child.Id); ` +
+		`exit 0`
+	sub := NewExec(
+		[]string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script},
+		map[string]string{"SPECSCORE_CHILD_PID_FILE": childPIDFile},
+		5*time.Second,
+	)
+
+	if err := sub.Deliver(context.Background(), execSampleEvent(t)); err != nil {
+		t.Fatalf("Deliver returned error: %v", err)
+	}
+
+	pid := waitForWindowsChildPID(t, childPIDFile, nil, 2*time.Second)
+	handle, err := windows.OpenProcess(
+		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE,
+		false,
+		uint32(pid),
+	)
+	if err != nil {
+		t.Fatalf("open child process %d: %v", pid, err)
+	}
+	t.Cleanup(func() {
+		_ = windows.TerminateProcess(handle, 1)
+		_ = windows.CloseHandle(handle)
+	})
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for {
+		var exitCode uint32
+		if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
+			t.Fatalf("query child process %d: %v", pid, err)
+		}
+		if exitCode != windowsStillActive {
+			t.Fatalf("background child %d exited after successful command with code %d", pid, exitCode)
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
 func waitForWindowsChildPID(
 	t *testing.T,
 	path string,
@@ -103,10 +154,12 @@ func waitForWindowsChildPID(
 		if !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("read child pid: %v", err)
 		}
-		select {
-		case deliveryErr := <-result:
-			t.Fatalf("Deliver returned before child PID was recorded: %v", deliveryErr)
-		default:
+		if result != nil {
+			select {
+			case deliveryErr := <-result:
+				t.Fatalf("Deliver returned before child PID was recorded: %v", deliveryErr)
+			default:
+			}
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("child PID was not recorded within %v", timeout)

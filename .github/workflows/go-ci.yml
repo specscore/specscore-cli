@@ -79,7 +79,7 @@ jobs:
         run: ./scripts/coverage-gate.sh
 
   windows-event-process-tree:
-    name: Windows event process-tree timeout
+    name: Windows event process-tree lifecycle
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -91,10 +91,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # This is deliberately a runtime test, not a Windows cross-compile:
-      # it proves Job Object timeout cleanup terminates a real descendant.
-      - name: Test Windows Job Object cleanup
-        run: go test ./pkg/event -run '^TestExecTimeoutKillsHungProcess$' -count=3 -timeout=30s
+      # This is deliberately a runtime test, not a Windows cross-compile. It
+      # proves both job-owned timeout cleanup and that normal success preserves
+      # a background descendant after the Job Object handle is released.
+      - name: Test Windows Job Object lifecycle
+        run: go test ./pkg/event -run '^TestExec(TimeoutKillsHungProcess|SuccessfulCommandLeavesBackgroundProcessRunning)$' -count=3 -timeout=30s
 
   release-targets:
     name: Build advertised release targets

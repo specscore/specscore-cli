@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os/exec"
 	"syscall"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 const windowsJobTimeoutExitCode = 1
+
+var windowsNtResumeProcess = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
 
 type windowsExecProcessTree struct {
 	cmd      *exec.Cmd
@@ -20,24 +21,14 @@ type windowsExecProcessTree struct {
 	setupErr error
 }
 
-// configureExecProcessTree creates an owned Job Object before the command
-// starts. KILL_ON_JOB_CLOSE is a final safety net for every exit path.
+// configureExecProcessTree creates a private Job Object. The command itself
+// starts suspended; afterStart assigns its retained process handle to the job
+// and resumes it. No subscriber instruction can run before job ownership is
+// established, so an assignment failure cannot leave descendants behind.
 func configureExecProcessTree(cmd *exec.Cmd) (execProcessTree, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create Windows Job Object: %w", err)
-	}
-
-	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
-	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-	if _, err := windows.SetInformationJobObject(
-		job,
-		windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&info)),
-		uint32(unsafe.Sizeof(info)),
-	); err != nil {
-		_ = windows.CloseHandle(job)
-		return nil, fmt.Errorf("configure Windows Job Object: %w", err)
 	}
 
 	tree := &windowsExecProcessTree{
@@ -45,28 +36,37 @@ func configureExecProcessTree(cmd *exec.Cmd) (execProcessTree, error) {
 		job:   job,
 		ready: make(chan struct{}),
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
 	cmd.Cancel = tree.cancel
 	return tree, nil
 }
 
-// afterStart assigns the exact os.Process handle to the retained job.
-// WithHandle pins process identity through assignment, so no PID lookup or
-// reuse window exists. Cancel waits for assignment before terminating the job.
+// afterStart makes CreateProcess -> AssignProcessToJobObject -> resume one
+// ownership sequence. NtResumeProcess is the process-handle form of resume;
+// os/exec closes CreateProcess's primary-thread handle before returning.
 func (t *windowsExecProcessTree) afterStart() error {
-	var assignErr error
-	handleErr := t.cmd.Process.WithHandle(func(handle uintptr) {
-		assignErr = windows.AssignProcessToJobObject(t.job, windows.Handle(handle))
+	t.setupErr = t.cmd.Process.WithHandle(func(handle uintptr) {
+		t.setupErr = windows.AssignProcessToJobObject(t.job, windows.Handle(handle))
+		if t.setupErr != nil {
+			return
+		}
+		t.setupErr = resumeWindowsProcess(windows.Handle(handle))
 	})
-	if handleErr != nil {
-		t.setupErr = handleErr
-	} else {
-		t.setupErr = assignErr
+	if t.setupErr != nil {
+		// If assignment failed the process is still suspended. If resume failed
+		// after assignment, terminating the job also covers that process.
+		_ = windows.TerminateJobObject(t.job, windowsJobTimeoutExitCode)
 	}
 	close(t.ready)
 	return t.setupErr
+}
+
+func resumeWindowsProcess(process windows.Handle) error {
+	status, _, _ := windowsNtResumeProcess.Call(uintptr(process))
+	if int32(status) < 0 {
+		return windows.NTStatus(status)
+	}
+	return nil
 }
 
 func (t *windowsExecProcessTree) cancel() error {

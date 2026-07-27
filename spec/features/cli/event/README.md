@@ -76,7 +76,7 @@ The configured path MAY be absolute or relative. Relative paths MUST be resolved
 1. Builds an `os/exec.Cmd` from the configured `command` array (the first element is the executable, subsequent elements are positional arguments). The configured `env` mapping MUST be appended to the child process's environment (in addition to, not in place of, the parent process's environment).
 2. Pipes the serialized event JSON (same single-line form as `JsonlWriter`'s output, followed by a trailing `\n`) to the child's stdin, then closes stdin (signalling EOF).
 3. Inherits the parent process's stderr so the subscriber's diagnostic output reaches the user. Discards stdout (subscribers MUST NOT return data to the dispatcher in v1).
-4. Enforces a hard wall-clock timeout per REQ:exec-subscriber-timeout. Timeout cleanup MUST include descendants started by the command. On Unix, the dispatcher MUST send SIGTERM to the command's process group, wait 100 ms, then send SIGKILL to that group only if it remains alive. On Windows, where SIGTERM has no equivalent, the dispatcher MUST assign the command to an owned Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and use `TerminateJobObject` to forcefully terminate the command and its descendants.
+4. Enforces a hard wall-clock timeout per REQ:exec-subscriber-timeout. Timeout cleanup MUST include descendants started by the command, while successful delivery MUST NOT terminate background descendants. On Unix, the dispatcher MUST send SIGTERM to an owned command process group, wait 100 ms, then send SIGKILL to that same group; the group identity MUST remain owned through that grace interval. On Windows, where SIGTERM has no equivalent, the dispatcher MUST create the command suspended, assign its retained process handle to an owned Job Object, then resume it; on timeout it MUST use `TerminateJobObject` to forcefully terminate the command and its descendants. Closing the Job Object after a successful command MUST NOT terminate its remaining descendants.
 5. Returns nil when the child exits with code 0; returns an error wrapping the child's exit code on non-zero exit; returns a distinguishable timeout error on timeout.
 
 `Name()` MUST return `exec:<argv[0]>` (e.g. `exec:my-event-consumer`).
@@ -250,7 +250,7 @@ specscore event emit --name=<n> --actor-kind=<k> ... [--payload-json|--payload-f
 | `JsonlWriter` write fails (disk full, permission denied) | Same as above. |
 | `Exec` subscriber binary not found in PATH | `Deliver` returns error from `cmd.Start`; logged; dispatch continues. |
 | `Exec` subscriber exits non-zero | `Deliver` returns error wrapping the exit code; logged; dispatch continues. |
-| `Exec` subscriber hangs past `timeout_ms` | Dispatcher sends SIGTERM, waits 100 ms, sends SIGKILL if still running; `Deliver` returns timeout error; logged; dispatch continues. |
+| `Exec` subscriber hangs past `timeout_ms` | Dispatcher terminates the owned command tree (SIGTERM then SIGKILL on Unix; Job Object termination on Windows); `Deliver` returns timeout error; logged; dispatch continues. |
 | All non-empty subscribers fail | Exit 10 (REQ:dispatch-exit-codes). |
 | Explicitly empty subscriber list (`events: { subscribers: [] }`) | Exit 0; no subscriber called; no stderr output. |
 | Concurrent invocations writing the same JSONL file | POSIX `O_APPEND` guarantees per-write atomicity for writes within `PIPE_BUF` (4 KiB on Linux, 512 B on macOS); serialized envelope JSON lines fit well under that limit. No CLI-side locking required. |

@@ -72,7 +72,9 @@ Timeout cleanup includes descendants started by the command. On Unix the
 dispatcher sends `SIGTERM` to the command's process group, then `SIGKILL` after
 100 ms if the group is still running. On Windows it assigns the command to an
 owned Job Object and terminates that job because Windows has no `SIGTERM`
-equivalent. The default timeout is 2000 ms.
+equivalent. Successful commands release this timeout ownership without
+terminating any background descendants they deliberately started. The default
+timeout is 2000 ms.
 
 ## Writing an Exec subscriber
 
