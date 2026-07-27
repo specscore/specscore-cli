@@ -64,63 +64,6 @@ func TestExecPipesEventToStdin(t *testing.T) {
 	}
 }
 
-// TestExecTimeoutKillsHungProcess verifies AC:exec-timeout-kills-hung-process.
-// A `sleep 30` subscriber with a 200 ms timeout must return a timeout-typed
-// error, complete within ~[200, 400] ms wall clock, and leave no surviving
-// child process.
-func TestExecTimeoutKillsHungProcess(t *testing.T) {
-	sub := NewExec([]string{"sleep", "30"}, nil, 200*time.Millisecond)
-
-	start := time.Now()
-	err := sub.Deliver(context.Background(), execSampleEvent(t))
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatalf("Deliver returned nil, want timeout error")
-	}
-	var timeoutErr *ExecTimeoutError
-	if !errors.As(err, &timeoutErr) {
-		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
-	}
-	if timeoutErr.Timeout != 200*time.Millisecond {
-		t.Fatalf("timeoutErr.Timeout = %v, want 200ms", timeoutErr.Timeout)
-	}
-
-	// Wall-clock window: 200 ms timeout + 100 ms SIGTERM grace + scheduler
-	// slack. The AC names [200, 400] ms; we widen the upper bound slightly
-	// because CI runners are occasionally slow, but keep the lower bound
-	// strict so a too-eager return (e.g., immediate exit) is caught.
-	if elapsed < 200*time.Millisecond {
-		t.Fatalf("elapsed = %v, want >= 200ms", elapsed)
-	}
-	if elapsed > 800*time.Millisecond {
-		t.Fatalf("elapsed = %v, want <= 800ms", elapsed)
-	}
-
-	// Verify no surviving `sleep 30` child process. pgrep exits 0 with
-	// matches, 1 with no matches. We tolerate any pgrep failure other than
-	// the "no matches" case by failing the test only on exit 0 with output.
-	pg := exec.Command("pgrep", "-f", "sleep 30")
-	pgOut, pgErr := pg.Output()
-	if pgErr == nil {
-		// Filter out the line for our own pgrep process if it appears.
-		lines := strings.Split(strings.TrimSpace(string(pgOut)), "\n")
-		var survivors []string
-		for _, ln := range lines {
-			ln = strings.TrimSpace(ln)
-			if ln == "" {
-				continue
-			}
-			survivors = append(survivors, ln)
-		}
-		if len(survivors) > 0 {
-			t.Fatalf("found surviving sleep processes after timeout: %v", survivors)
-		}
-	}
-	// pgErr non-nil typically means "no matches" (exit 1); that is the
-	// desired outcome and we do not fail the test.
-}
-
 // TestExecNonZeroExitReturnsExitError verifies that a child exiting non-zero
 // surfaces a distinguishable *ExecExitError so the dispatcher can name the
 // failure mode in its stderr log.
@@ -158,6 +101,54 @@ func TestExecEmptyArgvDeliver(t *testing.T) {
 	if !strings.Contains(err.Error(), "empty argv") {
 		t.Errorf("error message = %q, want to contain 'empty argv'", err.Error())
 	}
+}
+
+func TestExecConfigureProcessTreeError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
+	sentinel := errors.New("configure tree")
+	configureExecProcessTreeFn = func(*exec.Cmd) (execProcessTree, error) {
+		return nil, sentinel
+	}
+
+	err := NewExec([]string{"true"}, nil, time.Second).
+		Deliver(context.Background(), execSampleEvent(t))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Deliver error = %v, want %v", err, sentinel)
+	}
+}
+
+func TestExecInitializeProcessTreeError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
+	sentinel := errors.New("initialize tree")
+	tree := &fakeExecProcessTree{afterStartErr: sentinel}
+	configureExecProcessTreeFn = func(*exec.Cmd) (execProcessTree, error) {
+		return tree, nil
+	}
+
+	err := NewExec([]string{"sleep", "30"}, nil, time.Second).
+		Deliver(context.Background(), execSampleEvent(t))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Deliver error = %v, want %v", err, sentinel)
+	}
+	if !tree.closed {
+		t.Fatal("process tree was not closed")
+	}
+}
+
+type fakeExecProcessTree struct {
+	afterStartErr error
+	closed        bool
+}
+
+func (t *fakeExecProcessTree) afterStart() error {
+	return t.afterStartErr
+}
+
+func (t *fakeExecProcessTree) close() error {
+	t.closed = true
+	return nil
 }
 
 // TestExecTimeoutErrorMethods covers the Error() and Unwrap() methods of

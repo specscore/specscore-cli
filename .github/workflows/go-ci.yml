@@ -11,6 +11,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/go-ci.yml'
+      - '.goreleaser.yml'
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
@@ -18,6 +19,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/go-ci.yml'
+      - '.goreleaser.yml'
       - '**/*.go'
       - 'go.mod'
       - 'go.sum'
@@ -75,6 +77,46 @@ jobs:
 
       - name: coverage gate (100%)
         run: ./scripts/coverage-gate.sh
+
+  windows-event-process-tree:
+    name: Windows event process-tree timeout
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # This is deliberately a runtime test, not a Windows cross-compile:
+      # it proves Job Object timeout cleanup terminates a real descendant.
+      - name: Test Windows Job Object cleanup
+        run: go test ./pkg/event -run '^TestExecTimeoutKillsHungProcess$' -count=3 -timeout=30s
+
+  release-targets:
+    name: Build advertised release targets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # GoReleaser reads the OS/architecture matrix directly from
+      # .goreleaser.yml, keeping this gate aligned with published artifacts.
+      - name: Build GoReleaser target matrix
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: build --snapshot --clean
 
   # Runs the committed acceptance corpus (Studio + Rehearse scenarios) through
   # the self-hosted `rehearse run` runner. A separate job so Go test timing is

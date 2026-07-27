@@ -8,24 +8,26 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"syscall"
 	"time"
 )
 
 // Exec is a Subscriber that delivers events by spawning a child process and
 // piping the JSON-serialized envelope to its stdin. It enforces a wall-clock
-// timeout: on expiry the child receives SIGTERM, then SIGKILL after a 100 ms
-// grace window. The configured env mapping is appended to the inherited
-// process environment (additive, not replacement).
+// timeout: on expiry the command tree is terminated using platform-specific
+// process-group or tree controls. The configured env mapping is appended to
+// the inherited process environment (additive, not replacement).
 type Exec struct {
 	argv    []string
 	env     map[string]string
 	timeout time.Duration
 }
 
-// execSIGTERMGrace is the wait window between SIGTERM and SIGKILL on timeout.
-// Kept as a package-level constant so the constructor and the comment in
-// Deliver document the same value.
+type execProcessTree interface {
+	afterStart() error
+	close() error
+}
+
+// execSIGTERMGrace is the Unix wait window between SIGTERM and SIGKILL.
 const execSIGTERMGrace = 100 * time.Millisecond
 
 // cmdStdinPipeFn is a testable indirection for cmd.StdinPipe. Tests can
@@ -33,6 +35,8 @@ const execSIGTERMGrace = 100 * time.Millisecond
 var cmdStdinPipeFn = func(cmd *exec.Cmd) (io.WriteCloser, error) {
 	return cmd.StdinPipe()
 }
+
+var configureExecProcessTreeFn = configureExecProcessTree
 
 // NewExec constructs an Exec subscriber. argv[0] is the executable and
 // argv[1:] are positional arguments. env may be nil. timeout is the wall-clock
@@ -68,6 +72,11 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, x.argv[0], x.argv[1:]...)
+	processTree, err := configureExecProcessTreeFn(cmd)
+	if err != nil {
+		return fmt.Errorf("exec: configure process tree: %w", err)
+	}
+	defer processTree.close()
 
 	// Additive env: inherit parent environment, then append configured pairs.
 	env := os.Environ()
@@ -84,15 +93,14 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 		return fmt.Errorf("exec: stdin pipe: %w", err)
 	}
 
-	// On context expiry, send SIGTERM first; if the child is still alive
-	// after WaitDelay (100 ms), the runtime escalates to SIGKILL.
-	cmd.Cancel = func() error {
-		return cmd.Process.Signal(syscall.SIGTERM)
-	}
-	cmd.WaitDelay = execSIGTERMGrace
-
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("exec: start: %w", err)
+	}
+	if err := processTree.afterStart(); err != nil {
+		// Fail closed: a command without owned tree cleanup must not continue.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return fmt.Errorf("exec: initialize process tree: %w", err)
 	}
 
 	// Write the envelope and close stdin so the child sees EOF.
