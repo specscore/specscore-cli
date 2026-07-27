@@ -530,6 +530,14 @@ func TestP009_PrerequisitePlansResolveAndExposeCycles(t *testing.T) {
 		}
 	})
 
+	t.Run("ASCII dash is not the empty sentinel", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** -\n")
+		if got := hasViolation(runRules(t, e), "P-009", "invalid prerequisite plan slug"); got == nil {
+			t.Fatal("expected ASCII dash prerequisite violation")
+		}
+	})
+
 	t.Run("duplicate", func(t *testing.T) {
 		e := newPlanRulesEnv(t)
 		e.writePlan(t, "foundation", "# Plan: Foundation\n\n**Source:** none\n")

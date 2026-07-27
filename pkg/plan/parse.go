@@ -228,7 +228,7 @@ func Parse(path string) (*Plan, error) {
 			case "Prerequisite Plans":
 				p.PrerequisiteRaw = val
 				p.PrerequisiteLine = i + 1
-				p.PrerequisitePlans = splitCommaList(val)
+				p.PrerequisitePlans = splitPrerequisitePlans(val)
 			case "Mode":
 				p.ModeRaw = val
 				p.ModeLine = i + 1
@@ -432,6 +432,16 @@ func splitCommaList(val string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// splitPrerequisitePlans preserves ASCII "-" as a value so P-009 can reject
+// it. The owning prerequisite contract accepts only the em dash (`—`) as the
+// explicit empty sentinel.
+func splitPrerequisitePlans(val string) []string {
+	if strings.TrimSpace(val) == "-" {
+		return []string{"-"}
+	}
+	return splitCommaList(val)
 }
 
 // deferredEntryRe matches `- <feature-slug>#ac:<ac-slug> — <reason>` lines.

@@ -1145,7 +1145,7 @@ func lintP009(parsedPlans map[string]*plan.Plan, relPaths map[string]string) []V
 			})
 			continue
 		}
-		if raw == "—" || raw == "-" {
+		if raw == "—" {
 			continue
 		}
 
