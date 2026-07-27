@@ -38,6 +38,27 @@ func TestPlanInfo_ReturnsMetadata(t *testing.T) {
 	}
 }
 
+func TestPlanInfo_ReturnsPrerequisitePlans(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+	writePlanRaw(t, plansDir, "delivery", "# Plan: Delivery\n\n**Status:** Draft\n**Prerequisite Plans:** foundation, integration\n")
+
+	stdout, _, err := runPlan(t, "info", "delivery")
+	if err != nil {
+		t.Fatalf("plan info delivery: %v", err)
+	}
+	if !strings.Contains(stdout, "prerequisite_plans:\n  - foundation\n  - integration") {
+		t.Errorf("yaml missing prerequisite plans: %s", stdout)
+	}
+
+	text, _, err := runPlan(t, "info", "delivery", "--format", "text")
+	if err != nil {
+		t.Fatalf("plan info delivery --format text: %v", err)
+	}
+	if !strings.Contains(text, "Prerequisite plans: foundation, integration") {
+		t.Errorf("text missing prerequisite plans: %s", text)
+	}
+}
+
 // TestPlanInfo_ReturnsTaskRollup verifies cli/plan/info#ac:info-returns-task-rollup.
 func TestPlanInfo_ReturnsTaskRollup(t *testing.T) {
 	plansDir := setupPlansSpec(t)

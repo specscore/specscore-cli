@@ -41,7 +41,21 @@ status: Draft
 
 ## Tasks
 
-<!-- gallery -->
+### Task 1: <task name>
+
+**Verifies:** <feature-slug>#ac:<ac-slug>
+**Depends-On:** —
+**Status:** pending
+
+<!-- 1–3 sentences describing what this task implements. -->
+
+### Task 2: <task name>
+
+**Verifies:** <feature-slug>#ac:<ac-slug>
+**Depends-On:** 1
+**Status:** pending
+
+<!-- 1–3 sentences describing what this task implements. -->
 
 ## Open Questions
 
@@ -223,8 +237,8 @@ func TestPlanNew_Collision(t *testing.T) {
 }
 
 // AC: ancestor-indexes-materialized — a project with no spec/plans tree gets
-// spec/README.md and spec/plans/README.md created; re-running leaves the
-// pre-existing indexes untouched.
+// spec/README.md and spec/plans/README.md created; re-running preserves the
+// pre-existing index content while synchronizing its derived Plan rows.
 func TestPlanNew_AncestorIndexesMaterialized(t *testing.T) {
 	root := setupSpecRoot(t) // has spec/features + spec/ideas, but no spec/README.md or spec/plans
 	withCwd(t, root)
@@ -237,7 +251,7 @@ func TestPlanNew_AncestorIndexesMaterialized(t *testing.T) {
 			t.Errorf("expected %s to exist: %v", rel, err)
 		}
 	}
-	// Idempotency: mutate the index, run again, confirm it is left untouched.
+	// Preserve hand-authored index content while adding the new derived row.
 	idxPath := filepath.Join(root, "spec", "plans", "README.md")
 	sentinel := "<!-- sentinel -->\n"
 	cur, _ := os.ReadFile(idxPath)
@@ -248,7 +262,26 @@ func TestPlanNew_AncestorIndexesMaterialized(t *testing.T) {
 	}
 	after, _ := os.ReadFile(idxPath)
 	if !strings.HasPrefix(string(after), sentinel) {
-		t.Error("existing plans index was modified by a later plan new")
+		t.Error("plan new must preserve hand-authored plans-index content")
+	}
+	for _, slug := range []string{"p1", "p2"} {
+		if !strings.Contains(string(after), "["+slug+"]("+slug+".md)") {
+			t.Errorf("plans index missing derived row for %q:\n%s", slug, after)
+		}
+	}
+}
+
+func TestPlanNew_SyncsPlansIndex(t *testing.T) {
+	root := setupLintCleanProject(t)
+	if _, _, err := runPlan(t, "new", "indexed-plan", "--project", root, "--owner", "alex"); err != nil {
+		t.Fatalf("plan new: %v", err)
+	}
+	index, err := os.ReadFile(filepath.Join(root, "spec", "plans", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(index), "| [indexed-plan](indexed-plan.md) | Draft | none |") {
+		t.Errorf("plan new must synchronize the plans index:\n%s", index)
 	}
 }
 
@@ -292,6 +325,34 @@ func TestPlanNew_FetchesPublishedTemplate(t *testing.T) {
 	}
 }
 
+// AC: scaffolded-plan-is-lint-clean — the successful gallery-fetch path must
+// be held to the same lint contract as the embedded fallback. In particular,
+// a fresh plan must not carry a legacy task status which `spec lint` rejects.
+func TestPlanNew_FetchedTemplateIsLintClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(testPlanTemplate))
+	}))
+	defer srv.Close()
+	t.Setenv("SPECSCORE_TEMPLATE_BASE_URL", srv.URL)
+
+	root := setupLintCleanProject(t)
+	if _, _, err := runPlan(t, "new", "fetched-clean", "--project", root); err != nil {
+		t.Fatalf("plan new: %v", err)
+	}
+	generated := readPlan(t, root, "fetched-clean")
+	if strings.Contains(generated, "**Status:** pending") {
+		t.Errorf("fetched plan must not retain legacy pending task status:\n%s", generated)
+	}
+	if !strings.Contains(generated, "**Status:** planning") {
+		t.Errorf("fetched plan must use canonical planning task status:\n%s", generated)
+	}
+
+	_, stderr, err := runSpecLintCmd(t, "--project", root)
+	if err != nil {
+		t.Fatalf("fetched plan must pass spec lint: %v\nstderr:\n%s", err, stderr)
+	}
+}
+
 // The idea-source rewrite of the fetched template turns the default Source
 // Feature line into the idea form.
 func TestPlanNew_FetchIdeaSourceRewrite(t *testing.T) {
@@ -310,7 +371,7 @@ func TestPlanNew_FetchIdeaSourceRewrite(t *testing.T) {
 	if !strings.Contains(s, "**Source:** idea:my-idea") {
 		t.Errorf("fetched template idea-source rewrite failed:\n%s", s)
 	}
-	if strings.Contains(s, "**Source Feature:**") || strings.Contains(s, "<feature-slug>") {
+	if strings.Contains(s, "**Source Feature:**") {
 		t.Errorf("feature source line should be gone:\n%s", s)
 	}
 }

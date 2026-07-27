@@ -52,25 +52,28 @@ type Plan struct {
 	TitleLine    int    // 1-based line number of the title (0 when absent)
 	Title        string // the `<title>` portion after `# Plan: `
 
-	SourceFeature     string // value of `**Source Feature:**` (empty when missing)
-	SourceFeatureLine int    // 1-based line of the field; 0 when absent
-	SourceIdea        string // Idea slug from `**Source:** idea:<slug>` (empty when not idea-sourced)
-	SourceNone        bool   // true when the source line is `**Source:** none` (source-less plan)
-	SourceRaw         string // raw value of a `**Source:**` line as written (empty when absent)
-	SourceLine        int    // 1-based line of the `**Source:**` field; 0 when absent
-	Status            string // value of `**Status:**` (empty when missing)
-	StatusLine        int    // 1-based line of the field; 0 when absent
-	Date              string // value of `**Date:**` (empty when missing)
-	DateLine          int    // 1-based line of the field; 0 when absent
-	Owner             string // value of `**Owner:**` (empty when missing)
-	OwnerLine         int    // 1-based line of the field; 0 when absent
-	Parent            string // value of `**Parent:**` (empty when missing) — master/sub-plan composition
-	ParentLine        int    // 1-based line of the field; 0 when absent
-	Mode              Mode   // `full` (default) or `stub`
-	ModeLine          int    // 1-based line of `**Mode:**`; 0 when absent
-	ModeRaw           string // raw value as written (used by P-004 to report invalid tokens)
-	ModeRawPresent    bool   // true when the field was present at all
-	ModeValueValid    bool   // true when ModeRaw parsed cleanly into Mode
+	SourceFeature     string   // value of `**Source Feature:**` (empty when missing)
+	SourceFeatureLine int      // 1-based line of the field; 0 when absent
+	SourceIdea        string   // Idea slug from `**Source:** idea:<slug>` (empty when not idea-sourced)
+	SourceNone        bool     // true when the source line is `**Source:** none` (source-less plan)
+	SourceRaw         string   // raw value of a `**Source:**` line as written (empty when absent)
+	SourceLine        int      // 1-based line of the `**Source:**` field; 0 when absent
+	Status            string   // value of `**Status:**` (empty when missing)
+	StatusLine        int      // 1-based line of the field; 0 when absent
+	Date              string   // value of `**Date:**` (empty when missing)
+	DateLine          int      // 1-based line of the field; 0 when absent
+	Owner             string   // value of `**Owner:**` (empty when missing)
+	OwnerLine         int      // 1-based line of the field; 0 when absent
+	Parent            string   // value of `**Parent:**` (empty when missing) — master/sub-plan composition
+	ParentLine        int      // 1-based line of the field; 0 when absent
+	PrerequisitePlans []string // same-repo predecessor plan slugs from `**Prerequisite Plans:**`
+	PrerequisiteLine  int      // 1-based line of the field; 0 when absent
+	PrerequisiteRaw   string   // raw field value, retained so lint can distinguish malformed input
+	Mode              Mode     // `full` (default) or `stub`
+	ModeLine          int      // 1-based line of `**Mode:**`; 0 when absent
+	ModeRaw           string   // raw value as written (used by P-004 to report invalid tokens)
+	ModeRawPresent    bool     // true when the field was present at all
+	ModeValueValid    bool     // true when ModeRaw parsed cleanly into Mode
 
 	Tasks []Task // task blocks in source order
 
@@ -222,6 +225,10 @@ func Parse(path string) (*Plan, error) {
 			case "Parent":
 				p.Parent = val
 				p.ParentLine = i + 1
+			case "Prerequisite Plans":
+				p.PrerequisiteRaw = val
+				p.PrerequisiteLine = i + 1
+				p.PrerequisitePlans = splitCommaList(val)
 			case "Mode":
 				p.ModeRaw = val
 				p.ModeLine = i + 1

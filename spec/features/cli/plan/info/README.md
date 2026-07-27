@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore plan info <slug>` returns structured metadata for a single plan: its status, source feature, mode, date, owner, and a rollup of its task statuses (e.g., 6 of 8 tasks done).
+`specscore plan info <slug>` returns structured metadata for a single plan: its status, source feature, mode, date, owner, same-repository prerequisite plans, and a rollup of its task statuses.
 
 ## Synopsis
 
@@ -42,6 +42,7 @@ The output MUST include, at minimum:
 - `mode` — the `**Mode:**` value (empty when absent)
 - `date` — the `**Date:**` value (empty when absent)
 - `owner` — the `**Owner:**` value (empty when absent)
+- `prerequisite_plans` — the ordered list from `**Prerequisite Plans:**` (empty when absent)
 - `tasks` — a rollup object (see REQ:task-rollup)
 
 Additional fields MAY be added in later releases; consumers MUST tolerate unknown fields.
@@ -95,6 +96,12 @@ The `tasks` field MUST include `total` (count of tasks in the plan) and a per-st
 **Given** a plan with 8 tasks of which 8 are `done`
 **When** the user runs `specscore plan info <slug>`
 **Then** the output's `tasks` field reports `total: 8` and `done: 8`, with `in-progress`, `pending`, and `blocked` each `0`.
+
+### AC: info-returns-prerequisites (verifies REQ:required-fields)
+
+**Given** a plan with `**Prerequisite Plans:** foundation, integration`
+**When** the user runs `specscore plan info <slug>`
+**Then** structured output contains `prerequisite_plans` with `foundation` and `integration`, and text output renders both slugs.
 
 ### AC: not-found-exits-3 (verifies REQ:format-and-not-found)
 

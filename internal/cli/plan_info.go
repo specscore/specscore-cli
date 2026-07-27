@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/plan"
@@ -14,14 +15,15 @@ import (
 // always present (no omitempty) so an absent source field renders as an empty
 // but present key.
 type planInfoDoc struct {
-	Slug          string      `yaml:"slug" json:"slug"`
-	Status        string      `yaml:"status" json:"status"`
-	SourceFeature string      `yaml:"source_feature" json:"source_feature"`
-	Source        string      `yaml:"source" json:"source"` // `idea:<slug>` or `none`; empty for Feature-sourced plans
-	Mode          string      `yaml:"mode" json:"mode"`
-	Date          string      `yaml:"date" json:"date"`
-	Owner         string      `yaml:"owner" json:"owner"`
-	Tasks         plan.Rollup `yaml:"tasks" json:"tasks"`
+	Slug              string      `yaml:"slug" json:"slug"`
+	Status            string      `yaml:"status" json:"status"`
+	SourceFeature     string      `yaml:"source_feature" json:"source_feature"`
+	Source            string      `yaml:"source" json:"source"` // `idea:<slug>` or `none`; empty for Feature-sourced plans
+	Mode              string      `yaml:"mode" json:"mode"`
+	Date              string      `yaml:"date" json:"date"`
+	Owner             string      `yaml:"owner" json:"owner"`
+	PrerequisitePlans []string    `yaml:"prerequisite_plans" json:"prerequisite_plans"`
+	Tasks             plan.Rollup `yaml:"tasks" json:"tasks"`
 	// ImplementationEvidence is the DERIVED, query-only set of the plan's tasks'
 	// `**Implemented-by:**` refs. It is a distinct record from any Snapshots Git
 	// Hash and is never written back into the plan.
@@ -81,14 +83,15 @@ func runPlanInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	doc := planInfoDoc{
-		Slug:          p.Slug,
-		Status:        p.Status,
-		SourceFeature: p.SourceFeature,
-		Source:        p.SourceRaw,
-		Mode:          string(p.Mode),
-		Date:          p.Date,
-		Owner:         p.Owner,
-		Tasks:         p.TaskRollup(),
+		Slug:              p.Slug,
+		Status:            p.Status,
+		SourceFeature:     p.SourceFeature,
+		Source:            p.SourceRaw,
+		Mode:              string(p.Mode),
+		Date:              p.Date,
+		Owner:             p.Owner,
+		PrerequisitePlans: p.PrerequisitePlans,
+		Tasks:             p.TaskRollup(),
 
 		ImplementationEvidence: p.ImplementationEvidence(),
 	}
@@ -119,6 +122,11 @@ func writePlanInfoText(w io.Writer, doc planInfoDoc) error {
 	_, _ = fmt.Fprintf(bw, "Mode:           %s\n", doc.Mode)
 	_, _ = fmt.Fprintf(bw, "Date:           %s\n", doc.Date)
 	_, _ = fmt.Fprintf(bw, "Owner:          %s\n", doc.Owner)
+	if len(doc.PrerequisitePlans) == 0 {
+		_, _ = fmt.Fprintln(bw, "Prerequisite plans: none")
+	} else {
+		_, _ = fmt.Fprintf(bw, "Prerequisite plans: %s\n", strings.Join(doc.PrerequisitePlans, ", "))
+	}
 	r := doc.Tasks
 	_, _ = fmt.Fprintf(bw, "Tasks: %d total (%d complete, %d in_progress, %d planning, %d queued, %d blocked)\n",
 		r.Total, r.Complete, r.InProgress, r.Planning, r.Queued, r.Blocked)

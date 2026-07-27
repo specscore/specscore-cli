@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-Adds seven lint rules (`P-001`–`P-007`) and the underlying single-file Plan parser to `specscore spec lint`, implementing the contract reserved by the SpecStudio `plan` Feature (`spec/features/skills/plan/README.md` in the [`specstudio-skills`](https://github.com/specscore/specstudio-skills) repo). `P-001`–`P-004` unblock the in-development `specstudio:implement` skill, which depends on machine-checkable validation of `**Mode:**`, `**Status:**`, and `**Depends-On:**` task fields on single-file Plans at `spec/plans/<slug>.md`. `P-005` validates the optional `**Parent:**` body-metadata line that `cli/plan/new --parent` emits — the master/sub-plan composition primitive — resolving same-repo parents and accepting cross-repo `<repo-slug>:<slug>` references syntactically without sibling-repo scanning. `P-006` validates the Plan's body document-status against the canonical Plan status set, and `P-007` derives the Plan's execution-band status (`Executing`/`Blocked`/`Implemented`/`Failed`) from the task-status rollup, reconciling drift via `--fix` (the canonical [plan#req:execution-status-derived](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#req-execution-status-derived) / [#req:status-rollup](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#req-status-rollup) contract).
+Adds nine lint rules (`P-001`–`P-009`) and the underlying single-file Plan parser to `specscore spec lint`. `P-001`–`P-004` validate task structure; `P-005` validates optional master/sub-plan composition through `**Parent:**`; `P-006` validates Plan document status; `P-007` derives the execution band from task rollup; `P-008` validates task implementation-provenance syntax; and `P-009` validates same-repository cross-plan prerequisites.
 
 ## Problem
 
@@ -224,6 +224,18 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 `P-007` MUST be autofixable. `specscore spec lint --fix` MUST rewrite ONLY the body `**Status:**` line of a drifting Plan to the derived band, byte-preserving the rest of the file. The fix MUST be idempotent: a second `--fix` pass over a reconciled Plan MUST be a no-op. The fixer MUST honor the same guards as the check (eligible body status + determinate rollup + actual drift); it MUST NEVER move a Plan out of a prep or disposition status, and MUST NEVER write task statuses. The fix runs on the unscoped pass and when `--fix=P-007` names it explicitly.
 
+### Lint rule P-009 — Cross-plan prerequisites
+
+`P-009` owns execution-order dependencies between whole Plans. It does not change the meaning of `**Parent:**` (composition) or `**Depends-On:**` (task-to-task dependency inside one Plan).
+
+#### REQ: plan-prerequisite-plans-field
+
+The parser MUST recognize an optional header line `**Prerequisite Plans:** <slug>, <slug>, …`. Each value is a same-repository, lowercase, hyphen-separated Plan slug. The field is omitted when a Plan has no cross-plan prerequisites; `—` is an accepted explicit empty value. Cross-repository references are deliberately not supported by this field.
+
+#### REQ: rule-p-009-prerequisites-resolve-and-acyclic
+
+`P-009` MUST execute in the default lint suite at error severity. It MUST reject empty entries, malformed or duplicate slugs, self-references, and references that do not resolve to a single-file Plan at `spec/plans/<slug>.md`. It MUST reject dependency cycles and name a full cycle path. `P-009` is not autofixable because adding, removing, or ordering prerequisites requires author intent.
+
 ### Co-existence with existing plan checkers
 
 #### REQ: directory-plans-untouched
@@ -238,11 +250,11 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 #### REQ: rules-in-default-suite
 
-`P-001`, `P-002`, `P-003`, `P-004`, `P-005`, `P-006`, and `P-007` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
+`P-001` through `P-009` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
 
 #### REQ: rules-emit-stable-violation-shape
 
-Violations from `P-001`–`P-007` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations).
+Violations from `P-001`–`P-009` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations, or the `**Prerequisite Plans:**` line for `P-009`).
 
 ## Acceptance Criteria
 
@@ -341,6 +353,12 @@ Violations from `P-001`–`P-007` MUST use the existing `lint.Violation` struct 
 **Given** a single-file Plan with no `**Parent:**` line,
 **When** `specscore spec lint` runs,
 **Then** `P-005` emits zero violations for that Plan (it is a root plan).
+
+### AC: prerequisite-plan-cycle-flagged (verifies REQ:plan-prerequisite-plans-field, REQ:rule-p-009-prerequisites-resolve-and-acyclic)
+
+**Given** plans `alpha.md` declaring `**Prerequisite Plans:** beta` and `beta.md` declaring `**Prerequisite Plans:** alpha`
+**When** `specscore spec lint` runs
+**Then** a `P-009` violation is emitted whose message names the cycle `alpha → beta → alpha` (or a rotation), and `plan info alpha` exposes `prerequisite_plans` containing `beta`.
 
 ### AC: dangling-parent-flagged (verifies REQ:rule-p-005-same-repo-resolves)
 

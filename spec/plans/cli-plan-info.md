@@ -30,6 +30,13 @@ Add a rollup helper to `pkg/plan` that counts a plan's tasks by their parsed `**
 
 Implement `plan info <slug>`: emit a YAML (default) / JSON / text document with `slug`, `status`, `source_feature`, `mode`, `date`, `owner`, and the `tasks` rollup from Task 1. An unresolved slug exits `3` naming the missing slug, with no partial output written to stdout.
 
+### Task 3: Expose validated cross-plan prerequisites
+
+**Verifies:** cli/plan/info#ac:info-returns-prerequisites
+**Status:** complete
+
+Parse the optional `**Prerequisite Plans:**` header into an ordered list and expose it as `prerequisite_plans` in YAML/JSON and a readable text line. Cover both structured and text output with command tests.
+
 ## Open Questions
 
 - Should `plan info` optionally include each task's title and status (`--fields tasks`), or should that stay a separate read?
