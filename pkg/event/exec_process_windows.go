@@ -12,7 +12,11 @@ import (
 
 const windowsJobTimeoutExitCode = 1
 
-var windowsNtResumeProcess = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
+var (
+	windowsNtResumeProcess     = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
+	findWindowsNtResumeProcess = windowsNtResumeProcess.Find
+	closeWindowsHandle         = windows.CloseHandle
+)
 
 type windowsExecProcessTree struct {
 	cmd      *exec.Cmd
@@ -29,6 +33,13 @@ func configureExecProcessTree(cmd *exec.Cmd) (execProcessTree, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create Windows Job Object: %w", err)
+	}
+	// LazyProc.Call panics when the procedure cannot be resolved. Resolve the
+	// native resume entry point before cmd.Start so an unavailable API returns a
+	// normal setup error with no suspended child process to clean up.
+	if err := findWindowsNtResumeProcess(); err != nil {
+		_ = closeWindowsHandle(job)
+		return nil, fmt.Errorf("resolve Windows NtResumeProcess: %w", err)
 	}
 
 	tree := &windowsExecProcessTree{
@@ -81,7 +92,7 @@ func (t *windowsExecProcessTree) close() error {
 	if t.job == 0 {
 		return nil
 	}
-	err := windows.CloseHandle(t.job)
+	err := closeWindowsHandle(t.job)
 	t.job = 0
 	return err
 }

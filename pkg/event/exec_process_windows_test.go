@@ -17,6 +17,47 @@ import (
 
 const windowsStillActive = 259
 
+func TestExecWindowsResumeLookupFailurePreventsStart(t *testing.T) {
+	originalFind := findWindowsNtResumeProcess
+	originalClose := closeWindowsHandle
+	t.Cleanup(func() {
+		findWindowsNtResumeProcess = originalFind
+		closeWindowsHandle = originalClose
+	})
+
+	sentinel := errors.New("NtResumeProcess is unavailable")
+	findWindowsNtResumeProcess = func() error { return sentinel }
+	closeCalls := 0
+	closeWindowsHandle = func(handle windows.Handle) error {
+		if handle == 0 {
+			t.Error("closed an invalid Windows Job Object handle")
+		}
+		closeCalls++
+		return originalClose(handle)
+	}
+
+	marker := filepath.Join(t.TempDir(), "command-started")
+	sub := NewExec(
+		[]string{
+			"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+			"[System.IO.File]::WriteAllText($env:SPECSCORE_RESUME_LOOKUP_MARKER, 'started')",
+		},
+		map[string]string{"SPECSCORE_RESUME_LOOKUP_MARKER": marker},
+		time.Second,
+	)
+
+	err := sub.Deliver(context.Background(), execSampleEvent(t))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Deliver error = %v, want %v", err, sentinel)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("command ran despite failed NtResumeProcess lookup: stat %q: %v", marker, err)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("closed %d Job Object handles, want 1", closeCalls)
+	}
+}
+
 // TestExecTimeoutKillsHungProcess verifies the Windows half of
 // AC:exec-timeout-kills-hung-process on a real Windows runner. The retained
 // child handle proves that timeout terminates the descendant, not only its
