@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,33 @@ func TestPlanInfo_ReturnsPrerequisitePlans(t *testing.T) {
 	}
 	if !strings.Contains(text, "Prerequisite plans: foundation, integration") {
 		t.Errorf("text missing prerequisite plans: %s", text)
+	}
+}
+
+// TestPlanInfo_AbsentPrerequisitePlansIsAnEmptyCollection verifies that an
+// absent header is stable for both machine and human consumers.
+func TestPlanInfo_AbsentPrerequisitePlansIsAnEmptyCollection(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+	writePlanRaw(t, plansDir, "delivery", "# Plan: Delivery\n\n**Status:** Draft\n")
+
+	jsonOutput, _, err := runPlan(t, "info", "delivery", "--format", "json")
+	if err != nil {
+		t.Fatalf("plan info delivery --format json: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonOutput), &doc); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, jsonOutput)
+	}
+	if got := string(doc["prerequisite_plans"]); got != "[]" {
+		t.Errorf("prerequisite_plans = %s, want []", got)
+	}
+
+	text, _, err := runPlan(t, "info", "delivery", "--format", "text")
+	if err != nil {
+		t.Fatalf("plan info delivery --format text: %v", err)
+	}
+	if !strings.Contains(text, "Prerequisite plans: none") {
+		t.Errorf("text missing absent-prerequisites rendering: %s", text)
 	}
 }
 

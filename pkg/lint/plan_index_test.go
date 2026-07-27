@@ -9,7 +9,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
-func TestPlanIndexChecker_FlagsAndFixesMissingPlanRow(t *testing.T) {
+func TestPlanIndexChecker_FlagsAndFixesPlanRowDrift(t *testing.T) {
 	root := t.TempDir()
 	plansDir := filepath.Join(root, "plans")
 	if err := os.MkdirAll(plansDir, 0o755); err != nil {
@@ -19,11 +19,19 @@ func TestPlanIndexChecker_FlagsAndFixesMissingPlanRow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(plansDir, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	body, err := plan.Scaffold(plan.ScaffoldOptions{Slug: "alpha"})
-	if err != nil {
-		t.Fatal(err)
+	for _, slug := range []string{"alpha", "beta"} {
+		body, err := plan.Scaffold(plan.ScaffoldOptions{Slug: slug})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(plansDir, slug+".md"), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(plansDir, "alpha.md"), body, 0o644); err != nil {
+	// alpha is missing; beta is both stale and duplicated. The checker reports
+	// one derived-index drift violation and the fixer reconstructs the rows.
+	stale := "# Plans\n\n| Plan | Status | Source | Date | Owner |\n|---|---|---|---|---|\n| [beta](beta.md) | Approved | none | — | — |\n| [beta](beta.md) | Approved | none | — | — |\n\n## Open Questions\n\nNone at this time.\n"
+	if err := os.WriteFile(filepath.Join(plansDir, "README.md"), []byte(stale), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -46,7 +54,13 @@ func TestPlanIndexChecker_FlagsAndFixesMissingPlanRow(t *testing.T) {
 		t.Fatalf("fix must leave index clean: %+v", vs)
 	}
 	got, _ := os.ReadFile(filepath.Join(plansDir, "README.md"))
-	if !strings.Contains(string(got), "| [alpha](alpha.md) | Draft | none |") {
-		t.Errorf("fixed index missing plan row:\n%s", got)
+	content := string(got)
+	for _, slug := range []string{"alpha", "beta"} {
+		if strings.Count(content, "["+slug+"]("+slug+".md)") != 1 {
+			t.Errorf("fixed index must contain exactly one %s row:\n%s", slug, content)
+		}
+	}
+	if strings.Contains(content, "| [beta](beta.md) | Approved |") {
+		t.Errorf("fixed index retained stale beta metadata:\n%s", content)
 	}
 }

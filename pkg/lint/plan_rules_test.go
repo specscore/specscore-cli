@@ -513,6 +513,32 @@ func TestP009_PrerequisitePlansResolveAndExposeCycles(t *testing.T) {
 		}
 	})
 
+	t.Run("empty entry", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "foundation", "# Plan: Foundation\n\n**Source:** none\n")
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** foundation,\n")
+		if got := hasViolation(runRules(t, e), "P-009", "empty list entry"); got == nil {
+			t.Fatal("expected empty prerequisite entry violation")
+		}
+	})
+
+	t.Run("malformed slug", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** Bad_Slug\n")
+		if got := hasViolation(runRules(t, e), "P-009", "invalid prerequisite plan slug"); got == nil {
+			t.Fatal("expected malformed prerequisite slug violation")
+		}
+	})
+
+	t.Run("duplicate", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "foundation", "# Plan: Foundation\n\n**Source:** none\n")
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** foundation, foundation\n")
+		if got := hasViolation(runRules(t, e), "P-009", "more than once"); got == nil {
+			t.Fatal("expected duplicate prerequisite violation")
+		}
+	})
+
 	t.Run("self", func(t *testing.T) {
 		e := newPlanRulesEnv(t)
 		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** application\n")

@@ -45,6 +45,14 @@ In `internal/cli/spec.go`, when `--fix` is set and the format is `json` or `yaml
 
 In default text format, when the fix pass modified one or more files, write a "Fixed N file(s):" summary naming each modified path to **stderr**, leaving stdout as the remaining-violations report (unchanged from a non-`--fix` run). Print no summary when zero files changed. Like Task 2, this output is default-on and requires no flag.
 
+### Task 4: Keep the canonical Plans index derived from single-file Plans
+
+**Status:** complete
+**Depends-On:** —
+**Verifies:** cli/spec/lint#ac:plan-index-sync-detects-and-fixes-row-drift
+
+Register the `plan-index-sync` checker in the default lint suite. For the canonical Plans-table schema, detect missing rows, stale row values, and duplicate rows, then have the standard `--fix` pass regenerate exactly one current row per direct single-file Plan while preserving surrounding author-maintained prose. Cover both drift detection and idempotent repair with focused tests.
+
 ## Deferred AC Coverage
 
 - cli/spec/lint#ac:clean-tree-exits-0 — Already implemented and shipped before this increment; out of scope for this plan, which covers only the new Fixed-files reporting behavior.

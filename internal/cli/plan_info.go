@@ -83,14 +83,17 @@ func runPlanInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	doc := planInfoDoc{
-		Slug:              p.Slug,
-		Status:            p.Status,
-		SourceFeature:     p.SourceFeature,
-		Source:            p.SourceRaw,
-		Mode:              string(p.Mode),
-		Date:              p.Date,
-		Owner:             p.Owner,
-		PrerequisitePlans: p.PrerequisitePlans,
+		Slug:          p.Slug,
+		Status:        p.Status,
+		SourceFeature: p.SourceFeature,
+		Source:        p.SourceRaw,
+		Mode:          string(p.Mode),
+		Date:          p.Date,
+		Owner:         p.Owner,
+		// Keep this an allocated slice so JSON serializes an absent header as []
+		// rather than null. The output contract promises a collection, not an
+		// optional value.
+		PrerequisitePlans: append([]string{}, p.PrerequisitePlans...),
 		Tasks:             p.TaskRollup(),
 
 		ImplementationEvidence: p.ImplementationEvidence(),

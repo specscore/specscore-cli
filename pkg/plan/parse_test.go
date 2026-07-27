@@ -65,6 +65,26 @@ x
 	}
 }
 
+func TestParse_PrerequisitePlansRetainsRawEmptyEntryForLint(t *testing.T) {
+	dir := t.TempDir()
+	p, err := Parse(writePlan(t, filepath.Join(dir, "plans"), "application", `# Plan: Application
+
+**Prerequisite Plans:** foundation,
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.PrerequisiteRaw != "foundation," {
+		t.Fatalf("PrerequisiteRaw = %q, want trailing comma retained", p.PrerequisiteRaw)
+	}
+	if got, want := strings.Join(p.PrerequisitePlans, ","), "foundation"; got != want {
+		t.Fatalf("PrerequisitePlans = %v, want %v", got, want)
+	}
+	if p.PrerequisiteLine == 0 {
+		t.Fatal("PrerequisiteLine must be set for P-009 to report the raw field")
+	}
+}
+
 func TestParse_TaskIdField(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, "plans")
