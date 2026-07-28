@@ -129,6 +129,43 @@ func TestTaskChangeStatus_PlanInline_MissingPlan(t *testing.T) {
 	}
 }
 
+// A plan-inline task mutation is valid only inside a real Plan artifact. This
+// holds even when an arbitrary Markdown file contains a complete-looking task
+// example; no status or provenance field may be rewritten on refusal.
+func TestTaskChangeStatus_PlanInline_RefusesNonPlanWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"backtick fence", "```markdown\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n```\n# Notes\n"},
+		{"tilde fence", "~~~markdown\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n~~~\n# Notes\n"},
+		{"indented code", "    # Plan: Auth\n    ## Tasks\n    ### Task 1: Example\n    **Id:** setup\n    **Status:** planning\n# Notes\n"},
+		{"HTML comment", "<!--\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n-->\n# Notes\n"},
+		{"frontmatter", "---\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n---\n# Notes\n"},
+		{"earlier Setext H1", "Notes\n=====\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, planPath := stagePlanWithTasks(t, "auth", tc.body)
+			before, err := os.ReadFile(planPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = runTask(t, "change-status", "setup", "--plan", "auth", "--to=queued")
+			if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+				t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+			}
+			after, readErr := os.ReadFile(planPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("non-Plan file changed despite refusal:\n%s", after)
+			}
+		})
+	}
+}
+
 // Illegal transition on a plan-inline task → exit 4 (InvalidState), block unchanged.
 func TestTaskChangeStatus_PlanInline_IllegalTransition(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)

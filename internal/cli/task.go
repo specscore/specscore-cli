@@ -527,6 +527,10 @@ func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug,
 		// ParseBytes consumes the supplied snapshot only and never performs I/O.
 		return nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
 	}
+	if !p.HasPlanTitle {
+		return nil, exitcode.InvalidStateErrorf(
+			"plan %q is not a Plan artifact: expected first H1 to start with '# Plan:'", planSlug)
+	}
 
 	// Coordination-branch enforcement: when the plan declares
 	// **Coordination:**, mutating one of its inline tasks is authoritative
@@ -558,10 +562,10 @@ func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug,
 	if to == lifecycle.TaskInProgress {
 		readiness, readinessErr := p.PrerequisiteReadiness(filepath.Join(specRoot, "spec", "plans"))
 		if readinessErr != nil {
-			return readinessCLIError(readinessErr)
+			return nil, readinessCLIError(readinessErr)
 		}
 		if !readiness.Ready {
-			return exitcode.InvalidStateErrorf(
+			return nil, exitcode.InvalidStateErrorf(
 				"plan %q is not ready to begin execution; unmet prerequisite plan(s): %s; each must derive Implemented from its task rollup",
 				planSlug, readiness.UnmetMessage())
 		}
@@ -791,6 +795,10 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 		p, err := plan.ParseBytes(planPath, before)
 		if err != nil {
 			return nil, err
+		}
+		if !p.HasPlanTitle {
+			return nil, exitcode.InvalidStateErrorf(
+				"plan %q is not a Plan artifact: expected first H1 to start with '# Plan:'", planSlug)
 		}
 		forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
 		if err := enforceCoordinationBranch(p, specRoot, forceCoordination, &coordinationWarning); err != nil {

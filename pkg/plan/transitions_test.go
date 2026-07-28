@@ -242,6 +242,90 @@ func TestChangeStatus_NoStatusLine(t *testing.T) {
 	}
 }
 
+// A file at a plan-shaped path can contain examples of Plan syntax, but a
+// lifecycle mutation must refuse before touching any byte unless the parser
+// recognizes a genuine first canonical Plan title.
+func TestChangeStatus_RefusesNonPlanSyntaxWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"backtick fence", "```markdown\n# Plan: Auth\n\n**Status:** Draft\n```\n# Notes\n"},
+		{"tilde fence", "~~~markdown\n# Plan: Auth\n\n**Status:** Draft\n~~~\n# Notes\n"},
+		{"indented code", "    # Plan: Auth\n    **Status:** Draft\n# Notes\n"},
+		{"HTML comment", "<!--\n# Plan: Auth\n**Status:** Draft\n-->\n# Notes\n"},
+		{"frontmatter", "---\n# Plan: Auth\n**Status:** Draft\n---\n# Notes\n"},
+		{"earlier Setext H1", "Notes\n=====\n# Plan: Auth\n\n**Status:** Draft\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "spec", "plans", "auth.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = ChangeStatus(ChangeStatusOptions{
+				SpecRoot: root, Slug: "auth", To: lifecycle.PlanApproved, PostMutation: okHook,
+			})
+			if got := codeOf(t, err); got != exitcode.InvalidState {
+				t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+			}
+			after, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("non-Plan file changed despite refusal:\n%s", after)
+			}
+		})
+	}
+}
+
+func TestChangeStatus_RefusesEarlierNonStructuralStatusWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "spec", "plans", "auth.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "# Plan: Auth\n\n```markdown\n**Status:** Approved\n```\n\n**Status:** Draft\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview, PostMutation: okHook,
+	})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("Plan changed despite non-structural status refusal:\n%s", after)
+	}
+}
+
+func TestFirstRawPlanStatusLineBytes(t *testing.T) {
+	if got := firstRawPlanStatusLineBytes([]byte("note\n  **Status:** Draft\r\n**Status:** Approved\n")); got != 2 {
+		t.Fatalf("firstRawPlanStatusLineBytes = %d, want 2", got)
+	}
+	if got := firstRawPlanStatusLineBytes([]byte("note\n")); got != 0 {
+		t.Fatalf("no-status result = %d, want 0", got)
+	}
+}
+
 func TestChangeStatus_DuplicatePlanStatusRejectedUnderTransaction(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Draft")
 	before, _ := os.ReadFile(path)

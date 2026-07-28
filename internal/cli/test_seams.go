@@ -20,6 +20,7 @@ var (
 	decisionNextNumberFn = decision.NextNumber
 	ideaScaffoldFn       = idea.Scaffold
 	planScaffoldFn       = plan.Scaffold
+	planSyncIndexFn      = plan.SyncIndex
 	issueScaffoldFn      = issue.Scaffold
 	issueParseFn         = issue.Parse
 	featureFindRefsFn    = feature.FindFeatureRefs

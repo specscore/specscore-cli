@@ -236,6 +236,9 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	if err != nil {
 		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", flatPath, err)
 	}
+	if err := requirePlanArtifact(p, "target"); err != nil {
+		return ReconcileResult{}, nil, err
+	}
 	if p.StatusCount == 0 {
 		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("plan %s has no **Status:** line", flatPath)
 	}
@@ -319,13 +322,13 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	// Reconcile writes the Plan directly to the Implemented execution band.
 	// It is an out-of-band history correction, not a prerequisite bypass: the
 	// same readiness evaluator used by dispatch entrypoints must pass before
-	// any bytes are read for mutation or written, preserving atomic refusal.
-	readiness, err := p.PrerequisiteReadiness(plansDir)
+	// any transformed bytes are produced or written, preserving atomic refusal.
+	readiness, err := p.PrerequisiteReadiness(filepath.Join(opts.SpecRoot, "spec", "plans"))
 	if err != nil {
-		return ReconcileResult{}, preserveReadinessError(opts.Slug, err)
+		return ReconcileResult{}, nil, preserveReadinessError(opts.Slug, err)
 	}
 	if !readiness.Ready {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+		return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 			"plan %q is not ready to reconcile to Implemented; unmet prerequisite plan(s): %s; each must derive Implemented from its task rollup",
 			opts.Slug, readiness.UnmetMessage())
 	}

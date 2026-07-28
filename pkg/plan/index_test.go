@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,9 +129,8 @@ func TestSyncIndex_ReportsWriteError(t *testing.T) {
 	if err := os.MkdirAll(plansDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	indexPath := filepath.Join(plansDir, "README.md")
 	index := "# Plans\n\n" + plansIndexHeader + "\n|---|---|---|---|---|\n"
-	if err := os.WriteFile(indexPath, []byte(index), 0o444); err != nil {
+	if err := os.WriteFile(filepath.Join(plansDir, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	body, err := Scaffold(ScaffoldOptions{Slug: "alpha"})
@@ -140,8 +140,11 @@ func TestSyncIndex_ReportsWriteError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(plansDir, "alpha.md"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	originalWrite := syncIndexWriteFile
+	syncIndexWriteFile = func(string, []byte, os.FileMode) error { return errors.New("write boom") }
+	t.Cleanup(func() { syncIndexWriteFile = originalWrite })
 	if changed, err := SyncIndex(plansDir); err == nil || changed {
-		t.Fatalf("read-only index changed=%v err=%v, want write error", changed, err)
+		t.Fatalf("failed index write changed=%v err=%v, want write error", changed, err)
 	}
 }
 

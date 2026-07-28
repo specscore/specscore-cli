@@ -486,3 +486,15 @@ func TestPlanNew_ScaffoldError(t *testing.T) {
 		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
 	}
 }
+
+func TestPlanNew_SyncIndexError(t *testing.T) {
+	original := planSyncIndexFn
+	planSyncIndexFn = func(string) (bool, error) { return false, errors.New("sync boom") }
+	t.Cleanup(func() { planSyncIndexFn = original })
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	_, _, err := runPlan(t, "new", "sync-fail", "--feature", "f")
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+}

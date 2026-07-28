@@ -23,6 +23,35 @@ func TestPreserveReadinessError(t *testing.T) {
 	}
 }
 
+func TestReconcile_RefusesNonPlanWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "spec", "plans", "auth.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "<!--\n# Plan: Auth\n**Status:** Draft\n## Tasks\n### Task 1: Example\n**Status:** planning\n-->\n# Notes\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "must not mutate examples", PostMutation: okHook,
+	})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("non-Plan file changed despite reconcile refusal:\n%s", after)
+	}
+}
+
 // reconcilePlanBody returns a minimal lint-shaped flat Plan body in the given
 // status, with one `### Task N:` block per entry in taskStatuses. A task
 // status of "" omits the **Status:** line entirely (an unset task).

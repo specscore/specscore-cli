@@ -419,6 +419,18 @@ func TestPlanReadiness_RejectsRootWhoseFakeCodeHeadingLooksLikePlan(t *testing.T
 			name: "indented code example",
 			body: "    # Plan: Delivery\n# Notes\n",
 		},
+		{
+			name: "HTML comment example",
+			body: "<!--\n# Plan: Delivery\n-->\n# Notes\n",
+		},
+		{
+			name: "frontmatter example",
+			body: "---\n# Plan: Delivery\n---\n# Notes\n",
+		},
+		{
+			name: "earlier Setext H1",
+			body: "Notes\n=====\n# Plan: Delivery\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -511,6 +523,18 @@ func TestPrerequisiteReadiness_RejectsPrerequisiteWhoseFakeCodeHeadingLooksLikeP
 		{
 			name: "indented code example",
 			body: "    # Plan: Foundation\n# Notes\n",
+		},
+		{
+			name: "HTML comment example",
+			body: "<!--\n# Plan: Foundation\n-->\n# Notes\n",
+		},
+		{
+			name: "frontmatter example",
+			body: "---\n# Plan: Foundation\n---\n# Notes\n",
+		},
+		{
+			name: "earlier Setext H1",
+			body: "Notes\n=====\n# Plan: Foundation\n",
 		},
 	}
 	for _, tc := range tests {

@@ -201,6 +201,13 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scanning plan %q: %w", path, err)
 	}
+	// Build one structural view of the document before interpreting any Plan
+	// syntax. Every load-bearing parser pass below uses this same view: prose
+	// examples, comments, frontmatter and code must never become a title,
+	// header field, section boundary, task, or task field merely because they
+	// happen to contain Markdown-shaped text.
+	structure := scanStructuralMarkdown(lines)
+
 	// Pass 1: locate title, header fields, section starts.
 	type sectionStart struct {
 		title string
@@ -209,35 +216,34 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 	var sections []sectionStart
 
 	firstH1Seen := false
-	var fence markdownFence
 	for i, raw := range lines {
-		// A fenced code sample may contain headings that look like Plan titles.
-		// They are prose/examples, not document structure. A title is purposely
-		// stricter than general Markdown here: it must begin in column zero, so
-		// an indented-code heading (including Markdown's ordinary 4-space code
-		// blocks) can never declare a lifecycle-controlled Plan.
-		if fence.containsOrOpens(raw) {
+		if !structure.isStructural(i) {
 			continue
 		}
 
-		trimmed := strings.TrimSpace(raw)
-		if rest, ok := unindentedATXH1(raw); ok {
+		// A real Setext H1 is a document H1 too. It must prevent a later
+		// `# Plan:` example from claiming a document that already has a title.
+		if isSetextH1(lines, structure, i) {
+			firstH1Seen = true
+			continue
+		}
+		if isCanonicalUnindentedATXH1(raw) {
 			// A Plan title is meaningful only when it is the document's first
 			// H1. In particular, do not let arbitrary Markdown with a later
 			// "# Plan:" heading enter lifecycle gates as a Plan artifact.
 			if !firstH1Seen {
 				firstH1Seen = true
-				if title, ok := strings.CutPrefix(rest, "Plan:"); ok {
+				if title, ok := canonicalPlanTitle(raw); ok {
 					p.HasPlanTitle = true
 					p.TitleLine = i + 1
-					p.Title = strings.TrimSpace(title)
+					p.Title = title
 				}
 			}
 			continue
 		}
-		if title, ok := strings.CutPrefix(trimmed, "## "); ok {
+		if title, ok := canonicalUnindentedATXH2(raw); ok {
 			sections = append(sections, sectionStart{
-				title: strings.TrimSpace(title),
+				title: title,
 				line:  i,
 			})
 		}
@@ -253,8 +259,10 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 		headerEnd = sections[0].line
 	}
 	for i := p.TitleLine; i < headerEnd; i++ {
-		line := strings.TrimSpace(lines[i])
-		if name, val, ok := matchBoldField(line); ok {
+		if !structure.isStructural(i) {
+			continue
+		}
+		if name, val, ok := matchBoldField(lines[i]); ok {
 			switch name {
 			case "Source Feature":
 				p.SourceFeature = val
@@ -333,13 +341,115 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 	}
 
 	if tasksStart >= 0 {
-		p.Tasks = parseTasks(lines, tasksStart+1, tasksEnd)
+		p.Tasks = parseTasks(lines, structure, tasksStart+1, tasksEnd)
 	}
 	if deferredStart >= 0 {
-		p.DeferredACs = parseDeferredACs(lines, deferredStart+1, deferredEnd)
+		p.DeferredACs = parseDeferredACs(lines, structure, deferredStart+1, deferredEnd)
 	}
 
 	return p, nil
+}
+
+// structuralMarkdown is a per-line mask shared by every Plan parser pass.
+// A false line is source text but not Plan structure: it belongs to leading
+// YAML frontmatter, a fenced or indented code sample, or an HTML comment.
+// Keeping this classification separate from the individual grammar readers
+// is important: a new reader cannot accidentally re-introduce a different
+// interpretation of examples than title discovery used.
+type structuralMarkdown struct {
+	lines []bool
+}
+
+func (s structuralMarkdown) isStructural(line int) bool {
+	return line >= 0 && line < len(s.lines) && s.lines[line]
+}
+
+// scanStructuralMarkdown classifies the source lines that are eligible to
+// carry Plan syntax. It intentionally implements only the small Markdown
+// subset relevant to structural safety, rather than trying to render Markdown.
+func scanStructuralMarkdown(lines []string) structuralMarkdown {
+	mask := structuralMarkdown{lines: make([]bool, len(lines))}
+	inFrontmatter := len(lines) > 0 && isFrontmatterFence(lines[0])
+	inComment := false
+	var fence markdownFence
+
+	for i, line := range lines {
+		if inFrontmatter {
+			if i > 0 && isFrontmatterFence(line) {
+				inFrontmatter = false
+			}
+			continue
+		}
+		if inComment {
+			if close := strings.Index(line, "-->"); close >= 0 {
+				inComment = htmlCommentContinues(line[close+3:])
+			}
+			continue
+		}
+		// Four spaces, a leading tab, or a mixed indentation that reaches a
+		// tab is code for the purpose of Plan syntax. It cannot introduce a
+		// title/section/field even when a renderer treats it differently.
+		if isIndentedCode(line) {
+			continue
+		}
+		if fence.containsOrOpens(line) {
+			continue
+		}
+		// The stub-mode placeholder is deliberately an HTML comment in the
+		// published format. It is the sole comment-shaped line with Plan
+		// semantics, and only its byte-exact canonical spelling is retained.
+		if strings.TrimSpace(line) == PlaceholderBodyToken {
+			mask.lines[i] = true
+			continue
+		}
+		if start := strings.Index(line, "<!--"); start >= 0 {
+			inComment = htmlCommentContinues(line[start:])
+			continue
+		}
+		mask.lines[i] = true
+	}
+	return mask
+}
+
+func isFrontmatterFence(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return trimmed == "---" || trimmed == "..."
+}
+
+// htmlCommentContinues reports whether the first or a later HTML comment
+// opener in fragment remains unclosed. The entire containing source line is
+// non-structural even if a comment opens and closes on that one line.
+func htmlCommentContinues(fragment string) bool {
+	for {
+		start := strings.Index(fragment, "<!--")
+		if start < 0 {
+			return false
+		}
+		afterStart := fragment[start+len("<!--"):]
+		end := strings.Index(afterStart, "-->")
+		if end < 0 {
+			return true
+		}
+		fragment = afterStart[end+len("-->"):]
+	}
+}
+
+func isIndentedCode(line string) bool {
+	spaces := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case ' ':
+			spaces++
+			if spaces >= 4 {
+				return true
+			}
+		case '\t':
+			return true
+		default:
+			return false
+		}
+	}
+	return spaces >= 4
 }
 
 // markdownFence tracks just enough fenced-code-block syntax to keep embedded
@@ -401,26 +511,68 @@ func fenceCloses(line string, marker byte, minimumLength int) bool {
 	return length >= minimumLength && strings.TrimSpace(line[indent+length:]) == ""
 }
 
-// unindentedATXH1 recognizes an ATX H1 only at column zero. SpecScore accepts
-// the normal Markdown space or tab separator after the single '#'; a bare '#'
-// is also an H1 and therefore prevents a later '# Plan:' from becoming a
-// document title. Leading whitespace is intentionally not normalized here.
-func unindentedATXH1(line string) (string, bool) {
-	if line == "#" {
-		return "", true
-	}
-	if len(line) < 2 || line[0] != '#' || (line[1] != ' ' && line[1] != '\t') {
+// isCanonicalUnindentedATXH1 recognizes the contract's H1 form: a title must
+// start at column zero and use exactly one ASCII space after the single '#'.
+// Tabs, multi-space variants and a bare '#' are deliberately not aliases: if
+// they were, a malformed heading could either hide a real Plan title or claim
+// one through permissive whitespace normalization.
+func isCanonicalUnindentedATXH1(line string) bool {
+	return len(line) > 2 && strings.HasPrefix(line, "# ") && line[2] != ' ' && line[2] != '\t' && strings.TrimSpace(line[2:]) != ""
+}
+
+// canonicalPlanTitle recognizes exactly `# Plan: <title>`. The separator
+// shape is load-bearing: lifecycle-controlled files must not be admitted by
+// `#\tPlan:`, `#  Plan:`, or `# Plan:Title` lookalikes.
+func canonicalPlanTitle(line string) (string, bool) {
+	const prefix = "# Plan: "
+	if !strings.HasPrefix(line, prefix) {
 		return "", false
 	}
-	return strings.TrimLeft(line[1:], " \t"), true
+	title := strings.TrimSpace(line[len(prefix):])
+	return title, title != ""
+}
+
+func canonicalUnindentedATXH2(line string) (string, bool) {
+	if !strings.HasPrefix(line, "## ") {
+		return "", false
+	}
+	title := strings.TrimSpace(line[len("## "):])
+	return title, title != ""
+}
+
+// isSetextH1 recognizes an unambiguous Setext H1 at lines[i]. It only needs
+// the previous physical line because a blank line ends the paragraph that a
+// Setext underline decorates. Both lines must be structural, so code/comments
+// and frontmatter cannot manufacture an earlier document H1.
+func isSetextH1(lines []string, structure structuralMarkdown, i int) bool {
+	if i <= 0 || !structure.isStructural(i-1) {
+		return false
+	}
+	if strings.TrimSpace(lines[i-1]) == "" || isIndentedCode(lines[i-1]) {
+		return false
+	}
+	line := lines[i]
+	if isIndentedCode(line) {
+		return false
+	}
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' && indent < 3 {
+		indent++
+	}
+	start := indent
+	for indent < len(line) && line[indent] == '=' {
+		indent++
+	}
+	return indent-start >= 3 && strings.TrimSpace(line[indent:]) == ""
 }
 
 // taskHeadingRe matches `### Task N: <name>` where N is one-or-more digits.
 var taskHeadingRe = regexp.MustCompile(`^###\s+Task\s+(\d+)\s*:\s*(.*)$`)
 
-// boldFieldRe matches `**Name:** value`. The bold prefix MUST be at column 0
-// after trimming so this stays unambiguous.
-var boldFieldRe = regexp.MustCompile(`^\*\*([^*]+?):\*\*\s*(.*)$`)
+// boldFieldRe matches `**Name:** value` only at column zero. Callers must
+// pass the original source line, never a TrimSpace-normalized copy: leading
+// indentation is code-like and must not become a Plan field.
+var boldFieldRe = regexp.MustCompile(`^\*\*([^*]+?):\*\*[ \t]*(.*)$`)
 
 func matchBoldField(line string) (name, val string, ok bool) {
 	m := boldFieldRe.FindStringSubmatch(line)
@@ -431,7 +583,7 @@ func matchBoldField(line string) (name, val string, ok bool) {
 }
 
 // parseTasks parses `### Task N: …` blocks within lines[start:end].
-func parseTasks(lines []string, start, end int) []Task {
+func parseTasks(lines []string, structure structuralMarkdown, start, end int) []Task {
 	type rawTask struct {
 		num      int
 		name     string
@@ -440,8 +592,10 @@ func parseTasks(lines []string, start, end int) []Task {
 	}
 	var raws []rawTask
 	for i := start; i < end; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if m := taskHeadingRe.FindStringSubmatch(trimmed); m != nil {
+		if !structure.isStructural(i) {
+			continue
+		}
+		if m := taskHeadingRe.FindStringSubmatch(lines[i]); m != nil {
 			n, _ := strconv.Atoi(m[1])
 			raws = append(raws, rawTask{
 				num:      n,
@@ -466,17 +620,20 @@ func parseTasks(lines []string, start, end int) []Task {
 			BodyLines:   append([]string(nil), body...),
 			Status:      StatusPlanning,
 		}
-		parseTaskBody(&t)
+		parseTaskBody(&t, structure)
 		tasks = append(tasks, t)
 	}
 	return tasks
 }
 
 // parseTaskBody walks t.BodyLines and populates the Verifies/Status/Depends-On/placeholder fields.
-func parseTaskBody(t *Task) {
+func parseTaskBody(t *Task, structure structuralMarkdown) {
 	for offset, raw := range t.BodyLines {
-		line := strings.TrimSpace(raw)
 		absLine := t.BodyStart + offset
+		if !structure.isStructural(absLine - 1) {
+			continue
+		}
+		line := strings.TrimSpace(raw)
 
 		// Placeholder marker matching is byte-exact after trimming whitespace.
 		if line == PlaceholderBodyToken {
@@ -485,7 +642,7 @@ func parseTaskBody(t *Task) {
 			continue
 		}
 
-		name, val, ok := matchBoldField(line)
+		name, val, ok := matchBoldField(raw)
 		if !ok {
 			continue
 		}
@@ -602,9 +759,12 @@ func splitPrerequisitePlans(val string) []string {
 // token. Reason text is opaque to the parser.
 var deferredEntryRe = regexp.MustCompile(`^[-*]\s+(\S+#ac:\S+)(?:\s+[—–-]\s*(.*))?\s*$`)
 
-func parseDeferredACs(lines []string, start, end int) []DeferredAC {
+func parseDeferredACs(lines []string, structure structuralMarkdown, start, end int) []DeferredAC {
 	var out []DeferredAC
 	for i := start; i < end; i++ {
+		if !structure.isStructural(i) {
+			continue
+		}
 		trimmed := strings.TrimSpace(lines[i])
 		if trimmed == "" {
 			continue

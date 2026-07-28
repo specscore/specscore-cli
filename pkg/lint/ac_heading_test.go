@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,6 +203,27 @@ func TestACHeading_TwoViolationsSortedByFileThenLine(t *testing.T) {
 	}
 	if vs[0].File >= vs[1].File {
 		t.Fatalf("violations not sorted by file: %s, %s", vs[0].File, vs[1].File)
+	}
+}
+
+func TestACHeading_TwoViolationsInOneFileSortByLine(t *testing.T) {
+	e := newAHEnv(t)
+	e.write(t, "same", ahBody("same", "### AC:x")+"\n### AC:y\n")
+	vs, err := newACHeadingFormatChecker().check(e.specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 2 || vs[0].Line >= vs[1].Line {
+		t.Fatalf("violations = %+v, want same-file line order", vs)
+	}
+}
+
+func TestACHeading_CheckPropagatesWalkerError(t *testing.T) {
+	original := walkACFeatureReadmes
+	walkACFeatureReadmes = func(string, func(string, []byte)) error { return errors.New("walk boom") }
+	t.Cleanup(func() { walkACFeatureReadmes = original })
+	if _, err := newACHeadingFormatChecker().check(t.TempDir()); err == nil {
+		t.Fatal("check must propagate walker error")
 	}
 }
 

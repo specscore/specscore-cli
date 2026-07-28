@@ -372,7 +372,7 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		}
 		return exitcode.UnexpectedErrorCause(fmt.Sprintf("publishing %s: %v", target, err), err)
 	}
-	if _, err := plan.SyncIndex(filepath.Dir(target)); err != nil {
+	if _, err := planSyncIndexFn(filepath.Dir(target)); err != nil {
 		committed := lifecycle.CommittedError(target, "syncing plans index", err)
 		return exitcode.UnexpectedErrorCause(fmt.Sprintf("syncing plans index after committed Plan publication: %v", err), committed)
 	}
