@@ -13,6 +13,11 @@ builds:
     binary: specscore
     env:
       - CGO_ENABLED=0
+      # Go 1.26.5 produced a darwin/arm64 release binary that stalls in
+      # dyld before the Go runtime starts. Keep release artifacts on the
+      # last verified toolchain until an artifact smoke gate proves a newer
+      # patch release is safe.
+      - GOTOOLCHAIN=go1.26.4
     goos:
       - linux
       - darwin
