@@ -52,9 +52,12 @@ func appendResolutionNoteAfterLine(artifactPath, note string, afterLine int) (or
 		return nil, false, nil
 	}
 	err = TransformArtifact(artifactPath, func(before []byte) ([]byte, error) {
-		original = append([]byte(nil), before...)
 		var updated []byte
 		updated, wrote, err = AppendResolutionNoteAfterLineBytes(before, note, afterLine)
+		if err != nil {
+			return nil, err
+		}
+		original = append([]byte(nil), before...)
 		return updated, err
 	})
 	return original, wrote, err
@@ -76,7 +79,8 @@ func AppendResolutionNoteAfterLineBytes(orig []byte, note string, afterLine int)
 		return nil, false, fmt.Errorf("resolution-note body anchor line %d is outside 0..%d", afterLine, len(lines))
 	}
 	para := strings.TrimRight(note, "\n\r \t")
-	return joinLines(insertResolutionNoteAfterLine(lines, para, afterLine)), true, nil
+	structure := StructuralMarkdownMask(lines, "")
+	return joinLines(insertResolutionNoteAfterLine(lines, structure, para, afterLine)), true, nil
 }
 
 // RestoreBody is the explicit legacy whole-body compensating writer. It is not
@@ -91,17 +95,20 @@ func RestoreBody(artifactPath string, original []byte) error {
 // insertResolutionNoteAfterLine is the body-scoped form of
 // Resolution-note insertion. afterLine is a 1-based anchor: only lines
 // strictly after it participate in Resolution-heading and footer lookup.
-func insertResolutionNoteAfterLine(lines []string, para string, afterLine int) []string {
-	if idx := findResolutionHeadingIndexAfterLine(lines, afterLine); idx >= 0 {
-		return appendParagraphToSection(lines, idx, para)
+func insertResolutionNoteAfterLine(lines []string, structure []bool, para string, afterLine int) []string {
+	if idx := findResolutionHeadingIndexAfterLine(lines, structure, afterLine); idx >= 0 {
+		return appendParagraphToSection(lines, structure, idx, para)
 	}
-	return createResolutionSectionAfterLine(lines, para, afterLine)
+	return createResolutionSectionAfterLine(lines, structure, para, afterLine)
 }
 
 // findResolutionHeadingIndexAfterLine returns the first Resolution heading
 // strictly after the 1-based afterLine anchor, or -1 when absent.
-func findResolutionHeadingIndexAfterLine(lines []string, afterLine int) int {
+func findResolutionHeadingIndexAfterLine(lines []string, structure []bool, afterLine int) int {
 	for i := afterLine; i < len(lines); i++ {
+		if !isStructuralLine(structure, i) {
+			continue
+		}
 		ln := lines[i]
 		body, _ := splitTerminator(ln)
 		if strings.TrimRight(body, " \t") == resolutionHeading {
@@ -116,11 +123,14 @@ func findResolutionHeadingIndexAfterLine(lines []string, afterLine int) int {
 // inserted just before the next H2 (`## `) heading at or after the section, or
 // before the footer line, or at EOF — whichever comes first — so existing
 // sections are never relocated.
-func appendParagraphToSection(lines []string, headingIdx int, para string) []string {
+func appendParagraphToSection(lines []string, structure []bool, headingIdx int, para string) []string {
 	end := len(lines)
 	for i := headingIdx + 1; i < len(lines); i++ {
+		if !isStructuralLine(structure, i) {
+			continue
+		}
 		body, _ := splitTerminator(lines[i])
-		if strings.HasPrefix(body, "## ") || isFooterLine(body) {
+		if isCanonicalUnindentedATXH2(body) || isFooterLine(body) {
 			end = i
 			break
 		}
@@ -132,12 +142,15 @@ func appendParagraphToSection(lines []string, headingIdx int, para string) []str
 // createResolutionSectionAfterLine inserts a fresh Resolution section into
 // the body after the 1-based afterLine anchor. Only a footer in that body can
 // act as the insertion point; a pre-anchor footer is prose or an example.
-func createResolutionSectionAfterLine(lines []string, para string, afterLine int) []string {
+func createResolutionSectionAfterLine(lines []string, structure []bool, para string, afterLine int) []string {
 	heading := resolutionHeading + "\n\n"
 	block := []string{heading}
 	block = append(block, paragraphBlock(para, false)...)
 
 	for i := afterLine; i < len(lines); i++ {
+		if !isStructuralLine(structure, i) {
+			continue
+		}
 		ln := lines[i]
 		body, _ := splitTerminator(ln)
 		if isFooterLine(body) {
@@ -193,4 +206,12 @@ func insertAt(lines []string, i int, block []string) []string {
 // (`*This document follows the …*`).
 func isFooterLine(body string) bool {
 	return strings.HasPrefix(strings.TrimSpace(body), "*This document follows")
+}
+
+func isStructuralLine(structure []bool, line int) bool {
+	return line >= 0 && line < len(structure) && structure[line]
+}
+
+func isCanonicalUnindentedATXH2(body string) bool {
+	return strings.HasPrefix(body, "## ") && strings.TrimSpace(body[len("## "):]) != ""
 }

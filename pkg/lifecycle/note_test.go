@@ -126,6 +126,42 @@ func TestAppendResolutionNoteAfterLine_IgnoresPreAnchorExamples(t *testing.T) {
 	}
 }
 
+// Fenced examples can contain every marker the writer searches for. They are
+// prose, not artifact structure: they must neither receive the note nor make
+// the writer insert before an example footer.
+func TestAppendResolutionNote_IgnoresFencedResolutionAndFooterExamples(t *testing.T) {
+	body := "# Idea: Baz\n\n**Status:** Queued\n\n```markdown\n## Resolution\n\nexample only\n\n" + footerLine + "\n```\n\nCanonical body.\n\n" + footerLine + "\n"
+	path := writeNoteFixture(t, body)
+
+	original, wrote, err := AppendResolutionNote(path, "canonical note")
+	if err != nil || !wrote || string(original) != body {
+		t.Fatalf("AppendResolutionNote = (wrote=%t, original=%q, err=%v), want successful byte-preserving snapshot", wrote, string(original), err)
+	}
+
+	want := "# Idea: Baz\n\n**Status:** Queued\n\n```markdown\n## Resolution\n\nexample only\n\n" + footerLine + "\n```\n\nCanonical body.\n\n## Resolution\n\ncanonical note\n" + footerLine + "\n"
+	if got := readFile(t, path); got != want {
+		t.Fatalf("fenced example must remain byte-for-byte intact and canonical note must precede real footer:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+// A fenced H2 or footer inside a real Resolution section must not terminate
+// that section. The note remains in the canonical section until the next real
+// H2, preserving the entire example unchanged.
+func TestAppendResolutionNote_AppendIgnoresFencedH2AndFooterExamples(t *testing.T) {
+	body := "# Idea: Baz\n\n**Status:** Queued\n\n## Resolution\n\nfirst canonical paragraph\n\n```markdown\n## Next\n" + footerLine + "\n```\nsecond canonical paragraph\n## Next\n\nCanonical next section.\n\n" + footerLine + "\n"
+	path := writeNoteFixture(t, body)
+
+	_, wrote, err := AppendResolutionNote(path, "canonical note")
+	if err != nil || !wrote {
+		t.Fatalf("AppendResolutionNote = (wrote=%t, err=%v), want success", wrote, err)
+	}
+
+	want := "# Idea: Baz\n\n**Status:** Queued\n\n## Resolution\n\nfirst canonical paragraph\n\n```markdown\n## Next\n" + footerLine + "\n```\nsecond canonical paragraph\n\ncanonical note\n## Next\n\nCanonical next section.\n\n" + footerLine + "\n"
+	if got := readFile(t, path); got != want {
+		t.Fatalf("fenced H2/footer example must not end canonical Resolution section:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
 // empty / whitespace-only note → no-op.
 func TestAppendResolutionNote_EmptyIsNoOp(t *testing.T) {
 	t.Parallel()

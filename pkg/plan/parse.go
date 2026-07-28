@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
 // PlaceholderBodyToken is the byte-exact marker the parser recognizes as a
@@ -383,158 +385,33 @@ func (s structuralMarkdown) isStructural(line int) bool {
 // carry Plan syntax. It intentionally implements only the small Markdown
 // subset relevant to structural safety, rather than trying to render Markdown.
 func scanStructuralMarkdown(lines []string) structuralMarkdown {
-	mask := structuralMarkdown{lines: make([]bool, len(lines))}
-	// A UTF-8 BOM is permitted only at the beginning of the physical source
-	// stream.  Recognise it for the opening fence without normalising the line:
-	// every later parser still receives the original source text and therefore
-	// retains its physical line/column offsets for diagnostics and rewrites.
-	inFrontmatter := len(lines) > 0 && isLeadingFrontmatterFence(lines[0])
-	inComment := false
-	var fence markdownFence
-
-	for i, line := range lines {
-		if inFrontmatter {
-			if i > 0 && isFrontmatterFence(line) {
-				inFrontmatter = false
-			}
-			continue
-		}
-		if inComment {
-			if close := strings.Index(line, "-->"); close >= 0 {
-				inComment = htmlCommentContinues(line[close+3:])
-			}
-			continue
-		}
-		// Four spaces, a leading tab, or a mixed indentation that reaches a
-		// tab is code for the purpose of Plan syntax. It cannot introduce a
-		// title/section/field even when a renderer treats it differently.
-		if isIndentedCode(line) {
-			continue
-		}
-		if fence.containsOrOpens(line) {
-			continue
-		}
-		// The stub-mode placeholder is deliberately an HTML comment in the
-		// published format. It is the sole comment-shaped line with Plan
-		// semantics, and only its byte-exact canonical spelling is retained.
-		if strings.TrimSpace(line) == PlaceholderBodyToken {
-			mask.lines[i] = true
-			continue
-		}
-		if start := strings.Index(line, "<!--"); start >= 0 {
-			inComment = htmlCommentContinues(line[start:])
-			continue
-		}
-		mask.lines[i] = true
-	}
-	return mask
+	return structuralMarkdown{lines: lifecycle.StructuralMarkdownMask(lines, PlaceholderBodyToken)}
 }
 
 func isFrontmatterFence(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	return trimmed == "---" || trimmed == "..."
+	return lifecycle.IsFrontmatterFence(line)
 }
 
 // isLeadingFrontmatterFence recognises the first YAML delimiter in a document.
 // UTF-8 BOM is legal only on this opening source line; accepting it on later
 // lines would make a body line look like source metadata.
 func isLeadingFrontmatterFence(line string) bool {
-	return isFrontmatterFence(strings.TrimPrefix(line, "\ufeff"))
+	return lifecycle.IsLeadingFrontmatterFence(line)
 }
 
 // htmlCommentContinues reports whether the first or a later HTML comment
 // opener in fragment remains unclosed. The entire containing source line is
 // non-structural even if a comment opens and closes on that one line.
 func htmlCommentContinues(fragment string) bool {
-	for {
-		start := strings.Index(fragment, "<!--")
-		if start < 0 {
-			return false
-		}
-		afterStart := fragment[start+len("<!--"):]
-		end := strings.Index(afterStart, "-->")
-		if end < 0 {
-			return true
-		}
-		fragment = afterStart[end+len("-->"):]
-	}
+	return lifecycle.HTMLCommentContinues(fragment)
 }
 
 func isIndentedCode(line string) bool {
-	spaces := 0
-	for i := 0; i < len(line); i++ {
-		switch line[i] {
-		case ' ':
-			spaces++
-			if spaces >= 4 {
-				return true
-			}
-		case '\t':
-			return true
-		default:
-			return false
-		}
-	}
-	return spaces >= 4
-}
-
-// markdownFence tracks just enough fenced-code-block syntax to keep embedded
-// Markdown examples out of Plan title recognition. It deliberately is not a
-// general Markdown parser: a fence opens only with 0–3 leading spaces and at
-// least three matching backticks or tildes; a close must use the opening marker
-// with at least the opening length and contain only trailing whitespace.
-type markdownFence struct {
-	marker byte
-	length int
-}
-
-func (f *markdownFence) containsOrOpens(line string) bool {
-	if f.marker != 0 {
-		if fenceCloses(line, f.marker, f.length) {
-			f.marker, f.length = 0, 0
-		}
-		return true
-	}
-	marker, length, ok := fenceOpens(line)
-	if !ok {
-		return false
-	}
-	f.marker, f.length = marker, length
-	return true
-}
-
-func fenceOpens(line string) (byte, int, bool) {
-	indent := 0
-	for indent < len(line) && line[indent] == ' ' && indent < 3 {
-		indent++
-	}
-	if indent == len(line) || (indent < len(line) && line[indent] == ' ') {
-		return 0, 0, false // four or more spaces are an indented code block.
-	}
-	marker := line[indent]
-	if marker != '`' && marker != '~' {
-		return 0, 0, false
-	}
-	length := 0
-	for indent+length < len(line) && line[indent+length] == marker {
-		length++
-	}
-	return marker, length, length >= 3
+	return lifecycle.IsIndentedCode(line)
 }
 
 func fenceCloses(line string, marker byte, minimumLength int) bool {
-	indent := 0
-	for indent < len(line) && line[indent] == ' ' && indent < 3 {
-		indent++
-	}
-	if indent == len(line) || (indent < len(line) && line[indent] == ' ') || line[indent] != marker {
-		return false
-	}
-	length := 0
-	for indent+length < len(line) && line[indent+length] == marker {
-		length++
-	}
-	return length >= minimumLength && strings.TrimSpace(line[indent+length:]) == ""
+	return lifecycle.FenceCloses(line, marker, minimumLength)
 }
 
 // isMarkdownATXH1 recognises every valid Markdown ATX H1 for *ordering*.

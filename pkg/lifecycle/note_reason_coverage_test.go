@@ -60,6 +60,30 @@ func TestAppendResolutionNote_InsertAtTop(t *testing.T) {
 	}
 }
 
+func TestAppendResolutionNoteAfterLine_InvalidAnchorRefusesWithoutMutation(t *testing.T) {
+	for _, afterLine := range []int{-1, 3} {
+		t.Run("anchor", func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "a.md")
+			before := []byte("# t\n")
+			if err := os.WriteFile(p, before, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			original, wrote, err := AppendResolutionNoteAfterLine(p, "a note", afterLine)
+			if err == nil || wrote || original != nil {
+				t.Fatalf("invalid anchor %d = (original=%q, wrote=%t, err=%v), want refusal without snapshot", afterLine, string(original), wrote, err)
+			}
+			after, readErr := os.ReadFile(p)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("invalid anchor %d mutated file:\nwant %q\n got %q", afterLine, before, after)
+			}
+		})
+	}
+}
+
 func TestNewReasonRequiredSet_Empty(t *testing.T) {
 	s := NewReasonRequiredSet()
 	if s.RequiresReason("Queued", "Rejected") {

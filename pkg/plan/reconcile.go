@@ -440,13 +440,17 @@ func preserveReadinessError(slug string, err error) error {
 // dated paragraph in `## Resolution`, so nothing is lost — the header stays a
 // single, stable, grep-able "this plan was reconciled at least once" signal.
 func insertReconciledMarkerIfAbsent(lines []string, titleIdx, statusIdx int, date string) []string {
+	structure := scanStructuralMarkdown(lines)
 	for i := titleIdx + 1; i < len(lines); i++ {
+		if !structure.isStructural(i) {
+			continue
+		}
 		body := strings.TrimSuffix(lines[i], "\r")
 		if _, ok := canonicalUnindentedATXH2(body); ok {
 			break
 		}
-		ln := lines[i]
-		if strings.HasPrefix(strings.TrimSpace(ln), reconciledMarkerPrefix) {
+		name, _, ok := matchBoldField(body)
+		if ok && name == "Reconciled" {
 			return lines
 		}
 	}

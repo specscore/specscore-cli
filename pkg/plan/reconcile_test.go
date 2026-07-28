@@ -261,6 +261,19 @@ func TestReconcile_PreTitleAuditSamplesDoNotSuppressCanonicalMarkerOrNote(t *tes
 	}
 }
 
+// An example fenced into the canonical header area is not a canonical header
+// field. It must not suppress the real reconciliation marker that follows the
+// structural Plan status line, and its example bytes must remain untouched.
+func TestInsertReconciledMarkerIfAbsent_IgnoresFencedHeaderExample(t *testing.T) {
+	lines := strings.Split("# Plan: Auth\n\n**Status:** Draft\n```markdown\n**Reconciled:** 1999-01-01 example only\n```\n**Source:** none\n\n## Summary\n", "\n")
+
+	got := strings.Join(insertReconciledMarkerIfAbsent(lines, 0, 2, "2026-07-28"), "\n")
+	want := "# Plan: Auth\n\n**Status:** Draft\n**Reconciled:** 2026-07-28\n```markdown\n**Reconciled:** 1999-01-01 example only\n```\n**Source:** none\n\n## Summary\n"
+	if got != want {
+		t.Fatalf("fenced Reconciled example must not suppress canonical marker or be rewritten:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
 func TestReconcile_PreTitleAuditSamples_PostMutationFailureRetainsCanonicalCommit(t *testing.T) {
 	pinReconcileDate(t, "2026-07-28")
 	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
