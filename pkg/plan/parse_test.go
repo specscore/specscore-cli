@@ -638,6 +638,25 @@ just some markdown
 	}
 }
 
+func TestParse_OnlyFirstH1CanDeclarePlan(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Notes
+
+This document mentions a plan below, but is not one.
+
+# Plan: Hidden
+
+**Status:** Approved
+`
+	p, err := Parse(writePlan(t, dir, "notes", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HasPlanTitle || p.TitleLine != 0 || p.Title != "" {
+		t.Fatalf("later Plan H1 must not declare a Plan: %+v", p)
+	}
+}
+
 func TestParse_PlaceholderByteExact(t *testing.T) {
 	cases := []struct {
 		body  string

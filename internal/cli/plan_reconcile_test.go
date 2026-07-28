@@ -310,6 +310,40 @@ func TestPlanReconcile_UnmetPrerequisiteRefusesWithoutMutation_CLI(t *testing.T)
 	}
 }
 
+// A malformed prerequisite artifact is a lifecycle refusal (4), not an
+// operational failure (10), and reconcile must not write any bytes first.
+func TestPlanReconcile_PreservesInvalidStateReadinessErrorWithoutMutation_CLI(t *testing.T) {
+	root := stageReconcilablePlan(t, "delivery", "Draft", "planning")
+	deliveryPath := filepath.Join(root, "spec", "plans", "delivery.md")
+	body, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "**Status:** Draft", "**Status:** Draft\n**Prerequisite Plans:** foundation", 1))
+	if err := os.WriteFile(deliveryPath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte("# Notes\n\n# Plan: Foundation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = runPlan(t, "reconcile", "delivery", "--tasks=complete", "--note", "x")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	after, readErr := os.ReadFile(deliveryPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Error("reconcile changed plan despite invalid-state readiness refusal")
+	}
+}
+
 // A --project that does not resolve to a spec repo surfaces the
 // resolveSpecRoot error (covers the error-return branch after flag
 // validation passes).

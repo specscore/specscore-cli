@@ -82,6 +82,9 @@ type prerequisiteReadinessEvaluator struct {
 }
 
 func (e *prerequisiteReadinessEvaluator) evaluatePlan(p *Plan, slug string) (PrerequisiteReadiness, error) {
+	if err := requirePlanArtifact(p, "root"); err != nil {
+		return PrerequisiteReadiness{}, err
+	}
 	if slug == "" {
 		slug = "<current plan>"
 	}
@@ -93,7 +96,8 @@ func (e *prerequisiteReadinessEvaluator) evaluatePlan(p *Plan, slug string) (Pre
 	if err != nil {
 		return PrerequisiteReadiness{}, err
 	}
-	return PrerequisiteReadiness{Ready: len(evaluation.unmet) == 0, Unmet: evaluation.unmet}, nil
+	unmet := deduplicateUnmet(evaluation.unmet)
+	return PrerequisiteReadiness{Ready: len(unmet) == 0, Unmet: unmet}, nil
 }
 
 func (e *prerequisiteReadinessEvaluator) evaluateContents(p *Plan) (prerequisiteEvaluation, error) {
@@ -115,15 +119,22 @@ func (e *prerequisiteReadinessEvaluator) evaluateContents(p *Plan) (prerequisite
 			return prerequisiteEvaluation{}, err
 		}
 		if !prerequisite.derivedOK || prerequisite.derived != "Implemented" {
-			// A cycle/invalid child already carries its actionable diagnostic;
-			// avoid adding a duplicate synthetic direct prerequisite beside it.
-			if len(prerequisite.unmet) == 0 {
+			// Report both an unmet prerequisite itself and every unmet
+			// prerequisite beneath it. Omitting the direct diagnostic when a
+			// descendant is also blocked makes "every unmet prerequisite"
+			// misleading: the caller cannot see that this declared edge's own
+			// task rollup is not yet Implemented. Pre-order preserves declared
+			// edge order, followed by the nested reasons that explain it.
+			// A cycle has no determinate derived status. Its nested diagnostic is
+			// the useful direct refusal, so do not add an empty synthetic sibling
+			// ahead of it. An ordinary indeterminate prerequisite without nested
+			// diagnostics still needs its own entry.
+			if prerequisite.derivedOK || len(prerequisite.unmet) == 0 {
 				result.unmet = append(result.unmet, UnmetPrerequisite{
 					Slug: slug, Status: prerequisite.status, DerivedStatus: prerequisite.derived,
 				})
-			} else {
-				result.unmet = append(result.unmet, prerequisite.unmet...)
 			}
+			result.unmet = append(result.unmet, prerequisite.unmet...)
 			continue
 		}
 		if len(prerequisite.unmet) > 0 {
@@ -159,6 +170,9 @@ func (e *prerequisiteReadinessEvaluator) evaluateSlug(slug string) (prerequisite
 	if err != nil {
 		return prerequisiteEvaluation{}, exitcode.UnexpectedErrorf("parsing prerequisite plan %q at %s: %v", slug, path, err)
 	}
+	if err := requirePlanArtifact(p, "prerequisite"); err != nil {
+		return prerequisiteEvaluation{}, err
+	}
 
 	e.active[slug] = len(e.stack)
 	e.stack = append(e.stack, slug)
@@ -170,6 +184,53 @@ func (e *prerequisiteReadinessEvaluator) evaluateSlug(slug string) (prerequisite
 	}
 	e.visited[slug] = evaluation
 	return evaluation, nil
+}
+
+// requirePlanArtifact prevents lifecycle gates from treating arbitrary Markdown
+// at a plan-shaped path as an empty, therefore-ready, Plan. Parse deliberately
+// returns non-Plan Markdown to discovery callers; execution gates must instead
+// fail closed.
+func requirePlanArtifact(p *Plan, role string) error {
+	if p != nil && p.HasPlanTitle {
+		return nil
+	}
+	path := "<unknown path>"
+	if p != nil && p.Path != "" {
+		path = p.Path
+	}
+	return exitcode.InvalidStateErrorf(
+		"%s plan %q is not a Plan artifact: expected first H1 to start with '# Plan:'",
+		role, path)
+}
+
+// deduplicateUnmet keeps the first diagnostic reached by depth-first
+// prerequisite declaration order. Recursive evaluation caches shared branches,
+// which otherwise causes their leaf failures (and cycles) to be reported once
+// for every path through the graph.
+func deduplicateUnmet(unmet []UnmetPrerequisite) []UnmetPrerequisite {
+	seen := make(map[unmetPrerequisiteIdentity]struct{}, len(unmet))
+	unique := make([]UnmetPrerequisite, 0, len(unmet))
+	for _, prerequisite := range unmet {
+		identity := unmetPrerequisiteIdentity{
+			slug:    prerequisite.Slug,
+			status:  prerequisite.Status,
+			derived: prerequisite.DerivedStatus,
+			reason:  prerequisite.Reason,
+		}
+		if _, ok := seen[identity]; ok {
+			continue
+		}
+		seen[identity] = struct{}{}
+		unique = append(unique, prerequisite)
+	}
+	return unique
+}
+
+type unmetPrerequisiteIdentity struct {
+	slug    string
+	status  string
+	derived string
+	reason  string
 }
 
 func isNotFound(err error) bool {

@@ -224,6 +224,33 @@ func TestTaskChangeStatus_PlanInline_InProgressRejectsPrerequisiteCycle(t *testi
 	}
 }
 
+// A malformed prerequisite artifact is a lifecycle refusal (4), not an
+// operational failure (10), and the task status remains untouched.
+func TestTaskChangeStatus_PlanInline_PreservesInvalidStateReadinessError(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte("# Notes\n\n# Plan: Foundation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Error("task plan changed despite invalid-state readiness refusal")
+	}
+}
+
 func TestTaskChangeStatus_PlanInline_ReadinessReadFailureIsAtomic(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission denial is not enforceable for root")

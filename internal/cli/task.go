@@ -558,7 +558,7 @@ func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug,
 	if to == lifecycle.TaskInProgress {
 		readiness, readinessErr := p.PrerequisiteReadiness(filepath.Join(specRoot, "spec", "plans"))
 		if readinessErr != nil {
-			return exitcode.UnexpectedErrorf("checking prerequisite readiness for plan %q: %v", planSlug, readinessErr)
+			return readinessCLIError(readinessErr)
 		}
 		if !readiness.Ready {
 			return exitcode.InvalidStateErrorf(

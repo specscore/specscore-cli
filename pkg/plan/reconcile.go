@@ -322,8 +322,7 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	// any bytes are read for mutation or written, preserving atomic refusal.
 	readiness, err := p.PrerequisiteReadiness(plansDir)
 	if err != nil {
-		return ReconcileResult{}, exitcode.UnexpectedErrorf(
-			"checking prerequisite readiness for plan %q: %v", opts.Slug, err)
+		return ReconcileResult{}, preserveReadinessError(opts.Slug, err)
 	}
 	if !readiness.Ready {
 		return ReconcileResult{}, exitcode.InvalidStateErrorf(
@@ -414,6 +413,18 @@ func firstReconcileTask(numbers map[int]bool) int {
 		return n
 	}
 	return 0
+}
+
+// preserveReadinessError keeps contract-level refusals such as a non-Plan
+// prerequisite at InvalidState. Only untyped filesystem/parser failures are
+// unexpected runtime failures. Call this before a reconcile mutation so an
+// execution gate cannot accidentally erase its own machine-readable reason.
+func preserveReadinessError(slug string, err error) error {
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return err
+	}
+	return exitcode.UnexpectedErrorf("checking prerequisite readiness for plan %q: %v", slug, err)
 }
 
 // insertReconciledMarkerIfAbsent inserts a `**Reconciled:** <date>` header

@@ -198,7 +198,7 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 		lines = append(lines, scanner.Text())
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scanning plan %q: %w", path, err)
 	}
 	// Pass 1: locate title, header fields, section starts.
 	type sectionStart struct {
@@ -207,13 +207,20 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 	}
 	var sections []sectionStart
 
+	firstH1Seen := false
 	for i, raw := range lines {
 		trimmed := strings.TrimSpace(raw)
-		if rest, ok := strings.CutPrefix(trimmed, "# "); !p.HasPlanTitle && ok {
-			if title, ok := strings.CutPrefix(rest, "Plan:"); ok {
-				p.HasPlanTitle = true
-				p.TitleLine = i + 1
-				p.Title = strings.TrimSpace(title)
+		if rest, ok := strings.CutPrefix(trimmed, "# "); ok {
+			// A Plan title is meaningful only when it is the document's first
+			// H1. In particular, do not let arbitrary Markdown with a later
+			// "# Plan:" heading enter lifecycle gates as a Plan artifact.
+			if !firstH1Seen {
+				firstH1Seen = true
+				if title, ok := strings.CutPrefix(rest, "Plan:"); ok {
+					p.HasPlanTitle = true
+					p.TitleLine = i + 1
+					p.Title = strings.TrimSpace(title)
+				}
 			}
 			continue
 		}

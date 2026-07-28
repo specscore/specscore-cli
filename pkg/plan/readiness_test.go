@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,6 +71,87 @@ func TestPlanReadiness_CycleIsUnreadyEvenWhenDirectPrerequisiteIsImplemented(t *
 	}
 	if !strings.Contains(got.UnmetMessage(), "prerequisite cycle: alpha -> beta -> alpha") {
 		t.Errorf("cycle diagnostic = %q", got.UnmetMessage())
+	}
+}
+
+func TestPlanReadiness_DeduplicatesSharedUnmetLeafInFirstReachableOrder(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "first", "Implemented", "shared", "complete")
+	writeReadinessPlan(t, plansDir, "shared", "Approved", "", "queued")
+	writeReadinessPlan(t, plansDir, "second", "Implemented", "shared, other", "complete")
+	writeReadinessPlan(t, plansDir, "other", "Executing", "", "in_progress")
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "first, second", "queued")
+
+	got, err := PlanReadiness(root, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []UnmetPrerequisite{
+		{Slug: "shared", Status: "Approved"},
+		{Slug: "other", Status: "Executing", DerivedStatus: "Executing"},
+	}
+	if !slices.Equal(got.Unmet, want) {
+		t.Fatalf("unmet = %+v, want %+v", got.Unmet, want)
+	}
+}
+
+func TestPlanReadiness_ReportsUnmetPrerequisiteBeforeItsUnmetDescendants(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// integration is itself unready and also depends on foundation. The
+	// readiness response must name both blockers in pre-order, rather than
+	// hiding integration behind its nested prerequisite.
+	writeReadinessPlan(t, plansDir, "foundation", "Approved", "", "queued")
+	writeReadinessPlan(t, plansDir, "integration", "Executing", "foundation", "in_progress")
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "integration", "queued")
+
+	got, err := PlanReadiness(root, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []UnmetPrerequisite{
+		{Slug: "integration", Status: "Executing", DerivedStatus: "Executing"},
+		{Slug: "foundation", Status: "Approved"},
+	}
+	if !slices.Equal(got.Unmet, want) {
+		t.Fatalf("unmet = %+v, want %+v", got.Unmet, want)
+	}
+}
+
+func TestPlanReadiness_DeduplicatesSharedCycleAndPreservesBranchedCycles(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "first", "Implemented", "shared", "complete")
+	writeReadinessPlan(t, plansDir, "second", "Implemented", "shared", "complete")
+	writeReadinessPlan(t, plansDir, "shared", "Implemented", "first", "complete")
+	writeReadinessPlan(t, plansDir, "third", "Implemented", "fourth", "complete")
+	writeReadinessPlan(t, plansDir, "fourth", "Implemented", "third", "complete")
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "first, second, third", "queued")
+
+	got, err := PlanReadiness(root, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Ready || len(got.Unmet) != 2 {
+		t.Fatalf("readiness = %+v, want two unique cycle diagnostics", got)
+	}
+	for i, want := range []string{
+		"first -> shared -> first",
+		"third -> fourth -> third",
+	} {
+		if got.Unmet[i].Status != "invalid" || !strings.Contains(got.Unmet[i].Reason, want) {
+			t.Errorf("unmet[%d] = %+v, want cycle %q", i, got.Unmet[i], want)
+		}
 	}
 }
 
@@ -230,6 +312,74 @@ func TestPrerequisiteReadiness_DirectoryFormPrerequisite(t *testing.T) {
 	}
 }
 
+func TestPlanReadiness_RejectsNonPlanRootInDirectoryForm(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "spec", "plans", "delivery", "README.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# Notes\n\nnot a plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := PlanReadiness(root, "delivery"); !isInvalidState(err) {
+		t.Fatalf("readiness error = %v, want invalid-state non-Plan refusal", err)
+	}
+}
+
+func TestPlanReadiness_RejectsRootWhoseLaterH1LooksLikePlan(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "spec", "plans", "delivery.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# Notes\n\n# Plan: Delivery\n\n**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := PlanReadiness(root, "delivery"); !isInvalidState(err) {
+		t.Fatalf("readiness error = %v, want invalid-state later-H1 root refusal", err)
+	}
+}
+
+func TestPrerequisiteReadiness_RejectsNonPlanPrerequisite(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plansDir, "foundation.md"), []byte("# Notes\n\nnot a plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "foundation", "queued")
+	p, err := Parse(filepath.Join(plansDir, "delivery.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.PrerequisiteReadiness(plansDir); !isInvalidState(err) {
+		t.Fatalf("readiness error = %v, want invalid-state non-Plan refusal", err)
+	}
+}
+
+func TestPrerequisiteReadiness_RejectsPrerequisiteWhoseLaterH1LooksLikePlan(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plansDir, "foundation.md"), []byte("# Notes\n\n# Plan: Foundation\n\n**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "foundation", "queued")
+	p, err := Parse(filepath.Join(plansDir, "delivery.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.PrerequisiteReadiness(plansDir); !isInvalidState(err) {
+		t.Fatalf("readiness error = %v, want invalid-state later-H1 prerequisite refusal", err)
+	}
+}
+
 func TestMalformedPrerequisiteDeclaration(t *testing.T) {
 	tests := []struct {
 		name string
@@ -355,4 +505,9 @@ func TestPrerequisiteReadiness_PropagatesNestedResolutionFailure(t *testing.T) {
 func isUnexpected(err error) bool {
 	var coded interface{ ExitCode() int }
 	return errors.As(err, &coded) && coded.ExitCode() == exitcode.Unexpected
+}
+
+func isInvalidState(err error) bool {
+	var coded interface{ ExitCode() int }
+	return errors.As(err, &coded) && coded.ExitCode() == exitcode.InvalidState
 }
