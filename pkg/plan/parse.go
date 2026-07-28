@@ -220,6 +220,14 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 		if !structure.isStructural(i) {
 			continue
 		}
+		// A UTF-8 BOM is permitted only at the beginning of the physical
+		// source stream. Normalize it only for first-H1 ordering and Plan
+		// title recognition: the rest of the parser continues to use the
+		// original line, preserving source offsets for diagnostics and writes.
+		heading := raw
+		if i == 0 {
+			heading = strings.TrimPrefix(heading, "\ufeff")
+		}
 
 		// A real Setext H1 is a document H1 too. It must prevent a later
 		// `# Plan:` example from claiming a document that already has a title.
@@ -227,13 +235,13 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 			firstH1Seen = true
 			continue
 		}
-		if isMarkdownATXH1(raw) {
+		if isMarkdownATXH1(heading) {
 			// A Plan title is meaningful only when it is the document's first
 			// H1. In particular, do not let arbitrary Markdown with a later
 			// "# Plan:" heading enter lifecycle gates as a Plan artifact.
 			if !firstH1Seen {
 				firstH1Seen = true
-				if title, ok := canonicalPlanTitle(raw); ok {
+				if title, ok := canonicalPlanTitle(heading); ok {
 					p.HasPlanTitle = true
 					p.TitleLine = i + 1
 					p.Title = title
@@ -253,10 +261,16 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 		return p, nil
 	}
 
-	// Header fields live between the title (exclusive) and the first ## heading.
+	// Header fields live between the title (exclusive) and the first structural
+	// ## heading after it. A document can contain an H2 before its first H1;
+	// that earlier section must not make the Plan header empty and thereby hide
+	// prerequisite declarations from readiness.
 	headerEnd := len(lines)
-	if len(sections) > 0 {
-		headerEnd = sections[0].line
+	for _, section := range sections {
+		if section.line >= p.TitleLine {
+			headerEnd = section.line
+			break
+		}
 	}
 	for i := p.TitleLine; i < headerEnd; i++ {
 		if !structure.isStructural(i) {

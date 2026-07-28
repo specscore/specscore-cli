@@ -702,6 +702,12 @@ func TestParse_OnlyTheFirstMarkdownH1CanDeclarePlan(t *testing.T) {
 			wantTitleLine: 2,
 		},
 		{
+			name:          "BOM-prefixed Plan title is recognized as the first H1",
+			body:          "\ufeff# Plan: Delivery\n",
+			wantPlanTitle: true,
+			wantTitleLine: 1,
+		},
+		{
 			name: "indented Plan example does not declare a plan",
 			body: "    # Plan: Example only\n# Notes\n",
 		},
@@ -720,6 +726,10 @@ func TestParse_OnlyTheFirstMarkdownH1CanDeclarePlan(t *testing.T) {
 		{
 			name: "bare Markdown H1 blocks later canonical Plan title",
 			body: "#\n# Plan: Delivery\n",
+		},
+		{
+			name: "BOM-prefixed Markdown H1 blocks later canonical Plan title",
+			body: "\ufeff# Notes\n# Plan: Delivery\n",
 		},
 		{
 			name:          "no-separator hash line is not an ATX H1",

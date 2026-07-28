@@ -50,6 +50,40 @@ func TestPlanReadiness_TraversesMultiHopUnmetPrerequisite(t *testing.T) {
 	}
 }
 
+func TestPlanReadiness_H2BeforeTitleCannotBypassPrerequisite(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReadinessPlan(t, plansDir, "foundation", "Approved", "", "queued")
+	delivery := `## Preface
+
+# Plan: Delivery
+
+**Status:** Approved
+**Prerequisite Plans:** foundation
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** queued
+`
+	if err := os.WriteFile(filepath.Join(plansDir, "delivery.md"), []byte(delivery), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := PlanReadiness(root, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []UnmetPrerequisite{{Slug: "foundation", Status: "Approved"}}
+	if got.Ready || !slices.Equal(got.Unmet, want) {
+		t.Fatalf("readiness = %+v, want unmet prerequisite %+v", got, want)
+	}
+}
+
 func TestPlanReadiness_CycleIsUnreadyEvenWhenDirectPrerequisiteIsImplemented(t *testing.T) {
 	root := t.TempDir()
 	plansDir := filepath.Join(root, "spec", "plans")
@@ -450,6 +484,10 @@ func TestPlanReadiness_RejectsRootWhoseFakeCodeHeadingLooksLikePlan(t *testing.T
 		{
 			name: "BOM-prefixed frontmatter title",
 			body: "\ufeff---\n# Plan: Metadata fake\n<!-- comment -->\n---\n# Notes\n",
+		},
+		{
+			name: "BOM-prefixed Notes title",
+			body: "\ufeff# Notes\n# Plan: Delivery\n",
 		},
 	}
 	for _, tc := range tests {
