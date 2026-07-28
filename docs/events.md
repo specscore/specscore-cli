@@ -67,9 +67,18 @@ off event delivery at the project level without removing the `events:` block.
 
 Pipes the JSON-encoded envelope to a child process via stdin and waits for it
 to exit. The child is considered successful if it exits with status `0`. A
-non-zero exit, a crash, or running past `timeout_ms` is reported on stderr.
-On timeout the dispatcher sends `SIGTERM`, then `SIGKILL` if the process is
-still running shortly after. The default timeout is 2000 ms.
+non-zero exit, a crash, or exhausting `timeout_ms` is reported on stderr. The
+budget starts before process-tree setup, so an expiry during setup or process
+start is reported as a timeout too. Timeout cleanup includes descendants
+started by the command. On Unix the
+dispatcher sends `SIGTERM` to the command's process group, then `SIGKILL` after
+100 ms if the group is still running. On Windows it assigns the command to an
+owned Job Object and terminates that job because Windows has no `SIGTERM`
+equivalent. If Job Object termination is unavailable, it immediately kills the
+retained direct child and bounds cleanup waiting rather than hanging.
+Successful commands release this timeout ownership without terminating any
+background descendants they deliberately started. The default timeout is
+2000 ms.
 
 ## Writing an Exec subscriber
 
