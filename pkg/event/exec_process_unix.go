@@ -187,7 +187,7 @@ func (t *unixExecProcessTree) close() error {
 		// share its group. Killing it also bounds cleanup if an inherited stdin
 		// descriptor ever delays the shell's EOF observation.
 		_ = t.guard.Process.Kill()
-		_ = t.guard.Wait()
+		waitForUnixProcessGroupGuardExit(t.guard)
 	}
 	return nil
 }

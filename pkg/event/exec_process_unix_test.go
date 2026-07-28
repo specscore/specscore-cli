@@ -3,6 +3,7 @@
 package event
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -244,47 +245,66 @@ func TestUnixProcessTreeCancelErrorPaths(t *testing.T) {
 }
 
 // TestExecTimeoutStillKillsGroupAfterSignalFailure is an end-to-end proof of
-// the fail-closed cancellation path. The injected TERM/KILL errors model an
-// OS process-control failure, while the real signal is also sent so the test
-// cannot leak a process. Deliver must remain bounded and typed as a timeout.
+// the fail-closed cancellation path. The TERM and KILL seams deliberately do
+// not send real signals, leaving a descendant alive with an inherited stdout
+// pipe. Cmd.WaitDelay must close that pipe and kill the direct command process
+// rather than letting an OS process-control failure make Deliver wait forever.
 func TestExecTimeoutStillKillsGroupAfterSignalFailure(t *testing.T) {
 	tests := []struct {
-		name       string
-		failSignal syscall.Signal
+		name     string
+		failTERM bool
+		failKILL bool
 	}{
-		{name: "TERM", failSignal: syscall.SIGTERM},
-		{name: "KILL", failSignal: syscall.SIGKILL},
+		{name: "TERM", failTERM: true},
+		{name: "KILL", failKILL: true},
+		{name: "TERM and KILL", failTERM: true, failKILL: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			originalSignal := signalUnixProcessGroup
 			t.Cleanup(func() { signalUnixProcessGroup = originalSignal })
+			originalStdout := execStdout
+			t.Cleanup(func() { execStdout = originalStdout })
+			execStdout = &bytes.Buffer{}
+
 			sentinel := errors.New("injected process-group signal failure")
 			calls := make([]syscall.Signal, 0, 2)
-			signalUnixProcessGroup = func(pid int, sig syscall.Signal) error {
+			signalUnixProcessGroup = func(_ int, sig syscall.Signal) error {
 				calls = append(calls, sig)
-				err := originalSignal(pid, sig)
-				if sig == tc.failSignal {
+				if (sig == syscall.SIGTERM && tc.failTERM) || (sig == syscall.SIGKILL && tc.failKILL) {
 					return sentinel
 				}
-				return err
+				return nil
 			}
 
 			timeout := 75 * time.Millisecond
+			childPIDFile := filepath.Join(t.TempDir(), "child.pid")
 			start := time.Now()
-			err := NewExec([]string{"sh", "-c", "exec sleep 30"}, nil, timeout).
+			err := NewExec([]string{
+				"sh", "-c",
+				`sh -c 'printf "%s" "$$" > "$1"; trap "" TERM; exec sleep 30' child "$1" & exit 0`,
+				"sh", childPIDFile,
+			}, nil, timeout).
 				Deliver(context.Background(), execSampleEvent(t))
 			elapsed := time.Since(start)
 			var timeoutErr *ExecTimeoutError
 			if !errors.As(err, &timeoutErr) {
 				t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
 			}
-			if elapsed > time.Second {
-				t.Fatalf("Deliver elapsed = %v, want bounded cleanup within 1s", elapsed)
+			if elapsed < execProcessCleanupWait-50*time.Millisecond {
+				t.Fatalf("Deliver elapsed = %v, want WaitDelay to close the descendant's stdout pipe", elapsed)
+			}
+			if max := timeout + execSIGTERMGrace + execProcessCleanupWait + 500*time.Millisecond; elapsed > max {
+				t.Fatalf("Deliver elapsed = %v, want bounded cleanup within %v", elapsed, max)
 			}
 			if len(calls) != 2 || calls[0] != syscall.SIGTERM || calls[1] != syscall.SIGKILL {
 				t.Fatalf("signals = %v, want [SIGTERM SIGKILL]", calls)
 			}
+
+			pid := waitForUnixChildPID(t, childPIDFile, time.Second)
+			t.Cleanup(func() {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			})
 		})
 	}
 }
@@ -312,6 +332,29 @@ func TestUnixProcessTreeClose(t *testing.T) {
 	if err := (&unixExecProcessTree{}).close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
+}
+
+func TestUnixProcessTreeCloseBoundsGuardReap(t *testing.T) {
+	originalWait := waitUnixProcessGroupGuard
+	t.Cleanup(func() { waitUnixProcessGroupGuard = originalWait })
+
+	blocked := make(chan struct{})
+	reaped := make(chan struct{})
+	waitUnixProcessGroupGuard = func(*exec.Cmd) error {
+		<-blocked
+		close(reaped)
+		return nil
+	}
+
+	start := time.Now()
+	if err := (&unixExecProcessTree{guard: &exec.Cmd{Process: &os.Process{}}}).close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < execProcessCleanupWait {
+		t.Fatalf("close returned in %v, want it to honor cleanup bound", elapsed)
+	}
+	close(blocked)
+	<-reaped
 }
 
 func TestWaitForUnixProcessGroupGuardExitBoundsReap(t *testing.T) {

@@ -48,6 +48,12 @@ var cmdStartFn = func(cmd *exec.Cmd) error { return cmd.Start() }
 
 var configureExecProcessTreeFn = configureExecProcessTree
 
+// execStdout is normally discarded. Keeping it as a seam lets the process-tree
+// tests model a descendant that inherits an os/exec output pipe: Cmd.WaitDelay
+// must close that pipe after cancellation instead of waiting for the descendant
+// to release it.
+var execStdout io.Writer = io.Discard
+
 // NewExec constructs an Exec subscriber. argv[0] is the executable and
 // argv[1:] are positional arguments. env may be nil. timeout is the wall-clock
 // budget for the child; the config-loader (task 6) enforces the [100, 30000]
@@ -112,7 +118,7 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 	}
 	cmd.Env = env
 
-	cmd.Stdout = io.Discard
+	cmd.Stdout = execStdout
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmdStdinPipeFn(cmd)
