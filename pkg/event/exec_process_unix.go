@@ -4,6 +4,7 @@ package event
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -21,6 +22,8 @@ type unixExecProcessTree struct {
 }
 
 var signalUnixProcessGroup = syscall.Kill
+
+var waitUnixProcessGroupGuard = func(guard *exec.Cmd) error { return guard.Wait() }
 
 // newUnixProcessGroupGuardCmd is a seam for the setup-failure tests. The
 // production command uses a shell builtin only: after reporting readiness it
@@ -122,7 +125,29 @@ func stopUnixProcessGroupGuard(guard *exec.Cmd, stdin io.WriteCloser, stdout io.
 	}
 	if guard != nil && guard.Process != nil {
 		_ = guard.Process.Kill()
-		_ = guard.Wait()
+		waitForUnixProcessGroupGuardExit(guard)
+	}
+}
+
+// waitForUnixProcessGroupGuardExit reaps the setup guard without allowing a
+// broken OS process-control path to extend the caller's timeout indefinitely.
+// The Kill above has already made the guard unable to execute any further
+// code; the asynchronous waiter still reaps it if the kernel does not report
+// exit inside this bounded window.
+func waitForUnixProcessGroupGuardExit(guard *exec.Cmd) {
+	if guard == nil || guard.Process == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = waitUnixProcessGroupGuard(guard)
+		close(done)
+	}()
+	timer := time.NewTimer(execProcessCleanupWait)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
 	}
 }
 
@@ -139,14 +164,17 @@ func (t *unixExecProcessTree) cancel() error {
 	if t.setupErr != nil {
 		return t.setupErr
 	}
-	if err := signalProcessGroup(t.pgid, syscall.SIGTERM); err != nil {
-		return err
+	termErr := signalProcessGroup(t.pgid, syscall.SIGTERM)
+	if termErr == nil {
+		time.Sleep(execSIGTERMGrace)
 	}
-
-	time.Sleep(execSIGTERMGrace)
 	// The TERM-ignoring guard remains in this group, so this numeric target is
-	// still our group even if every command process exited during the grace.
-	return signalProcessGroup(t.pgid, syscall.SIGKILL)
+	// still our group even if every command process exited during the grace. A
+	// failed TERM is deliberately not an early return: SIGKILL is the
+	// fail-closed fallback, while Cmd.WaitDelay separately bounds direct-child
+	// cleanup if the kernel rejects both group signals.
+	killErr := signalProcessGroup(t.pgid, syscall.SIGKILL)
+	return errors.Join(termErr, killErr)
 }
 
 func (t *unixExecProcessTree) close() error {

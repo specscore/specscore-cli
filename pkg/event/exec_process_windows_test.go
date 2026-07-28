@@ -182,6 +182,56 @@ func TestExecWindowsResumeLookupFailurePreventsStart(t *testing.T) {
 	}
 }
 
+// TestExecWindowsJobTerminationFailureFallsBackDuringDeliver is deliberately
+// end-to-end: the Job Object termination seam fails after a real child was
+// started, and Deliver must still return promptly because it kills the direct
+// child. This is stronger than testing cancel in isolation because it also
+// exercises CommandContext's Cancel/WaitDelay interaction.
+func TestExecWindowsJobTerminationFailureFallsBackDuringDeliver(t *testing.T) {
+	originalTerminate := terminateWindowsJob
+	originalKill := killWindowsProcess
+	t.Cleanup(func() {
+		terminateWindowsJob = originalTerminate
+		killWindowsProcess = originalKill
+	})
+	sentinel := errors.New("TerminateJobObject failed")
+	terminateCalls := 0
+	terminateWindowsJob = func(_ windows.Handle, _ uint32) error {
+		terminateCalls++
+		return sentinel
+	}
+	killCalls := 0
+	killWindowsProcess = func(process *os.Process) error {
+		killCalls++
+		return originalKill(process)
+	}
+
+	timeout := 100 * time.Millisecond
+	start := time.Now()
+	err := NewExec(
+		[]string{
+			"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+			"Start-Sleep -Seconds 30",
+		},
+		nil,
+		timeout,
+	).Deliver(context.Background(), execSampleEvent(t))
+	elapsed := time.Since(start)
+	var timeoutErr *ExecTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Deliver elapsed = %v, want bounded cleanup within 2s", elapsed)
+	}
+	if terminateCalls == 0 {
+		t.Fatal("TerminateJobObject was not attempted")
+	}
+	if killCalls == 0 {
+		t.Fatal("direct-child fallback was not attempted after TerminateJobObject failure")
+	}
+}
+
 // TestExecTimeoutKillsHungProcess verifies the Windows half of
 // AC:exec-timeout-kills-hung-process on a real Windows runner. The retained
 // child handle proves that timeout terminates the descendant, not only its

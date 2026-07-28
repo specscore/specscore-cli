@@ -205,8 +205,9 @@ func TestUnixProcessTreeCancelErrorPaths(t *testing.T) {
 		wantErr error
 	}{
 		{name: "setup failure", setup: sentinel, wantErr: sentinel},
-		{name: "term failure", results: []error{sentinel}, wantErr: sentinel},
+		{name: "term failure still kills", results: []error{sentinel, nil}, wantErr: sentinel},
 		{name: "kill failure", results: []error{nil, sentinel}, wantErr: sentinel},
+		{name: "both failures", results: []error{sentinel, sentinel}, wantErr: sentinel},
 		{name: "success", results: []error{nil, nil}},
 	}
 	for _, tc := range tests {
@@ -235,6 +236,55 @@ func TestUnixProcessTreeCancelErrorPaths(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("cancel error = %v, want %v", err, tc.wantErr)
 			}
+			if tc.setup == nil && call != 2 {
+				t.Fatalf("signal calls = %d, want TERM then KILL", call)
+			}
+		})
+	}
+}
+
+// TestExecTimeoutStillKillsGroupAfterSignalFailure is an end-to-end proof of
+// the fail-closed cancellation path. The injected TERM/KILL errors model an
+// OS process-control failure, while the real signal is also sent so the test
+// cannot leak a process. Deliver must remain bounded and typed as a timeout.
+func TestExecTimeoutStillKillsGroupAfterSignalFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		failSignal syscall.Signal
+	}{
+		{name: "TERM", failSignal: syscall.SIGTERM},
+		{name: "KILL", failSignal: syscall.SIGKILL},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			originalSignal := signalUnixProcessGroup
+			t.Cleanup(func() { signalUnixProcessGroup = originalSignal })
+			sentinel := errors.New("injected process-group signal failure")
+			calls := make([]syscall.Signal, 0, 2)
+			signalUnixProcessGroup = func(pid int, sig syscall.Signal) error {
+				calls = append(calls, sig)
+				err := originalSignal(pid, sig)
+				if sig == tc.failSignal {
+					return sentinel
+				}
+				return err
+			}
+
+			timeout := 75 * time.Millisecond
+			start := time.Now()
+			err := NewExec([]string{"sh", "-c", "exec sleep 30"}, nil, timeout).
+				Deliver(context.Background(), execSampleEvent(t))
+			elapsed := time.Since(start)
+			var timeoutErr *ExecTimeoutError
+			if !errors.As(err, &timeoutErr) {
+				t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
+			}
+			if elapsed > time.Second {
+				t.Fatalf("Deliver elapsed = %v, want bounded cleanup within 1s", elapsed)
+			}
+			if len(calls) != 2 || calls[0] != syscall.SIGTERM || calls[1] != syscall.SIGKILL {
+				t.Fatalf("signals = %v, want [SIGTERM SIGKILL]", calls)
+			}
 		})
 	}
 }
@@ -262,6 +312,29 @@ func TestUnixProcessTreeClose(t *testing.T) {
 	if err := (&unixExecProcessTree{}).close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
+}
+
+func TestWaitForUnixProcessGroupGuardExitBoundsReap(t *testing.T) {
+	originalWait := waitUnixProcessGroupGuard
+	t.Cleanup(func() { waitUnixProcessGroupGuard = originalWait })
+
+	// Nil guards are valid for a partially failed setup and must be a no-op.
+	waitForUnixProcessGroupGuardExit(nil)
+
+	blocked := make(chan struct{})
+	reaped := make(chan struct{})
+	waitUnixProcessGroupGuard = func(*exec.Cmd) error {
+		<-blocked
+		close(reaped)
+		return nil
+	}
+	start := time.Now()
+	waitForUnixProcessGroupGuardExit(&exec.Cmd{Process: &os.Process{}})
+	if elapsed := time.Since(start); elapsed < execProcessCleanupWait {
+		t.Fatalf("guard reap returned in %v, want it to honor cleanup bound", elapsed)
+	}
+	close(blocked)
+	<-reaped
 }
 
 func TestConfigureUnixProcessTreePropagatesGuardSetupFailure(t *testing.T) {

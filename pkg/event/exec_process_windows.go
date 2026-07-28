@@ -4,6 +4,7 @@ package event
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +21,13 @@ var (
 	closeWindowsHandle         = windows.CloseHandle
 	assignWindowsProcessToJob  = windows.AssignProcessToJobObject
 	terminateWindowsJob        = windows.TerminateJobObject
-	withWindowsProcessHandle   = func(process *os.Process, callback func(uintptr)) error {
+	killWindowsProcess         = func(process *os.Process) error {
+		if process == nil {
+			return errors.New("Windows direct child process is unavailable")
+		}
+		return process.Kill()
+	}
+	withWindowsProcessHandle = func(process *os.Process, callback func(uintptr)) error {
 		return process.WithHandle(callback)
 	}
 	resumeWindowsProcessFn = resumeWindowsProcess
@@ -85,8 +92,11 @@ func (t *windowsExecProcessTree) afterStart() error {
 	}
 	if t.setupErr != nil {
 		// If assignment failed the process is still suspended. If resume failed
-		// after assignment, terminating the job also covers that process.
-		_ = terminateWindowsJob(t.job, windowsJobTimeoutExitCode)
+		// after assignment, terminating the job also covers that process. If the
+		// Job Object call itself fails, kill the retained direct child before
+		// returning: Cmd.WaitDelay provides a second bounded fallback when
+		// process-tree control is unavailable.
+		t.setupErr = errors.Join(t.setupErr, t.terminateOrKillDirectChild())
 	}
 	close(t.ready)
 	return t.setupErr
@@ -105,7 +115,30 @@ func (t *windowsExecProcessTree) cancel() error {
 	if t.setupErr != nil {
 		return t.setupErr
 	}
-	return terminateWindowsJob(t.job, windowsJobTimeoutExitCode)
+	return t.terminateOrKillDirectChild()
+}
+
+// terminateOrKillDirectChild prefers the Job Object (which covers all
+// descendants), but never accepts its failure as a reason to leave even the
+// root process running. CommandContext's bounded WaitDelay will repeat the
+// direct-child fallback if necessary and close inherited pipes.
+func (t *windowsExecProcessTree) terminateOrKillDirectChild() error {
+	jobErr := terminateWindowsJob(t.job, windowsJobTimeoutExitCode)
+	if jobErr == nil {
+		return nil
+	}
+	var process *os.Process
+	if t.cmd != nil {
+		process = t.cmd.Process
+	}
+	childErr := killWindowsProcess(process)
+	if childErr == nil {
+		return fmt.Errorf("terminate Windows Job Object: %w (direct child killed)", jobErr)
+	}
+	return fmt.Errorf(
+		"terminate Windows Job Object and direct child: %w",
+		errors.Join(jobErr, childErr),
+	)
 }
 
 func (t *windowsExecProcessTree) close() error {

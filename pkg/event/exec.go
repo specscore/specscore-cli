@@ -30,11 +30,21 @@ type execProcessTree interface {
 // execSIGTERMGrace is the Unix wait window between SIGTERM and SIGKILL.
 const execSIGTERMGrace = 100 * time.Millisecond
 
+// execProcessCleanupWait bounds Cmd.Wait when cancellation or a setup failure
+// has already asked the process tree to stop. os/exec starts this timer when
+// either the delivery context finishes or the direct child exits. On expiry it
+// kills the direct child and closes any still-open pipes, so a failed
+// platform-specific tree-control call cannot make Deliver wait forever on a
+// descendant which inherited stdin/stdout/stderr.
+const execProcessCleanupWait = 250 * time.Millisecond
+
 // cmdStdinPipeFn is a testable indirection for cmd.StdinPipe. Tests can
 // replace it to simulate pipe-creation failures.
 var cmdStdinPipeFn = func(cmd *exec.Cmd) (io.WriteCloser, error) {
 	return cmd.StdinPipe()
 }
+
+var cmdStartFn = func(cmd *exec.Cmd) error { return cmd.Start() }
 
 var configureExecProcessTreeFn = configureExecProcessTree
 
@@ -73,6 +83,11 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, x.argv[0], x.argv[1:]...)
+	// CommandContext's Cancel is our process-tree cancellation function. A
+	// non-nil Cancel error otherwise leaves Wait free to wait indefinitely for
+	// inherited pipes; this explicit bound is therefore part of the timeout
+	// contract, not merely a test convenience.
+	cmd.WaitDelay = execProcessCleanupWait
 	processTree, err := configureExecProcessTreeFn(cctx, cmd)
 	if err != nil {
 		if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, err); timeoutErr != nil {
@@ -112,7 +127,7 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 		return timeoutErr
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := cmdStartFn(cmd); err != nil {
 		_ = stdin.Close()
 		if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, err); timeoutErr != nil {
 			return timeoutErr

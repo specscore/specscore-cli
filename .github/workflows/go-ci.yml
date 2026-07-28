@@ -95,7 +95,7 @@ jobs:
       # proves both job-owned timeout cleanup and that normal success preserves
       # a background descendant after the Job Object handle is released.
       - name: Test Windows Job Object lifecycle
-        run: go test ./pkg/event -run '^TestExec(WindowsResumeLookupFailurePreventsStart|WindowsAssignmentFailureTerminatesSuspendedProcess|WindowsResumeFailureTerminatesOwnedProcess|TimeoutKillsHungProcess|SuccessfulCommandLeavesBackgroundProcessRunning)$' -count=3 -timeout=30s
+        run: go test ./pkg/event -run '^TestExec(WindowsResumeLookupFailurePreventsStart|WindowsAssignmentFailureTerminatesSuspendedProcess|WindowsResumeFailureTerminatesOwnedProcess|WindowsJobTerminationFailureFallsBackDuringDeliver|ConfigureErrorAfterDeadlineReturnsTimeoutError|DeadlineBeforeStartReturnsTimeoutError|StdinPipeErrorAfterDeadlineReturnsTimeoutError|StdinPipeSuccessAfterDeadlineReturnsTimeoutError|StartErrorAfterDeadlineReturnsTimeoutError|AfterStartSuccessAfterDeadlineReturnsTimeoutError|TimeoutKillsHungProcess|SuccessfulCommandLeavesBackgroundProcessRunning)$' -count=3 -timeout=30s
 
   release-targets:
     name: Build advertised release targets

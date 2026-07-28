@@ -153,6 +153,105 @@ func TestExecDeadlineBeforeStartReturnsTimeoutError(t *testing.T) {
 	}
 }
 
+// TestExecConfigureErrorAfterDeadlineReturnsTimeoutError keeps the public
+// timeout type load-bearing even when a platform setup function reports its
+// own error after consuming the delivery budget.
+func TestExecConfigureErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
+	sentinel := errors.New("configure after deadline")
+	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
+		<-ctx.Done()
+		return nil, sentinel
+	}
+
+	timeout := 25 * time.Millisecond
+	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
+	assertExecTimeoutError(t, err, timeout, sentinel)
+}
+
+// TestExecStdinPipeErrorAfterDeadlineReturnsTimeoutError covers a pipe setup
+// error that races the wall-clock deadline. It must not become a generic
+// setup error just because no command has started yet.
+func TestExecStdinPipeErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	originalStdinPipe := cmdStdinPipeFn
+	t.Cleanup(func() {
+		configureExecProcessTreeFn = originalConfigure
+		cmdStdinPipeFn = originalStdinPipe
+	})
+	var setupCtx context.Context
+	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
+		setupCtx = ctx
+		return &fakeExecProcessTree{}, nil
+	}
+	sentinel := errors.New("stdin pipe after deadline")
+	cmdStdinPipeFn = func(*exec.Cmd) (io.WriteCloser, error) {
+		<-setupCtx.Done()
+		return nil, sentinel
+	}
+
+	timeout := 25 * time.Millisecond
+	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
+	assertExecTimeoutError(t, err, timeout, sentinel)
+}
+
+// TestExecStdinPipeSuccessAfterDeadlineReturnsTimeoutError covers the
+// successful pipe path: the pipe must be closed and no command may start once
+// the deadline has elapsed during pipe setup.
+func TestExecStdinPipeSuccessAfterDeadlineReturnsTimeoutError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	originalStdinPipe := cmdStdinPipeFn
+	t.Cleanup(func() {
+		configureExecProcessTreeFn = originalConfigure
+		cmdStdinPipeFn = originalStdinPipe
+	})
+	var setupCtx context.Context
+	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
+		setupCtx = ctx
+		return &fakeExecProcessTree{}, nil
+	}
+	stdin := &fakeWriteCloser{}
+	cmdStdinPipeFn = func(*exec.Cmd) (io.WriteCloser, error) {
+		<-setupCtx.Done()
+		return stdin, nil
+	}
+
+	timeout := 25 * time.Millisecond
+	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
+	assertExecTimeoutError(t, err, timeout, context.DeadlineExceeded)
+	if stdin.closeCalls != 1 {
+		t.Fatalf("stdin Close calls = %d, want 1", stdin.closeCalls)
+	}
+}
+
+// TestExecStartErrorAfterDeadlineReturnsTimeoutError proves a plain Start
+// failure does not erase the stable timeout error type when the deadline wins
+// the race. cmdStartFn is intentionally a narrow seam because os/exec does
+// not expose a deterministic way to delay Start itself in a unit test.
+func TestExecStartErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	originalStart := cmdStartFn
+	t.Cleanup(func() {
+		configureExecProcessTreeFn = originalConfigure
+		cmdStartFn = originalStart
+	})
+	var setupCtx context.Context
+	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
+		setupCtx = ctx
+		return &fakeExecProcessTree{}, nil
+	}
+	sentinel := errors.New("start after deadline")
+	cmdStartFn = func(*exec.Cmd) error {
+		<-setupCtx.Done()
+		return sentinel
+	}
+
+	timeout := 25 * time.Millisecond
+	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
+	assertExecTimeoutError(t, err, timeout, sentinel)
+}
+
 // TestExecDeadlineDuringAfterStartReturnsTimeoutError covers the other
 // platform setup boundary: a deadline that expires while ownership is being
 // established after cmd.Start still has to surface as *ExecTimeoutError.
@@ -182,6 +281,59 @@ func TestExecDeadlineDuringAfterStartReturnsTimeoutError(t *testing.T) {
 	}
 	if !tree.closed {
 		t.Fatal("process tree was not closed after afterStart deadline")
+	}
+}
+
+// TestExecAfterStartSuccessAfterDeadlineReturnsTimeoutError covers the final
+// setup boundary: afterStart can complete successfully just after expiry, but
+// Deliver must still stop the child and report the typed timeout. The helper
+// command is the test binary itself so this proof also runs on Windows.
+func TestExecAfterStartSuccessAfterDeadlineReturnsTimeoutError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
+	var setupCtx context.Context
+	tree := &fakeExecProcessTree{}
+	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
+		setupCtx = ctx
+		tree.afterStartFn = func() error {
+			<-setupCtx.Done()
+			return nil
+		}
+		return tree, nil
+	}
+
+	timeout := 25 * time.Millisecond
+	err := NewExec(
+		[]string{os.Args[0], "-test.run=^TestExecDeadlineHelperProcess$", "--"},
+		map[string]string{"SPECSCORE_EVENT_DEADLINE_HELPER": "1"},
+		timeout,
+	).Deliver(context.Background(), execSampleEvent(t))
+	assertExecTimeoutError(t, err, timeout, context.DeadlineExceeded)
+	if !tree.closed {
+		t.Fatal("process tree was not closed after successful afterStart deadline")
+	}
+}
+
+func TestExecDeadlineHelperProcess(t *testing.T) {
+	if os.Getenv("SPECSCORE_EVENT_DEADLINE_HELPER") != "1" {
+		return
+	}
+	// A timer, rather than select {}, keeps the child alive without triggering
+	// the Go runtime's all-goroutines-asleep deadlock detector.
+	time.Sleep(30 * time.Second)
+}
+
+func assertExecTimeoutError(t *testing.T, err error, timeout time.Duration, cause error) {
+	t.Helper()
+	var timeoutErr *ExecTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
+	}
+	if timeoutErr.Timeout != timeout {
+		t.Fatalf("timeoutErr.Timeout = %v, want %v", timeoutErr.Timeout, timeout)
+	}
+	if cause != nil && !errors.Is(err, cause) {
+		t.Fatalf("Deliver error = %v, want it to wrap %v", err, cause)
 	}
 }
 
@@ -235,6 +387,11 @@ func TestExecTimeoutErrorMethods(t *testing.T) {
 	if unwrapped := e.Unwrap(); unwrapped != cause {
 		t.Fatalf("Unwrap() = %v, want %v", unwrapped, cause)
 	}
+}
+
+func TestStopStartedExecCommandIgnoresMissingProcess(t *testing.T) {
+	stopStartedExecCommand(nil)
+	stopStartedExecCommand(&exec.Cmd{})
 }
 
 // TestExecExitErrorMethods covers the Error() and Unwrap() methods of
@@ -292,8 +449,9 @@ func TestExecCancelledContext(t *testing.T) {
 // fakeWriteCloser is a WriteCloser whose Write and Close behaviors are
 // controlled by the caller for seam-injection tests.
 type fakeWriteCloser struct {
-	writeErr error
-	closeErr error
+	writeErr   error
+	closeErr   error
+	closeCalls int
 }
 
 func (f *fakeWriteCloser) Write(p []byte) (int, error) {
@@ -303,7 +461,10 @@ func (f *fakeWriteCloser) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (f *fakeWriteCloser) Close() error { return f.closeErr }
+func (f *fakeWriteCloser) Close() error {
+	f.closeCalls++
+	return f.closeErr
+}
 
 // TestExecStdinPipeError exercises the StdinPipe failure path (lines 77-79)
 // by injecting a fake cmdStdinPipeFn that always returns an error.
