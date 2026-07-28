@@ -16,7 +16,7 @@ var supersededByLineRe = regexp.MustCompile(`^([ \t]*)\*\*Superseded By:\*\*[ \t
 var supersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*`)
 
 // SetSupersededBy writes a `**Superseded By:** <successor>` reference into the
-// artifact's header block, mirroring the Decision "Superseded By" convention.
+// canonical lifecycle-artifact header, mirroring the Decision convention.
 // It is retained as a legacy single-field wrapper. Transaction-profile
 // Task/Plan writers call SetSupersededByBytes inside their one artifact
 // transaction and do not stitch this wrapper into a multi-write sequence.
@@ -25,8 +25,10 @@ var supersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*`)
 //
 //   - An empty or whitespace-only successor is treated as absent: the file is
 //     left untouched, wrote is false, and original is nil.
-//   - If a `**Superseded By:**` line already exists, its value is rewritten in
-//     place (indentation and trailing whitespace preserved).
+//   - Only fields in the canonical header after the first structural Plan or
+//     Lesson title and before its first structural H2 participate.
+//   - If a `**Superseded By:**` line already exists there, its value is
+//     rewritten in place (indentation and trailing whitespace preserved).
 //   - Otherwise the line is inserted immediately after the `**Supersedes:**`
 //     header line when present, else immediately after the `**Status:**` line.
 //     A file with neither anchor returns ErrStatusLineNotFound and is left
@@ -54,9 +56,18 @@ func SetSupersededByBytes(orig []byte, successor string) ([]byte, bool, error) {
 		return orig, false, nil
 	}
 	lines := splitKeepTerminators(orig)
+	structure := StructuralMarkdownMask(lines, "")
+	headerStart, headerEnd := canonicalLifecycleHeaderRange(lines, structure)
+	if headerStart < 0 {
+		return nil, false, ErrStatusLineNotFound
+	}
 
-	// Rewrite an existing line in place.
-	for i, ln := range lines {
+	// Rewrite an existing canonical-header line in place.
+	for i := headerStart; i < headerEnd; i++ {
+		if !isStructuralLine(structure, i) {
+			continue
+		}
+		ln := lines[i]
 		body, terminator := splitTerminator(ln)
 		if m := supersededByLineRe.FindStringSubmatch(body); m != nil {
 			lines[i] = fmt.Sprintf("%s**Superseded By:** %s%s", m[1], successor, m[3]) + terminator
@@ -64,10 +75,10 @@ func SetSupersededByBytes(orig []byte, successor string) ([]byte, bool, error) {
 		}
 	}
 
-	// Insert after the Supersedes line, else after the Status line.
-	anchor := findSupersedesLineIndex(lines)
+	// Insert after the canonical-header Supersedes line, else its Status line.
+	anchor := findSupersedesLineIndexInHeader(lines, structure, headerStart, headerEnd)
 	if anchor < 0 {
-		anchor = findStatusLineIndex(lines)
+		anchor = findStatusLineIndexInHeader(lines, structure, headerStart, headerEnd)
 	}
 	if anchor < 0 {
 		return nil, false, ErrStatusLineNotFound
@@ -87,16 +98,124 @@ func SetSupersededByBytes(orig []byte, successor string) ([]byte, bool, error) {
 	return joinLines(lines), true, nil
 }
 
-// findSupersedesLineIndex returns the index of the `**Supersedes:**` header
-// line, or -1 when absent.
+// findSupersedesLineIndex returns the canonical lifecycle-header field.
 func findSupersedesLineIndex(lines []string) int {
-	for i, ln := range lines {
+	structure := StructuralMarkdownMask(lines, "")
+	start, end := canonicalLifecycleHeaderRange(lines, structure)
+	return findSupersedesLineIndexInHeader(lines, structure, start, end)
+}
+
+func findSupersedesLineIndexInHeader(lines []string, structure []bool, start, end int) int {
+	if start < 0 {
+		return -1
+	}
+	for i := start; i < end; i++ {
+		if !isStructuralLine(structure, i) {
+			continue
+		}
+		ln := lines[i]
 		body, _ := splitTerminator(ln)
 		if supersedesLineRe.MatchString(body) {
 			return i
 		}
 	}
 	return -1
+}
+
+func findStatusLineIndexInHeader(lines []string, structure []bool, start, end int) int {
+	if start < 0 {
+		return -1
+	}
+	for i := start; i < end; i++ {
+		if !isStructuralLine(structure, i) {
+			continue
+		}
+		body, _ := splitTerminator(lines[i])
+		if statusLineRe.MatchString(body) {
+			return i
+		}
+	}
+	return -1
+}
+
+// canonicalLifecycleHeaderRange returns the [start,end) range eligible for
+// Plan/Lesson lifecycle fields. An earlier ordinary or Setext H1 makes a later
+// lifecycle-looking sample non-canonical and therefore fails closed.
+func canonicalLifecycleHeaderRange(lines []string, structure []bool) (start, end int) {
+	for i, line := range lines {
+		if !isStructuralLine(structure, i) {
+			continue
+		}
+		if isSetextH1Line(lines, structure, i) {
+			return -1, -1
+		}
+		heading, _ := splitTerminator(line)
+		if i == 0 {
+			heading = strings.TrimPrefix(heading, "\ufeff")
+		}
+		if !isATXH1(heading) {
+			continue
+		}
+		if !isCanonicalLifecycleTitle(heading) {
+			return -1, -1
+		}
+		end = len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if !isStructuralLine(structure, j) {
+				continue
+			}
+			body, _ := splitTerminator(lines[j])
+			if isCanonicalUnindentedATXH2(body) {
+				end = j
+				break
+			}
+		}
+		return i + 1, end
+	}
+	return -1, -1
+}
+
+func isCanonicalLifecycleTitle(line string) bool {
+	for _, prefix := range []string{"# Plan: ", "# Lesson: "} {
+		if strings.HasPrefix(line, prefix) && strings.TrimSpace(line[len(prefix):]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func isATXH1(line string) bool {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' && indent < 3 {
+		indent++
+	}
+	if indent == len(line) || (indent < len(line) && line[indent] == ' ') || line[indent] != '#' {
+		return false
+	}
+	return indent+1 == len(line) || line[indent+1] == ' ' || line[indent+1] == '\t'
+}
+
+func isSetextH1Line(lines []string, structure []bool, i int) bool {
+	if i <= 0 || !isStructuralLine(structure, i-1) {
+		return false
+	}
+	previous, _ := splitTerminator(lines[i-1])
+	if strings.TrimSpace(previous) == "" || IsIndentedCode(previous) {
+		return false
+	}
+	line, _ := splitTerminator(lines[i])
+	if IsIndentedCode(line) {
+		return false
+	}
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' && indent < 3 {
+		indent++
+	}
+	begin := indent
+	for indent < len(line) && line[indent] == '=' {
+		indent++
+	}
+	return indent-begin >= 1 && strings.TrimSpace(line[indent:]) == ""
 }
 
 // fullSupersedesLineRe matches a complete `**Supersedes:** <value>` header

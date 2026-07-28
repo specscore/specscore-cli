@@ -99,9 +99,10 @@ type ReconcileOptions struct {
 	// validation/transformation. It must not mutate the artifact.
 	ValidateSnapshot SnapshotValidator
 
-	// PostMutation is the post-rewrite hook (typically a spec-lint pass,
-	// which also syncs the frontmatter `status:` mirror and the plans
-	// index). Required; Reconcile returns exit 10 if nil.
+	// PostMutation is the post-rewrite hook (typically a spec-lint pass that
+	// syncs the plans index). The lifecycle write itself keeps the frontmatter
+	// `status:` mirror in lockstep with the canonical Plan body status.
+	// Required; Reconcile returns exit 10 if nil.
 	PostMutation PostMutationHook
 
 	// transformArtifact is an instance-scoped fault dependency for package
@@ -313,6 +314,11 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 			lines[t.StatusLine-1] = "**Status:** " + string(StatusBlocked)
 		}
 		lines[p.StatusLine-1] = "**Status:** " + string(to)
+		var mirrorErr error
+		lines, mirrorErr = setReconcileFrontmatterStatus(lines, string(to))
+		if mirrorErr != nil {
+			return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("preparing Plan frontmatter mirror: %v", mirrorErr)
+		}
 		lines = insertReconciledMarkerIfAbsent(lines, p.TitleLine-1, p.StatusLine-1, reconcileTodayUTC())
 		noteText := reconcileNoteTextWithTarget(from, to, changed, StatusBlocked, opts.Note, opts.Evidence, nil)
 		updated, _, _ := lifecycle.AppendResolutionNoteAfterLineBytes([]byte(strings.Join(lines, "\n")), noteText, p.TitleLine)
@@ -387,18 +393,12 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 			"plan %q is already reconciled: status is %q and every task is complete; re-running is a no-op", opts.Slug, string(to))
 	}
 
-	lines := strings.Split(string(original), "\n")
-	for _, t := range p.Tasks {
-		if t.Status == StatusComplete {
-			continue
-		}
-		lines[t.StatusLine-1] = "**Status:** " + string(StatusComplete)
+	updated, err := reconcilePlanContent(original, p, to, reconcileTodayUTC())
+	if err != nil {
+		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("preparing plan reconciliation: %v", err)
 	}
-	lines[p.StatusLine-1] = "**Status:** " + string(to)
-	lines = insertReconciledMarkerIfAbsent(lines, p.TitleLine-1, p.StatusLine-1, reconcileTodayUTC())
-
 	noteText := reconcileNoteTextWithTarget(from, to, changedTasks, StatusComplete, opts.Note, opts.Evidence, overrides)
-	updated, _, _ := lifecycle.AppendResolutionNoteAfterLineBytes([]byte(strings.Join(lines, "\n")), noteText, p.TitleLine)
+	updated, _, _ = lifecycle.AppendResolutionNoteAfterLineBytes(updated, noteText, p.TitleLine)
 
 	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, updated, nil
 }
@@ -416,6 +416,157 @@ func firstReconcileTask(numbers map[int]bool) int {
 		return n
 	}
 	return 0
+}
+
+// reconcilePlanContent derives every first-write change from one original byte
+// snapshot: each incomplete task becomes complete, the canonical Plan Status
+// becomes Implemented, the leading-frontmatter status mirror follows it, and
+// the reconciliation marker is inserted once. No source line is selected by a
+// broad text search: Parse supplied every body line from the same structural
+// Markdown mask used for lifecycle admission.
+func reconcilePlanContent(original []byte, p *Plan, to lifecycle.Status, date string) ([]byte, error) {
+	lines := strings.Split(string(original), "\n")
+	for _, t := range p.Tasks {
+		if t.Status == StatusComplete {
+			continue
+		}
+		if t.StatusLine <= 0 || t.StatusLine > len(lines) {
+			return nil, fmt.Errorf("Task %d status line %d is outside 1..%d", t.Number, t.StatusLine, len(lines))
+		}
+		updated, err := replaceReconciledStatusLine(lines[t.StatusLine-1], string(StatusComplete))
+		if err != nil {
+			return nil, fmt.Errorf("Task %d status line: %w", t.Number, err)
+		}
+		lines[t.StatusLine-1] = updated
+	}
+	if p.StatusLine <= 0 || p.StatusLine > len(lines) {
+		return nil, fmt.Errorf("Plan status line %d is outside 1..%d", p.StatusLine, len(lines))
+	}
+	updatedStatus, err := replaceReconciledStatusLine(lines[p.StatusLine-1], string(to))
+	if err != nil {
+		return nil, fmt.Errorf("Plan status line: %w", err)
+	}
+	lines[p.StatusLine-1] = updatedStatus
+	lines = insertReconciledMarkerIfAbsent(lines, p.TitleLine-1, p.StatusLine-1, date)
+
+	// A reconciled flat Plan must leave both status surfaces synchronized in
+	// this very write. A legacy/malformed frontmatter block is rejected before
+	// persistence rather than allowing body-only status drift for a later lint
+	// pass to repair.
+	lines, err = setReconcileFrontmatterStatus(lines, string(to))
+	if err != nil {
+		return nil, err
+	}
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
+// replaceReconciledStatusLine preserves the header spelling, post-colon
+// whitespace, trailing horizontal whitespace, and CR byte of a parsed Plan
+// Status field. The parser only records structurally canonical, column-zero
+// Plan/task fields; this defensive check makes any read/write disagreement a
+// fail-closed error before the compound write happens.
+func replaceReconciledStatusLine(line, status string) (string, error) {
+	const prefix = "**Status:**"
+	cr := ""
+	if strings.HasSuffix(line, "\r") {
+		cr = "\r"
+		line = strings.TrimSuffix(line, cr)
+	}
+	if !strings.HasPrefix(line, prefix) {
+		return "", fmt.Errorf("expected %q field", prefix)
+	}
+	rest := line[len(prefix):]
+	valueStart := 0
+	for valueStart < len(rest) && (rest[valueStart] == ' ' || rest[valueStart] == '\t') {
+		valueStart++
+	}
+	if valueStart == len(rest) {
+		return "", fmt.Errorf("missing status value")
+	}
+	valueEnd := len(rest)
+	for valueEnd > valueStart && (rest[valueEnd-1] == ' ' || rest[valueEnd-1] == '\t') {
+		valueEnd--
+	}
+	return prefix + rest[:valueStart] + status + rest[valueEnd:] + cr, nil
+}
+
+// setReconcileFrontmatterStatus updates the unique top-level `status:` field
+// in a complete leading frontmatter block, or inserts it immediately before
+// the closing fence when absent. A BOM-prefixed opening fence is recognized
+// but never normalized, and a missing/malformed block fails closed before any
+// mutation is persisted.
+func setReconcileFrontmatterStatus(lines []string, status string) ([]string, error) {
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("Plan has no leading frontmatter block")
+	}
+	first := strings.TrimSuffix(lines[0], "\r")
+	if !lifecycle.IsLeadingFrontmatterFence(first) {
+		return nil, fmt.Errorf("Plan has no complete leading frontmatter block")
+	}
+	closing := -1
+	statusLine := -1
+	for i := 1; i < len(lines); i++ {
+		body := strings.TrimSuffix(lines[i], "\r")
+		if lifecycle.IsFrontmatterFence(body) {
+			closing = i
+			break
+		}
+		if isTopLevelFrontmatterKey(body, "status") {
+			if statusLine >= 0 {
+				return nil, fmt.Errorf("Plan frontmatter has duplicate top-level status fields")
+			}
+			statusLine = i
+		}
+	}
+	if closing < 0 {
+		return nil, fmt.Errorf("Plan frontmatter opening fence is not closed")
+	}
+	if statusLine >= 0 {
+		lines[statusLine] = replaceReconcileFrontmatterStatus(lines[statusLine], status)
+		return lines, nil
+	}
+
+	terminator := reconcileInsertionTerminator(lines, closing)
+	inserted := append([]string{}, lines[:closing]...)
+	inserted = append(inserted, "status: "+status+terminator)
+	inserted = append(inserted, lines[closing:]...)
+	return inserted, nil
+}
+
+func isTopLevelFrontmatterKey(line, key string) bool {
+	if line == "" || line[0] == ' ' || line[0] == '\t' || line[0] == '#' {
+		return false
+	}
+	colon := strings.IndexByte(line, ':')
+	return colon > 0 && strings.TrimSpace(line[:colon]) == key
+}
+
+func replaceReconcileFrontmatterStatus(line, status string) string {
+	cr := ""
+	if strings.HasSuffix(line, "\r") {
+		cr = "\r"
+		line = strings.TrimSuffix(line, cr)
+	}
+	colon := strings.IndexByte(line, ':')
+	rest := line[colon+1:]
+	valueStart := 0
+	for valueStart < len(rest) && (rest[valueStart] == ' ' || rest[valueStart] == '\t') {
+		valueStart++
+	}
+	valueEnd := len(rest)
+	for valueEnd > valueStart && (rest[valueEnd-1] == ' ' || rest[valueEnd-1] == '\t') {
+		valueEnd--
+	}
+	return line[:colon+1] + rest[:valueStart] + status + rest[valueEnd:] + cr
+}
+
+func reconcileInsertionTerminator(lines []string, around int) string {
+	for _, index := range []int{around, around - 1, 0} {
+		if index >= 0 && index < len(lines) && strings.HasSuffix(lines[index], "\r") {
+			return "\r"
+		}
+	}
+	return ""
 }
 
 // preserveReadinessError keeps contract-level refusals such as a non-Plan
@@ -454,7 +605,7 @@ func insertReconciledMarkerIfAbsent(lines []string, titleIdx, statusIdx int, dat
 			return lines
 		}
 	}
-	marker := reconciledMarkerPrefix + " " + date
+	marker := reconciledMarkerPrefix + " " + date + reconcileInsertionTerminator(lines, statusIdx)
 	out := make([]string, 0, len(lines)+1)
 	out = append(out, lines[:statusIdx+1]...)
 	out = append(out, marker)

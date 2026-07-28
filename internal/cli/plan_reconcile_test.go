@@ -103,6 +103,9 @@ func TestPlanReconcile_HappyPath_CLI(t *testing.T) {
 	if !strings.Contains(s, "**Status:** Implemented") {
 		t.Errorf("status not rewritten:\n%s", s)
 	}
+	if !strings.Contains(s, "status: Implemented") || strings.Contains(s, "status: Draft") {
+		t.Errorf("frontmatter status mirror was not atomically reconciled with the body status:\n%s", s)
+	}
 	if strings.Count(s, "**Status:** complete") != 8 {
 		t.Errorf("expected 8 completed tasks:\n%s", s)
 	}

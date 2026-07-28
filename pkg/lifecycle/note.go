@@ -135,7 +135,7 @@ func appendParagraphToSection(lines []string, structure []bool, headingIdx int, 
 			break
 		}
 	}
-	block := paragraphBlock(para, true)
+	block := paragraphBlock(para, true, documentLineTerminator(lines))
 	return insertAt(lines, end, block)
 }
 
@@ -143,9 +143,10 @@ func appendParagraphToSection(lines []string, structure []bool, headingIdx int, 
 // the body after the 1-based afterLine anchor. Only a footer in that body can
 // act as the insertion point; a pre-anchor footer is prose or an example.
 func createResolutionSectionAfterLine(lines []string, structure []bool, para string, afterLine int) []string {
-	heading := resolutionHeading + "\n\n"
+	terminator := documentLineTerminator(lines)
+	heading := resolutionHeading + terminator + terminator
 	block := []string{heading}
-	block = append(block, paragraphBlock(para, false)...)
+	block = append(block, paragraphBlock(para, false, terminator)...)
 
 	for i := afterLine; i < len(lines); i++ {
 		if !isStructuralLine(structure, i) {
@@ -156,25 +157,25 @@ func createResolutionSectionAfterLine(lines []string, structure []bool, para str
 		if isFooterLine(body) {
 			// Insert before the footer, ensuring a blank separator line
 			// precedes the new section.
-			withLead := ensureLeadingBlank(lines, i, block)
+			withLead := ensureLeadingBlank(lines, i, block, terminator)
 			return insertAt(lines, i, withLead)
 		}
 	}
 	// No footer — append at EOF.
-	tail := ensureLeadingBlank(lines, len(lines), block)
+	tail := ensureLeadingBlank(lines, len(lines), block, terminator)
 	return append(lines, tail...)
 }
 
 // paragraphBlock renders para as a terminated block of lines. When leading is
 // true a blank separator line precedes the paragraph (used when appending a
 // further paragraph inside an existing section).
-func paragraphBlock(para string, leading bool) []string {
+func paragraphBlock(para string, leading bool, terminator string) []string {
 	var out []string
 	if leading {
-		out = append(out, "\n")
+		out = append(out, terminator)
 	}
 	for _, l := range strings.Split(para, "\n") {
-		out = append(out, l+"\n")
+		out = append(out, l+terminator)
 	}
 	return out
 }
@@ -182,7 +183,7 @@ func paragraphBlock(para string, leading bool) []string {
 // ensureLeadingBlank prepends a blank line to block when the line immediately
 // before insertAtIdx is not already blank, so the inserted section is visually
 // separated from preceding content.
-func ensureLeadingBlank(lines []string, insertAtIdx int, block []string) []string {
+func ensureLeadingBlank(lines []string, insertAtIdx int, block []string, terminator string) []string {
 	if insertAtIdx == 0 {
 		return block
 	}
@@ -190,7 +191,22 @@ func ensureLeadingBlank(lines []string, insertAtIdx int, block []string) []strin
 	if strings.TrimSpace(prevBody) == "" {
 		return block
 	}
-	return append([]string{"\n"}, block...)
+	return append([]string{terminator}, block...)
+}
+
+// documentLineTerminator returns the document's established line ending for
+// inserted lifecycle text. Existing lines retain their individual terminators;
+// this only prevents a CRLF artifact from acquiring a new LF-only Resolution
+// paragraph. A no-newline document falls back to LF for a syntactically
+// separated insertion.
+func documentLineTerminator(lines []string) string {
+	for _, line := range lines {
+		_, terminator := splitTerminator(line)
+		if terminator != "" {
+			return terminator
+		}
+	}
+	return "\n"
 }
 
 // insertAt returns lines with block spliced in at index i.

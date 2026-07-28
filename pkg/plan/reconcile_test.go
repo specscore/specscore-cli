@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -186,6 +187,9 @@ func TestReconcile_HappyPath_EightTasksDraftToImplemented(t *testing.T) {
 	if !strings.Contains(s, "**Status:** Implemented\n") {
 		t.Errorf("plan status not rewritten:\n%s", s)
 	}
+	if !strings.Contains(s, "status: Implemented\n") || strings.Contains(s, "status: Draft\n") {
+		t.Errorf("frontmatter status mirror must advance in the same reconciliation write:\n%s", s)
+	}
 	if strings.Count(s, "**Status:** complete") != 8 {
 		t.Errorf("expected 8 task lines rewritten to complete:\n%s", s)
 	}
@@ -215,6 +219,72 @@ func TestReconcile_HappyPath_EightTasksDraftToImplemented(t *testing.T) {
 	}
 }
 
+// A BOM-prefixed, CRLF Plan is a valid canonical flat Plan. Reconcile must
+// preserve both physical conventions while atomically advancing the body and
+// frontmatter status surfaces together.
+func TestReconcile_BOMFrontmatterMirrorsStatusAndPreservesPhysicalBytes(t *testing.T) {
+	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bomCRLF := []byte("\ufeff" + strings.ReplaceAll(string(before), "\n", "\r\n"))
+	if err := os.WriteFile(path, bomCRLF, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "BOM fixture", PostMutation: okHook,
+	}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(after)
+	if !strings.HasPrefix(s, "\ufeff---\r\n") {
+		t.Fatalf("BOM/CRLF opening bytes were not preserved: %q", after)
+	}
+	if !strings.Contains(s, "status: Implemented\r\n") || !strings.Contains(s, "**Status:** Implemented\r\n") {
+		t.Fatalf("BOM Plan status surfaces are not synchronized:\n%s", s)
+	}
+	if strings.Contains(s, "status: Draft\r\n") || strings.Contains(s, "**Status:** Draft\r\n") {
+		t.Fatalf("stale Draft status survived reconciliation:\n%s", s)
+	}
+	if strings.Contains(strings.ReplaceAll(s, "\r\n", ""), "\n") {
+		t.Fatalf("reconcile inserted an LF-only line into a CRLF Plan:\n%s", s)
+	}
+}
+
+// A Plan without a complete leading frontmatter block cannot satisfy the
+// status-mirror invariant. Reconcile must refuse before changing any task or
+// body status rather than relying on the later lint hook to repair it.
+func TestReconcile_MissingFrontmatterFailsClosedWithoutMutation(t *testing.T) {
+	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutFrontmatter := []byte(strings.TrimPrefix(string(before), "---\nformat: "+FormatURL+"\nstatus: Draft\n---\n\n"))
+	if err := os.WriteFile(path, withoutFrontmatter, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before = withoutFrontmatter
+
+	_, err = Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "must fail closed", PostMutation: okHook})
+	if got := codeOf(t, err); got != exitcode.Unexpected {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("missing-frontmatter refusal changed the Plan:\nwant:\n%s\ngot:\n%s", before, after)
+	}
+}
+
 // Reconcile's marker and audit note belong to the canonical Plan, not to
 // similarly-shaped prose that appears before its title. The success assertion
 // is intentionally byte-exact so a future broad search cannot silently move
@@ -227,7 +297,7 @@ func TestReconcile_PreTitleAuditSamplesDoNotSuppressCanonicalMarkerOrNote(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := prelude + string(body)
+	before := strings.Replace(string(body), "---\n\n# Plan: Auth\n", "---\n\n"+prelude+"# Plan: Auth\n", 1)
 	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +314,7 @@ func TestReconcile_PreTitleAuditSamplesDoNotSuppressCanonicalMarkerOrNote(t *tes
 		"**Status:** complete\n",
 		1,
 	)
+	want = strings.Replace(want, "status: Draft\n", "status: Implemented\n", 1)
 	want = strings.Replace(want,
 		"**Status:** Draft\n",
 		"**Status:** Implemented\n**Reconciled:** 2026-07-28\n",
@@ -281,7 +352,10 @@ func TestReconcile_PreTitleAuditSamples_PostMutationFailureRetainsCanonicalCommi
 	if err != nil {
 		t.Fatal(err)
 	}
-	before = append([]byte("## Resolution\n\npre-title Resolution example\n\n**Reconciled:** 1999-01-01 pre-title marker example\n\n"), before...)
+	before = []byte(strings.Replace(string(before),
+		"---\n\n# Plan: Auth\n",
+		"---\n\n## Resolution\n\npre-title Resolution example\n\n**Reconciled:** 1999-01-01 pre-title marker example\n\n# Plan: Auth\n",
+		1))
 	if err := os.WriteFile(path, before, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -873,22 +947,30 @@ func TestReconcile_ReopenWriteFailure(t *testing.T) {
 // AC: write-plan-error — an unwritable artifact directory prevents staging
 // the transaction's atomic replacement.
 func TestReconcile_WritePlanError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits are not enforced for root")
-	}
 	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	plansDir := filepath.Dir(path)
 	if err := os.Chmod(plansDir, 0o555); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(plansDir, 0o755) })
 
-	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
+	_, err = Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
 	if got := codeOf(t, err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
 	if !strings.Contains(err.Error(), "artifact transaction") {
 		t.Errorf("expected transaction write error, got: %q", err.Error())
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("failed compound write changed the Plan:\nwant:\n%s\ngot:\n%s", before, after)
 	}
 }
 
@@ -922,4 +1004,130 @@ func pinReconcileDate(t *testing.T, date string) {
 	orig := reconcileTodayUTC
 	reconcileTodayUTC = func() string { return date }
 	t.Cleanup(func() { reconcileTodayUTC = orig })
+}
+
+func TestReconcilePlanContent_DefensiveLineGuards(t *testing.T) {
+	withFrontmatter := []byte("---\nstatus: Draft\n---\n\n# Plan: Auth\n\n**Status:** Draft\n")
+	cases := []struct {
+		name string
+		body []byte
+		plan *Plan
+	}{
+		{
+			name: "task status outside source",
+			body: withFrontmatter,
+			plan: &Plan{TitleLine: 5, StatusLine: 7, Tasks: []Task{{Number: 1, Status: StatusPlanning, StatusLine: 99}}},
+		},
+		{
+			name: "task status writer disagrees with parser",
+			body: withFrontmatter,
+			plan: &Plan{TitleLine: 5, StatusLine: 7, Tasks: []Task{{Number: 1, Status: StatusPlanning, StatusLine: 1}}},
+		},
+		{
+			name: "plan status outside source",
+			body: withFrontmatter,
+			plan: &Plan{TitleLine: 5, StatusLine: 99},
+		},
+		{
+			name: "plan status writer disagrees with parser",
+			body: withFrontmatter,
+			plan: &Plan{TitleLine: 5, StatusLine: 1},
+		},
+		{
+			name: "frontmatter absent",
+			body: []byte("# Plan: Auth\n\n**Status:** Draft\n"),
+			plan: &Plan{TitleLine: 1, StatusLine: 3},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := reconcilePlanContent(tc.body, tc.plan, lifecycle.PlanImplemented, "2026-07-28"); err == nil {
+				t.Fatal("reconcilePlanContent unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestReconcileStatusLineReplacement_DefensiveForms(t *testing.T) {
+	for _, tc := range []struct {
+		line    string
+		want    string
+		wantErr bool
+	}{
+		{line: "not a status", wantErr: true},
+		{line: "**Status:**", wantErr: true},
+		{line: "**Status:** \t ", wantErr: true},
+		{line: "**Status:** Draft  \r", want: "**Status:** Implemented  \r"},
+	} {
+		got, err := replaceReconciledStatusLine(tc.line, "Implemented")
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("replaceReconciledStatusLine(%q) unexpectedly succeeded", tc.line)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("replaceReconciledStatusLine(%q) = %q, %v; want %q, nil", tc.line, got, err, tc.want)
+		}
+	}
+}
+
+func TestReconcileFrontmatterWriter_DefensiveForms(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		lines   []string
+		want    []string
+		wantErr bool
+	}{
+		{name: "empty", wantErr: true},
+		{name: "not leading fence", lines: []string{"# Plan: Auth"}, wantErr: true},
+		{name: "duplicate status", lines: []string{"---", "status: Draft", "status: Stated", "---"}, wantErr: true},
+		{name: "unclosed", lines: []string{"---", "status: Draft"}, wantErr: true},
+		{name: "insert missing status", lines: []string{"---", "format: x", "---", "body"}, want: []string{"---", "format: x", "status: Implemented", "---", "body"}},
+		{name: "replace empty CRLF value", lines: []string{"\ufeff---\r", "status:\r", "---\r"}, want: []string{"\ufeff---\r", "status:Implemented\r", "---\r"}},
+		{name: "preserve trailing whitespace", lines: []string{"---", "status: Draft \t", "---"}, want: []string{"---", "status: Implemented \t", "---"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := setReconcileFrontmatterStatus(append([]string(nil), tc.lines...), "Implemented")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("setReconcileFrontmatterStatus unexpectedly succeeded")
+				}
+				return
+			}
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("setReconcileFrontmatterStatus = %#v, %v; want %#v, nil", got, err, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		line string
+		key  string
+		want bool
+	}{
+		{"", "status", false},
+		{" status: Draft", "status", false},
+		{"\tstatus: Draft", "status", false},
+		{"# status: Draft", "status", false},
+		{"status Draft", "status", false},
+		{"format: x", "status", false},
+		{"status: Draft", "status", true},
+	} {
+		if got := isTopLevelFrontmatterKey(tc.line, tc.key); got != tc.want {
+			t.Errorf("isTopLevelFrontmatterKey(%q, %q) = %v, want %v", tc.line, tc.key, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		lines  []string
+		around int
+		want   string
+	}{
+		{nil, -1, ""},
+		{[]string{"x\r"}, 5, "\r"},
+		{[]string{"x", "y\r"}, 1, "\r"},
+	} {
+		if got := reconcileInsertionTerminator(tc.lines, tc.around); got != tc.want {
+			t.Errorf("reconcileInsertionTerminator(%q, %d) = %q, want %q", tc.lines, tc.around, got, tc.want)
+		}
+	}
 }
