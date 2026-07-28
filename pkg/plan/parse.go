@@ -209,9 +209,19 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 	var sections []sectionStart
 
 	firstH1Seen := false
+	var fence markdownFence
 	for i, raw := range lines {
+		// A fenced code sample may contain headings that look like Plan titles.
+		// They are prose/examples, not document structure. A title is purposely
+		// stricter than general Markdown here: it must begin in column zero, so
+		// an indented-code heading (including Markdown's ordinary 4-space code
+		// blocks) can never declare a lifecycle-controlled Plan.
+		if fence.containsOrOpens(raw) {
+			continue
+		}
+
 		trimmed := strings.TrimSpace(raw)
-		if rest, ok := strings.CutPrefix(trimmed, "# "); ok {
+		if rest, ok := unindentedATXH1(raw); ok {
 			// A Plan title is meaningful only when it is the document's first
 			// H1. In particular, do not let arbitrary Markdown with a later
 			// "# Plan:" heading enter lifecycle gates as a Plan artifact.
@@ -330,6 +340,79 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 	}
 
 	return p, nil
+}
+
+// markdownFence tracks just enough fenced-code-block syntax to keep embedded
+// Markdown examples out of Plan title recognition. It deliberately is not a
+// general Markdown parser: a fence opens only with 0–3 leading spaces and at
+// least three matching backticks or tildes; a close must use the opening marker
+// with at least the opening length and contain only trailing whitespace.
+type markdownFence struct {
+	marker byte
+	length int
+}
+
+func (f *markdownFence) containsOrOpens(line string) bool {
+	if f.marker != 0 {
+		if fenceCloses(line, f.marker, f.length) {
+			f.marker, f.length = 0, 0
+		}
+		return true
+	}
+	marker, length, ok := fenceOpens(line)
+	if !ok {
+		return false
+	}
+	f.marker, f.length = marker, length
+	return true
+}
+
+func fenceOpens(line string) (byte, int, bool) {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' && indent < 3 {
+		indent++
+	}
+	if indent == len(line) || (indent < len(line) && line[indent] == ' ') {
+		return 0, 0, false // four or more spaces are an indented code block.
+	}
+	marker := line[indent]
+	if marker != '`' && marker != '~' {
+		return 0, 0, false
+	}
+	length := 0
+	for indent+length < len(line) && line[indent+length] == marker {
+		length++
+	}
+	return marker, length, length >= 3
+}
+
+func fenceCloses(line string, marker byte, minimumLength int) bool {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' && indent < 3 {
+		indent++
+	}
+	if indent == len(line) || (indent < len(line) && line[indent] == ' ') || line[indent] != marker {
+		return false
+	}
+	length := 0
+	for indent+length < len(line) && line[indent+length] == marker {
+		length++
+	}
+	return length >= minimumLength && strings.TrimSpace(line[indent+length:]) == ""
+}
+
+// unindentedATXH1 recognizes an ATX H1 only at column zero. SpecScore accepts
+// the normal Markdown space or tab separator after the single '#'; a bare '#'
+// is also an H1 and therefore prevents a later '# Plan:' from becoming a
+// document title. Leading whitespace is intentionally not normalized here.
+func unindentedATXH1(line string) (string, bool) {
+	if line == "#" {
+		return "", true
+	}
+	if len(line) < 2 || line[0] != '#' || (line[1] != ' ' && line[1] != '\t') {
+		return "", false
+	}
+	return strings.TrimLeft(line[1:], " \t"), true
 }
 
 // taskHeadingRe matches `### Task N: <name>` where N is one-or-more digits.

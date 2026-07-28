@@ -676,6 +676,57 @@ This document mentions a plan below, but is not one.
 	}
 }
 
+func TestParse_PlanTitleUsesFirstUnindentedH1OutsideFences(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantPlanTitle bool
+		wantTitleLine int
+	}{
+		{
+			name: "backtick fenced Plan heading is not a title",
+			body: "```markdown\n# Plan: Example only\n```\n# Notes\n",
+		},
+		{
+			name: "backtick fence close must match opening length",
+			body: "````markdown\n# Notes\n```\n# Plan: Still code\n````\n",
+		},
+		{
+			name: "tilde fenced Plan heading is not a title",
+			body: "~~~markdown\n# Plan: Example only\n~~~\n# Notes\n",
+		},
+		{
+			name:          "indented code heading does not hide first real Plan title",
+			body:          "    # Notes\n# Plan: Delivery\n",
+			wantPlanTitle: true,
+			wantTitleLine: 2,
+		},
+		{
+			name: "indented Plan example does not declare a plan",
+			body: "    # Plan: Example only\n# Notes\n",
+		},
+		{
+			name: "ordinary Markdown heading indentation is intentionally not a Plan title",
+			body: "   # Plan: Example only\n# Notes\n",
+		},
+		{
+			name: "first real tab separated H1 wins",
+			body: "#\tNotes\n# Plan: Delivery\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := Parse(writePlan(t, t.TempDir(), "title", tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.HasPlanTitle != tc.wantPlanTitle || p.TitleLine != tc.wantTitleLine {
+				t.Fatalf("parsed title = (has=%t, line=%d), want (has=%t, line=%d): %+v", p.HasPlanTitle, p.TitleLine, tc.wantPlanTitle, tc.wantTitleLine, p)
+			}
+		})
+	}
+}
+
 func TestParse_PlaceholderByteExact(t *testing.T) {
 	cases := []struct {
 		body  string

@@ -226,11 +226,11 @@ func TestTaskChangeStatus_PlanInline_InProgressRejectsPrerequisiteCycle(t *testi
 
 // A malformed prerequisite artifact is a lifecycle refusal (4), not an
 // operational failure (10), and the task status remains untouched.
-func TestTaskChangeStatus_PlanInline_PreservesInvalidStateReadinessError(t *testing.T) {
+func TestTaskChangeStatus_PlanInline_PreservesInvalidStateFakeHeadingReadinessError(t *testing.T) {
 	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
 	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
 	root, planPath := stagePlanWithTasks(t, "auth", body)
-	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte("# Notes\n\n# Plan: Foundation\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte("```markdown\n# Plan: Foundation\n```\n# Notes\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(planPath)

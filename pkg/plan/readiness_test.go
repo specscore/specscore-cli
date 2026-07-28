@@ -402,6 +402,61 @@ func TestPlanReadiness_RejectsRootWhoseLaterH1LooksLikePlan(t *testing.T) {
 	}
 }
 
+func TestPlanReadiness_RejectsRootWhoseFakeCodeHeadingLooksLikePlan(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "fenced backtick example",
+			body: "```markdown\n# Plan: Delivery\n```\n# Notes\n",
+		},
+		{
+			name: "fenced tilde example",
+			body: "~~~markdown\n# Plan: Delivery\n~~~\n# Notes\n",
+		},
+		{
+			name: "indented code example",
+			body: "    # Plan: Delivery\n# Notes\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "spec", "plans", "delivery.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := PlanReadiness(root, "delivery"); !isInvalidState(err) {
+				t.Fatalf("readiness error = %v, want invalid-state fake-heading root refusal", err)
+			}
+		})
+	}
+}
+
+func TestPlanReadiness_UsesFirstRealH1AfterIndentedCode(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plansDir, "delivery.md"), []byte("    # Notes\n# Plan: Delivery\n\n**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := PlanReadiness(root, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Ready {
+		t.Fatalf("readiness = %+v, want first real H1 Plan accepted", got)
+	}
+}
+
 func TestPrerequisiteReadiness_RejectsNonPlanPrerequisite(t *testing.T) {
 	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
 	if err := os.MkdirAll(plansDir, 0o755); err != nil {
@@ -437,6 +492,46 @@ func TestPrerequisiteReadiness_RejectsPrerequisiteWhoseLaterH1LooksLikePlan(t *t
 
 	if _, err := p.PrerequisiteReadiness(plansDir); !isInvalidState(err) {
 		t.Fatalf("readiness error = %v, want invalid-state later-H1 prerequisite refusal", err)
+	}
+}
+
+func TestPrerequisiteReadiness_RejectsPrerequisiteWhoseFakeCodeHeadingLooksLikePlan(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "fenced backtick example",
+			body: "```markdown\n# Plan: Foundation\n```\n# Notes\n",
+		},
+		{
+			name: "fenced tilde example",
+			body: "~~~markdown\n# Plan: Foundation\n~~~\n# Notes\n",
+		},
+		{
+			name: "indented code example",
+			body: "    # Plan: Foundation\n# Notes\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			plansDir := filepath.Join(t.TempDir(), "spec", "plans")
+			if err := os.MkdirAll(plansDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(plansDir, "foundation.md"), []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			writeReadinessPlan(t, plansDir, "delivery", "Approved", "foundation", "queued")
+			p, err := Parse(filepath.Join(plansDir, "delivery.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := p.PrerequisiteReadiness(plansDir); !isInvalidState(err) {
+				t.Fatalf("readiness error = %v, want invalid-state fake-heading prerequisite refusal", err)
+			}
+		})
 	}
 }
 
