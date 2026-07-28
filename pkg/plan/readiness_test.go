@@ -431,6 +431,26 @@ func TestPlanReadiness_RejectsRootWhoseFakeCodeHeadingLooksLikePlan(t *testing.T
 			name: "earlier Setext H1",
 			body: "Notes\n=====\n# Plan: Delivery\n",
 		},
+		{
+			name: "tab-separated earlier ATX H1",
+			body: "#\tNotes\n# Plan: Delivery\n",
+		},
+		{
+			name: "three-space earlier ATX H1",
+			body: "   # Notes\n# Plan: Delivery\n",
+		},
+		{
+			name: "bare earlier ATX H1",
+			body: "#\n# Plan: Delivery\n",
+		},
+		{
+			name: "one-character earlier Setext H1",
+			body: "Notes\n=\n# Plan: Delivery\n",
+		},
+		{
+			name: "BOM-prefixed frontmatter title",
+			body: "\ufeff---\n# Plan: Metadata fake\n<!-- comment -->\n---\n# Notes\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -535,6 +555,26 @@ func TestPrerequisiteReadiness_RejectsPrerequisiteWhoseFakeCodeHeadingLooksLikeP
 		{
 			name: "earlier Setext H1",
 			body: "Notes\n=====\n# Plan: Foundation\n",
+		},
+		{
+			name: "tab-separated earlier ATX H1",
+			body: "#\tNotes\n# Plan: Foundation\n",
+		},
+		{
+			name: "three-space earlier ATX H1",
+			body: "   # Notes\n# Plan: Foundation\n",
+		},
+		{
+			name: "bare earlier ATX H1",
+			body: "#\n# Plan: Foundation\n",
+		},
+		{
+			name: "one-character earlier Setext H1",
+			body: "Notes\n=\n# Plan: Foundation\n",
+		},
+		{
+			name: "BOM-prefixed frontmatter title",
+			body: "\ufeff---\n# Plan: Metadata fake\n<!-- comment -->\n---\n# Notes\n",
 		},
 	}
 	for _, tc := range tests {

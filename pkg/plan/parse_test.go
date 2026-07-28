@@ -676,7 +676,7 @@ This document mentions a plan below, but is not one.
 	}
 }
 
-func TestParse_PlanTitleUsesFirstUnindentedH1OutsideFences(t *testing.T) {
+func TestParse_OnlyTheFirstMarkdownH1CanDeclarePlan(t *testing.T) {
 	tests := []struct {
 		name          string
 		body          string
@@ -706,12 +706,24 @@ func TestParse_PlanTitleUsesFirstUnindentedH1OutsideFences(t *testing.T) {
 			body: "    # Plan: Example only\n# Notes\n",
 		},
 		{
-			name: "ordinary Markdown heading indentation is intentionally not a Plan title",
+			name: "three-space Markdown H1 blocks later canonical Plan title",
 			body: "   # Plan: Example only\n# Notes\n",
 		},
 		{
-			name:          "tab separated lookalike cannot suppress canonical Plan title",
-			body:          "#\tNotes\n# Plan: Delivery\n",
+			name: "tab separated Markdown H1 blocks later canonical Plan title",
+			body: "#\tNotes\n# Plan: Delivery\n",
+		},
+		{
+			name: "multiple-space Markdown H1 blocks later canonical Plan title",
+			body: "#  Notes\n# Plan: Delivery\n",
+		},
+		{
+			name: "bare Markdown H1 blocks later canonical Plan title",
+			body: "#\n# Plan: Delivery\n",
+		},
+		{
+			name:          "no-separator hash line is not an ATX H1",
+			body:          "#Notes\n# Plan: Delivery\n",
 			wantPlanTitle: true,
 			wantTitleLine: 2,
 		},
@@ -802,6 +814,13 @@ func TestParse_SetextH1PreventsLaterPlanTitle(t *testing.T) {
 	if p.HasPlanTitle {
 		t.Fatalf("later title after Setext H1 must not declare a Plan: %+v", p)
 	}
+	p, err = Parse(writePlan(t, dir, "single-equals", "Notes\n=\n\n# Plan: Hidden\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HasPlanTitle {
+		t.Fatalf("later title after one-character Setext H1 must not declare a Plan: %+v", p)
+	}
 
 	p, err = Parse(writePlan(t, dir, "code", "```markdown\nNotes\n=====\n```\n# Plan: Real\n"))
 	if err != nil {
@@ -846,6 +865,11 @@ func TestStructuralMarkdownMask(t *testing.T) {
 			name: "frontmatter including comments is not structure",
 			body: "---\n<!-- frontmatter comment -->\n...\n# Plan: Real",
 			want: []bool{false, false, false, true},
+		},
+		{
+			name: "BOM-prefixed frontmatter including comments is not structure",
+			body: "\ufeff---\n# Plan: frontmatter fake\n<!-- comment -->\n...\n# Plan: Real",
+			want: []bool{false, false, false, false, true},
 		},
 		{
 			name: "multiline comments and a second unmatched opener stay hidden",
@@ -904,6 +928,9 @@ func TestStructuralMarkdownHelpers(t *testing.T) {
 			t.Errorf("isFrontmatterFence(%q) = %t, want %t", tc.line, got, tc.want)
 		}
 	}
+	if !isLeadingFrontmatterFence("\ufeff---") {
+		t.Fatal("BOM-prefixed opening frontmatter fence must be recognized")
+	}
 	for _, tc := range []struct {
 		fragment string
 		want     bool
@@ -918,10 +945,10 @@ func TestStructuralMarkdownHelpers(t *testing.T) {
 		line string
 		want bool
 	}{
-		{"# Real", true}, {"#\tReal", false}, {"#  Real", false}, {"#", false}, {" # Real", false},
+		{"# Real", true}, {"#\tReal", true}, {"#  Real", true}, {"#", true}, {"# ", true}, {" # Real", true}, {"   # Real", true}, {"    # Real", false}, {"#Real", false}, {"## Real", false},
 	} {
-		if got := isCanonicalUnindentedATXH1(tc.line); got != tc.want {
-			t.Errorf("isCanonicalUnindentedATXH1(%q) = %t, want %t", tc.line, got, tc.want)
+		if got := isMarkdownATXH1(tc.line); got != tc.want {
+			t.Errorf("isMarkdownATXH1(%q) = %t, want %t", tc.line, got, tc.want)
 		}
 	}
 	if title, ok := canonicalUnindentedATXH2("## Tasks  "); !ok || title != "Tasks" {
@@ -953,6 +980,20 @@ func TestStructuralMarkdownHelpers(t *testing.T) {
 	}
 	if isSetextH1([]string{"Notes", "    ====", "", ""}, structure, 1) {
 		t.Fatal("indented Setext underline must be code, not an H1")
+	}
+	if !isSetextH1([]string{"Notes", "=", "", ""}, structure, 1) {
+		t.Fatal("one-character Setext underline must be an H1")
+	}
+}
+
+func TestParse_BOMFrontmatterCannotClaimPlanTitle(t *testing.T) {
+	body := "\ufeff---\n# Plan: Metadata fake\n<!--\n# Plan: Comment fake\n-->\n---\n# Plan: Real\n"
+	p, err := Parse(writePlan(t, t.TempDir(), "bom", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.HasPlanTitle || p.Title != "Real" || p.TitleLine != 7 {
+		t.Fatalf("BOM frontmatter must leave only the body title structural: %+v", p)
 	}
 }
 

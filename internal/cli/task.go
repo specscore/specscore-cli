@@ -180,9 +180,14 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 	}
 	planSlug, _ := cmd.Flags().GetString("plan")
 	planSlug = strings.TrimSpace(planSlug)
+	// Plan-inline mode constructs a file path from --plan in both the status
+	// transition and provenance-amend flows. Validate once, before either
+	// dispatch (and therefore before project resolution or path construction),
+	// so a traversal-shaped value is always a usage error and cannot address an
+	// unrelated file.
 	if planSlug != "" {
 		if err := plan.ValidateSlug(planSlug); err != nil {
-			return exitcode.InvalidArgsErrorf("invalid plan slug: %v", err)
+			return exitcode.InvalidArgsErrorf("invalid --plan value %q: %v", planSlug, err)
 		}
 	}
 

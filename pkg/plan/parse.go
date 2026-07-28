@@ -227,7 +227,7 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 			firstH1Seen = true
 			continue
 		}
-		if isCanonicalUnindentedATXH1(raw) {
+		if isMarkdownATXH1(raw) {
 			// A Plan title is meaningful only when it is the document's first
 			// H1. In particular, do not let arbitrary Markdown with a later
 			// "# Plan:" heading enter lifecycle gates as a Plan artifact.
@@ -369,7 +369,11 @@ func (s structuralMarkdown) isStructural(line int) bool {
 // subset relevant to structural safety, rather than trying to render Markdown.
 func scanStructuralMarkdown(lines []string) structuralMarkdown {
 	mask := structuralMarkdown{lines: make([]bool, len(lines))}
-	inFrontmatter := len(lines) > 0 && isFrontmatterFence(lines[0])
+	// A UTF-8 BOM is permitted only at the beginning of the physical source
+	// stream.  Recognise it for the opening fence without normalising the line:
+	// every later parser still receives the original source text and therefore
+	// retains its physical line/column offsets for diagnostics and rewrites.
+	inFrontmatter := len(lines) > 0 && isLeadingFrontmatterFence(lines[0])
 	inComment := false
 	var fence markdownFence
 
@@ -414,6 +418,13 @@ func scanStructuralMarkdown(lines []string) structuralMarkdown {
 func isFrontmatterFence(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return trimmed == "---" || trimmed == "..."
+}
+
+// isLeadingFrontmatterFence recognises the first YAML delimiter in a document.
+// UTF-8 BOM is legal only on this opening source line; accepting it on later
+// lines would make a body line look like source metadata.
+func isLeadingFrontmatterFence(line string) bool {
+	return isFrontmatterFence(strings.TrimPrefix(line, "\ufeff"))
 }
 
 // htmlCommentContinues reports whether the first or a later HTML comment
@@ -511,13 +522,24 @@ func fenceCloses(line string, marker byte, minimumLength int) bool {
 	return length >= minimumLength && strings.TrimSpace(line[indent+length:]) == ""
 }
 
-// isCanonicalUnindentedATXH1 recognizes the contract's H1 form: a title must
-// start at column zero and use exactly one ASCII space after the single '#'.
-// Tabs, multi-space variants and a bare '#' are deliberately not aliases: if
-// they were, a malformed heading could either hide a real Plan title or claim
-// one through permissive whitespace normalization.
-func isCanonicalUnindentedATXH1(line string) bool {
-	return len(line) > 2 && strings.HasPrefix(line, "# ") && line[2] != ' ' && line[2] != '\t' && strings.TrimSpace(line[2:]) != ""
+// isMarkdownATXH1 recognises every valid Markdown ATX H1 for *ordering*.
+// A Plan's own title remains stricter (canonicalPlanTitle): column zero,
+// exactly one ASCII space after '#', and a non-empty `Plan:` value.  Ordering
+// cannot use that strict grammar, because a prior ordinary H1 such as
+// ` # Notes`, `#\tNotes`, `#  Notes`, or bare `#` still owns the document and
+// must prevent a later canonical `# Plan:` sample from claiming it.
+func isMarkdownATXH1(line string) bool {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' && indent < 3 {
+		indent++
+	}
+	if indent == len(line) || (indent < len(line) && line[indent] == ' ') || line[indent] != '#' {
+		return false
+	}
+	if indent+1 == len(line) {
+		return true // bare '#'
+	}
+	return line[indent+1] == ' ' || line[indent+1] == '\t'
 }
 
 // canonicalPlanTitle recognizes exactly `# Plan: <title>`. The separator
@@ -563,7 +585,7 @@ func isSetextH1(lines []string, structure structuralMarkdown, i int) bool {
 	for indent < len(line) && line[indent] == '=' {
 		indent++
 	}
-	return indent-start >= 3 && strings.TrimSpace(line[indent:]) == ""
+	return indent-start >= 1 && strings.TrimSpace(line[indent:]) == ""
 }
 
 // taskHeadingRe matches `### Task N: <name>` where N is one-or-more digits.

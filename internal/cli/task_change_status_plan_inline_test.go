@@ -143,6 +143,11 @@ func TestTaskChangeStatus_PlanInline_RefusesNonPlanWithoutMutation(t *testing.T)
 		{"HTML comment", "<!--\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n-->\n# Notes\n"},
 		{"frontmatter", "---\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n---\n# Notes\n"},
 		{"earlier Setext H1", "Notes\n=====\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier tab-separated ATX H1", "#\tNotes\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier three-space ATX H1", "   # Notes\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier bare ATX H1", "#\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier one-character Setext H1", "Notes\n=\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"BOM-prefixed frontmatter", "\ufeff---\n# Plan: Metadata fake\n<!-- comment -->\n---\n# Notes\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,6 +166,69 @@ func TestTaskChangeStatus_PlanInline_RefusesNonPlanWithoutMutation(t *testing.T)
 			}
 			if string(after) != string(before) {
 				t.Fatalf("non-Plan file changed despite refusal:\n%s", after)
+			}
+		})
+	}
+}
+
+// A traversal-shaped --plan must be rejected as usage before either
+// plan-inline operation constructs its path. The target outside spec/plans is
+// deliberately a complete-looking Plan: byte equality proves neither status
+// nor provenance can be written through the selector.
+func TestTaskChangeStatus_PlanInline_InvalidPlanSlugNeverTouchesExternalFile(t *testing.T) {
+	root, _ := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
+	externalPath := filepath.Join(root, "outside.md")
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		external []byte
+	}{
+		{
+			name: "status transition",
+			args: []string{"change-status", "setup", "--plan", "../../outside", "--to=queued"},
+			external: []byte(`# Plan: Outside
+
+## Tasks
+
+### Task 1: Setup
+
+**Id:** setup
+**Status:** planning
+`),
+		},
+		{
+			name: "provenance amend",
+			args: []string{"change-status", "setup", "--plan", "../../outside", "--amend-provenance", "--commit", "a1b2c3d"},
+			external: []byte(`# Plan: Outside
+
+## Tasks
+
+### Task 1: Setup
+
+**Id:** setup
+**Status:** complete
+**Implemented-by:** old@deadbee
+`),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(externalPath, tc.external, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(externalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = runTask(t, tc.args...)
+			if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+			}
+			after, readErr := os.ReadFile(externalPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("external file changed after invalid --plan refusal:\n%s", after)
 			}
 		})
 	}
