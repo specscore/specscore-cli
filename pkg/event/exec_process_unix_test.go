@@ -68,6 +68,67 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 	}
 }
 
+// TestExecTimeoutWhenGuardNeverReportsReadiness proves the guard's setup
+// handshake is part of Exec's wall-clock budget. In particular, the command
+// must not start and the setup guard must be reaped when its stdout stays
+// silent forever.
+func TestExecTimeoutWhenGuardNeverReportsReadiness(t *testing.T) {
+	guardPIDFile := filepath.Join(t.TempDir(), "guard.pid")
+	commandMarker := filepath.Join(t.TempDir(), "command-started")
+
+	originalNewGuard := newUnixProcessGroupGuardCmd
+	t.Cleanup(func() { newUnixProcessGroupGuardCmd = originalNewGuard })
+	newUnixProcessGroupGuardCmd = func() *exec.Cmd {
+		return exec.Command(
+			"/bin/sh", "-c",
+			`printf "%s" "$$" > "$1"; trap '' TERM; read -r _`,
+			"guard", guardPIDFile,
+		)
+	}
+
+	sub := NewExec(
+		[]string{"sh", "-c", `printf started > "$1"`, "sh", commandMarker},
+		nil,
+		100*time.Millisecond,
+	)
+
+	start := time.Now()
+	err := sub.Deliver(context.Background(), execSampleEvent(t))
+	elapsed := time.Since(start)
+	var timeoutErr *ExecTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
+	}
+	if timeoutErr.Timeout != 100*time.Millisecond {
+		t.Fatalf("timeoutErr.Timeout = %v, want 100ms", timeoutErr.Timeout)
+	}
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("elapsed = %v, want >= 100ms", elapsed)
+	}
+	if elapsed > 800*time.Millisecond {
+		t.Fatalf("elapsed = %v, want <= 800ms", elapsed)
+	}
+	if _, err := os.Stat(commandMarker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("subscriber command ran despite silent guard: stat %q: %v", commandMarker, err)
+	}
+
+	pid := waitForUnixChildPID(t, guardPIDFile, time.Second)
+	deadline := time.Now().Add(time.Second)
+	for {
+		err = syscall.Kill(pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		if err != nil && !errors.Is(err, syscall.EPERM) {
+			t.Fatalf("check guard process %d: %v", pid, err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("silent process-group guard %d survived exec timeout", pid)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestExecSuccessfulCommandLeavesBackgroundProcessRunning verifies that the
 // guard used to pin Unix group identity is released without signalling an
 // otherwise successful command's background descendants.
@@ -210,7 +271,7 @@ func TestConfigureUnixProcessTreePropagatesGuardSetupFailure(t *testing.T) {
 		return exec.Command("/definitely/not/a-process-group-guard")
 	}
 
-	if _, err := configureExecProcessTree(&exec.Cmd{}); err == nil {
+	if _, err := configureExecProcessTree(context.Background(), &exec.Cmd{}); err == nil {
 		t.Fatal("configureExecProcessTree returned nil error")
 	}
 }
@@ -255,7 +316,7 @@ func TestStartUnixProcessGroupGuardFailures(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			newUnixProcessGroupGuardCmd = tc.cmd
-			if _, _, err := startUnixProcessGroupGuard(); err == nil {
+			if _, _, err := startUnixProcessGroupGuard(context.Background()); err == nil {
 				t.Fatal("startUnixProcessGroupGuard returned nil error")
 			}
 		})

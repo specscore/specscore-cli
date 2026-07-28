@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +17,129 @@ import (
 )
 
 const windowsStillActive = 259
+
+// TestExecWindowsAssignmentFailureTerminatesSuspendedProcess exercises the
+// failure boundary between CreateProcess(CREATE_SUSPENDED) and resume. The
+// WithHandle seam deliberately returns a second error after its callback: the
+// assignment error is the authoritative setup failure and must not be hidden.
+func TestExecWindowsAssignmentFailureTerminatesSuspendedProcess(t *testing.T) {
+	assignmentErr := errors.New("assign process to job")
+	withHandleErr := errors.New("with process handle")
+	originalWithHandle := withWindowsProcessHandle
+	originalAssign := assignWindowsProcessToJob
+	originalResume := resumeWindowsProcessFn
+	originalTerminate := terminateWindowsJob
+	t.Cleanup(func() {
+		withWindowsProcessHandle = originalWithHandle
+		assignWindowsProcessToJob = originalAssign
+		resumeWindowsProcessFn = originalResume
+		terminateWindowsJob = originalTerminate
+	})
+
+	withWindowsProcessHandle = func(_ *os.Process, callback func(uintptr)) error {
+		callback(42)
+		return withHandleErr
+	}
+	assignWindowsProcessToJob = func(job windows.Handle, process windows.Handle) error {
+		if job != 7 || process != 42 {
+			t.Fatalf("assignment handles = (%d, %d), want (7, 42)", job, process)
+		}
+		return assignmentErr
+	}
+	resumeWindowsProcessFn = func(windows.Handle) error {
+		t.Fatal("resume called after failed job assignment")
+		return nil
+	}
+	terminated := false
+	terminateWindowsJob = func(job windows.Handle, exitCode uint32) error {
+		if job != 7 || exitCode != windowsJobTimeoutExitCode {
+			t.Fatalf("terminate args = (%d, %d), want (7, %d)", job, exitCode, windowsJobTimeoutExitCode)
+		}
+		terminated = true
+		return nil
+	}
+
+	tree := &windowsExecProcessTree{
+		cmd:   &exec.Cmd{Process: &os.Process{}},
+		job:   7,
+		ready: make(chan struct{}),
+	}
+	err := tree.afterStart()
+	if !errors.Is(err, assignmentErr) {
+		t.Fatalf("afterStart error = %v, want assignment error %v", err, assignmentErr)
+	}
+	if errors.Is(err, withHandleErr) {
+		t.Fatalf("afterStart error = %v, assignment failure was overwritten by WithHandle error", err)
+	}
+	if !terminated {
+		t.Fatal("assignment failure did not terminate the owned Job Object")
+	}
+	if err := tree.cancel(); !errors.Is(err, assignmentErr) {
+		t.Fatalf("cancel error = %v, want assignment error %v", err, assignmentErr)
+	}
+}
+
+// TestExecWindowsResumeFailureTerminatesOwnedProcess proves that a process
+// already assigned to the Job Object is killed if its native resume fails.
+// As above, a secondary WithHandle error must not replace the resume failure.
+func TestExecWindowsResumeFailureTerminatesOwnedProcess(t *testing.T) {
+	resumeErr := errors.New("resume process")
+	withHandleErr := errors.New("with process handle")
+	originalWithHandle := withWindowsProcessHandle
+	originalAssign := assignWindowsProcessToJob
+	originalResume := resumeWindowsProcessFn
+	originalTerminate := terminateWindowsJob
+	t.Cleanup(func() {
+		withWindowsProcessHandle = originalWithHandle
+		assignWindowsProcessToJob = originalAssign
+		resumeWindowsProcessFn = originalResume
+		terminateWindowsJob = originalTerminate
+	})
+
+	withWindowsProcessHandle = func(_ *os.Process, callback func(uintptr)) error {
+		callback(42)
+		return withHandleErr
+	}
+	assignWindowsProcessToJob = func(job windows.Handle, process windows.Handle) error {
+		if job != 7 || process != 42 {
+			t.Fatalf("assignment handles = (%d, %d), want (7, 42)", job, process)
+		}
+		return nil
+	}
+	resumeWindowsProcessFn = func(process windows.Handle) error {
+		if process != 42 {
+			t.Fatalf("resume handle = %d, want 42", process)
+		}
+		return resumeErr
+	}
+	terminated := false
+	terminateWindowsJob = func(job windows.Handle, exitCode uint32) error {
+		if job != 7 || exitCode != windowsJobTimeoutExitCode {
+			t.Fatalf("terminate args = (%d, %d), want (7, %d)", job, exitCode, windowsJobTimeoutExitCode)
+		}
+		terminated = true
+		return nil
+	}
+
+	tree := &windowsExecProcessTree{
+		cmd:   &exec.Cmd{Process: &os.Process{}},
+		job:   7,
+		ready: make(chan struct{}),
+	}
+	err := tree.afterStart()
+	if !errors.Is(err, resumeErr) {
+		t.Fatalf("afterStart error = %v, want resume error %v", err, resumeErr)
+	}
+	if errors.Is(err, withHandleErr) {
+		t.Fatalf("afterStart error = %v, resume failure was overwritten by WithHandle error", err)
+	}
+	if !terminated {
+		t.Fatal("resume failure did not terminate the owned Job Object")
+	}
+	if err := tree.cancel(); !errors.Is(err, resumeErr) {
+		t.Fatalf("cancel error = %v, want resume error %v", err, resumeErr)
+	}
+}
 
 func TestExecWindowsResumeLookupFailurePreventsStart(t *testing.T) {
 	originalFind := findWindowsNtResumeProcess

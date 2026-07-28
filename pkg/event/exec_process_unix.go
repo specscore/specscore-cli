@@ -3,6 +3,7 @@
 package event
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
@@ -33,8 +34,8 @@ var newUnixProcessGroupGuardCmd = func() *exec.Cmd {
 // The guard ignores SIGTERM and stays in the group until cleanup, pinning the
 // PGID across the TERM-to-KILL grace window. That removes the otherwise unsafe
 // race in which an empty process group ID could be reused before SIGKILL.
-func configureExecProcessTree(cmd *exec.Cmd) (execProcessTree, error) {
-	guard, guardStdin, err := startUnixProcessGroupGuard()
+func configureExecProcessTree(ctx context.Context, cmd *exec.Cmd) (execProcessTree, error) {
+	guard, guardStdin, err := startUnixProcessGroupGuard(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +54,7 @@ func configureExecProcessTree(cmd *exec.Cmd) (execProcessTree, error) {
 	return tree, nil
 }
 
-func startUnixProcessGroupGuard() (*exec.Cmd, io.WriteCloser, error) {
+func startUnixProcessGroupGuard(ctx context.Context) (*exec.Cmd, io.WriteCloser, error) {
 	guard := newUnixProcessGroupGuardCmd()
 	guard.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -71,14 +72,58 @@ func startUnixProcessGroupGuard() (*exec.Cmd, io.WriteCloser, error) {
 		return nil, nil, fmt.Errorf("start process-group guard: %w", err)
 	}
 
-	ready := []byte{0}
-	if _, err := io.ReadFull(stdout, ready); err != nil {
-		_ = stdin.Close()
-		_ = guard.Process.Kill()
-		_ = guard.Wait()
-		return nil, nil, fmt.Errorf("wait for process-group guard readiness: %w", err)
+	if err := waitForUnixProcessGroupGuardReadiness(ctx, guard, stdin, stdout); err != nil {
+		return nil, nil, err
 	}
 	return guard, stdin, nil
+}
+
+// waitForUnixProcessGroupGuardReadiness bounds the guard's initial handshake
+// by the delivery context. The guard must report readiness before the
+// subscriber command is allowed to start; otherwise an unavailable shell or a
+// stuck pipe could bypass Exec's advertised wall-clock timeout.
+func waitForUnixProcessGroupGuardReadiness(
+	ctx context.Context,
+	guard *exec.Cmd,
+	stdin io.WriteCloser,
+	stdout io.ReadCloser,
+) error {
+	result := make(chan error, 1)
+	go func() {
+		ready := []byte{0}
+		_, err := io.ReadFull(stdout, ready)
+		result <- err
+	}()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			stopUnixProcessGroupGuard(guard, stdin, stdout)
+			return fmt.Errorf("wait for process-group guard readiness: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		// Closing the read side releases the goroutine blocked in ReadFull;
+		// closing stdin lets the production shell leave its builtin read. Kill
+		// and Wait still run to handle a guard that ignores stdin or is otherwise
+		// wedged, so no setup process survives a timed-out delivery.
+		stopUnixProcessGroupGuard(guard, stdin, stdout)
+		<-result
+		return fmt.Errorf("wait for process-group guard readiness: %w", ctx.Err())
+	}
+}
+
+func stopUnixProcessGroupGuard(guard *exec.Cmd, stdin io.WriteCloser, stdout io.ReadCloser) {
+	if stdout != nil {
+		_ = stdout.Close()
+	}
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	if guard != nil && guard.Process != nil {
+		_ = guard.Process.Kill()
+		_ = guard.Wait()
+	}
 }
 
 func (t *unixExecProcessTree) afterStart() error {

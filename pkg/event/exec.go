@@ -56,8 +56,9 @@ func (x *Exec) Name() string {
 }
 
 // Deliver runs the configured command with the event JSON piped to stdin.
-// Returns *ExecTimeoutError on wall-clock timeout, *ExecExitError on non-zero
-// exit, or a plain error for setup failures (serialization, pipe creation).
+// Returns *ExecTimeoutError on wall-clock timeout (including setup),
+// *ExecExitError on non-zero exit, or a plain error for other setup failures
+// (serialization, pipe creation).
 func (x *Exec) Deliver(ctx context.Context, e Event) error {
 	if len(x.argv) == 0 {
 		return errors.New("exec: empty argv")
@@ -72,8 +73,11 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, x.argv[0], x.argv[1:]...)
-	processTree, err := configureExecProcessTreeFn(cmd)
+	processTree, err := configureExecProcessTreeFn(cctx, cmd)
 	if err != nil {
+		if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, err); timeoutErr != nil {
+			return timeoutErr
+		}
 		return fmt.Errorf("exec: configure process tree: %w", err)
 	}
 	defer func() {
@@ -82,6 +86,9 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 		// static analysis does not mistake this intentional best-effort release.
 		_ = processTree.close()
 	}()
+	if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, nil); timeoutErr != nil {
+		return timeoutErr
+	}
 
 	// Additive env: inherit parent environment, then append configured pairs.
 	env := os.Environ()
@@ -95,17 +102,37 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 
 	stdin, err := cmdStdinPipeFn(cmd)
 	if err != nil {
+		if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, err); timeoutErr != nil {
+			return timeoutErr
+		}
 		return fmt.Errorf("exec: stdin pipe: %w", err)
+	}
+	if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, nil); timeoutErr != nil {
+		_ = stdin.Close()
+		return timeoutErr
 	}
 
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, err); timeoutErr != nil {
+			return timeoutErr
+		}
 		return fmt.Errorf("exec: start: %w", err)
 	}
 	if err := processTree.afterStart(); err != nil {
 		// Fail closed: a command without owned tree cleanup must not continue.
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		stopStartedExecCommand(cmd)
+		if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, err); timeoutErr != nil {
+			return timeoutErr
+		}
 		return fmt.Errorf("exec: initialize process tree: %w", err)
+	}
+	if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, nil); timeoutErr != nil {
+		// A context can expire while platform-specific ownership is being
+		// established. Do not proceed to write an event to a command whose
+		// wall-clock budget has already elapsed.
+		stopStartedExecCommand(cmd)
+		return timeoutErr
 	}
 
 	// Write the envelope and close stdin so the child sees EOF.
@@ -131,11 +158,33 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 	return nil
 }
 
+// execTimeoutIfDeadlineExceeded preserves Exec's public failure contract for
+// every setup boundary, not only Cmd.Wait. CommandContext can report a plain
+// start or platform-setup error after the deadline has fired; callers must
+// still be able to distinguish this from a non-timeout setup failure.
+func execTimeoutIfDeadlineExceeded(cctx context.Context, timeout time.Duration, cause error) error {
+	if cctx.Err() != context.DeadlineExceeded {
+		return nil
+	}
+	if cause == nil {
+		cause = cctx.Err()
+	}
+	return &ExecTimeoutError{Timeout: timeout, Cause: cause}
+}
+
+func stopStartedExecCommand(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+}
+
 // classifyWaitError converts the result of cmd.Wait into one of the typed
 // errors callers (the dispatcher's stderr log) discriminate on.
 func classifyWaitError(waitErr error, cctx context.Context, timeout time.Duration) error {
-	if cctx.Err() == context.DeadlineExceeded {
-		return &ExecTimeoutError{Timeout: timeout, Cause: waitErr}
+	if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, timeout, waitErr); timeoutErr != nil {
+		return timeoutErr
 	}
 	var ee *exec.ExitError
 	if errors.As(waitErr, &ee) {

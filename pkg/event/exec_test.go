@@ -107,7 +107,7 @@ func TestExecConfigureProcessTreeError(t *testing.T) {
 	originalConfigure := configureExecProcessTreeFn
 	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
 	sentinel := errors.New("configure tree")
-	configureExecProcessTreeFn = func(*exec.Cmd) (execProcessTree, error) {
+	configureExecProcessTreeFn = func(context.Context, *exec.Cmd) (execProcessTree, error) {
 		return nil, sentinel
 	}
 
@@ -118,12 +118,79 @@ func TestExecConfigureProcessTreeError(t *testing.T) {
 	}
 }
 
+// TestExecDeadlineBeforeStartReturnsTimeoutError proves the wall-clock budget
+// includes setup. The configure seam consumes that budget before cmd.Start;
+// Deliver must return the typed timeout rather than a platform-dependent start
+// error (and the command must never run).
+func TestExecDeadlineBeforeStartReturnsTimeoutError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
+	tree := &fakeExecProcessTree{}
+	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
+		<-ctx.Done()
+		return tree, nil
+	}
+
+	marker := filepath.Join(t.TempDir(), "command-started")
+	timeout := 25 * time.Millisecond
+	err := NewExec(
+		[]string{"sh", "-c", `printf started > "$1"`, "sh", marker},
+		nil,
+		timeout,
+	).Deliver(context.Background(), execSampleEvent(t))
+	var timeoutErr *ExecTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
+	}
+	if timeoutErr.Timeout != timeout {
+		t.Fatalf("timeoutErr.Timeout = %v, want %v", timeoutErr.Timeout, timeout)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("command ran after setup deadline: stat %q: %v", marker, statErr)
+	}
+	if !tree.closed {
+		t.Fatal("process tree was not closed after setup deadline")
+	}
+}
+
+// TestExecDeadlineDuringAfterStartReturnsTimeoutError covers the other
+// platform setup boundary: a deadline that expires while ownership is being
+// established after cmd.Start still has to surface as *ExecTimeoutError.
+func TestExecDeadlineDuringAfterStartReturnsTimeoutError(t *testing.T) {
+	originalConfigure := configureExecProcessTreeFn
+	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
+	var setupCtx context.Context
+	tree := &fakeExecProcessTree{}
+	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
+		setupCtx = ctx
+		tree.afterStartFn = func() error {
+			<-setupCtx.Done()
+			return setupCtx.Err()
+		}
+		return tree, nil
+	}
+
+	timeout := 25 * time.Millisecond
+	err := NewExec([]string{"sleep", "30"}, nil, timeout).
+		Deliver(context.Background(), execSampleEvent(t))
+	var timeoutErr *ExecTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
+	}
+	if timeoutErr.Timeout != timeout {
+		t.Fatalf("timeoutErr.Timeout = %v, want %v", timeoutErr.Timeout, timeout)
+	}
+	if !tree.closed {
+		t.Fatal("process tree was not closed after afterStart deadline")
+	}
+}
+
 func TestExecInitializeProcessTreeError(t *testing.T) {
 	originalConfigure := configureExecProcessTreeFn
 	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
 	sentinel := errors.New("initialize tree")
 	tree := &fakeExecProcessTree{afterStartErr: sentinel}
-	configureExecProcessTreeFn = func(*exec.Cmd) (execProcessTree, error) {
+	configureExecProcessTreeFn = func(context.Context, *exec.Cmd) (execProcessTree, error) {
 		return tree, nil
 	}
 
@@ -139,10 +206,14 @@ func TestExecInitializeProcessTreeError(t *testing.T) {
 
 type fakeExecProcessTree struct {
 	afterStartErr error
+	afterStartFn  func() error
 	closed        bool
 }
 
 func (t *fakeExecProcessTree) afterStart() error {
+	if t.afterStartFn != nil {
+		return t.afterStartFn()
+	}
 	return t.afterStartErr
 }
 

@@ -3,7 +3,9 @@
 package event
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 
@@ -16,6 +18,12 @@ var (
 	windowsNtResumeProcess     = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
 	findWindowsNtResumeProcess = windowsNtResumeProcess.Find
 	closeWindowsHandle         = windows.CloseHandle
+	assignWindowsProcessToJob  = windows.AssignProcessToJobObject
+	terminateWindowsJob        = windows.TerminateJobObject
+	withWindowsProcessHandle   = func(process *os.Process, callback func(uintptr)) error {
+		return process.WithHandle(callback)
+	}
+	resumeWindowsProcessFn = resumeWindowsProcess
 )
 
 type windowsExecProcessTree struct {
@@ -29,7 +37,7 @@ type windowsExecProcessTree struct {
 // starts suspended; afterStart assigns its retained process handle to the job
 // and resumes it. No subscriber instruction can run before job ownership is
 // established, so an assignment failure cannot leave descendants behind.
-func configureExecProcessTree(cmd *exec.Cmd) (execProcessTree, error) {
+func configureExecProcessTree(_ context.Context, cmd *exec.Cmd) (execProcessTree, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create Windows Job Object: %w", err)
@@ -56,17 +64,29 @@ func configureExecProcessTree(cmd *exec.Cmd) (execProcessTree, error) {
 // ownership sequence. NtResumeProcess is the process-handle form of resume;
 // os/exec closes CreateProcess's primary-thread handle before returning.
 func (t *windowsExecProcessTree) afterStart() error {
-	t.setupErr = t.cmd.Process.WithHandle(func(handle uintptr) {
-		t.setupErr = windows.AssignProcessToJobObject(t.job, windows.Handle(handle))
-		if t.setupErr != nil {
+	var assignmentErr, resumeErr error
+	withHandleErr := withWindowsProcessHandle(t.cmd.Process, func(handle uintptr) {
+		assignmentErr = assignWindowsProcessToJob(t.job, windows.Handle(handle))
+		if assignmentErr != nil {
 			return
 		}
-		t.setupErr = resumeWindowsProcess(windows.Handle(handle))
+		resumeErr = resumeWindowsProcessFn(windows.Handle(handle))
 	})
+
+	// Keep callback failures separate from WithHandle's own error. In
+	// particular, a callback assignment/resume failure must not be overwritten
+	// by WithHandle's return value when process-handle acquisition also fails.
+	t.setupErr = assignmentErr
+	if t.setupErr == nil {
+		t.setupErr = resumeErr
+	}
+	if t.setupErr == nil {
+		t.setupErr = withHandleErr
+	}
 	if t.setupErr != nil {
 		// If assignment failed the process is still suspended. If resume failed
 		// after assignment, terminating the job also covers that process.
-		_ = windows.TerminateJobObject(t.job, windowsJobTimeoutExitCode)
+		_ = terminateWindowsJob(t.job, windowsJobTimeoutExitCode)
 	}
 	close(t.ready)
 	return t.setupErr
@@ -85,7 +105,7 @@ func (t *windowsExecProcessTree) cancel() error {
 	if t.setupErr != nil {
 		return t.setupErr
 	}
-	return windows.TerminateJobObject(t.job, windowsJobTimeoutExitCode)
+	return terminateWindowsJob(t.job, windowsJobTimeoutExitCode)
 }
 
 func (t *windowsExecProcessTree) close() error {
