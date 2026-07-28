@@ -249,7 +249,10 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 			}
 			continue
 		}
-		if title, ok := canonicalUnindentedATXH2(raw); ok {
+		// A Plan artifact starts at its canonical title. Ignore structural H2s
+		// in surrounding Markdown so no section consumer can treat pre-title
+		// Tasks or Deferred AC Coverage as part of the Plan.
+		if title, ok := canonicalUnindentedATXH2(raw); ok && p.HasPlanTitle && i+1 > p.TitleLine {
 			sections = append(sections, sectionStart{
 				title: title,
 				line:  i,
@@ -262,9 +265,7 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 	}
 
 	// Header fields live between the title (exclusive) and the first structural
-	// ## heading after it. A document can contain an H2 before its first H1;
-	// that earlier section must not make the Plan header empty and thereby hide
-	// prerequisite declarations from readiness.
+	// ## heading after it.
 	headerEnd := len(lines)
 	for _, section := range sections {
 		if section.line >= p.TitleLine {

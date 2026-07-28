@@ -52,6 +52,63 @@ func TestReconcile_RefusesNonPlanWithoutMutation(t *testing.T) {
 	}
 }
 
+// A completed task before the canonical Plan title is prose outside the Plan
+// artifact. It must not supply a rollup that lets reconcile promote a Plan
+// which has no canonical post-title Tasks section.
+func TestReconcile_PreTitleTasksCannotSupplyCompletedRollup(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "spec", "plans", "auth.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `## Tasks
+
+### Task 1: Misleading preface example
+
+**Status:** complete
+
+# Plan: Auth
+
+**Status:** Draft
+**Source:** none
+**Date:** 2026-06-17
+**Owner:** alex
+**Supersedes:** —
+
+## Summary
+
+Auth.
+
+## Approach
+
+One task per step.
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "must not promote from a pre-title example", PostMutation: okHook,
+	})
+	if got := codeOf(t, err); got != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "no embedded tasks") {
+		t.Errorf("error = %q, want no embedded tasks refusal", err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("plan changed despite refusal:\n%s", after)
+	}
+}
+
 // reconcilePlanBody returns a minimal lint-shaped flat Plan body in the given
 // status, with one `### Task N:` block per entry in taskStatuses. A task
 // status of "" omits the **Status:** line entirely (an unset task).

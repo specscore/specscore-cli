@@ -40,6 +40,7 @@ func TestMatchGlobPattern(t *testing.T) {
 		{"deep/nested/file.go", "**", true, "double-star matches anything"},
 		{"main.go", "*.go", true, "simple glob match"},
 		{"map.go", "m?p.go", true, "question mark matches one path character"},
+		{"pkg/map.go", "pkg/**/m?p.go", true, "double-star pattern translates question mark"},
 		{"main.txt", "*.go", false, "simple glob no match"},
 		{"src/main.go", "*.go", false, "glob does not cross directories"},
 		{"foo.go", "foo.go", true, "exact match"},
