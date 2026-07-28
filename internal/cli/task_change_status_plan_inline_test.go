@@ -234,6 +234,94 @@ func TestTaskChangeStatus_PlanInline_InvalidPlanSlugNeverTouchesExternalFile(t *
 	}
 }
 
+// An explicitly supplied blank --plan must never fall back to a same-named
+// board task. The matching board task is deliberately mutable by each command
+// shape; byte equality proves the invalid selector stopped dispatch before any
+// board or plan mutation.
+func TestTaskChangeStatus_ExplicitBlankPlanNeverFallsBackToBoard(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		planFlag string
+		amend    bool
+	}{
+		{name: "status with equals", planFlag: "--plan="},
+		{name: "status with whitespace", planFlag: "--plan= \t"},
+		{name: "amend with equals", planFlag: "--plan=", amend: true},
+		{name: "amend with whitespace", planFlag: "--plan= \t", amend: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status := "in_progress"
+			planBody := twoTaskPlanBody
+			if tc.amend {
+				status = "complete"
+				planBody = completeTaskPlanBody
+			}
+			root, boardTaskPath := stageTaskWithStatus(t, "setup", status)
+			if tc.amend {
+				if err := writeBoardImplementedBy(boardTaskPath, "backstage@wrongsha"); err != nil {
+					t.Fatalf("seed board provenance: %v", err)
+				}
+			}
+
+			plansDir := filepath.Join(root, "spec", "plans")
+			if err := os.MkdirAll(plansDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			planPath := filepath.Join(plansDir, "auth.md")
+			if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			boardIndexPath := filepath.Join(root, "tasks", "README.md")
+			boardIndexBefore, err := os.ReadFile(boardIndexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			boardBefore, err := os.ReadFile(boardTaskPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			planBefore, err := os.ReadFile(planPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			args := []string{"change-status", "setup", tc.planFlag}
+			if tc.amend {
+				args = append(args, "--amend-provenance", "--commit", "a1b2c3d")
+			} else {
+				args = append(args, "--to=complete")
+			}
+			_, _, err = runTask(t, args...)
+			if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+			}
+
+			boardIndexAfter, readErr := os.ReadFile(boardIndexPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(boardIndexAfter) != string(boardIndexBefore) {
+				t.Fatalf("board index changed despite invalid --plan refusal:\n%s", boardIndexAfter)
+			}
+			boardAfter, readErr := os.ReadFile(boardTaskPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(boardAfter) != string(boardBefore) {
+				t.Fatalf("matching board task changed despite invalid --plan refusal:\n%s", boardAfter)
+			}
+			planAfter, readErr := os.ReadFile(planPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(planAfter) != string(planBefore) {
+				t.Fatalf("plan changed despite invalid --plan refusal:\n%s", planAfter)
+			}
+		})
+	}
+}
+
 // Illegal transition on a plan-inline task → exit 4 (InvalidState), block unchanged.
 func TestTaskChangeStatus_PlanInline_IllegalTransition(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)

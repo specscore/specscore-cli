@@ -180,12 +180,13 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 	}
 	planSlug, _ := cmd.Flags().GetString("plan")
 	planSlug = strings.TrimSpace(planSlug)
+	planFlagChanged := cmd.Flags().Changed("plan")
 	// Plan-inline mode constructs a file path from --plan in both the status
 	// transition and provenance-amend flows. Validate once, before either
 	// dispatch (and therefore before project resolution or path construction),
-	// so a traversal-shaped value is always a usage error and cannot address an
-	// unrelated file.
-	if planSlug != "" {
+	// so an explicit blank or traversal-shaped value is always a usage error and
+	// cannot address an unrelated file or fall back to a board task.
+	if planFlagChanged {
 		if err := plan.ValidateSlug(planSlug); err != nil {
 			return exitcode.InvalidArgsErrorf("invalid --plan value %q: %v", planSlug, err)
 		}
@@ -216,7 +217,7 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 		if err := validateProvenanceFlags(cmd, lifecycle.TaskComplete); err != nil {
 			return err
 		}
-		if planSlug != "" {
+		if planFlagChanged {
 			return runTaskAmendProvenancePlanInline(cmd, taskSlug, planSlug, deps)
 		}
 		return runTaskAmendProvenanceBoard(cmd, taskSlug, deps)
@@ -242,9 +243,9 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 	}
 
 	// --plan selects plan-inline mode: the task is addressed by its **Id:**
-	// field on a `### Task N:` block inside spec/plans/<plan>.md. Without --plan
-	// the verb stays in board mode (tasks/<task>/README.md), unchanged.
-	if planSlug != "" {
+	// field on a `### Task N:` block inside spec/plans/<plan>.md. Only when
+	// --plan is absent does the verb stay in board mode (tasks/<task>/README.md).
+	if planFlagChanged {
 		return runTaskChangeStatusPlanInline(cmd, taskSlug, planSlug, to, deps)
 	}
 
