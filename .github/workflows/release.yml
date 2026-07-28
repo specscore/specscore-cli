@@ -33,7 +33,75 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release-artifact-smoke-darwin-arm64:
+    name: Run darwin/arm64 release artifact
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the release artifact
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: build --snapshot --clean --single-target
+
+      - name: Smoke-test the packaged executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          artifacts = json.loads(pathlib.Path("dist/artifacts.json").read_text())
+          binaries = [
+              artifact["path"]
+              for artifact in artifacts
+              if artifact.get("type") == "Binary"
+              and artifact.get("name") == "specscore"
+              and artifact.get("goos") == "darwin"
+              and artifact.get("goarch") == "arm64"
+          ]
+          if len(binaries) != 1:
+              raise SystemExit(
+                  f"expected one darwin/arm64 specscore binary, found {binaries}"
+              )
+
+          commands = (
+              (binaries[0], "--version"),
+              (binaries[0], "spec", "lint", "--no-telemetry"),
+          )
+          for command in commands:
+              try:
+                  completed = subprocess.run(
+                      command,
+                      capture_output=True,
+                      text=True,
+                      timeout=10,
+                      check=False,
+                  )
+              except subprocess.TimeoutExpired as error:
+                  raise SystemExit(f"release artifact timed out: {command}") from error
+              if completed.returncode != 0:
+                  raise SystemExit(
+                      f"release artifact failed ({completed.returncode}): {command}\n"
+                      f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+                  )
+              if command[-1] == "--version" and not completed.stdout.strip():
+                  raise SystemExit("release artifact --version produced no output")
+          PY
+
   release:
+    needs: release-artifact-smoke-darwin-arm64
     uses: strongo/cicd/.github/workflows/release.yml@v1
     permissions:
       contents: write
