@@ -108,6 +108,12 @@ func (e *prerequisiteReadinessEvaluator) evaluateContents(p *Plan) (prerequisite
 			Status: "invalid",
 			Reason: reason,
 		})
+		// A malformed declaration is an invalid graph, not a partially valid
+		// list. In particular, never hand an invalid slug (for example
+		// "../../outside") to the filesystem resolver.
+		result.derived, result.derivedOK = p.DeriveExecutionBand()
+		result.status = normalizedPlanStatus(p)
+		return result, nil
 	}
 	for _, slug := range p.PrerequisitePlans {
 		prerequisite, err := e.evaluateSlug(slug)
@@ -125,11 +131,10 @@ func (e *prerequisiteReadinessEvaluator) evaluateContents(p *Plan) (prerequisite
 			// misleading: the caller cannot see that this declared edge's own
 			// task rollup is not yet Implemented. Pre-order preserves declared
 			// edge order, followed by the nested reasons that explain it.
-			// A cycle has no determinate derived status. Its nested diagnostic is
-			// the useful direct refusal, so do not add an empty synthetic sibling
-			// ahead of it. An ordinary indeterminate prerequisite without nested
-			// diagnostics still needs its own entry.
-			if prerequisite.derivedOK || len(prerequisite.unmet) == 0 {
+			// Only an all-cycle diagnostic already fully explains this edge.
+			// An indeterminate intermediate Plan with an ordinary unmet child is
+			// itself a direct blocker and must remain visible.
+			if !onlyCycleDiagnostics(prerequisite.unmet) {
 				result.unmet = append(result.unmet, UnmetPrerequisite{
 					Slug: slug, Status: prerequisite.status, DerivedStatus: prerequisite.derived,
 				})
@@ -142,11 +147,28 @@ func (e *prerequisiteReadinessEvaluator) evaluateContents(p *Plan) (prerequisite
 		}
 	}
 	result.derived, result.derivedOK = p.DeriveExecutionBand()
-	result.status = strings.TrimSpace(p.Status)
-	if result.status == "" {
-		result.status = "unset"
-	}
+	result.status = normalizedPlanStatus(p)
 	return result, nil
+}
+
+func normalizedPlanStatus(p *Plan) string {
+	status := strings.TrimSpace(p.Status)
+	if status == "" {
+		return "unset"
+	}
+	return status
+}
+
+func onlyCycleDiagnostics(unmet []UnmetPrerequisite) bool {
+	if len(unmet) == 0 {
+		return false
+	}
+	for _, prerequisite := range unmet {
+		if !strings.HasPrefix(prerequisite.Reason, "prerequisite cycle: ") {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *prerequisiteReadinessEvaluator) evaluateSlug(slug string) (prerequisiteEvaluation, error) {
@@ -242,6 +264,9 @@ func isNotFound(err error) bool {
 // owns the authoring diagnostics, but readiness must never report true for an
 // invalid declaration merely because Parse recovered a partial list.
 func malformedPrerequisiteDeclaration(p *Plan) string {
+	if len(p.PrerequisiteLines) > 1 {
+		return "duplicate field"
+	}
 	if p.PrerequisiteLine == 0 || strings.TrimSpace(p.PrerequisiteRaw) == "—" {
 		return ""
 	}

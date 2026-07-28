@@ -12,6 +12,17 @@ import (
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
+func TestPreserveReadinessError(t *testing.T) {
+	typed := exitcode.InvalidStateError("invalid graph")
+	if got := preserveReadinessError("delivery", typed); got != typed {
+		t.Fatalf("typed error = %v, want original %v", got, typed)
+	}
+	got := preserveReadinessError("delivery", errors.New("permission denied"))
+	if !isUnexpected(got) || !strings.Contains(got.Error(), "delivery") {
+		t.Fatalf("untyped error = %v, want contextual Unexpected", got)
+	}
+}
+
 // reconcilePlanBody returns a minimal lint-shaped flat Plan body in the given
 // status, with one `### Task N:` block per entry in taskStatuses. A task
 // status of "" omits the **Status:** line entirely (an unset task).

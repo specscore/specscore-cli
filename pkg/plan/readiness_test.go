@@ -125,6 +125,32 @@ func TestPlanReadiness_ReportsUnmetPrerequisiteBeforeItsUnmetDescendants(t *test
 	}
 }
 
+func TestPlanReadiness_ReportsIndeterminateDirectPrerequisiteBeforeUnmetDescendant(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// intermediate has a pre-execution task, so its own rollup is
+	// indeterminate. Its declared leaf is also unmet. Both are direct,
+	// actionable blockers for delivery and must remain visible.
+	writeReadinessPlan(t, plansDir, "leaf", "Approved", "", "queued")
+	writeReadinessPlan(t, plansDir, "intermediate", "Planning", "leaf", "queued")
+	writeReadinessPlan(t, plansDir, "delivery", "Approved", "intermediate", "queued")
+
+	got, err := PlanReadiness(root, "delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []UnmetPrerequisite{
+		{Slug: "intermediate", Status: "Planning"},
+		{Slug: "leaf", Status: "Approved"},
+	}
+	if !slices.Equal(got.Unmet, want) {
+		t.Fatalf("unmet = %+v, want %+v", got.Unmet, want)
+	}
+}
+
 func TestPlanReadiness_DeduplicatesSharedCycleAndPreservesBranchedCycles(t *testing.T) {
 	root := t.TempDir()
 	plansDir := filepath.Join(root, "spec", "plans")
@@ -289,6 +315,40 @@ func TestPrerequisiteReadiness_MalformedDeclarationIsNeverReady(t *testing.T) {
 	}
 }
 
+func TestPrerequisiteReadiness_MalformedDeclarationsDoNotResolveAnyEdge(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, prerequisite := range []string{"../../secret", "foundation\n**Prerequisite Plans:** replacement"} {
+		t.Run(strings.ReplaceAll(prerequisite, "\n", "-"), func(t *testing.T) {
+			writeReadinessPlan(t, plansDir, "delivery", "Approved", prerequisite, "queued")
+			p, err := Parse(filepath.Join(plansDir, "delivery.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			originalResolve := resolveReadinessPlanFile
+			called := false
+			resolveReadinessPlanFile = func(string, string) (string, error) {
+				called = true
+				return "", errors.New("resolver must not be called for malformed input")
+			}
+			t.Cleanup(func() { resolveReadinessPlanFile = originalResolve })
+
+			got, err := p.PrerequisiteReadiness(plansDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if called {
+				t.Fatal("readiness resolved a malformed prerequisite edge")
+			}
+			if got.Ready || len(got.Unmet) != 1 || got.Unmet[0].Status != "invalid" {
+				t.Fatalf("readiness = %+v, want one invalid declaration refusal", got)
+			}
+		})
+	}
+}
+
 func TestPrerequisiteReadiness_DirectoryFormPrerequisite(t *testing.T) {
 	plansDir := filepath.Join(t.TempDir(), "spec", "plans")
 	dir := filepath.Join(plansDir, "foundation")
@@ -391,6 +451,7 @@ func TestMalformedPrerequisiteDeclaration(t *testing.T) {
 		{"empty", Plan{PrerequisiteLine: 1, PrerequisiteRaw: " "}, "empty"},
 		{"invalid", Plan{PrerequisiteLine: 1, PrerequisiteRaw: "Bad_Slug"}, "invalid slug"},
 		{"duplicate", Plan{PrerequisiteLine: 1, PrerequisiteRaw: "alpha, alpha"}, "duplicate slug"},
+		{"duplicate field", Plan{PrerequisiteLine: 1, PrerequisiteLines: []int{1, 2}, PrerequisiteRaw: "alpha"}, "duplicate field"},
 		{"self", Plan{Slug: "alpha", PrerequisiteLine: 1, PrerequisiteRaw: "alpha"}, "self reference"},
 	}
 	for _, tt := range tests {

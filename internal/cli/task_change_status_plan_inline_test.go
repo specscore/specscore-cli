@@ -251,6 +251,46 @@ func TestTaskChangeStatus_PlanInline_PreservesInvalidStateReadinessError(t *test
 	}
 }
 
+// A duplicate prerequisite header is malformed even if a later header says
+// none. Readiness must refuse before the target task rewrite and retain the
+// first declaration for the authoring diagnostic.
+func TestTaskChangeStatus_PlanInline_DuplicatePrerequisiteHeaderRefusesWithoutMutation(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Prerequisite Plans:** —\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	foundation := `# Plan: Foundation
+
+**Status:** Implemented
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** complete
+`
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte(foundation), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "duplicate field") {
+		t.Errorf("diagnostic = %v, want duplicate declaration", err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Error("task plan changed despite duplicate prerequisite refusal")
+	}
+}
+
 func TestTaskChangeStatus_PlanInline_ReadinessReadFailureIsAtomic(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission denial is not enforceable for root")

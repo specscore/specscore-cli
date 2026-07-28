@@ -563,6 +563,15 @@ func TestP009_PrerequisitePlansResolveAndExposeCycles(t *testing.T) {
 		}
 	})
 
+	t.Run("duplicate header", func(t *testing.T) {
+		e := newPlanRulesEnv(t)
+		e.writePlan(t, "foundation", "# Plan: Foundation\n\n**Source:** none\n")
+		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** foundation\n**Prerequisite Plans:** —\n")
+		if got := hasViolation(runRules(t, e), "P-009", "must appear at most once"); got == nil {
+			t.Fatal("expected duplicate prerequisite header violation")
+		}
+	})
+
 	t.Run("self", func(t *testing.T) {
 		e := newPlanRulesEnv(t)
 		e.writePlan(t, "application", "# Plan: Application\n\n**Source:** none\n**Prerequisite Plans:** application\n")

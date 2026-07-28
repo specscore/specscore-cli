@@ -3,6 +3,7 @@ package plan
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -99,6 +100,24 @@ func TestParse_PrerequisitePlansRetainsASCIIDashForLint(t *testing.T) {
 	}
 	if got, want := strings.Join(p.PrerequisitePlans, ","), "-"; got != want {
 		t.Fatalf("PrerequisitePlans = %q, want %q", got, want)
+	}
+}
+
+func TestParse_PrerequisitePlansKeepsFirstDeclarationAndTracksDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	p, err := Parse(writePlan(t, filepath.Join(dir, "plans"), "application", `# Plan: Application
+
+**Prerequisite Plans:** foundation
+**Prerequisite Plans:** replacement
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.PrerequisitePlans, []string{"foundation"}; !slices.Equal(got, want) {
+		t.Fatalf("PrerequisitePlans = %v, want first declaration %v", got, want)
+	}
+	if got, want := p.PrerequisiteLines, []int{3, 4}; !slices.Equal(got, want) {
+		t.Fatalf("PrerequisiteLines = %v, want %v", got, want)
 	}
 }
 

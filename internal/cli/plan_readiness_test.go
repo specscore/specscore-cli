@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,6 +143,11 @@ type readinessErrorWriter struct{}
 
 func (readinessErrorWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
 
+type readinessCloseErrorYAMLEnc struct{}
+
+func (readinessCloseErrorYAMLEnc) Encode(any) error { return nil }
+func (readinessCloseErrorYAMLEnc) Close() error     { return errors.New("close failed") }
+
 func TestPlanReadiness_ResolveAndEncodeErrors(t *testing.T) {
 	plansDir := setupPlansSpec(t)
 	writeReadinessPlanCLI(t, plansDir, "ready", "Approved", "", "queued")
@@ -154,6 +160,8 @@ func TestPlanReadiness_ResolveAndEncodeErrors(t *testing.T) {
 	cmd.SetArgs([]string{"ready"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected YAML encoding write error")
+	} else if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("YAML encoding exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
 
 	bare := t.TempDir()
@@ -161,6 +169,40 @@ func TestPlanReadiness_ResolveAndEncodeErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected project resolution error")
 	}
+}
+
+func TestPlanReadiness_OutputFailuresUseUnexpectedExit(t *testing.T) {
+	plansDir := setupPlansSpec(t)
+	writeReadinessPlanCLI(t, plansDir, "ready", "Approved", "", "queued")
+
+	t.Run("json encode", func(t *testing.T) {
+		swapJSON(t, errors.New("json failed"))
+		cmd := planReadinessCommand()
+		cmd.SetArgs([]string{"ready", "--format=json"})
+		if err := cmd.Execute(); exitCodeOfErr(err) != exitcode.Unexpected {
+			t.Fatalf("exit = %d, want %d; err=%v", exitCodeOfErr(err), exitcode.Unexpected, err)
+		}
+	})
+
+	t.Run("yaml close", func(t *testing.T) {
+		old := newYAMLEnc
+		newYAMLEnc = func(io.Writer) yamlEnc { return readinessCloseErrorYAMLEnc{} }
+		t.Cleanup(func() { newYAMLEnc = old })
+		cmd := planReadinessCommand()
+		cmd.SetArgs([]string{"ready", "--format=yaml"})
+		if err := cmd.Execute(); exitCodeOfErr(err) != exitcode.Unexpected {
+			t.Fatalf("exit = %d, want %d; err=%v", exitCodeOfErr(err), exitcode.Unexpected, err)
+		}
+	})
+
+	t.Run("text flush", func(t *testing.T) {
+		cmd := planReadinessCommand()
+		cmd.SetOut(readinessErrorWriter{})
+		cmd.SetArgs([]string{"ready", "--format=text"})
+		if err := cmd.Execute(); exitCodeOfErr(err) != exitcode.Unexpected {
+			t.Fatalf("exit = %d, want %d; err=%v", exitCodeOfErr(err), exitcode.Unexpected, err)
+		}
+	})
 }
 
 func TestReadinessCLIError_PreservesTypedErrorsAndMapsUntypedFailures(t *testing.T) {

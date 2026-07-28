@@ -71,8 +71,9 @@ type Plan struct {
 	Coordination      string   // value of `**Coordination:**` (empty when missing) — <owner>/<repo>@<branch> mutation-authority reference
 	CoordinationLine  int      // 1-based line of the field; 0 when absent
 	PrerequisitePlans []string // same-repo predecessor plan slugs from `**Prerequisite Plans:**`
-	PrerequisiteLine  int      // 1-based line of the field; 0 when absent
-	PrerequisiteRaw   string   // raw field value, retained so lint can distinguish malformed input
+	PrerequisiteLine  int      // 1-based line of the first field; 0 when absent
+	PrerequisiteLines []int    // every field occurrence, so duplicate headers cannot overwrite the first edge
+	PrerequisiteRaw   string   // first raw field value, retained so lint can distinguish malformed input
 	Mode              Mode     // `full` (default) or `stub`
 	ModeLine          int      // 1-based line of `**Mode:**`; 0 when absent
 	ModeRaw           string   // raw value as written (used by P-004 to report invalid tokens)
@@ -273,9 +274,15 @@ func ParseBytes(path string, data []byte) (*Plan, error) {
 				p.Coordination = val
 				p.CoordinationLine = i + 1
 			case "Prerequisite Plans":
-				p.PrerequisiteRaw = val
-				p.PrerequisiteLine = i + 1
-				p.PrerequisitePlans = splitPrerequisitePlans(val)
+				p.PrerequisiteLines = append(p.PrerequisiteLines, i+1)
+				// Keep the first declaration authoritative for discovery and
+				// readiness. A later duplicate is malformed data, never an
+				// opportunity to erase an earlier dependency.
+				if p.PrerequisiteLine == 0 {
+					p.PrerequisiteRaw = val
+					p.PrerequisiteLine = i + 1
+					p.PrerequisitePlans = splitPrerequisitePlans(val)
+				}
 			case "Mode":
 				p.ModeRaw = val
 				p.ModeLine = i + 1

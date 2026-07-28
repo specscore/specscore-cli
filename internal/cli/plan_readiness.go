@@ -73,15 +73,24 @@ func runPlanReadiness(cmd *cobra.Command, args []string) error {
 	}
 	switch format {
 	case "json":
-		return newJSONEnc(cmd.OutOrStdout()).Encode(doc)
+		if err := newJSONEnc(cmd.OutOrStdout()).Encode(doc); err != nil {
+			return exitcode.UnexpectedErrorf("encoding json: %v", err)
+		}
+		return nil
 	case "text":
-		return writePlanReadinessText(cmd.OutOrStdout(), doc)
+		if err := writePlanReadinessText(cmd.OutOrStdout(), doc); err != nil {
+			return exitcode.UnexpectedErrorf("writing text: %v", err)
+		}
+		return nil
 	default:
 		enc := newYAMLEnc(cmd.OutOrStdout())
 		if err := enc.Encode(doc); err != nil {
 			return exitcode.UnexpectedErrorf("encoding yaml: %v", err)
 		}
-		return enc.Close()
+		if err := enc.Close(); err != nil {
+			return exitcode.UnexpectedErrorf("closing yaml output: %v", err)
+		}
+		return nil
 	}
 }
 
