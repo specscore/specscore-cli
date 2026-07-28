@@ -1,6 +1,9 @@
 package lifecycle
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // resolutionHeading is the H2 heading under which an optional transition
 // --note is written, per lifecycle-transitions#REQ:optional-transition-note.
@@ -27,13 +30,31 @@ const resolutionHeading = "## Resolution"
 // post-commit rollback authority. Transaction-profile Task/Plan writers call
 // AppendResolutionNoteBytes inside their single artifact transaction.
 func AppendResolutionNote(artifactPath, note string) (original []byte, wrote bool, err error) {
+	return appendResolutionNoteAfterLine(artifactPath, note, 0)
+}
+
+// AppendResolutionNoteAfterLine writes note in the artifact body after the
+// 1-based afterLine anchor. Resolution-heading and footer discovery are both
+// limited to that body scope, so a Markdown example before a canonical title
+// or header cannot receive or suppress a real audit note. Pass 0 when the
+// whole document is the body; AppendResolutionNote does so for artifact kinds
+// that do not provide a structural body anchor.
+//
+// The empty-note, verbatim-write, original-byte, and rollback semantics are
+// identical to AppendResolutionNote. An anchor beyond the end of the file is
+// rejected without mutating it.
+func AppendResolutionNoteAfterLine(artifactPath, note string, afterLine int) (original []byte, wrote bool, err error) {
+	return appendResolutionNoteAfterLine(artifactPath, note, afterLine)
+}
+
+func appendResolutionNoteAfterLine(artifactPath, note string, afterLine int) (original []byte, wrote bool, err error) {
 	if strings.TrimSpace(note) == "" {
 		return nil, false, nil
 	}
 	err = TransformArtifact(artifactPath, func(before []byte) ([]byte, error) {
 		original = append([]byte(nil), before...)
 		var updated []byte
-		updated, wrote, err = AppendResolutionNoteBytes(before, note)
+		updated, wrote, err = AppendResolutionNoteAfterLineBytes(before, note, afterLine)
 		return updated, err
 	})
 	return original, wrote, err
@@ -41,11 +62,21 @@ func AppendResolutionNote(artifactPath, note string) (original []byte, wrote boo
 
 // AppendResolutionNoteBytes appends a resolution paragraph in memory.
 func AppendResolutionNoteBytes(orig []byte, note string) ([]byte, bool, error) {
+	return AppendResolutionNoteAfterLineBytes(orig, note, 0)
+}
+
+// AppendResolutionNoteAfterLineBytes is the snapshot-pure, body-scoped form
+// used by compound artifact transactions. afterLine is a 1-based anchor.
+func AppendResolutionNoteAfterLineBytes(orig []byte, note string, afterLine int) ([]byte, bool, error) {
 	if strings.TrimSpace(note) == "" {
 		return orig, false, nil
 	}
+	lines := splitKeepTerminators(orig)
+	if afterLine < 0 || afterLine > len(lines) {
+		return nil, false, fmt.Errorf("resolution-note body anchor line %d is outside 0..%d", afterLine, len(lines))
+	}
 	para := strings.TrimRight(note, "\n\r \t")
-	return joinLines(insertResolutionNote(splitKeepTerminators(orig), para)), true, nil
+	return joinLines(insertResolutionNoteAfterLine(lines, para, afterLine)), true, nil
 }
 
 // RestoreBody is the explicit legacy whole-body compensating writer. It is not
@@ -57,20 +88,21 @@ func RestoreBody(artifactPath string, original []byte) error {
 	})
 }
 
-// insertResolutionNote returns the lines with the note inserted: a new
-// paragraph appended to an existing `## Resolution` section, or a freshly
-// created section when none exists.
-func insertResolutionNote(lines []string, para string) []string {
-	if idx := findResolutionHeadingIndex(lines); idx >= 0 {
+// insertResolutionNoteAfterLine is the body-scoped form of
+// Resolution-note insertion. afterLine is a 1-based anchor: only lines
+// strictly after it participate in Resolution-heading and footer lookup.
+func insertResolutionNoteAfterLine(lines []string, para string, afterLine int) []string {
+	if idx := findResolutionHeadingIndexAfterLine(lines, afterLine); idx >= 0 {
 		return appendParagraphToSection(lines, idx, para)
 	}
-	return createResolutionSection(lines, para)
+	return createResolutionSectionAfterLine(lines, para, afterLine)
 }
 
-// findResolutionHeadingIndex returns the index of the `## Resolution` H2
-// heading line, or -1 when absent.
-func findResolutionHeadingIndex(lines []string) int {
-	for i, ln := range lines {
+// findResolutionHeadingIndexAfterLine returns the first Resolution heading
+// strictly after the 1-based afterLine anchor, or -1 when absent.
+func findResolutionHeadingIndexAfterLine(lines []string, afterLine int) int {
+	for i := afterLine; i < len(lines); i++ {
+		ln := lines[i]
 		body, _ := splitTerminator(ln)
 		if strings.TrimRight(body, " \t") == resolutionHeading {
 			return i
@@ -97,14 +129,16 @@ func appendParagraphToSection(lines []string, headingIdx int, para string) []str
 	return insertAt(lines, end, block)
 }
 
-// createResolutionSection inserts a fresh `## Resolution` section carrying
-// para, immediately before the footer line when present, else at EOF.
-func createResolutionSection(lines []string, para string) []string {
+// createResolutionSectionAfterLine inserts a fresh Resolution section into
+// the body after the 1-based afterLine anchor. Only a footer in that body can
+// act as the insertion point; a pre-anchor footer is prose or an example.
+func createResolutionSectionAfterLine(lines []string, para string, afterLine int) []string {
 	heading := resolutionHeading + "\n\n"
 	block := []string{heading}
 	block = append(block, paragraphBlock(para, false)...)
 
-	for i, ln := range lines {
+	for i := afterLine; i < len(lines); i++ {
+		ln := lines[i]
 		body, _ := splitTerminator(ln)
 		if isFooterLine(body) {
 			// Insert before the footer, ensuring a blank separator line

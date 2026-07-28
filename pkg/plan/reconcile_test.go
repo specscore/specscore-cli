@@ -215,6 +215,79 @@ func TestReconcile_HappyPath_EightTasksDraftToImplemented(t *testing.T) {
 	}
 }
 
+// Reconcile's marker and audit note belong to the canonical Plan, not to
+// similarly-shaped prose that appears before its title. The success assertion
+// is intentionally byte-exact so a future broad search cannot silently move
+// either audit record back into the pre-title fixture.
+func TestReconcile_PreTitleAuditSamplesDoNotSuppressCanonicalMarkerOrNote(t *testing.T) {
+	pinReconcileDate(t, "2026-07-28")
+	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
+	prelude := "## Resolution\n\npre-title Resolution example\n\n**Reconciled:** 1999-01-01 pre-title marker example\n\n"
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := prelude + string(body)
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "canonical reconciliation note", PostMutation: okHook,
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	want := strings.Replace(before,
+		"**Status:** planning\n",
+		"**Status:** complete\n",
+		1,
+	)
+	want = strings.Replace(want,
+		"**Status:** Draft\n",
+		"**Status:** Implemented\n**Reconciled:** 2026-07-28\n",
+		1,
+	)
+	want = strings.Replace(want,
+		"*This document follows the "+FormatURL+"*\n",
+		"\n## Resolution\n\n**Reconciled Draft → Implemented outside the tracked `change-status` flow** (1 task(s) marked complete; this did not walk the legal-transition matrix).\n\ncanonical reconciliation note\n*This document follows the "+FormatURL+"*\n",
+		1,
+	)
+	if got, readErr := os.ReadFile(path); readErr != nil {
+		t.Fatal(readErr)
+	} else if string(got) != want {
+		t.Fatalf("pre-title audit samples must not suppress canonical records:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestReconcile_PreTitleAuditSamples_PostMutationFailureRetainsCanonicalCommit(t *testing.T) {
+	pinReconcileDate(t, "2026-07-28")
+	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before = append([]byte("## Resolution\n\npre-title Resolution example\n\n**Reconciled:** 1999-01-01 pre-title marker example\n\n"), before...)
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	boom := errors.New("lint failed")
+
+	_, err = Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "canonical reconciliation note",
+		PostMutation: func() error { return boom },
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected post-mutation error, got %v", err)
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil {
+		t.Fatal(readErr)
+	} else if string(got) == string(before) || !strings.Contains(string(got), "**Status:** Implemented") || !strings.Contains(string(got), "canonical reconciliation note") {
+		t.Fatalf("post-mutation failure did not retain the complete canonical reconciliation:\n%s", got)
+	}
+}
+
 // AC: no-evidence — Evidence is genuinely optional; when omitted, no
 // "Evidence:" line is written.
 func TestReconcile_NoEvidence_NoEvidenceLineWritten(t *testing.T) {

@@ -102,6 +102,30 @@ func TestAppendResolutionNote_AppendToExisting(t *testing.T) {
 	}
 }
 
+// A caller with a structural title/header anchor can limit Resolution lookup
+// and footer insertion to the canonical body. Examples before that anchor are
+// left byte-for-byte alone.
+func TestAppendResolutionNoteAfterLine_IgnoresPreAnchorExamples(t *testing.T) {
+	prelude := "## Resolution\n\npre-title example\n\n" + footerLine + "\n\n"
+	body := prelude + "# Plan: Auth\n\n**Status:** Draft\n\n## Summary\n\nBody.\n\n" + footerLine + "\n"
+	path := writeNoteFixture(t, body)
+	afterTitle := strings.Count(prelude, "\n") + 1
+
+	original, wrote, err := AppendResolutionNoteAfterLine(path, "canonical audit note", afterTitle)
+	if err != nil {
+		t.Fatalf("AppendResolutionNoteAfterLine: %v", err)
+	}
+	if !wrote || string(original) != body {
+		t.Fatalf("result = (wrote=%t, original=%q), want (true, original bytes)", wrote, string(original))
+	}
+
+	want := prelude + "# Plan: Auth\n\n**Status:** Draft\n\n## Summary\n\nBody.\n\n" +
+		"## Resolution\n\ncanonical audit note\n" + footerLine + "\n"
+	if got := readFile(t, path); got != want {
+		t.Fatalf("body-scoped note mutation mismatch:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
 // empty / whitespace-only note → no-op.
 func TestAppendResolutionNote_EmptyIsNoOp(t *testing.T) {
 	t.Parallel()

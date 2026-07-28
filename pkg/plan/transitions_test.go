@@ -142,6 +142,73 @@ func TestChangeStatus_Withdrawn_WritesResolution(t *testing.T) {
 	}
 }
 
+// A pre-title Resolution sample is not part of the Plan artifact. The note
+// must append to the canonical post-title Resolution section instead.
+func TestChangeStatus_PreTitleResolutionSampleDoesNotReceiveCanonicalNote(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Approved")
+	prelude := "## Resolution\n\npre-title example that must remain untouched\n\n"
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyWithCanonicalResolution := strings.Replace(
+		string(body),
+		"## Open Questions\n\nNone at this time.",
+		"## Resolution\n\ncanonical existing audit\n\n## Open Questions\n\nNone at this time.",
+		1,
+	)
+	before := prelude + bodyWithCanonicalResolution
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanWithdrawn,
+		Note: "canonical transition note", PostMutation: okHook,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+
+	want := strings.Replace(before, "**Status:** Approved\n", "**Status:** Withdrawn\n", 1)
+	want = strings.Replace(want,
+		"canonical existing audit\n\n## Open Questions",
+		"canonical existing audit\n\n\ncanonical transition note\n## Open Questions",
+		1,
+	)
+	if got, err := os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	} else if string(got) != want {
+		t.Fatalf("pre-title Resolution sample must not receive the note:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestChangeStatus_PreTitleResolutionSample_PostMutationFailureRetainsCanonicalCommit(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Approved")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before = append([]byte("## Resolution\n\npre-title example\n\n"), before...)
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	boom := errors.New("lint failed")
+
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanWithdrawn,
+		Note: "canonical transition note", PostMutation: func() error { return boom },
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected post-mutation error, got %v", err)
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil {
+		t.Fatal(readErr)
+	} else if string(got) == string(before) || !strings.Contains(string(got), "**Status:** Withdrawn") || !strings.Contains(string(got), "canonical transition note") {
+		t.Fatalf("post-mutation failure did not retain the complete canonical transition:\n%s", got)
+	}
+}
+
 func TestChangeStatus_Superseded_WritesSuccessorAndNote(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Approved")
 	_, err := ChangeStatus(ChangeStatusOptions{

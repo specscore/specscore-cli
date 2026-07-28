@@ -313,9 +313,9 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 			lines[t.StatusLine-1] = "**Status:** " + string(StatusBlocked)
 		}
 		lines[p.StatusLine-1] = "**Status:** " + string(to)
-		lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
+		lines = insertReconciledMarkerIfAbsent(lines, p.TitleLine-1, p.StatusLine-1, reconcileTodayUTC())
 		noteText := reconcileNoteTextWithTarget(from, to, changed, StatusBlocked, opts.Note, opts.Evidence, nil)
-		updated, _, _ := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
+		updated, _, _ := lifecycle.AppendResolutionNoteAfterLineBytes([]byte(strings.Join(lines, "\n")), noteText, p.TitleLine)
 		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, updated, nil
 	}
 
@@ -395,10 +395,10 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 		lines[t.StatusLine-1] = "**Status:** " + string(StatusComplete)
 	}
 	lines[p.StatusLine-1] = "**Status:** " + string(to)
-	lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
+	lines = insertReconciledMarkerIfAbsent(lines, p.TitleLine-1, p.StatusLine-1, reconcileTodayUTC())
 
 	noteText := reconcileNoteTextWithTarget(from, to, changedTasks, StatusComplete, opts.Note, opts.Evidence, overrides)
-	updated, _, _ := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
+	updated, _, _ := lifecycle.AppendResolutionNoteAfterLineBytes([]byte(strings.Join(lines, "\n")), noteText, p.TitleLine)
 
 	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, updated, nil
 }
@@ -432,13 +432,20 @@ func preserveReadinessError(slug string, err error) error {
 
 // insertReconciledMarkerIfAbsent inserts a `**Reconciled:** <date>` header
 // line immediately after lines[statusIdx] (the plan's 0-based **Status:**
-// line), unless a `**Reconciled:**` line already exists anywhere in the file.
+// line), unless the canonical post-title Plan header already contains a
+// `**Reconciled:**` line. A pre-title sample or a body example must not
+// suppress the actual audit marker.
 // The marker records only the date of the FIRST reconciliation; later
 // reconciliations (e.g. after more tasks are added) still get their own
 // dated paragraph in `## Resolution`, so nothing is lost — the header stays a
 // single, stable, grep-able "this plan was reconciled at least once" signal.
-func insertReconciledMarkerIfAbsent(lines []string, statusIdx int, date string) []string {
-	for _, ln := range lines {
+func insertReconciledMarkerIfAbsent(lines []string, titleIdx, statusIdx int, date string) []string {
+	for i := titleIdx + 1; i < len(lines); i++ {
+		body := strings.TrimSuffix(lines[i], "\r")
+		if _, ok := canonicalUnindentedATXH2(body); ok {
+			break
+		}
+		ln := lines[i]
 		if strings.HasPrefix(strings.TrimSpace(ln), reconciledMarkerPrefix) {
 			return lines
 		}

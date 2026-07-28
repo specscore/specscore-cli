@@ -179,7 +179,7 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		if opts.Successor != "" {
 			updated, _, _ = lifecycle.SetSupersededByBytes(updated, opts.Successor)
 		}
-		updated, _, _ = lifecycle.AppendResolutionNoteBytes(updated, opts.Note)
+		updated, _, _ = lifecycle.AppendResolutionNoteAfterLineBytes(updated, opts.Note, parsed.TitleLine)
 		return updated, nil
 	})
 	if err != nil {
