@@ -247,8 +247,10 @@ func TestUnixProcessTreeCancelErrorPaths(t *testing.T) {
 // TestExecTimeoutStillKillsGroupAfterSignalFailure is an end-to-end proof of
 // the fail-closed cancellation path. The TERM and KILL seams deliberately do
 // not send real signals, leaving a descendant alive with an inherited stdout
-// pipe. Cmd.WaitDelay must close that pipe and kill the direct command process
-// rather than letting an OS process-control failure make Deliver wait forever.
+// pipe. The direct shell waits for that child, so it is still alive when the
+// delivery context expires. Cmd.WaitDelay must then close the pipe and kill
+// the direct command rather than letting an OS process-control failure make
+// Deliver wait forever.
 func TestExecTimeoutStillKillsGroupAfterSignalFailure(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -267,10 +269,31 @@ func TestExecTimeoutStillKillsGroupAfterSignalFailure(t *testing.T) {
 			t.Cleanup(func() { execStdout = originalStdout })
 			execStdout = &bytes.Buffer{}
 
+			childPIDFile := filepath.Join(t.TempDir(), "child.pid")
+			// Register cleanup before starting the command so an assertion failure
+			// after the child starts cannot leave the deliberately unsignalled
+			// descendant alive for its full sleep duration.
+			t.Cleanup(func() {
+				pidBytes, err := os.ReadFile(childPIDFile)
+				if err != nil {
+					return
+				}
+				pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+				if err == nil && pid > 0 {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			})
+
 			sentinel := errors.New("injected process-group signal failure")
 			calls := make([]syscall.Signal, 0, 2)
+			cancelObserved := false
 			signalUnixProcessGroup = func(_ int, sig syscall.Signal) error {
+				cancelObserved = true
 				calls = append(calls, sig)
+				// This seam intentionally never delegates to originalSignal: every
+				// path models a real process-group signalling failure. WaitDelay is
+				// the load-bearing fallback that stops the direct shell and closes
+				// the inherited output pipe.
 				if (sig == syscall.SIGTERM && tc.failTERM) || (sig == syscall.SIGKILL && tc.failKILL) {
 					return sentinel
 				}
@@ -278,11 +301,10 @@ func TestExecTimeoutStillKillsGroupAfterSignalFailure(t *testing.T) {
 			}
 
 			timeout := 75 * time.Millisecond
-			childPIDFile := filepath.Join(t.TempDir(), "child.pid")
 			start := time.Now()
 			err := NewExec([]string{
 				"sh", "-c",
-				`sh -c 'printf "%s" "$$" > "$1"; trap "" TERM; exec sleep 30' child "$1" & exit 0`,
+				`sh -c 'printf "%s" "$$" > "$1"; trap "" TERM; exec sleep 30' child "$1" & wait`,
 				"sh", childPIDFile,
 			}, nil, timeout).
 				Deliver(context.Background(), execSampleEvent(t))
@@ -297,14 +319,17 @@ func TestExecTimeoutStillKillsGroupAfterSignalFailure(t *testing.T) {
 			if max := timeout + execSIGTERMGrace + execProcessCleanupWait + 500*time.Millisecond; elapsed > max {
 				t.Fatalf("Deliver elapsed = %v, want bounded cleanup within %v", elapsed, max)
 			}
+			if !cancelObserved {
+				t.Fatal("process-tree cancellation was not observed")
+			}
 			if len(calls) != 2 || calls[0] != syscall.SIGTERM || calls[1] != syscall.SIGKILL {
 				t.Fatalf("signals = %v, want [SIGTERM SIGKILL]", calls)
 			}
 
 			pid := waitForUnixChildPID(t, childPIDFile, time.Second)
-			t.Cleanup(func() {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			})
+			if err := syscall.Kill(pid, 0); err != nil {
+				t.Fatalf("descendant %d did not outlive the suppressed group signals: %v", pid, err)
+			}
 		})
 	}
 }
