@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // statusMirrorChecker enforces artifact-frontmatter-convention REQ:status-field,
@@ -40,11 +42,20 @@ func (c *statusMirrorChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	for _, t := range docTypeTargets {
 		target := t
+		var bodyStatusErr error
 		err := target.walk(specRoot, func(path string, content []byte) {
+			if bodyStatusErr != nil {
+				return
+			}
 			var v Violation
 			var ok bool
 			if target.statusBearing {
-				v, ok = statusMirrorViolation(specRoot, path, content, target.description)
+				body, err := canonicalArtifactBodyStatus(path, content, target)
+				if err != nil {
+					bodyStatusErr = err
+					return
+				}
+				v, ok = statusMirrorViolation(specRoot, path, content, body, target.description)
 			} else {
 				v, ok = statusLessStatusViolation(specRoot, path, content, target.description)
 			}
@@ -54,6 +65,9 @@ func (c *statusMirrorChecker) check(specRoot string) ([]Violation, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+		if bodyStatusErr != nil {
+			return nil, bodyStatusErr
 		}
 	}
 	return violations, nil
@@ -85,8 +99,7 @@ func statusLessStatusViolation(specRoot, path string, content []byte, descriptio
 // status-bearing artifact. When the body carries no `**Status:**` line there is
 // nothing to mirror (the missing-body-status rule is enforced per type
 // elsewhere), so the artifact is skipped.
-func statusMirrorViolation(specRoot, path string, content []byte, description string) (Violation, bool) {
-	body := extractBodyStatus(content)
+func statusMirrorViolation(specRoot, path string, content []byte, body, description string) (Violation, bool) {
 	if body == "" {
 		return Violation{}, false
 	}
@@ -132,15 +145,20 @@ func (c *statusMirrorChecker) fix(specRoot string) error {
 		}
 		target := t
 		var writeErr error
+		var bodyStatusErr error
 		err := target.walk(specRoot, func(path string, content []byte) {
-			if writeErr != nil {
+			if writeErr != nil || bodyStatusErr != nil {
 				return
 			}
 			fields, present := parseLeadingFrontmatter(content)
 			if !present {
 				return
 			}
-			body := extractBodyStatus(content)
+			body, err := canonicalArtifactBodyStatus(path, content, target)
+			if err != nil {
+				bodyStatusErr = err
+				return
+			}
 			if body == "" {
 				return
 			}
@@ -156,11 +174,38 @@ func (c *statusMirrorChecker) fix(specRoot string) error {
 		if err != nil {
 			return err
 		}
+		if bodyStatusErr != nil {
+			return bodyStatusErr
+		}
 		if writeErr != nil {
 			return writeErr
 		}
 	}
 	return nil
+}
+
+// parsePlanForArtifactStatus is injectable to exercise and preserve the error
+// path around the canonical Plan parser. Production always uses plan.Parse.
+var parsePlanForArtifactStatus = plan.Parse
+
+// canonicalArtifactBodyStatus returns the only body status eligible for a
+// mirrored frontmatter field. A Plan must use its established structural parser
+// rather than a raw Markdown scan: only the first structural `# Plan:` title's
+// header band may supply `**Status:**`; frontmatter, comments, code samples,
+// pre-title prose, and later body examples are excluded. Other artifact types
+// retain their existing body-status convention.
+func canonicalArtifactBodyStatus(path string, content []byte, target docTypeTarget) (string, error) {
+	if !target.planArtifact {
+		return extractBodyStatus(content), nil
+	}
+	parsed, err := parsePlanForArtifactStatus(path)
+	if err != nil {
+		return "", fmt.Errorf("parsing Plan artifact %q for canonical status: %w", path, err)
+	}
+	if !parsed.HasPlanTitle {
+		return "", nil
+	}
+	return strings.Trim(strings.TrimSpace(parsed.Status), "`\"'"), nil
 }
 
 // frontmatterStatus returns the leading frontmatter `status:` value, or "" when

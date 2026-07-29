@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/idea"
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // docTypeTarget describes one document type subject to the adherence-footer
@@ -27,6 +28,7 @@ type docTypeTarget struct {
 	url           string
 	severity      string
 	statusBearing bool
+	planArtifact  bool
 	walk          func(specRoot string, fn func(path string, content []byte)) error
 }
 
@@ -76,6 +78,7 @@ var docTypeTargets = []docTypeTarget{
 		url:           "https://specscore.md/plan-specification",
 		severity:      "warn",
 		statusBearing: true,
+		planArtifact:  true,
 		walk:          walkPlanArtifacts,
 	},
 	{
@@ -369,6 +372,13 @@ func walkFlatPlanFiles(specRoot string, fn func(path string, content []byte)) er
 			continue
 		}
 		path := filepath.Join(plansDir, entry.Name())
+		parsed, parseErr := plan.Parse(path)
+		if parseErr != nil {
+			return parseErr
+		}
+		if !parsed.HasPlanTitle {
+			continue
+		}
 		content, readErr := readFlatPlanFile(path)
 		if readErr != nil {
 			return readErr

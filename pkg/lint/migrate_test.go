@@ -1,10 +1,13 @@
 package lint
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 func featureDoc(status, footerURL string) string {
@@ -114,6 +117,53 @@ func TestMigrate_StatusBearingNoBodyStatus(t *testing.T) {
 	}
 	if strings.Contains(got, "status:") {
 		t.Errorf("no status should be added without a body status:\n%s", got)
+	}
+}
+
+func TestMigrate_FlatNonPlanIsIgnored(t *testing.T) {
+	original := "# Random notes\n\n**Status:** Draft\n"
+	specRoot := writeSpec(t, map[string]string{"plans/notes.md": original})
+	changed, err := Migrate(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("non-Plan flat markdown must not gain Plan frontmatter: %v", changed)
+	}
+	if got := readFile(t, filepath.Join(specRoot, "plans", "notes.md")); got != original {
+		t.Fatalf("non-Plan flat markdown was mutated:\nwant:\n%s\ngot:\n%s", original, got)
+	}
+}
+
+func TestMigrate_PlanIgnoresFauxBodyStatus(t *testing.T) {
+	original := "---\nformat: https://specscore.md/plan-specification\n---\n\n" +
+		"**Status:** Pre-title example\n\n" +
+		"```markdown\n**Status:** Fenced example\n```\n\n" +
+		"# Plan: Genuine\n\n## Summary\n\nNo actual status.\n"
+	specRoot := writeSpec(t, map[string]string{"plans/genuine.md": original})
+	changed, err := Migrate(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("faux Plan body statuses must not create a mirror: %v", changed)
+	}
+	if got := readFile(t, filepath.Join(specRoot, "plans", "genuine.md")); got != original {
+		t.Fatalf("migration rewrote a Plan from faux metadata:\nwant:\n%s\ngot:\n%s", original, got)
+	}
+}
+
+func TestMigrate_PlanStatusParserErrorIsReturned(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"plans/genuine.md": "# Plan: Genuine\n\n**Status:** Draft\n",
+	})
+	original := parsePlanForArtifactStatus
+	parsePlanForArtifactStatus = func(string) (*plan.Plan, error) {
+		return nil, errors.New("forced Plan parser failure")
+	}
+	t.Cleanup(func() { parsePlanForArtifactStatus = original })
+	if _, err := Migrate(specRoot); err == nil {
+		t.Fatal("expected Plan parser error from migration")
 	}
 }
 

@@ -31,6 +31,7 @@ func TestWalkFlatPlanFiles(t *testing.T) {
 		mkdir(t, filepath.Join(plansDir, "legacy"))
 		writeFile(t, filepath.Join(plansDir, "README.md"), "# Plans\n")
 		writeFile(t, filepath.Join(plansDir, "notes.txt"), "skip\n")
+		writeFile(t, filepath.Join(plansDir, "random.md"), "# Random notes\n")
 		writeFile(t, filepath.Join(plansDir, "social-circles.md"), "# Plan: Social Circles\n")
 		writeFile(t, filepath.Join(plansDir, "legacy", "README.md"), "# Plan: Legacy\n")
 		var visited []string
@@ -41,6 +42,21 @@ func TestWalkFlatPlanFiles(t *testing.T) {
 		}
 		if got, want := strings.Join(visited, ","), "social-circles.md"; got != want {
 			t.Fatalf("visited %q, want %q", got, want)
+		}
+	})
+
+	t.Run("parser error is returned", func(t *testing.T) {
+		root := t.TempDir()
+		plansDir := filepath.Join(root, "plans")
+		if err := os.MkdirAll(plansDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		brokenPath := filepath.Join(plansDir, "broken.md")
+		if err := os.Symlink(filepath.Join(root, "missing.md"), brokenPath); err != nil {
+			t.Skipf("cannot create a broken symlink: %v", err)
+		}
+		if err := walkFlatPlanFiles(root, func(string, []byte) {}); err == nil {
+			t.Fatal("expected Plan parser error for an unreadable candidate")
 		}
 	})
 
