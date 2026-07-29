@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -46,7 +47,7 @@ type specTreeTransaction struct {
 	provenLifecycleState *specTreeSnapshot
 	ownedLifecyclePaths  map[string]bool
 	preLintUnownedPaths  []string
-	opaquePostMutation   bool
+	recoveryPaths        []string
 }
 
 // lifecycleReleaseError retains the lifecycle command error as the unwrap
@@ -77,9 +78,7 @@ func (err *lifecycleReleaseError) Unwrap() error {
 // Testable indirections for rollback I/O failures.
 var (
 	transactionReadFile     = os.ReadFile
-	transactionWriteFile    = os.WriteFile
 	transactionRemove       = os.Remove
-	transactionMkdirAll     = os.MkdirAll
 	transactionOpenFile     = os.OpenFile
 	transactionCloseFile    = func(file *os.File) error { return file.Close() }
 	transactionLstat        = os.Lstat
@@ -89,41 +88,24 @@ var (
 	transactionRemoveAll    = os.RemoveAll
 	transactionScratchMkdir = os.MkdirAll
 	transactionScratchWrite = os.WriteFile
-	transactionSnapshot     = snapshotSpecTreeForTransaction
-	transactionLockFile     = acquireLifecycleFileLock
-	transactionProcessAlive = defaultProcessAlive
+	// The no-follow traversal supplies an already-open descriptor to this
+	// reader; keeping it injectable makes descriptor-read failures testable
+	// without ever reopening a path by name.
+	transactionReadSnapshotFile = io.ReadAll
+	transactionSnapshot         = snapshotSpecTreeForTransaction
+	transactionPublishTree      = publishSpecTreeNoReplace
+	// transactionAfterRecoveryClaim is a deterministic test seam between the
+	// two no-replace renames. Production leaves it as a no-op; tests install a
+	// raw successor here to prove the second rename never overwrites it.
+	transactionAfterRecoveryClaim = func() {}
+	transactionLockFile           = acquireLifecycleFileLock
+	transactionProcessAlive       = defaultProcessAlive
 )
 
 var errLifecycleLockHeld = errors.New("lifecycle lock is held")
 
 func snapshotSpecTreeForTransaction(specRoot string) (specTreeSnapshot, error) {
-	snapshot := specTreeSnapshot{
-		files:       make(map[string]specTreeFile),
-		directories: make(map[string]os.FileMode),
-	}
-	err := filepath.Walk(specRoot, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, _ := filepath.Rel(specRoot, path) // filepath.Walk only yields descendants.
-		if info.IsDir() {
-			snapshot.directories[rel] = info.Mode()
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		content, err := transactionReadFile(path)
-		if err != nil {
-			return err
-		}
-		snapshot.files[rel] = specTreeFile{content: content, mode: info.Mode()}
-		return nil
-	})
-	if err != nil {
-		return specTreeSnapshot{}, fmt.Errorf("snapshotting spec tree: %w", err)
-	}
-	return snapshot, nil
+	return snapshotSpecTreeNoFollow(specRoot)
 }
 
 func beginSpecTreeTransaction(specRoot string, lifecycleOwnedPaths ...string) (*specTreeTransaction, error) {
@@ -207,40 +189,39 @@ func lifecycleLockOwnerPath(lockPath string) string {
 
 func acquireLifecycleLock(projectRoot string) (string, *os.File, error) {
 	lockPath := filepath.Join(projectRoot, ".specscore-lifecycle.lock")
-	for attempt := 0; attempt < 2; attempt++ {
-		lockFile, err := transactionOpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-		if err == nil {
-			if err := transactionLockFile(lockFile); err != nil {
-				_ = transactionCloseFile(lockFile)
-				if errors.Is(err, errLifecycleLockHeld) {
-					return "", nil, exitcode.UnexpectedErrorf("another SpecScore lifecycle transaction is active at %s", lockPath)
-				}
-				return "", nil, exitcode.UnexpectedErrorf("acquiring lifecycle transaction lock %s: %v", lockPath, err)
+	lockFile, err := transactionOpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err == nil {
+		if err := transactionLockFile(lockFile); err != nil {
+			_ = transactionCloseFile(lockFile)
+			if errors.Is(err, errLifecycleLockHeld) {
+				return "", nil, exitcode.UnexpectedErrorf("another SpecScore lifecycle transaction is active at %s", lockPath)
 			}
-			return lockPath, lockFile, nil
+			return "", nil, exitcode.UnexpectedErrorf("acquiring lifecycle transaction lock %s: %v", lockPath, err)
 		}
-		_, inspectErr := legacyLifecycleLockInfo(lockPath)
-		if inspectErr != nil {
-			// A non-directory open failure (permissions, I/O, a failing test
-			// seam) is not evidence of a legacy lock. Only a verified directory
-			// enters recovery; otherwise preserve the original open error.
-			if os.IsNotExist(inspectErr) {
-				return "", nil, exitcode.UnexpectedErrorf("acquiring lifecycle transaction lock %s: %v", lockPath, err)
-			}
-			return "", nil, inspectErr
-		}
-		stale, err := lifecycleLegacyLockIsStale(lockPath)
-		if err != nil {
-			return "", nil, err
-		}
-		if !stale {
-			return "", nil, exitcode.UnexpectedErrorf("another SpecScore lifecycle transaction is active at %s", lockPath)
-		}
-		if err := releaseLegacyLifecycleLock(lockPath); err != nil {
-			return "", nil, exitcode.UnexpectedErrorf("removing stale lifecycle transaction lock %s: %v", lockPath, err)
-		}
+		return lockPath, lockFile, nil
 	}
-	return "", nil, exitcode.UnexpectedErrorf("acquiring lifecycle transaction lock %s: legacy lock was recreated concurrently", lockPath)
+	_, inspectErr := legacyLifecycleLockInfo(lockPath)
+	if inspectErr != nil {
+		// A non-directory open failure (permissions, I/O, a failing test
+		// seam) is not evidence of a legacy lock. Only a verified directory
+		// enters recovery; otherwise preserve the original open error.
+		if os.IsNotExist(inspectErr) {
+			return "", nil, exitcode.UnexpectedErrorf("acquiring lifecycle transaction lock %s: %v", lockPath, err)
+		}
+		return "", nil, inspectErr
+	}
+	stale, err := lifecycleLegacyLockIsStale(lockPath)
+	if err != nil {
+		return "", nil, err
+	}
+	if !stale {
+		return "", nil, exitcode.UnexpectedErrorf("another SpecScore lifecycle transaction is active at %s", lockPath)
+	}
+	// A legacy lock is a directory and can be replaced between any pathname
+	// revalidation and rmdir. Do not reclaim it automatically: deleting a
+	// successor would be worse than requiring a one-time manual cleanup of a
+	// stale pre-file-lock artifact.
+	return "", nil, exitcode.UnexpectedErrorf("legacy lifecycle transaction lock at %s requires manual recovery; refusing non-atomic directory deletion", lockPath)
 }
 
 func legacyLifecycleLockInfo(lockPath string) (os.FileInfo, error) {
@@ -289,55 +270,7 @@ func lifecycleLegacyLockIsStale(lockPath string) (bool, error) {
 }
 
 func releaseLegacyLifecycleLock(lockPath string) error {
-	lockInfo, err := legacyLifecycleLockInfo(lockPath)
-	if err != nil {
-		return err
-	}
-	stale, err := lifecycleLegacyLockIsStale(lockPath)
-	if err != nil {
-		return err
-	}
-	if !stale {
-		return exitcode.UnexpectedErrorf("refusing to remove active or ownerless lifecycle transaction lock at %s", lockPath)
-	}
-	ownerPath := lifecycleLockOwnerPath(lockPath)
-	ownerInfo, err := transactionLstat(ownerPath)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("revalidating lifecycle transaction lock owner %s: %v", ownerPath, err)
-	}
-	if ownerInfo.Mode()&os.ModeSymlink != 0 || !ownerInfo.Mode().IsRegular() {
-		return exitcode.UnexpectedErrorf("refusing changed lifecycle transaction lock owner at %s", ownerPath)
-	}
-	if current, err := legacyLifecycleLockInfo(lockPath); err != nil || !os.SameFile(lockInfo, current) {
-		if err != nil {
-			return err
-		}
-		return exitcode.UnexpectedErrorf("lifecycle transaction lock was replaced before stale-lock recovery at %s", lockPath)
-	}
-	currentOwner, err := transactionLstat(ownerPath)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("revalidating lifecycle transaction lock owner %s immediately before removal: %v", ownerPath, err)
-	}
-	if currentOwner.Mode()&os.ModeSymlink != 0 || !currentOwner.Mode().IsRegular() || !os.SameFile(ownerInfo, currentOwner) {
-		return exitcode.UnexpectedErrorf("lifecycle transaction lock owner was replaced before stale-lock recovery at %s", ownerPath)
-	}
-	if err := transactionRemove(ownerPath); err != nil && !os.IsNotExist(err) {
-		return exitcode.UnexpectedErrorf("releasing lifecycle transaction lock owner %s: %v", ownerPath, err)
-	}
-	// os.Remove only removes an empty directory. Re-check the directory identity
-	// after removing the stale owner, so a replacement (including a fresh lock)
-	// is never removed by this recovery path.
-	current, err := legacyLifecycleLockInfo(lockPath)
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(lockInfo, current) {
-		return exitcode.UnexpectedErrorf("lifecycle transaction lock was replaced during stale-lock recovery at %s", lockPath)
-	}
-	if err := transactionRemove(lockPath); err != nil && !os.IsNotExist(err) {
-		return exitcode.UnexpectedErrorf("releasing lifecycle transaction lock %s: %v", lockPath, err)
-	}
-	return nil
+	return exitcode.UnexpectedErrorf("legacy lifecycle transaction lock at %s requires manual recovery; refusing non-atomic directory deletion", lockPath)
 }
 
 // releaseLifecycleLockFile delegates platform-specific ordering. Unix can
@@ -377,22 +310,17 @@ func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string
 				"uncoordinated spec changes before lint --fix at %s", strings.Join(unownedPaths, ", ")))
 		}
 
-		cloneRoot, err := transactionMkdirTemp("", "specscore-lint-transaction-*")
+		cloneRoot, err := stageSpecTreeSnapshot(transaction.specRoot, before)
 		if err != nil {
 			transaction.postLintSnapshot = &before
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("creating isolated lint tree: %v", err))
 		}
-		defer func() { _ = transactionRemoveAll(cloneRoot) }()
-		if rootMode, ok := before.directories["."]; ok {
-			if err := transactionChmod(cloneRoot, rootMode.Perm()); err != nil {
-				transaction.postLintSnapshot = &before
-				return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("preparing isolated lint tree: %v", err))
+		stageRetained := false
+		defer func() {
+			if !stageRetained {
+				_ = transactionRemoveAll(cloneRoot)
 			}
-		}
-		if err := materializeSpecSnapshot(cloneRoot, before); err != nil {
-			transaction.postLintSnapshot = &before
-			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("materializing isolated lint tree: %v", err))
-		}
+		}()
 		runErr := run(cloneRoot)
 		if runErr != nil {
 			// No linter bytes were applied to the live tree, so only the
@@ -422,11 +350,25 @@ func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string
 			transaction.preLintUnownedPaths = changed
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("uncoordinated spec changes during lint --fix at %s", strings.Join(changed, ", ")))
 		}
-		if err := applySpecSnapshotDiff(transaction.specRoot, before, afterClone); err != nil {
+		if reflect.DeepEqual(before, afterClone) {
+			transaction.postLintSnapshot = &before
+			return lifecycle.DeferRollback(nil)
+		}
+		recoveryPath, err := transactionPublishTree(transaction.specRoot, cloneRoot)
+		if err != nil {
+			if recoveryPath != "" {
+				// The publisher already moved the old tree aside. Retain the
+				// stage as well: the subsequent no-replace claim found a raw
+				// successor, so deleting either candidate would lose evidence.
+				stageRetained = true
+				transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath, cloneRoot)
+				err = fmt.Errorf("%w; retained staged lint tree at %s", err, cloneRoot)
+			}
 			current, _ := transactionSnapshot(transaction.specRoot)
 			transaction.postLintSnapshot = &current
-			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("applying lint mutation manifest: %v", err))
+			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("atomically publishing isolated lint tree: %v", err))
 		}
+		transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath)
 		after, err := transactionSnapshot(transaction.specRoot)
 		if err != nil {
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("snapshotting spec after lint manifest: %v", err))
@@ -441,11 +383,38 @@ func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string
 	}
 }
 
+// stageSpecTreeSnapshot materializes a private sibling of specRoot.  It must
+// be a sibling, rather than a system-temp directory, because publication uses
+// a same-directory no-replace rename as its atomic claim.
+func stageSpecTreeSnapshot(specRoot string, snapshot specTreeSnapshot) (string, error) {
+	if err := validateSpecTreeSnapshot(snapshot); err != nil {
+		return "", err
+	}
+	stageRoot, err := transactionMkdirTemp(filepath.Dir(specRoot), ".specscore-lint-stage-")
+	if err != nil {
+		return "", err
+	}
+	if rootMode, ok := snapshot.directories["."]; ok {
+		if err := transactionChmod(stageRoot, rootMode.Perm()); err != nil {
+			_ = transactionRemoveAll(stageRoot)
+			return "", fmt.Errorf("preparing isolated lint tree: %w", err)
+		}
+	}
+	if err := materializeSpecSnapshot(stageRoot, snapshot); err != nil {
+		_ = transactionRemoveAll(stageRoot)
+		return "", fmt.Errorf("materializing isolated lint tree: %w", err)
+	}
+	return stageRoot, nil
+}
+
 // materializeSpecSnapshot creates an isolated copy for lint execution. It
 // deliberately uses direct filesystem I/O rather than transaction restore
 // seams: fault-injection of the real rollback path must not prevent a private
 // scratch tree from being populated before that rollback is exercised.
 func materializeSpecSnapshot(root string, snapshot specTreeSnapshot) error {
+	if err := validateSpecTreeSnapshot(snapshot); err != nil {
+		return err
+	}
 	directories := make([]string, 0, len(snapshot.directories))
 	for rel := range snapshot.directories {
 		directories = append(directories, rel)
@@ -474,6 +443,39 @@ func materializeSpecSnapshot(root string, snapshot specTreeSnapshot) error {
 	return nil
 }
 
+// validateSpecTreeSnapshot accepts only the relative names produced by the
+// descriptor-relative scanner. It is deliberately pure validation: copy-on-
+// write publication must never inspect a live path and then later mutate it.
+func validateSpecTreeSnapshot(snapshot specTreeSnapshot) error {
+	if _, ok := snapshot.directories["."]; !ok {
+		return errors.New("snapshot is missing its root directory")
+	}
+	for _, paths := range []map[string]os.FileMode{snapshot.directories} {
+		for rel := range paths {
+			if rel == "." {
+				continue
+			}
+			if err := validateSnapshotRelativePath(rel); err != nil {
+				return err
+			}
+		}
+	}
+	for rel := range snapshot.files {
+		if err := validateSnapshotRelativePath(rel); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSnapshotRelativePath(rel string) error {
+	clean := filepath.Clean(rel)
+	if clean == "." || clean != rel || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("invalid snapshot path %q", rel)
+	}
+	return nil
+}
+
 // captureLifecycleMutationState records the exact filesystem state produced by
 // the lifecycle package after its final artifact write and before it calls the
 // post-mutation hook. A later pre-lint snapshot must match this evidence for
@@ -489,38 +491,6 @@ func (transaction *specTreeTransaction) captureLifecycleMutationState() error {
 	return nil
 }
 
-// postMutationHookWith records a custom lint hook as part of this transaction.
-// Issue lifecycle transitions use a scoped verifier, while other artifacts use
-// the whole-tree verifier above; both require the same rollback boundary.
-func (transaction *specTreeTransaction) postMutationHookWith(run func() error) func() error {
-	return func() error {
-		before, err := transactionSnapshot(transaction.specRoot)
-		if err != nil {
-			return exitcode.UnexpectedErrorf("snapshotting spec before lint --fix: %v", err)
-		}
-		transaction.postMutationStarted = true
-		transaction.opaquePostMutation = true
-		transaction.preLintSnapshot = &before
-		if unownedPaths := transaction.unownedPreLintPaths(before); len(unownedPaths) > 0 {
-			transaction.preLintUnownedPaths = unownedPaths
-			// Do not let lint touch an unproven external edit. Returning a
-			// deferred error prevents the lifecycle package's blind source
-			// rollback; finish leaves every path in place and gives the caller
-			// an explicit recovery error.
-			transaction.postLintSnapshot = &before
-			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf(
-				"uncoordinated spec changes before lint --fix at %s", strings.Join(unownedPaths, ", ")))
-		}
-		runErr := run()
-		after, snapshotErr := transactionSnapshot(transaction.specRoot)
-		if snapshotErr != nil {
-			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("snapshotting spec after lint --fix: %v", snapshotErr))
-		}
-		transaction.postLintSnapshot = &after
-		return lifecycle.DeferRollback(runErr)
-	}
-}
-
 // finish restores lint-owned paths after a post-mutation failure. Errors before
 // the hook began are handled by the lifecycle package's own rollback and require
 // no transaction restoration.
@@ -533,9 +503,6 @@ func (transaction *specTreeTransaction) finish(actionErr error) error {
 	}
 	if len(transaction.preLintUnownedPaths) > 0 {
 		return exitcode.UnexpectedErrorf("%v\nrollback preserved unowned changes detected before lint --fix at %s; inspect and reconcile manually", actionErr, strings.Join(transaction.preLintUnownedPaths, ", "))
-	}
-	if transaction.opaquePostMutation && len(changedSnapshotPaths(*transaction.preLintSnapshot, *transaction.postLintSnapshot)) > 0 {
-		return exitcode.UnexpectedErrorf("%v\nrollback preserved mutations from an opaque post-mutation hook; inspect and reconcile manually", actionErr)
 	}
 	if err := transaction.restoreLintMutations(); err != nil {
 		var concurrent *concurrentSpecChangesError
@@ -600,8 +567,18 @@ func (transaction *specTreeTransaction) restoreLintMutations() error {
 	// lint output. It is intentionally the rollback baseline: packages receive
 	// DeferredRollbackError and therefore do not blindly restore their source
 	// before this compare-and-restore step can protect raw filesystem edits.
-	filePaths := changedSnapshotFiles(transaction.snapshot, *transaction.postLintSnapshot)
-	directoryPaths := changedSnapshotDirectories(transaction.snapshot, *transaction.postLintSnapshot)
+	// Include paths that appeared after the lint manifest as well as paths the
+	// manifest itself changed. A raw writer can add an otherwise unrelated
+	// file; publishing the old snapshot in that case would hide its work in a
+	// recovery tree without surfacing a conflict.
+	filePaths := unionSnapshotPaths(
+		changedSnapshotFiles(transaction.snapshot, *transaction.postLintSnapshot),
+		changedSnapshotFiles(*transaction.postLintSnapshot, current),
+	)
+	directoryPaths := unionSnapshotPaths(
+		changedSnapshotDirectories(transaction.snapshot, *transaction.postLintSnapshot),
+		changedSnapshotDirectories(*transaction.postLintSnapshot, current),
+	)
 	var conflicts []string
 	for _, rel := range filePaths {
 		if snapshotFileEqual(current, transaction.snapshot, rel) {
@@ -624,64 +601,43 @@ func (transaction *specTreeTransaction) restoreLintMutations() error {
 		return &concurrentSpecChangesError{paths: conflicts}
 	}
 
-	for _, rel := range directoryPaths {
-		if _, existed := transaction.snapshot.directories[rel]; !existed {
-			continue
-		}
-		if _, existsNow := current.directories[rel]; existsNow {
-			continue
-		}
-		directory := transaction.snapshot.directories[rel]
-		path, err := transactionSafePath(transaction.specRoot, rel)
-		if err != nil {
-			return fmt.Errorf("refusing to recreate pre-transition directory %s: %w", rel, err)
-		}
-		if err := transactionMkdirAll(path, directory.Perm()); err != nil {
-			return fmt.Errorf("recreating pre-transition directory %s: %w", rel, err)
-		}
+	stageRoot, err := stageSpecTreeSnapshot(transaction.specRoot, transaction.snapshot)
+	if err != nil {
+		return fmt.Errorf("staging pre-transition snapshot for atomic rollback: %w", err)
 	}
-	for _, rel := range filePaths {
-		original, existed := transaction.snapshot.files[rel]
-		if !existed {
-			continue
+	stageRetained := false
+	defer func() {
+		if !stageRetained {
+			_ = transactionRemoveAll(stageRoot)
 		}
-		path, err := transactionSafePath(transaction.specRoot, rel)
-		if err != nil {
-			return fmt.Errorf("refusing to restore pre-transition file %s: %w", rel, err)
+	}()
+	recoveryPath, err := transactionPublishTree(transaction.specRoot, stageRoot)
+	if err != nil {
+		if recoveryPath != "" {
+			stageRetained = true
+			transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath, stageRoot)
+			return fmt.Errorf("atomically publishing pre-transition snapshot: %w; retained staged snapshot at %s", err, stageRoot)
 		}
-		if err := transactionMkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return fmt.Errorf("recreating pre-transition directory for %s: %w", rel, err)
-		}
-		if err := transactionWriteFile(path, original.content, original.mode.Perm()); err != nil {
-			return fmt.Errorf("restoring pre-transition file %s: %w", rel, err)
-		}
+		return fmt.Errorf("atomically publishing pre-transition snapshot: %w", err)
 	}
-	for _, rel := range filePaths {
-		if _, existed := transaction.snapshot.files[rel]; existed {
-			continue
-		}
-		path, err := transactionSafePath(transaction.specRoot, rel)
-		if err != nil {
-			return fmt.Errorf("refusing to remove lint-created file %s: %w", rel, err)
-		}
-		if err := transactionRemove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing lint-created file %s: %w", rel, err)
-		}
-	}
-	sort.Slice(directoryPaths, func(i, j int) bool { return len(directoryPaths[i]) > len(directoryPaths[j]) })
-	for _, rel := range directoryPaths {
-		if _, existed := transaction.snapshot.directories[rel]; existed || rel == "." {
-			continue
-		}
-		path, err := transactionSafePath(transaction.specRoot, rel)
-		if err != nil {
-			return fmt.Errorf("refusing to remove lint-created directory %s: %w", rel, err)
-		}
-		if err := transactionRemove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing lint-created directory %s: %w", rel, err)
-		}
-	}
+	transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath)
 	return nil
+}
+
+func unionSnapshotPaths(left, right []string) []string {
+	paths := make(map[string]bool, len(left)+len(right))
+	for _, path := range left {
+		paths[path] = true
+	}
+	for _, path := range right {
+		paths[path] = true
+	}
+	result := make([]string, 0, len(paths))
+	for path := range paths {
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func changedSnapshotFiles(before, after specTreeSnapshot) []string {
@@ -729,64 +685,34 @@ func changedSnapshotPaths(before, after specTreeSnapshot) []string {
 	return paths
 }
 
-// applySpecSnapshotDiff applies a manifest materialized in an isolated tree.
-// Each target is checked for a symlink before it is mutated; callers first
-// compare the entire live tree with before, which makes this a fail-closed
-// compare-and-apply step rather than an opaque in-place lint invocation.
+// applySpecSnapshotDiff is retained for focused callers and tests. It never
+// mutates a path inside the live tree: after a conservative snapshot comparison
+// it publishes a complete sibling tree with the same no-replace primitive used
+// by lifecycle transactions.
 func applySpecSnapshotDiff(specRoot string, before, after specTreeSnapshot) error {
-	directories := changedSnapshotDirectories(before, after)
-	for _, rel := range directories {
-		if _, existed := after.directories[rel]; !existed {
-			continue
-		}
-		path, err := transactionSafePath(specRoot, rel)
-		if err != nil {
-			return err
-		}
-		if err := transactionMkdirAll(path, after.directories[rel].Perm()); err != nil {
-			return err
-		}
+	current, err := transactionSnapshot(specRoot)
+	if err != nil {
+		return fmt.Errorf("snapshotting live tree before atomic manifest publication: %w", err)
 	}
-	for _, rel := range changedSnapshotFiles(before, after) {
-		file, exists := after.files[rel]
-		if !exists {
-			continue
-		}
-		path, err := transactionSafePath(specRoot, rel)
-		if err != nil {
-			return err
-		}
-		if err := transactionMkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return err
-		}
-		if err := transactionWriteFile(path, file.content, file.mode.Perm()); err != nil {
-			return err
-		}
+	if !reflect.DeepEqual(current, before) {
+		return &concurrentSpecChangesError{paths: changedSnapshotPaths(before, current)}
 	}
-	for _, rel := range changedSnapshotFiles(before, after) {
-		if _, exists := after.files[rel]; exists {
-			continue
-		}
-		path, err := transactionSafePath(specRoot, rel)
-		if err != nil {
-			return err
-		}
-		if err := transactionRemove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	stageRoot, err := stageSpecTreeSnapshot(specRoot, after)
+	if err != nil {
+		return err
 	}
-	sort.Slice(directories, func(i, j int) bool { return len(directories[i]) > len(directories[j]) })
-	for _, rel := range directories {
-		if _, exists := after.directories[rel]; exists || rel == "." {
-			continue
+	stageRetained := false
+	defer func() {
+		if !stageRetained {
+			_ = transactionRemoveAll(stageRoot)
 		}
-		path, err := transactionSafePath(specRoot, rel)
-		if err != nil {
-			return err
+	}()
+	if recoveryPath, err := transactionPublishTree(specRoot, stageRoot); err != nil {
+		if recoveryPath != "" {
+			stageRetained = true
+			return fmt.Errorf("%w; retained staged manifest at %s", err, stageRoot)
 		}
-		if err := transactionRemove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+		return err
 	}
 	return nil
 }
@@ -818,124 +744,26 @@ func snapshotDirectoryHasExternalDescendant(current, expected specTreeSnapshot, 
 	return false
 }
 
-// transactionSafePath refuses to restore through a symlinked spec root, path
-// component, or final path. Snapshotting deliberately does not follow links;
-// restoration must preserve that guarantee or a link swapped in after the
-// snapshot can redirect a rollback write outside the specification tree.
-func transactionSafePath(specRoot, rel string) (string, error) {
-	rootInfo, err := transactionLstat(specRoot)
-	if err != nil {
-		return "", fmt.Errorf("inspecting spec root: %w", err)
-	}
-	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
-		return "", fmt.Errorf("refusing non-directory or symlinked spec root %s", specRoot)
-	}
-	clean := filepath.Clean(rel)
-	if clean == "." {
-		return specRoot, nil
-	}
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("invalid transaction path %q", rel)
-	}
-	path := specRoot
-	parts := strings.Split(clean, string(os.PathSeparator))
-	for i, part := range parts {
-		path = filepath.Join(path, part)
-		info, err := transactionLstat(path)
-		if os.IsNotExist(err) {
-			return filepath.Join(specRoot, clean), nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("inspecting transaction path %s: %w", path, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("refusing symlinked transaction path %s", path)
-		}
-		if i < len(parts)-1 && !info.IsDir() {
-			return "", fmt.Errorf("refusing non-directory transaction path component %s", path)
-		}
-	}
-	return filepath.Join(specRoot, clean), nil
-}
-
-// restore returns the spec tree's regular files and directories to their
-// snapshot state. It removes files and empty directories created by the lint
-// pass and recreates files or directories it removed.
+// restore rolls a tree back through the same sibling copy-on-write publication
+// used by live lifecycle commands. It deliberately never walks a live path and
+// then writes it: a raw editor's old inode is retained in the recovery tree.
 func (snapshot specTreeSnapshot) restore(specRoot string) error {
-	var createdDirectories []string
-	err := filepath.Walk(specRoot, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, _ := filepath.Rel(specRoot, path) // filepath.Walk only yields descendants.
-		if info.IsDir() {
-			if rel != "." {
-				if _, existed := snapshot.directories[rel]; !existed {
-					createdDirectories = append(createdDirectories, path)
-				}
-			}
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		if _, existed := snapshot.files[rel]; existed {
-			return nil
-		}
-		if _, err := transactionSafePath(specRoot, rel); err != nil {
-			return err
-		}
-		return transactionRemove(path)
-	})
+	stageRoot, err := stageSpecTreeSnapshot(specRoot, snapshot)
 	if err != nil {
-		return fmt.Errorf("removing lint-created files: %w", err)
+		return fmt.Errorf("staging snapshot restore: %w", err)
 	}
-	sort.Slice(createdDirectories, func(i, j int) bool {
-		return len(createdDirectories[i]) > len(createdDirectories[j])
-	})
-	for _, path := range createdDirectories {
-		rel, _ := filepath.Rel(specRoot, path)
-		if _, err := transactionSafePath(specRoot, rel); err != nil {
-			return fmt.Errorf("refusing to remove lint-created directory %s: %w", path, err)
+	stageRetained := false
+	defer func() {
+		if !stageRetained {
+			_ = transactionRemoveAll(stageRoot)
 		}
-		if err := transactionRemove(path); err != nil {
-			return fmt.Errorf("removing lint-created directory %s: %w", path, err)
+	}()
+	if recoveryPath, err := transactionPublishTree(specRoot, stageRoot); err != nil {
+		if recoveryPath != "" {
+			stageRetained = true
+			return fmt.Errorf("atomically publishing snapshot restore: %w; retained staged snapshot at %s", err, stageRoot)
 		}
-	}
-
-	directories := make([]string, 0, len(snapshot.directories))
-	for rel := range snapshot.directories {
-		directories = append(directories, rel)
-	}
-	sort.Strings(directories)
-	for _, rel := range directories {
-		directory := snapshot.directories[rel]
-		path, err := transactionSafePath(specRoot, rel)
-		if err != nil {
-			return fmt.Errorf("refusing to recreate snapshot directory %s: %w", rel, err)
-		}
-		if err := transactionMkdirAll(path, directory.Perm()); err != nil {
-			return fmt.Errorf("recreating snapshot directory %s: %w", rel, err)
-		}
-	}
-
-	paths := make([]string, 0, len(snapshot.files))
-	for rel := range snapshot.files {
-		paths = append(paths, rel)
-	}
-	sort.Strings(paths)
-	for _, rel := range paths {
-		file := snapshot.files[rel]
-		path, err := transactionSafePath(specRoot, rel)
-		if err != nil {
-			return fmt.Errorf("refusing to restore snapshot file %s: %w", rel, err)
-		}
-		if err := transactionMkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return fmt.Errorf("recreating snapshot directory for %s: %w", rel, err)
-		}
-		if err := transactionWriteFile(path, file.content, file.mode.Perm()); err != nil {
-			return fmt.Errorf("restoring snapshot file %s: %w", rel, err)
-		}
+		return fmt.Errorf("atomically publishing snapshot restore: %w", err)
 	}
 	return nil
 }

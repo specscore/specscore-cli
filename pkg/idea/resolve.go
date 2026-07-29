@@ -2,6 +2,7 @@ package idea
 
 import (
 	"path/filepath"
+	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
@@ -14,6 +15,15 @@ import (
 // default (configurable-ideas-path#req:ideas-path-default).
 func ResolveIdeasDir(specDir string) string {
 	projectRoot := filepath.Dir(specDir)
+	// Lifecycle lint runs against a sibling `.specscore-lint-stage-*` tree so
+	// it can later be published with a same-parent no-replace rename. Its
+	// parent is still the real project root, which means normal configuration
+	// lookup would otherwise redirect an Ideas fixer to the live module. A
+	// staged tree is deliberately self-contained and therefore always uses its
+	// own conventional ideas/ child.
+	if strings.HasPrefix(filepath.Base(filepath.Clean(specDir)), ".specscore-lint-stage-") {
+		return filepath.Join(specDir, "ideas")
+	}
 	cfg, err := projectdef.ReadSpecConfig(projectRoot)
 	if err != nil {
 		return filepath.Join(specDir, "ideas")

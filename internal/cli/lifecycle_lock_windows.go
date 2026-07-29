@@ -26,9 +26,11 @@ func acquireLifecycleFileLock(file *os.File) error {
 }
 
 // Windows refuses to unlink a file while the locking handle is open unless it
-// was opened with delete sharing. Release the byte-range lock and close first;
-// if a concurrent opener wins the pathname race, a leftover unlocked file is
-// harmless because acquisition always takes an OS lock before proceeding.
+// was opened with delete sharing. Release the byte-range lock and close it, but
+// deliberately retain the stable unlocked pathname.  Removing it after close
+// would race a successor that acquired and locked a new file at the same path.
+// Acquisition always locks the opened handle, so a retained unlocked file is
+// harmless and is the only safe cross-process release behaviour here.
 func releaseLifecycleLockedFile(lockPath string, lockFile *os.File) error {
 	handle := windows.Handle(lockFile.Fd())
 	unlockErr := windows.UnlockFileEx(handle, 0, 1, 0, &windows.Overlapped{})
@@ -41,12 +43,6 @@ func releaseLifecycleLockedFile(lockPath string, lockFile *os.File) error {
 	}
 	if unlockErr != nil {
 		return exitcode.UnexpectedErrorf("unlocking lifecycle transaction lock %s: %v", lockPath, unlockErr)
-	}
-	if err := transactionRemove(lockPath); err != nil && !os.IsNotExist(err) {
-		// The handle is closed and the lock released. Do not turn an otherwise
-		// completed command into a failure merely because a benign stale file
-		// remains on a Windows filesystem with delayed delete semantics.
-		return nil
 	}
 	return nil
 }

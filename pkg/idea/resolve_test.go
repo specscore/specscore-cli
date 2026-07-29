@@ -51,3 +51,14 @@ func TestResolveIdeasDir_Override(t *testing.T) {
 		t.Errorf("ResolveSeedsDir = %q, want %q", got, filepath.Join(root, "ideas", "seeds"))
 	}
 }
+
+// A lifecycle lint stage lives beside spec/ but must never honour a project
+// override that would point its fixer back at the live tree.
+func TestResolveIdeasDir_LifecycleStageStaysSelfContained(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, "modules:\n  - path: \"\"\n    path_overrides:\n      ideas_path: ideas\n")
+	stage := filepath.Join(root, ".specscore-lint-stage-safe")
+	if got, want := ResolveIdeasDir(stage), filepath.Join(stage, "ideas"); got != want {
+		t.Errorf("ResolveIdeasDir(stage) = %q, want %q", got, want)
+	}
+}
