@@ -250,9 +250,9 @@ func (c *studioToolbarChecker) check(specRoot string) ([]Violation, error) {
 // found.
 func studioToolbarLineIndex(lines []string) int {
 	start := 0
-	if len(lines) > 0 && strings.TrimRight(lines[0], "\r") == "---" {
+	if len(lines) > 0 && isLeadingFrontmatterFence(lines[0]) {
 		for i := 1; i < len(lines); i++ {
-			if strings.TrimRight(lines[i], "\r") == "---" {
+			if isFrontmatterFence(lines[i]) {
 				start = i + 1
 				break
 			}

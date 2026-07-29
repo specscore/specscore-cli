@@ -93,7 +93,7 @@ func TestWalkPlansIndex_NoPlansDirNoError(t *testing.T) {
 	}
 }
 
-func TestWalkPlanReadmes_SkipsReservedDirsAndTasks(t *testing.T) {
+func TestWalkPlanArtifacts_SkipsReservedDirsAndTasks(t *testing.T) {
 	root := t.TempDir()
 	plansDir := filepath.Join(root, "plans")
 	// Plan README (should be visited)
@@ -103,7 +103,7 @@ func TestWalkPlanReadmes_SkipsReservedDirsAndTasks(t *testing.T) {
 	writeFile(t, filepath.Join(plansDir, "README.md"), "# Plans Index\n")
 	// Compatibility flat Plan (should be visited).
 	writeFile(t, filepath.Join(plansDir, "flat-plan.md"), "# Plan: Flat Plan\n")
-	// Task README inside a plan (should be skipped by walkPlanReadmes)
+	// Task README inside a plan (should be skipped by walkPlanArtifacts)
 	mkdir(t, filepath.Join(plansDir, "my-plan", "tasks", "task-1"))
 	writeFile(t, filepath.Join(plansDir, "my-plan", "tasks", "task-1", "README.md"), "# Task 1\n")
 	// _reserved dir (should be skipped entirely)
@@ -111,7 +111,7 @@ func TestWalkPlanReadmes_SkipsReservedDirsAndTasks(t *testing.T) {
 	writeFile(t, filepath.Join(plansDir, "_archive", "old-plan", "README.md"), "# Old Plan\n")
 
 	var paths []string
-	err := walkPlanReadmes(root, func(path string, content []byte) {
+	err := walkPlanArtifacts(root, func(path string, content []byte) {
 		paths = append(paths, path)
 	})
 	if err != nil {

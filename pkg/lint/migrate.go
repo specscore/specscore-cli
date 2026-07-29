@@ -73,10 +73,11 @@ func migrateArtifact(content []byte, t docTypeTarget) []byte {
 // its leading frontmatter block. When a complete block exists each field is
 // upserted (existing key rewritten, missing key inserted before the closing
 // fence), preserving other lines. When no complete block exists, a fresh
-// `---`-fenced block carrying the fields is prepended.
+// `---`-opened block carrying the fields is prepended. A complete existing
+// block may use either `---` or `...` as its closer.
 func ensureFrontmatter(content []byte, fields [][2]string) []byte {
 	lines := strings.Split(string(content), "\n")
-	if len(lines) > 0 && strings.TrimRight(lines[0], "\r") == "---" && hasClosingFence(lines) {
+	if len(lines) > 0 && isLeadingFrontmatterFence(lines[0]) && hasClosingFence(lines) {
 		for _, f := range fields {
 			lines = upsertFrontmatterField(lines, f[0], f[1])
 		}
@@ -92,11 +93,11 @@ func ensureFrontmatter(content []byte, fields [][2]string) []byte {
 	return []byte(b.String())
 }
 
-// hasClosingFence reports whether lines (whose first line opens a `---` fence)
-// contains a later `---` closing fence.
+// hasClosingFence reports whether lines (whose first line opens a frontmatter
+// fence) contain a later `---` or `...` closing fence.
 func hasClosingFence(lines []string) bool {
 	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], "\r") == "---" {
+		if isFrontmatterFence(lines[i]) {
 			return true
 		}
 	}

@@ -102,6 +102,29 @@ func TestStatusMirrorChecker_Check(t *testing.T) {
 	}
 }
 
+// A flat spec/plans/<slug>.md is the canonical Plan shape. It must be checked
+// alongside the legacy directory-form README so drift cannot bypass the
+// status-mirror contract merely by using the newer layout.
+func TestStatusMirrorChecker_ChecksFlatPlanArtifact(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"plans/social-circles.md": "---\nformat: https://specscore.md/plan-specification\nstatus: Draft\n---\n\n# Plan: Social Circles\n\n**Status:** Approved\n",
+	})
+	violations, err := newStatusMirrorChecker().check(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected one status-mirror violation for the flat Plan, got %+v", violations)
+	}
+	v := violations[0]
+	if v.Rule != "status-mirror" || filepath.ToSlash(v.File) != "plans/social-circles.md" {
+		t.Fatalf("flat Plan was not reported as status-mirror drift: %+v", v)
+	}
+	if !strings.Contains(v.Message, "does not mirror body") {
+		t.Errorf("unexpected violation message: %q", v.Message)
+	}
+}
+
 // TestStatusMirrorChecker_StatusLessRejectsStatus covers REQ:lint-status-mirror
 // case (b): a status-less type (features-index README) carrying a frontmatter
 // `status:` is flagged, while the same type with no `status:` passes — keyed by
@@ -401,6 +424,7 @@ func TestBodyAfterFrontmatter(t *testing.T) {
 		{"no opening fence", "# Title\nbody\n", "# Title\nbody\n"},
 		{"opening without closing", "---\nformat: x\nbody\n", "---\nformat: x\nbody\n"},
 		{"complete block", "---\nformat: x\n---\nbody\n", "body\n"},
+		{"dotted closer", "---\nformat: x\n...\nbody\n", "body\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -408,6 +432,22 @@ func TestBodyAfterFrontmatter(t *testing.T) {
 				t.Errorf("bodyAfterFrontmatter = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDottedFrontmatterCloserScopesStatusMirrorParserAndFix(t *testing.T) {
+	content := "---\nformat: x\n...\n# Plan: Sample\n\nstatus: prose that is not frontmatter\n**Status:** Approved\n"
+	fields, present := parseLeadingFrontmatter([]byte(content))
+	if !present || fields["format"] != "x" {
+		t.Fatalf("dotted closer was not parsed as a complete frontmatter block: present=%v fields=%v", present, fields)
+	}
+	if got := extractBodyStatus([]byte(content)); got != "Approved" {
+		t.Fatalf("body status = %q, want Approved", got)
+	}
+	got := string(setFrontmatterStatus([]byte(content), "Approved"))
+	want := "---\nformat: x\nstatus: Approved\n...\n# Plan: Sample\n\nstatus: prose that is not frontmatter\n**Status:** Approved\n"
+	if got != want {
+		t.Fatalf("dotted-closer fix crossed into body or changed the closer:\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
 

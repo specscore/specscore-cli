@@ -175,8 +175,8 @@ func RollbackBytes(current []byte, originalStatusLine string) ([]byte, error) {
 }
 
 // findFrontmatterStatusLineIndex returns the index of the `status:` line inside
-// a leading `---`-fenced YAML frontmatter block, or -1 when the file has no
-// such block or the block carries no `status:` key. The search stops at the
+// a leading YAML frontmatter block, or -1 when the file has no such block or
+// the block carries no `status:` key. The search stops at either `---` or `...`
 // closing fence so a body line is never mistaken for the mirror.
 func findFrontmatterStatusLineIndex(lines []string) int {
 	if len(lines) == 0 {
@@ -187,7 +187,7 @@ func findFrontmatterStatusLineIndex(lines []string) int {
 	}
 	for i := 1; i < len(lines); i++ {
 		body, _ := splitTerminator(lines[i])
-		if body == "---" {
+		if IsFrontmatterFence(body) {
 			return -1
 		}
 		if fmStatusLineRe.MatchString(body) {

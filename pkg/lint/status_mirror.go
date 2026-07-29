@@ -195,20 +195,21 @@ func extractBodyStatus(content []byte) string {
 // rule's — see fix).
 func setFrontmatterStatus(content []byte, status string) []byte {
 	lines := strings.Split(string(content), "\n")
-	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+	if len(lines) == 0 || !isLeadingFrontmatterFence(lines[0]) {
 		return content
 	}
 	return []byte(strings.Join(upsertFrontmatterField(lines, "status", status), "\n"))
 }
 
 // upsertFrontmatterField sets `key: value` within the leading frontmatter block
-// (lines[0] == "---" up to the next "---"): an existing top-level `key:` line is
-// rewritten in place, otherwise a new line is inserted just before the closing
-// fence. Other lines are preserved. When there is no closing fence the lines are
-// returned unchanged. The caller guarantees lines[0] opens a fence.
+// (from the opening fence through its `---` or `...` closer): an existing
+// top-level `key:` line is rewritten in place, otherwise a new line is inserted
+// just before the closing fence. Other lines are preserved. When there is no
+// closing fence the lines are returned unchanged. The caller guarantees lines[0]
+// opens a fence.
 func upsertFrontmatterField(lines []string, key, value string) []string {
 	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], "\r") != "---" {
+		if !isFrontmatterFence(lines[i]) {
 			continue
 		}
 		// lines[i] is the closing fence; lines[1:i] is the block body.

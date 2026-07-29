@@ -72,11 +72,11 @@ var docTypeTargets = []docTypeTarget{
 		walk:        walkIdeasIndex,
 	},
 	{
-		description:   "Plan README",
+		description:   "Plan artifact",
 		url:           "https://specscore.md/plan-specification",
 		severity:      "warn",
 		statusBearing: true,
-		walk:          walkPlanReadmes,
+		walk:          walkPlanArtifacts,
 	},
 	{
 		description:   "Task README",
@@ -341,10 +341,50 @@ func walkFeatureReadmesExcludingIndex(specRoot string, fn func(path string, cont
 	})
 }
 
-// walkPlanReadmes invokes fn for every directory-form Plan README under
-// specRoot/plans/**/README.md and every compatibility flat Plan at
-// specRoot/plans/*.md. It excludes specRoot/plans/README.md (the plans-index,
-// walked separately) and any README.md inside a reserved _-prefixed directory.
+// walkPlanArtifacts invokes fn for every Plan shape the current contract
+// supports: a canonical flat spec/plans/<slug>.md artifact and the historical
+// directory-form README. Keeping the pair in one walker prevents status- and
+// frontmatter rules from silently protecting only the legacy shape.
+func walkPlanArtifacts(specRoot string, fn func(path string, content []byte)) error {
+	if err := walkFlatPlanFiles(specRoot, fn); err != nil {
+		return err
+	}
+	return walkPlanReadmes(specRoot, fn)
+}
+
+// walkFlatPlanFiles invokes fn for direct .md children of spec/plans, except
+// README.md (the plans index). Nested markdown belongs to a directory-form
+// Plan, Task, or other sub-artifact and is handled by its dedicated walker.
+func walkFlatPlanFiles(specRoot string, fn func(path string, content []byte)) error {
+	plansDir := filepath.Join(specRoot, "plans")
+	entries, err := os.ReadDir(plansDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "README.md" || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(plansDir, entry.Name())
+		content, readErr := readFlatPlanFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		fn(path, content)
+	}
+	return nil
+}
+
+// readFlatPlanFile is injectable so the walker can be tested when an entry
+// disappears or becomes unreadable between directory enumeration and reading.
+var readFlatPlanFile = os.ReadFile
+
+// walkPlanReadmes invokes fn for every Plan README under specRoot/plans/**/README.md,
+// excluding specRoot/plans/README.md (which is the plans-index, walked separately)
+// and any README.md inside a reserved _-prefixed directory.
 func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) error {
 	plansDir := filepath.Join(specRoot, "plans")
 	info, err := os.Stat(plansDir)
@@ -361,8 +401,7 @@ func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) erro
 			}
 			return nil
 		}
-		isFlatPlan := filepath.Dir(path) == plansDir && info.Name() != "README.md" && strings.EqualFold(filepath.Ext(info.Name()), ".md")
-		if info.Name() != "README.md" && !isFlatPlan {
+		if info.Name() != "README.md" {
 			return nil
 		}
 		// Skip the plans-index itself (handled by walkPlansIndex).

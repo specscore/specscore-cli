@@ -167,6 +167,12 @@ func TestEnsureFrontmatter(t *testing.T) {
 			t.Errorf("got %q", got)
 		}
 	})
+	t.Run("dotted closer is preserved", func(t *testing.T) {
+		got := string(ensureFrontmatter([]byte("---\nformat: old\n...\n\n# T\n"), fields))
+		if got != "---\nformat: u\nstatus: Draft\n...\n\n# T\n" {
+			t.Errorf("got %q", got)
+		}
+	})
 	t.Run("opening fence without closing prepends", func(t *testing.T) {
 		got := string(ensureFrontmatter([]byte("---\nformat: x\nno close\n"), fields))
 		if !strings.HasPrefix(got, "---\nformat: u\nstatus: Draft\n---\n\n---\n") {
@@ -178,6 +184,9 @@ func TestEnsureFrontmatter(t *testing.T) {
 func TestHasClosingFence(t *testing.T) {
 	if !hasClosingFence([]string{"---", "k: v", "---"}) {
 		t.Error("expected true with closing fence")
+	}
+	if !hasClosingFence([]string{"---", "k: v", "..."}) {
+		t.Error("expected dotted closer to close frontmatter")
 	}
 	if hasClosingFence([]string{"---", "k: v"}) {
 		t.Error("expected false without closing fence")

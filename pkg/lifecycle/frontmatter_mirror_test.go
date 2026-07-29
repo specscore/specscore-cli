@@ -68,6 +68,7 @@ func TestFindFrontmatterStatusLineIndex(t *testing.T) {
 		{"no opening fence", "# Title\n\n**Status:** Draft\n", -1},
 		{"status before closing fence", "---\nformat: x\nstatus: Draft\n---\n", 2},
 		{"status after closing fence is not the mirror", "---\nformat: x\n---\nstatus: Draft\n", -1},
+		{"dotted closer blocks body status", "---\nformat: x\n...\nstatus: Draft\n", -1},
 		{"opening fence never closed, no status", "---\nformat: x\nbody\n", -1},
 		{"BOM-prefixed opening fence", "\ufeff---\nformat: x\nstatus: Draft\n---\n", 2},
 	}
@@ -78,6 +79,35 @@ func TestFindFrontmatterStatusLineIndex(t *testing.T) {
 				t.Errorf("findFrontmatterStatusLineIndex = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// A dotted YAML closer must end the mirror scope. In particular, Rewrite and
+// Rollback must not treat a later body `status:` prose line as a mirror field.
+func TestRewriteRollback_DottedCloserNeverRewritesBodyStatusProse(t *testing.T) {
+	body := "---\nformat: https://specscore.md/idea-specification\n...\n# Idea: Sample\n\nstatus: prose must remain unchanged\n**Status:** Draft\n"
+	path := writeFixture(t, body)
+	originalLine, err := Rewrite(path, IdeaApproved)
+	if err != nil {
+		t.Fatalf("Rewrite: %v", err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantUpdated := strings.Replace(body, "**Status:** Draft", "**Status:** Approved", 1)
+	if string(updated) != wantUpdated {
+		t.Fatalf("Rewrite changed body prose outside the canonical status line:\nwant:\n%s\ngot:\n%s", wantUpdated, updated)
+	}
+	if err := Rollback(path, originalLine); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	restored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != body {
+		t.Fatalf("Rollback changed body prose or failed to restore the artifact:\nwant:\n%s\ngot:\n%s", body, restored)
 	}
 }
 

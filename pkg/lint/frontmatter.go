@@ -2,10 +2,25 @@ package lint
 
 import "strings"
 
-// parseLeadingFrontmatter extracts a leading YAML-frontmatter block delimited
-// by `---` fence lines at the very top of content and returns its top-level
-// scalar key/value pairs. present is false when content has no leading
-// frontmatter block (no opening fence, or no closing fence).
+// isFrontmatterFence recognizes either YAML document marker accepted as a
+// frontmatter fence. A frontmatter block starts with `---`; YAML also permits
+// `...` as its closing marker. Keeping this recognition shared prevents a
+// body field after a dotted closer from being parsed as frontmatter.
+func isFrontmatterFence(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return trimmed == "---" || trimmed == "..."
+}
+
+// isLeadingFrontmatterFence additionally accepts a UTF-8 BOM on the physical
+// first line. The BOM is source encoding, not part of the fence syntax.
+func isLeadingFrontmatterFence(line string) bool {
+	return isFrontmatterFence(strings.TrimPrefix(line, "\ufeff"))
+}
+
+// parseLeadingFrontmatter extracts a leading YAML-frontmatter block at the
+// very top of content and returns its top-level scalar key/value pairs. The
+// opening fence is `---`; the closer may be `---` or `...`. present is false
+// when content has no complete leading frontmatter block.
 //
 // Only top-level `key: value` scalar lines are captured; indented (nested)
 // lines, blank lines, and `#` comments are skipped. The
@@ -15,13 +30,13 @@ import "strings"
 // single or double quotes on a value are stripped.
 func parseLeadingFrontmatter(content []byte) (fields map[string]string, present bool) {
 	lines := strings.Split(string(content), "\n")
-	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+	if len(lines) == 0 || !isLeadingFrontmatterFence(lines[0]) {
 		return nil, false
 	}
 
 	closing := -1
 	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], "\r") == "---" {
+		if isFrontmatterFence(lines[i]) {
 			closing = i
 			break
 		}
@@ -48,15 +63,15 @@ func parseLeadingFrontmatter(content []byte) (fields map[string]string, present 
 }
 
 // frontmatterEndIndex returns the index of the first content line after a
-// complete leading `---`-fenced frontmatter block, or 0 when there is no opening
-// fence or no closing fence. Parsers anchor their title/header scan to this so a
-// leading frontmatter block does not displace the title.
+// complete leading frontmatter block, or 0 when there is no opening fence or no
+// closing fence. Parsers anchor their title/header scan to this so a leading
+// frontmatter block does not displace the title.
 func frontmatterEndIndex(lines []string) int {
-	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+	if len(lines) == 0 || !isLeadingFrontmatterFence(lines[0]) {
 		return 0
 	}
 	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], "\r") == "---" {
+		if isFrontmatterFence(lines[i]) {
 			return i + 1
 		}
 	}
@@ -64,17 +79,17 @@ func frontmatterEndIndex(lines []string) int {
 }
 
 // bodyAfterFrontmatter returns content with any complete leading YAML
-// frontmatter block (a `---` fence, intervening lines, and a closing `---`
-// fence) removed, so callers inspecting the human-visible body do not match
+// frontmatter block (an opening `---`, intervening lines, and a `---` or `...`
+// closer) removed, so callers inspecting the human-visible body do not match
 // lines inside frontmatter. When there is no opening fence, or the opening
 // fence is never closed, the full content is returned unchanged.
 func bodyAfterFrontmatter(content []byte) string {
 	lines := strings.Split(string(content), "\n")
-	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+	if len(lines) == 0 || !isLeadingFrontmatterFence(lines[0]) {
 		return string(content)
 	}
 	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], "\r") == "---" {
+		if isFrontmatterFence(lines[i]) {
 			return strings.Join(lines[i+1:], "\n")
 		}
 	}
