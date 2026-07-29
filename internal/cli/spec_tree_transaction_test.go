@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/issue"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
 )
@@ -107,6 +108,156 @@ func TestSpecTreeSnapshotReadAndWalkFailures(t *testing.T) {
 		}
 		if _, err := os.Lstat(link); err != nil {
 			t.Fatalf("non-regular link should remain outside transaction state: %v", err)
+		}
+	})
+}
+
+func TestSpecTreeSnapshotRestore_RefusesSymlinkReplacement(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "nested", "tracked.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := snapshotSpecTreeForTransaction(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external.md")
+	if err := os.WriteFile(external, []byte("external bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, path); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := snapshot.restore(root); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("restore error = %v, want symlink refusal", err)
+	}
+	if got, err := os.ReadFile(external); err != nil || string(got) != "external bytes\n" {
+		t.Fatalf("rollback followed replacement symlink: %q, %v", got, err)
+	}
+}
+
+func TestTransactionSafePathAndManifestApplication(t *testing.T) {
+	t.Run("safe path rejects unsafe roots and components", func(t *testing.T) {
+		root := t.TempDir()
+		if _, err := transactionSafePath(filepath.Join(root, "missing"), "file.md"); err == nil {
+			t.Fatal("missing root accepted")
+		}
+		if _, err := transactionSafePath(root, "../outside.md"); err == nil {
+			t.Fatal("parent escape accepted")
+		}
+		component := filepath.Join(root, "component")
+		if err := os.WriteFile(component, []byte("not a dir"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := transactionSafePath(root, filepath.Join("component", "child.md")); err == nil {
+			t.Fatal("regular path component accepted")
+		}
+		link := filepath.Join(root, "link")
+		if err := os.Symlink(t.TempDir(), link); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		if _, err := transactionSafePath(root, filepath.Join("link", "child.md")); err == nil {
+			t.Fatal("symlink component accepted")
+		}
+	})
+
+	t.Run("manifest adds rewrites and removes exact paths", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "old"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "old", "remove.md"), []byte("remove"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		before, err := snapshotSpecTreeForTransaction(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after := specTreeSnapshot{
+			directories: map[string]os.FileMode{".": before.directories["."], "new": os.ModeDir | 0o700},
+			files:       map[string]specTreeFile{"new/index.md": {content: []byte("new"), mode: 0o600}},
+		}
+		if err := applySpecSnapshotDiff(root, before, after); err != nil {
+			t.Fatal(err)
+		}
+		got, err := snapshotSpecTreeForTransaction(root)
+		if err != nil || !reflect.DeepEqual(got, after) {
+			t.Fatalf("manifest result = %#v, %v; want %#v", got, err, after)
+		}
+	})
+
+	t.Run("materialize creates an exact private copy", func(t *testing.T) {
+		root := t.TempDir()
+		source := filepath.Join(root, "source")
+		if err := os.MkdirAll(filepath.Join(source, "nested"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(source, "nested", "file.md"), []byte("source"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := snapshotSpecTreeForTransaction(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		destination := filepath.Join(root, "destination")
+		if err := os.MkdirAll(destination, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := materializeSpecSnapshot(destination, snapshot); err != nil {
+			t.Fatal(err)
+		}
+		got, err := snapshotSpecTreeForTransaction(destination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got.files, snapshot.files) || !reflect.DeepEqual(got.directories["nested"], snapshot.directories["nested"]) {
+			t.Fatalf("materialized = %#v; want nested/files from %#v", got, snapshot)
+		}
+	})
+
+	t.Run("manifest and materialization surface filesystem failures", func(t *testing.T) {
+		root := t.TempDir()
+		fileRoot := filepath.Join(root, "file-root")
+		if err := os.WriteFile(fileRoot, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := materializeSpecSnapshot(fileRoot, specTreeSnapshot{directories: map[string]os.FileMode{"nested": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}); err == nil {
+			t.Fatal("materialization through a file root succeeded")
+		}
+		if err := applySpecSnapshotDiff(root, specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}, specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{"../escape.md": {content: []byte("x"), mode: 0o644}}}); err == nil {
+			t.Fatal("manifest path escape succeeded")
+		}
+	})
+}
+
+func TestSpecTreeTransaction_ErrorSeamsFailClosed(t *testing.T) {
+	t.Run("invalid owned path prevents transaction", func(t *testing.T) {
+		if _, err := beginSpecTreeTransaction(t.TempDir(), ".."); err == nil {
+			t.Fatal("invalid owned path succeeded")
+		}
+	})
+	t.Run("isolated lint pre-snapshot failure", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("body"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := snapshotSpecTreeForTransaction(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalRead := transactionReadFile
+		transactionReadFile = func(string) ([]byte, error) { return nil, errors.New("read failed") }
+		t.Cleanup(func() { transactionReadFile = originalRead })
+		transaction := &specTreeTransaction{specRoot: root, snapshot: snapshot}
+		if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "read failed") {
+			t.Fatalf("error = %v", err)
 		}
 	})
 }
@@ -284,6 +435,38 @@ func TestLifecycleLockRecoveryPaths(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy lock and owner symlinks or non-directories are refused", func(t *testing.T) {
+		root := t.TempDir()
+		lockPath := filepath.Join(root, ".specscore-lifecycle.lock")
+		if err := os.WriteFile(lockPath, []byte("not a directory"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := legacyLifecycleLockInfo(lockPath); err == nil || !strings.Contains(err.Error(), "not a directory") {
+			t.Fatalf("non-directory lock error = %v", err)
+		}
+		if err := os.Remove(lockPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(root, lockPath); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		if _, err := legacyLifecycleLockInfo(lockPath); err == nil || !strings.Contains(err.Error(), "symlinked") {
+			t.Fatalf("symlink lock error = %v", err)
+		}
+		if err := os.Remove(lockPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(lockPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(root, "missing"), lifecycleLockOwnerPath(lockPath)); err != nil {
+			t.Skipf("owner symlink unavailable: %v", err)
+		}
+		if _, err := lifecycleLegacyLockIsStale(lockPath); err == nil || !strings.Contains(err.Error(), "non-regular") {
+			t.Fatalf("symlink owner error = %v", err)
+		}
+	})
+
 	t.Run("legacy owner read failure", func(t *testing.T) {
 		root, _ := newLegacyLock(t, "42\n")
 		originalRead := transactionReadFile
@@ -315,7 +498,10 @@ func TestLifecycleLockRecoveryPaths(t *testing.T) {
 	})
 
 	t.Run("legacy lock recreated twice is reported", func(t *testing.T) {
-		root, lockPath := newLegacyLock(t, "")
+		root, lockPath := newLegacyLock(t, "999999\n")
+		originalProcessAlive := transactionProcessAlive
+		transactionProcessAlive = func(int) bool { return false }
+		t.Cleanup(func() { transactionProcessAlive = originalProcessAlive })
 		originalOpen := transactionOpenFile
 		calls := 0
 		transactionOpenFile = func(string, int, os.FileMode) (*os.File, error) {
@@ -328,15 +514,15 @@ func TestLifecycleLockRecoveryPaths(t *testing.T) {
 			return nil, &os.PathError{Op: "open", Path: lockPath, Err: os.ErrExist}
 		}
 		t.Cleanup(func() { transactionOpenFile = originalOpen })
-		if _, _, err := acquireLifecycleLock(root); err == nil || !strings.Contains(err.Error(), "legacy lock was recreated concurrently") {
-			t.Fatalf("error = %v, want recreated-lock recovery error", err)
+		if _, _, err := acquireLifecycleLock(root); err == nil || !strings.Contains(err.Error(), "another SpecScore lifecycle transaction") {
+			t.Fatalf("error = %v, want recreated active-lock error", err)
 		}
 	})
 
 	t.Run("legacy stale forms and release failures", func(t *testing.T) {
 		_, missingOwnerLock := newLegacyLock(t, "")
-		if stale, err := lifecycleLegacyLockIsStale(missingOwnerLock); err != nil || !stale {
-			t.Fatalf("missing owner stale = %v, %v; want true, nil", stale, err)
+		if stale, err := lifecycleLegacyLockIsStale(missingOwnerLock); err != nil || stale {
+			t.Fatalf("missing owner stale = %v, %v; want false, nil", stale, err)
 		}
 		_, malformedOwnerLock := newLegacyLock(t, "not-a-pid\n")
 		if stale, err := lifecycleLegacyLockIsStale(malformedOwnerLock); err != nil || !stale {
@@ -359,6 +545,20 @@ func TestLifecycleLockRecoveryPaths(t *testing.T) {
 			t.Fatalf("error = %v, want lock directory removal failure", err)
 		}
 		transactionRemove = originalRemove
+	})
+
+	t.Run("legacy recovery refuses ownerless and active locks", func(t *testing.T) {
+		_, ownerless := newLegacyLock(t, "")
+		if err := releaseLegacyLifecycleLock(ownerless); err == nil || !strings.Contains(err.Error(), "ownerless") {
+			t.Fatalf("ownerless release error = %v", err)
+		}
+		_, active := newLegacyLock(t, "42\n")
+		originalAlive := transactionProcessAlive
+		transactionProcessAlive = func(int) bool { return true }
+		t.Cleanup(func() { transactionProcessAlive = originalAlive })
+		if err := releaseLegacyLifecycleLock(active); err == nil || !strings.Contains(err.Error(), "active") {
+			t.Fatalf("active release error = %v", err)
+		}
 	})
 
 	t.Run("close failure is returned after unlink", func(t *testing.T) {
@@ -406,9 +606,117 @@ func TestLifecycleLockRecoveryPaths(t *testing.T) {
 			t.Fatal("release did not close the lock file after unlink failure")
 		}
 	})
+
+	t.Run("stale recovery refuses a replaced owner immediately before removal", func(t *testing.T) {
+		_, lockPath := newLegacyLock(t, "999999\n")
+		ownerPath := lifecycleLockOwnerPath(lockPath)
+		originalAlive := transactionProcessAlive
+		transactionProcessAlive = func(pid int) bool { return pid == 42 }
+		t.Cleanup(func() { transactionProcessAlive = originalAlive })
+		originalLstat := transactionLstat
+		ownerChecks := 0
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			if path == ownerPath {
+				ownerChecks++
+				// releaseLegacyLifecycleLock checks this identity once after
+				// stale detection and once immediately before removing it.
+				if ownerChecks == 3 {
+					if err := os.Remove(ownerPath); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(ownerPath, []byte("42\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			return originalLstat(path)
+		}
+		t.Cleanup(func() { transactionLstat = originalLstat })
+		if err := releaseLegacyLifecycleLock(lockPath); err == nil || !strings.Contains(err.Error(), "owner was replaced") {
+			t.Fatalf("release error = %v, want replaced-owner refusal", err)
+		}
+		if got, err := os.ReadFile(ownerPath); err != nil || string(got) != "42\n" {
+			t.Fatalf("replacement owner was removed: %q, %v", got, err)
+		}
+	})
+
+	t.Run("normal file lock release removes the pathname", func(t *testing.T) {
+		root := t.TempDir()
+		lockPath := filepath.Join(root, ".specscore-lifecycle.lock")
+		lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := releaseLifecycleLockFile(lockPath, lockFile); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+			t.Fatalf("released lock remains: %v", err)
+		}
+	})
 }
 
 func TestSpecTreeTransaction_RollbackPreservesRawFilesystemChanges(t *testing.T) {
+	t.Run("opaque hook cannot overwrite a competing command-source edit", func(t *testing.T) {
+		root := t.TempDir()
+		specRoot := filepath.Join(root, "spec")
+		source := filepath.Join(specRoot, "plans", "auth.md")
+		if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(source, []byte("before\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err := beginSpecTreeTransaction(specRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.release() })
+		err = transaction.postMutationHookWith(func() error {
+			if err := os.WriteFile(source, []byte("external command-source edit\n"), 0o644); err != nil {
+				return err
+			}
+			return errors.New("verification failed")
+		})()
+		err = transaction.finish(err)
+		if err == nil || !strings.Contains(err.Error(), "opaque post-mutation hook") {
+			t.Fatalf("finish error = %v, want opaque ownership recovery", err)
+		}
+		if got, readErr := os.ReadFile(source); readErr != nil || string(got) != "external command-source edit\n" {
+			t.Fatalf("competing source edit was overwritten: %q, %v", got, readErr)
+		}
+	})
+
+	t.Run("isolated lint manifest preserves a raw command-source edit during lint", func(t *testing.T) {
+		root := t.TempDir()
+		specRoot := filepath.Join(root, "spec")
+		source := filepath.Join(specRoot, "plans", "auth.md")
+		if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(source, []byte("before\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err := beginSpecTreeTransaction(specRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.release() })
+		err = transaction.postMutationHookWithLint(func(clone string) error {
+			if err := os.WriteFile(filepath.Join(clone, "plans", "index.md"), []byte("lint manifest\n"), 0o644); err != nil {
+				return err
+			}
+			return os.WriteFile(source, []byte("external command-source edit\n"), 0o644)
+		})()
+		err = transaction.finish(err)
+		if err == nil || !strings.Contains(err.Error(), "rollback preserved unowned changes") {
+			t.Fatalf("finish error = %v, want concurrent recovery", err)
+		}
+		if got, readErr := os.ReadFile(source); readErr != nil || string(got) != "external command-source edit\n" {
+			t.Fatalf("competing source edit was overwritten: %q, %v", got, readErr)
+		}
+	})
+
 	t.Run("unrelated raw file survives managed rollback", func(t *testing.T) {
 		root := t.TempDir()
 		specRoot := filepath.Join(root, "spec")
@@ -425,8 +733,8 @@ func TestSpecTreeTransaction_RollbackPreservesRawFilesystemChanges(t *testing.T)
 		}
 		t.Cleanup(func() { _ = transaction.release() })
 
-		err = transaction.postMutationHookWith(func() error {
-			return os.WriteFile(managedPath, []byte("lint changed\n"), 0o644)
+		err = transaction.postMutationHookWithLint(func(clone string) error {
+			return os.WriteFile(filepath.Join(clone, "README.md"), []byte("lint changed\n"), 0o644)
 		})()
 		if err != nil {
 			t.Fatal(err)
@@ -461,8 +769,8 @@ func TestSpecTreeTransaction_RollbackPreservesRawFilesystemChanges(t *testing.T)
 		t.Cleanup(func() { _ = transaction.release() })
 		createdPath := filepath.Join(specRoot, "generated.md")
 
-		err = transaction.postMutationHookWith(func() error {
-			return os.WriteFile(createdPath, []byte("lint-created\n"), 0o644)
+		err = transaction.postMutationHookWithLint(func(clone string) error {
+			return os.WriteFile(filepath.Join(clone, "generated.md"), []byte("lint-created\n"), 0o644)
 		})()
 		if err != nil {
 			t.Fatal(err)
@@ -554,6 +862,816 @@ func TestLifecycleOwnedPaths(t *testing.T) {
 	}
 	if _, err := relativeLifecycleOwnedPath(specRoot, filepath.Join(filepath.Dir(specRoot), "README.md")); err == nil {
 		t.Fatal("relativeLifecycleOwnedPath(outside spec root) succeeded")
+	}
+	originalRel := transactionRel
+	transactionRel = func(string, string) (string, error) { return "", errors.New("forced relative path failure") }
+	t.Cleanup(func() { transactionRel = originalRel })
+	if _, err := relativeLifecycleOwnedPath(specRoot, inside); err == nil || !strings.Contains(err.Error(), "forced relative path failure") {
+		t.Fatalf("relativeLifecycleOwnedPath error = %v, want forced failure", err)
+	}
+}
+
+// These are defensive recovery paths rather than normal user journeys. Keep
+// their fault injection next to the transaction tests: every error leaves the
+// live spec tree untouched or explicitly reports that manual recovery is needed.
+func TestSpecTreeTransaction_DefensiveRecoveryBranches(t *testing.T) {
+	t.Run("non-not-exist inspection failure is retained", func(t *testing.T) {
+		root := t.TempDir()
+		originalOpen, originalLstat := transactionOpenFile, transactionLstat
+		transactionOpenFile = func(string, int, os.FileMode) (*os.File, error) { return nil, errors.New("open denied") }
+		transactionLstat = func(string) (os.FileInfo, error) { return nil, errors.New("inspection denied") }
+		t.Cleanup(func() { transactionOpenFile, transactionLstat = originalOpen, originalLstat })
+		if _, _, err := acquireLifecycleLock(root); err == nil || !strings.Contains(err.Error(), "inspection denied") {
+			t.Fatalf("acquire error = %v", err)
+		}
+	})
+
+	t.Run("unlink and close failures are both retained", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "lock")
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalRemove, originalClose := transactionRemove, transactionCloseFile
+		transactionRemove = func(string) error { return errors.New("unlink failed") }
+		transactionCloseFile = func(*os.File) error { return errors.New("close failed") }
+		t.Cleanup(func() { transactionRemove, transactionCloseFile = originalRemove, originalClose; _ = file.Close() })
+		if err := releaseLifecycleLockFile(path, file); err == nil || !strings.Contains(err.Error(), "unlink failed") || !strings.Contains(err.Error(), "close failed") {
+			t.Fatalf("release error = %v", err)
+		}
+	})
+
+	t.Run("legacy lock recreation after both retries is surfaced", func(t *testing.T) {
+		root := t.TempDir()
+		lock := filepath.Join(root, ".specscore-lifecycle.lock")
+		makeStale := func() {
+			if err := os.Mkdir(lock, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(lifecycleLockOwnerPath(lock), []byte("bad\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		makeStale()
+		originalOpen := transactionOpenFile
+		calls := 0
+		transactionOpenFile = func(string, int, os.FileMode) (*os.File, error) {
+			calls++
+			if calls == 2 {
+				makeStale()
+			}
+			return nil, &os.PathError{Op: "open", Path: lock, Err: os.ErrExist}
+		}
+		t.Cleanup(func() { transactionOpenFile = originalOpen })
+		if _, _, err := acquireLifecycleLock(root); err == nil || !strings.Contains(err.Error(), "recreated concurrently") {
+			t.Fatalf("acquire error = %v", err)
+		}
+	})
+
+	t.Run("legacy inspection and revalidation failures are fail closed", func(t *testing.T) {
+		root := t.TempDir()
+		lock := filepath.Join(root, ".specscore-lifecycle.lock")
+		if err := os.Mkdir(lock, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		owner := lifecycleLockOwnerPath(lock)
+		if err := os.WriteFile(owner, []byte("bad\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		originalLstat := transactionLstat
+		calls := 0
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			calls++
+			if calls == 1 {
+				return nil, errors.New("initial inspection failure")
+			}
+			return originalLstat(path)
+		}
+		if _, err := lifecycleLegacyLockIsStale(lock); err == nil || !strings.Contains(err.Error(), "initial inspection failure") {
+			t.Fatalf("stale error = %v", err)
+		}
+		transactionLstat = originalLstat
+		calls = 0
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			calls++
+			if path == owner && calls >= 3 {
+				return nil, errors.New("revalidation failure")
+			}
+			return originalLstat(path)
+		}
+		t.Cleanup(func() { transactionLstat = originalLstat })
+		if err := releaseLegacyLifecycleLock(lock); err == nil || !strings.Contains(err.Error(), "revalidation failure") {
+			t.Fatalf("release error = %v", err)
+		}
+	})
+
+	t.Run("isolated hook detects pre and during lint writers", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("before"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err := beginSpecTreeTransaction(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.release() })
+		if err := os.WriteFile(filepath.Join(root, "external.md"), []byte("writer"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := transaction.postMutationHookWithLint(func(string) error { t.Fatal("lint should not run"); return nil })(); err == nil || !lifecycle.IsDeferredRollback(err) {
+			t.Fatalf("pre-lint error = %v", err)
+		}
+		if err := transaction.release(); err != nil {
+			t.Fatal(err)
+		}
+
+		root = t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("before"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err = beginSpecTreeTransaction(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.release() })
+		err = transaction.postMutationHookWithLint(func(clone string) error {
+			if err := os.WriteFile(filepath.Join(clone, "README.md"), []byte("lint"), 0o644); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(root, "during.md"), []byte("writer"), 0o644)
+		})()
+		if err == nil || !strings.Contains(err.Error(), "during lint") {
+			t.Fatalf("during-lint error = %v", err)
+		}
+	})
+
+	t.Run("failed lint and failed manifest preserve recovery evidence", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("before"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err := beginSpecTreeTransaction(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.release() })
+		err = transaction.postMutationHookWithLint(func(string) error {
+			if err := os.WriteFile(filepath.Join(root, "during-error.md"), []byte("writer"), 0o644); err != nil {
+				return err
+			}
+			return errors.New("lint failed")
+		})()
+		if err == nil || !strings.Contains(err.Error(), "lint failed") || len(transaction.preLintUnownedPaths) == 0 {
+			t.Fatalf("failed lint = %v, paths=%v", err, transaction.preLintUnownedPaths)
+		}
+		if err := transaction.release(); err != nil {
+			t.Fatal(err)
+		}
+
+		root = t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("before"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err = beginSpecTreeTransaction(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.release() })
+		originalWrite := transactionWriteFile
+		transactionWriteFile = func(string, []byte, os.FileMode) error { return errors.New("manifest write failed") }
+		t.Cleanup(func() { transactionWriteFile = originalWrite })
+		err = transaction.postMutationHookWithLint(func(clone string) error {
+			return os.WriteFile(filepath.Join(clone, "README.md"), []byte("lint"), 0o644)
+		})()
+		if err == nil || !strings.Contains(err.Error(), "applying lint mutation manifest") {
+			t.Fatalf("manifest error = %v", err)
+		}
+	})
+
+	t.Run("isolated lint setup failures defer rollback without touching live tree", func(t *testing.T) {
+		newTransaction := func(t *testing.T) *specTreeTransaction {
+			t.Helper()
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			transaction, err := beginSpecTreeTransaction(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = transaction.release() })
+			return transaction
+		}
+		t.Run("temp directory", func(t *testing.T) {
+			transaction := newTransaction(t)
+			original := transactionMkdirTemp
+			transactionMkdirTemp = func(string, string) (string, error) { return "", errors.New("temp failed") }
+			t.Cleanup(func() { transactionMkdirTemp = original })
+			if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "creating isolated lint tree") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+		t.Run("root permissions", func(t *testing.T) {
+			transaction := newTransaction(t)
+			original := transactionChmod
+			transactionChmod = func(string, os.FileMode) error { return errors.New("chmod failed") }
+			t.Cleanup(func() { transactionChmod = original })
+			if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "preparing isolated lint tree") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+		t.Run("materialize directory and file", func(t *testing.T) {
+			transaction := newTransaction(t)
+			originalMkdir := transactionScratchMkdir
+			transactionScratchMkdir = func(string, os.FileMode) error { return errors.New("scratch mkdir failed") }
+			if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "materializing isolated lint tree") {
+				t.Fatalf("mkdir error = %v", err)
+			}
+			if err := transaction.release(); err != nil {
+				t.Fatal(err)
+			}
+			transactionScratchMkdir = originalMkdir
+			transaction = newTransaction(t)
+			originalWrite := transactionScratchWrite
+			transactionScratchWrite = func(string, []byte, os.FileMode) error { return errors.New("scratch write failed") }
+			t.Cleanup(func() { transactionScratchMkdir, transactionScratchWrite = originalMkdir, originalWrite })
+			if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "materializing isolated lint tree") {
+				t.Fatalf("write error = %v", err)
+			}
+		})
+	})
+
+	t.Run("snapshot failures at every isolated lint boundary defer rollback", func(t *testing.T) {
+		newTransaction := func(t *testing.T) *specTreeTransaction {
+			t.Helper()
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			transaction, err := beginSpecTreeTransaction(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = transaction.release() })
+			return transaction
+		}
+		for _, tc := range []struct {
+			name   string
+			failOn int
+			want   string
+		}{
+			{"before lint", 1, "before lint --fix"},
+			{"after lint failure", 2, "after isolated lint failure"},
+			{"isolated output", 2, "isolated lint output"},
+			{"before manifest", 3, "before applying lint manifest"},
+			{"after manifest", 4, "after lint manifest"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				transaction := newTransaction(t)
+				original := transactionSnapshot
+				calls := 0
+				transactionSnapshot = func(root string) (specTreeSnapshot, error) {
+					calls++
+					if calls == tc.failOn {
+						return specTreeSnapshot{}, errors.New("forced snapshot failure")
+					}
+					return snapshotSpecTreeForTransaction(root)
+				}
+				t.Cleanup(func() { transactionSnapshot = original })
+				run := func(string) error { return nil }
+				if tc.name == "after lint failure" {
+					run = func(string) error { return errors.New("lint failed") }
+				}
+				err := transaction.postMutationHookWithLint(run)()
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("error = %v, want %q", err, tc.want)
+				}
+			})
+		}
+	})
+}
+
+func TestApplySpecSnapshotDiff_DefensiveFailures(t *testing.T) {
+	root := t.TempDir()
+	base := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+	t.Run("directory and parent creation failures", func(t *testing.T) {
+		original := transactionMkdirAll
+		transactionMkdirAll = func(string, os.FileMode) error { return errors.New("mkdir failed") }
+		t.Cleanup(func() { transactionMkdirAll = original })
+		after := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "new": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		if err := applySpecSnapshotDiff(root, base, after); err == nil || !strings.Contains(err.Error(), "mkdir failed") {
+			t.Fatalf("directory error = %v", err)
+		}
+		transactionMkdirAll = original
+		after = specTreeSnapshot{directories: base.directories, files: map[string]specTreeFile{"new.md": {content: []byte("new"), mode: 0o644}}}
+		transactionMkdirAll = func(string, os.FileMode) error { return errors.New("parent mkdir failed") }
+		if err := applySpecSnapshotDiff(root, base, after); err == nil || !strings.Contains(err.Error(), "parent mkdir failed") {
+			t.Fatalf("parent error = %v", err)
+		}
+	})
+	t.Run("write and removal failures", func(t *testing.T) {
+		originalWrite := transactionWriteFile
+		transactionWriteFile = func(string, []byte, os.FileMode) error { return errors.New("write failed") }
+		t.Cleanup(func() { transactionWriteFile = originalWrite })
+		after := specTreeSnapshot{directories: base.directories, files: map[string]specTreeFile{"new.md": {content: []byte("new"), mode: 0o644}}}
+		if err := applySpecSnapshotDiff(root, base, after); err == nil || !strings.Contains(err.Error(), "write failed") {
+			t.Fatalf("write error = %v", err)
+		}
+		transactionWriteFile = originalWrite
+		originalRemove := transactionRemove
+		transactionRemove = func(string) error { return errors.New("remove failed") }
+		t.Cleanup(func() { transactionRemove = originalRemove })
+		before := specTreeSnapshot{directories: base.directories, files: map[string]specTreeFile{"gone.md": {content: []byte("gone"), mode: 0o644}}}
+		if err := applySpecSnapshotDiff(root, before, base); err == nil || !strings.Contains(err.Error(), "remove failed") {
+			t.Fatalf("file removal error = %v", err)
+		}
+		before = specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "gone": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		if err := applySpecSnapshotDiff(root, before, base); err == nil || !strings.Contains(err.Error(), "remove failed") {
+			t.Fatalf("directory removal error = %v", err)
+		}
+	})
+	t.Run("unsafe manifest paths are rejected", func(t *testing.T) {
+		for _, snapshot := range []specTreeSnapshot{
+			{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "../escape": os.ModeDir | 0o755}, files: map[string]specTreeFile{}},
+			{directories: base.directories, files: map[string]specTreeFile{"../escape.md": {content: []byte("x"), mode: 0o644}}},
+		} {
+			if err := applySpecSnapshotDiff(root, base, snapshot); err == nil {
+				t.Fatal("unsafe manifest accepted")
+			}
+		}
+	})
+}
+
+func TestSpecTreeTransaction_RemainingDefensiveBranches(t *testing.T) {
+	t.Run("scratch file parent and write failures", func(t *testing.T) {
+		root := t.TempDir()
+		snapshot := specTreeSnapshot{directories: map[string]os.FileMode{}, files: map[string]specTreeFile{"file.md": {content: []byte("x"), mode: 0o644}}}
+		originalMkdir, originalWrite := transactionScratchMkdir, transactionScratchWrite
+		transactionScratchMkdir = func(string, os.FileMode) error { return errors.New("file parent failed") }
+		if err := materializeSpecSnapshot(root, snapshot); err == nil || !strings.Contains(err.Error(), "file parent failed") {
+			t.Fatalf("parent error = %v", err)
+		}
+		transactionScratchMkdir = originalMkdir
+		transactionScratchWrite = func(string, []byte, os.FileMode) error { return errors.New("file write failed") }
+		t.Cleanup(func() { transactionScratchMkdir, transactionScratchWrite = originalMkdir, originalWrite })
+		if err := materializeSpecSnapshot(root, snapshot); err == nil || !strings.Contains(err.Error(), "file write failed") {
+			t.Fatalf("write error = %v", err)
+		}
+	})
+
+	t.Run("manifest apply postcondition detects a changed live snapshot", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("before"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transaction, err := beginSpecTreeTransaction(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.release() })
+		original := transactionSnapshot
+		calls := 0
+		transactionSnapshot = func(path string) (specTreeSnapshot, error) {
+			calls++
+			snapshot, err := snapshotSpecTreeForTransaction(path)
+			if calls == 4 {
+				snapshot.files["unexpected.md"] = specTreeFile{content: []byte("race"), mode: 0o644}
+			}
+			return snapshot, err
+		}
+		t.Cleanup(func() { transactionSnapshot = original })
+		err = transaction.postMutationHookWithLint(func(clone string) error {
+			return os.WriteFile(filepath.Join(clone, "README.md"), []byte("lint"), 0o644)
+		})()
+		if err == nil || !strings.Contains(err.Error(), "while applying lint manifest") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("finish and change helpers cover manual recovery states", func(t *testing.T) {
+		base := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		changed := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "new": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		if got := changedSnapshotPaths(base, changed); !reflect.DeepEqual(got, []string{"new/"}) {
+			t.Fatalf("paths = %v", got)
+		}
+		transaction := &specTreeTransaction{postMutationStarted: true, preLintSnapshot: &base, postLintSnapshot: &changed, opaquePostMutation: true}
+		if err := transaction.finish(errors.New("action failed")); err == nil || !strings.Contains(err.Error(), "opaque post-mutation hook") {
+			t.Fatalf("finish = %v", err)
+		}
+		transaction = &specTreeTransaction{snapshot: base}
+		if got := transaction.unownedPreLintPaths(changed); !reflect.DeepEqual(got, []string{"new/"}) {
+			t.Fatalf("unowned = %v", got)
+		}
+	})
+
+	t.Run("restore reports snapshot and filesystem errors", func(t *testing.T) {
+		root := t.TempDir()
+		base := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{"tracked.md": {content: []byte("before"), mode: 0o644}}}
+		post := specTreeSnapshot{directories: base.directories, files: map[string]specTreeFile{"tracked.md": {content: []byte("lint"), mode: 0o644}}}
+		transaction := &specTreeTransaction{specRoot: root, snapshot: base, postLintSnapshot: &post}
+		originalSnapshot := transactionSnapshot
+		transactionSnapshot = func(string) (specTreeSnapshot, error) {
+			return specTreeSnapshot{}, errors.New("current snapshot failed")
+		}
+		if err := transaction.restoreLintMutations(); err == nil || !strings.Contains(err.Error(), "current snapshot failed") {
+			t.Fatalf("snapshot error = %v", err)
+		}
+		transactionSnapshot = originalSnapshot
+		if err := os.WriteFile(filepath.Join(root, "tracked.md"), []byte("lint"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		originalMkdir := transactionMkdirAll
+		transactionMkdirAll = func(string, os.FileMode) error { return errors.New("restore mkdir failed") }
+		t.Cleanup(func() { transactionSnapshot, transactionMkdirAll = originalSnapshot, originalMkdir })
+		if err := transaction.restoreLintMutations(); err == nil || !strings.Contains(err.Error(), "restore mkdir failed") {
+			t.Fatalf("restore error = %v", err)
+		}
+	})
+}
+
+func TestReleaseLegacyLifecycleLock_RevalidationFailures(t *testing.T) {
+	newLock := func(t *testing.T) string {
+		t.Helper()
+		lock := filepath.Join(t.TempDir(), ".specscore-lifecycle.lock")
+		if err := os.Mkdir(lock, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(lifecycleLockOwnerPath(lock), []byte("bad\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return lock
+	}
+	t.Run("initial and stale inspection failures", func(t *testing.T) {
+		if err := releaseLegacyLifecycleLock(filepath.Join(t.TempDir(), "missing")); err == nil {
+			t.Fatal("missing lock accepted")
+		}
+		lock := newLock(t)
+		originalRead := transactionReadFile
+		transactionReadFile = func(string) ([]byte, error) { return nil, errors.New("stale inspection failed") }
+		t.Cleanup(func() { transactionReadFile = originalRead })
+		if err := releaseLegacyLifecycleLock(lock); err == nil || !strings.Contains(err.Error(), "stale inspection failed") {
+			t.Fatalf("stale error = %v", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, lock string, original func(string) (os.FileInfo, error)) func(string) (os.FileInfo, error)
+		want   string
+	}{
+		{
+			name: "owner revalidation lstat error",
+			want: "revalidating lifecycle transaction lock owner",
+			mutate: func(t *testing.T, lock string, original func(string) (os.FileInfo, error)) func(string) (os.FileInfo, error) {
+				owner, calls := lifecycleLockOwnerPath(lock), 0
+				return func(path string) (os.FileInfo, error) {
+					if path == owner {
+						calls++
+						if calls == 2 {
+							return nil, errors.New("owner revalidate failed")
+						}
+					}
+					return original(path)
+				}
+			},
+		},
+		{
+			name: "owner becomes nonregular",
+			want: "refusing changed lifecycle transaction lock owner",
+			mutate: func(t *testing.T, lock string, original func(string) (os.FileInfo, error)) func(string) (os.FileInfo, error) {
+				owner, calls := lifecycleLockOwnerPath(lock), 0
+				return func(path string) (os.FileInfo, error) {
+					if path == owner {
+						calls++
+						if calls == 2 {
+							if err := os.Remove(owner); err != nil {
+								t.Fatal(err)
+							}
+							if err := os.Mkdir(owner, 0o700); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					return original(path)
+				}
+			},
+		},
+		{
+			name: "lock revalidation lstat error",
+			want: "lock revalidation failed",
+			mutate: func(t *testing.T, lock string, original func(string) (os.FileInfo, error)) func(string) (os.FileInfo, error) {
+				calls := 0
+				return func(path string) (os.FileInfo, error) {
+					if path == lock {
+						calls++
+						if calls == 3 {
+							return nil, errors.New("lock revalidation failed")
+						}
+					}
+					return original(path)
+				}
+			},
+		},
+		{
+			name: "lock identity changes before removal",
+			want: "lock was replaced before stale-lock recovery",
+			mutate: func(t *testing.T, lock string, original func(string) (os.FileInfo, error)) func(string) (os.FileInfo, error) {
+				calls := 0
+				return func(path string) (os.FileInfo, error) {
+					if path == lock {
+						calls++
+						if calls == 3 {
+							if err := os.RemoveAll(lock); err != nil {
+								t.Fatal(err)
+							}
+							if err := os.Mkdir(lock, 0o700); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					return original(path)
+				}
+			},
+		},
+		{
+			name: "immediate owner revalidation error",
+			want: "immediately before removal",
+			mutate: func(t *testing.T, lock string, original func(string) (os.FileInfo, error)) func(string) (os.FileInfo, error) {
+				owner, calls := lifecycleLockOwnerPath(lock), 0
+				return func(path string) (os.FileInfo, error) {
+					if path == owner {
+						calls++
+						if calls == 3 {
+							return nil, errors.New("immediate owner failed")
+						}
+					}
+					return original(path)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lock := newLock(t)
+			original := transactionLstat
+			transactionLstat = tc.mutate(t, lock, original)
+			t.Cleanup(func() { transactionLstat = original })
+			if err := releaseLegacyLifecycleLock(lock); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{"missing after owner removal", "no such file or directory"},
+		{"replaced after owner removal", "replaced during stale-lock recovery"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lock := newLock(t)
+			original := transactionRemove
+			calls := 0
+			transactionRemove = func(path string) error {
+				calls++
+				if calls != 1 {
+					return original(path)
+				}
+				if err := original(path); err != nil {
+					return err
+				}
+				if err := os.Remove(lock); err != nil {
+					return err
+				}
+				if tc.name == "replaced after owner removal" {
+					return os.Mkdir(lock, 0o700)
+				}
+				return nil
+			}
+			t.Cleanup(func() { transactionRemove = original })
+			if err := releaseLegacyLifecycleLock(lock); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSpecTreeTransaction_RestoreFailClosedBranches(t *testing.T) {
+	t.Run("safe path inspection errors", func(t *testing.T) {
+		root := t.TempDir()
+		original := transactionLstat
+		transactionLstat = func(string) (os.FileInfo, error) { return nil, errors.New("lstat failed") }
+		t.Cleanup(func() { transactionLstat = original })
+		if _, err := transactionSafePath(root, "file.md"); err == nil || !strings.Contains(err.Error(), "lstat failed") {
+			t.Fatalf("root error = %v", err)
+		}
+		transactionLstat = original
+		if err := os.WriteFile(filepath.Join(root, "file.md"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			if path == filepath.Join(root, "file.md") {
+				return nil, errors.New("component lstat failed")
+			}
+			return original(path)
+		}
+		if _, err := transactionSafePath(root, "file.md"); err == nil || !strings.Contains(err.Error(), "component lstat failed") {
+			t.Fatalf("component error = %v", err)
+		}
+		transactionLstat = original
+		fileRoot := filepath.Join(t.TempDir(), "not-a-directory")
+		if err := os.WriteFile(fileRoot, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := transactionSafePath(fileRoot, "file.md"); err == nil || !strings.Contains(err.Error(), "non-directory") {
+			t.Fatalf("file root error = %v", err)
+		}
+	})
+
+	newRestore := func(t *testing.T, initial, post specTreeSnapshot) *specTreeTransaction {
+		t.Helper()
+		root := t.TempDir()
+		return &specTreeTransaction{specRoot: root, snapshot: initial, postLintSnapshot: &post}
+	}
+	rootDirs := map[string]os.FileMode{".": os.ModeDir | 0o755}
+	t.Run("restoring a directory and source file rejects invalid paths", func(t *testing.T) {
+		initial := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "../bad": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		post := specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{}}
+		if err := newRestore(t, initial, post).restoreLintMutations(); err == nil || !strings.Contains(err.Error(), "recreate pre-transition directory") {
+			t.Fatalf("directory error = %v", err)
+		}
+		initial = specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{"../bad.md": {content: []byte("x"), mode: 0o644}}}
+		post = specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{}}
+		if err := newRestore(t, initial, post).restoreLintMutations(); err == nil || !strings.Contains(err.Error(), "restore pre-transition file") {
+			t.Fatalf("file error = %v", err)
+		}
+	})
+
+	t.Run("removing lint-created paths rejects inspection errors", func(t *testing.T) {
+		initial := specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{}}
+		post := specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{"created.md": {content: []byte("lint"), mode: 0o644}}}
+		transaction := newRestore(t, initial, post)
+		if err := os.WriteFile(filepath.Join(transaction.specRoot, "created.md"), []byte("lint"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		original := transactionLstat
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			if path == filepath.Join(transaction.specRoot, "created.md") {
+				return nil, errors.New("remove file inspect failed")
+			}
+			return original(path)
+		}
+		t.Cleanup(func() { transactionLstat = original })
+		if err := transaction.restoreLintMutations(); err == nil || !strings.Contains(err.Error(), "remove lint-created file") {
+			t.Fatalf("file removal error = %v", err)
+		}
+		transactionLstat = original
+		initial = specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{}}
+		post = specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "created": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		transaction = newRestore(t, initial, post)
+		if err := os.Mkdir(filepath.Join(transaction.specRoot, "created"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			if path == filepath.Join(transaction.specRoot, "created") {
+				return nil, errors.New("remove directory inspect failed")
+			}
+			return original(path)
+		}
+		if err := transaction.restoreLintMutations(); err == nil || !strings.Contains(err.Error(), "remove lint-created directory") {
+			t.Fatalf("directory removal error = %v", err)
+		}
+	})
+
+	t.Run("finish reports a non-concurrent restore failure", func(t *testing.T) {
+		base := specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{}}
+		post := specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{"created.md": {content: []byte("lint"), mode: 0o644}}}
+		transaction := newRestore(t, base, post)
+		transaction.postMutationStarted, transaction.preLintSnapshot = true, &base
+		original := transactionSnapshot
+		transactionSnapshot = func(string) (specTreeSnapshot, error) {
+			return specTreeSnapshot{}, errors.New("restore snapshot failed")
+		}
+		t.Cleanup(func() { transactionSnapshot = original })
+		if err := transaction.finish(errors.New("action failed")); err == nil || !strings.Contains(err.Error(), "could not restore") {
+			t.Fatalf("finish error = %v", err)
+		}
+	})
+
+	t.Run("already-restored source is left alone", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "tracked.md"), []byte("before"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		initial := specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{"tracked.md": {content: []byte("before"), mode: 0o644}}}
+		post := specTreeSnapshot{directories: rootDirs, files: map[string]specTreeFile{"tracked.md": {content: []byte("lint"), mode: 0o644}}}
+		transaction := &specTreeTransaction{specRoot: root, snapshot: initial, postLintSnapshot: &post}
+		if err := transaction.restoreLintMutations(); err != nil {
+			t.Fatalf("restore = %v", err)
+		}
+	})
+}
+
+func TestSnapshotRestoreAndManifestRemovalSafety(t *testing.T) {
+	root := t.TempDir()
+	base := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+	t.Run("manifest refuses unsafe removed files and directories", func(t *testing.T) {
+		before := specTreeSnapshot{directories: base.directories, files: map[string]specTreeFile{"../gone.md": {content: []byte("x"), mode: 0o644}}}
+		if err := applySpecSnapshotDiff(root, before, base); err == nil {
+			t.Fatal("unsafe removed file accepted")
+		}
+		before = specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "../gone": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		if err := applySpecSnapshotDiff(root, before, base); err == nil {
+			t.Fatal("unsafe removed directory accepted")
+		}
+	})
+	t.Run("restore refuses unsafe writes and deletes", func(t *testing.T) {
+		original := transactionLstat
+		file := filepath.Join(root, "extra.md")
+		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			if path == file {
+				return nil, errors.New("extra file inspect failed")
+			}
+			return original(path)
+		}
+		if err := base.restore(root); err == nil || !strings.Contains(err.Error(), "extra file inspect failed") {
+			t.Fatalf("file restore error = %v", err)
+		}
+		transactionLstat = original
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(root, "extra")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		transactionLstat = func(path string) (os.FileInfo, error) {
+			if path == dir {
+				return nil, errors.New("extra dir inspect failed")
+			}
+			return original(path)
+		}
+		if err := base.restore(root); err == nil || !strings.Contains(err.Error(), "extra dir inspect failed") {
+			t.Fatalf("directory restore error = %v", err)
+		}
+		transactionLstat = original
+		snapshot := specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755, "../bad": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}
+		t.Cleanup(func() { transactionLstat = original })
+		if err := snapshot.restore(root); err == nil || !strings.Contains(err.Error(), "recreate snapshot directory") {
+			t.Fatalf("snapshot directory error = %v", err)
+		}
+	})
+}
+
+func TestLifecycleCommandAdapterDefensiveSeams(t *testing.T) {
+	t.Run("issue discovery failure precedes mutation", func(t *testing.T) {
+		root := setupIssueSpecRoot(t)
+		withCwd(t, root)
+		original := issueDiscoverAll
+		issueDiscoverAll = func(string) ([]issue.Discovered, error) { return nil, errors.New("issue discovery failed") }
+		t.Cleanup(func() { issueDiscoverAll = original })
+		_, _, err := runIssue(t, "change-status", "missing", "--to=investigating")
+		if err == nil || !strings.Contains(err.Error(), "issue discovery failed") {
+			t.Fatalf("issue error = %v", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T) error
+	}{
+		{
+			name: "plan owned path failure",
+			run: func(t *testing.T) error {
+				stagePlan(t, "auth", "Draft")
+				_, _, err := runPlan(t, "change-status", "auth", "--to=in review")
+				return err
+			},
+		},
+		{
+			name: "sidekick owned path failure",
+			run: func(t *testing.T) error {
+				root := setupSpecRoot(t)
+				withCwd(t, root)
+				if _, _, err := runSidekick(t, "new", "queued seed"); err != nil {
+					return err
+				}
+				_, _, err := runSidekick(t, "change-status", "queued-seed", "--to=implemented")
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := transactionRel
+			transactionRel = func(string, string) (string, error) { return "", errors.New("owned path failed") }
+			t.Cleanup(func() { transactionRel = original })
+			if err := tc.run(t); err == nil || !strings.Contains(err.Error(), "owned path failed") {
+				t.Fatalf("adapter error = %v", err)
+			}
+		})
 	}
 }
 
@@ -1096,10 +2214,11 @@ func TestSpecTreeTransaction_RestoresAllLintMutationsAfterVerificationFailure(t 
 	originalLint := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
 		if opts.Fix {
-			if err := os.WriteFile(target, []byte("target changed by lint\n"), 0o644); err != nil {
+			lintTarget := filepath.Join(opts.SpecRoot, "plans", "auth.md")
+			if err := os.WriteFile(lintTarget, []byte("target changed by lint\n"), 0o644); err != nil {
 				return nil, err
 			}
-			return nil, os.WriteFile(filepath.Join(specRoot, "plans", "README.md"), []byte("index added by lint\n"), 0o644)
+			return nil, os.WriteFile(filepath.Join(opts.SpecRoot, "plans", "README.md"), []byte("index added by lint\n"), 0o644)
 		}
 		return []lint.Violation{{File: "plans/auth.md", Line: 1, Rule: "forced", Severity: "error", Message: "verify failure"}}, nil
 	}
@@ -1144,7 +2263,7 @@ func TestLintPostMutationHook_SnapshotAndRollbackFailuresAreReported(t *testing.
 		originalLint := lintLintFn
 		lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
 			if opts.Fix {
-				return nil, os.WriteFile(target, []byte("changed"), 0o644)
+				return nil, os.WriteFile(filepath.Join(opts.SpecRoot, "README.md"), []byte("changed"), 0o644)
 			}
 			return nil, errors.New("forced verification failure")
 		}
@@ -1159,8 +2278,11 @@ func TestLintPostMutationHook_SnapshotAndRollbackFailuresAreReported(t *testing.
 		}
 		err = transaction.postMutationHook()()
 		err = transaction.finish(err)
-		if err == nil || !strings.Contains(err.Error(), "rollback could not restore all transaction-owned state") || !strings.Contains(err.Error(), "forced restore failure") {
-			t.Fatalf("error = %v, want reported rollback failure", err)
+		if err == nil || !strings.Contains(err.Error(), "forced verification failure") {
+			t.Fatalf("error = %v, want verification failure", err)
+		}
+		if got, readErr := os.ReadFile(target); readErr != nil || string(got) != "before" {
+			t.Fatalf("isolated lint changed live tree despite verification failure: %q, %v", got, readErr)
 		}
 	})
 }
@@ -1223,7 +2345,7 @@ func TestIssueChangeStatus_LintVerificationFailureRestoresFullSpecTree_CLI(t *te
 	originalLint := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
 		if opts.Fix {
-			indexPath := filepath.Join(specRoot, "issues", "generated", "README.md")
+			indexPath := filepath.Join(opts.SpecRoot, "issues", "generated", "README.md")
 			if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
 				return nil, err
 			}
