@@ -1208,7 +1208,7 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 	}
 }
 
-func TestLifecycleRecoveryValidationHoldsStageDescriptorAcrossPathSwap(t *testing.T) {
+func TestLifecycleRecoveryValidationRejectsStagePathSwapAfterSnapshot(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
 	receipt, err := RunLifecycleTransaction(project, func(string) error {
@@ -1233,8 +1233,8 @@ func TestLifecycleRecoveryValidationHoldsStageDescriptorAcrossPathSwap(t *testin
 		return originalSnapshot(tree)
 	}
 	t.Cleanup(func() { lifecycleRecoverySnapshot = originalSnapshot })
-	if err := validateLifecycleReceipt(project, receipt); err != nil {
-		t.Fatalf("descriptor-held recovery validation after stage path swap: %v", err)
+	if err := validateLifecycleReceipt(project, receipt); err == nil {
+		t.Fatal("recovery validation accepted a stage path swap after predecessor snapshot")
 	}
 	info, err := os.Lstat(receipt.RecoveryRoot)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
@@ -1242,7 +1242,7 @@ func TestLifecycleRecoveryValidationHoldsStageDescriptorAcrossPathSwap(t *testin
 	}
 }
 
-func TestLifecycleRecoveryDiffUsesOneValidatedSnapshotPair(t *testing.T) {
+func TestLifecycleRecoveryDiffRejectsStagePathSwapAfterSnapshot(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
 	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
@@ -1278,8 +1278,8 @@ func TestLifecycleRecoveryDiffUsesOneValidatedSnapshotPair(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetArgs([]string{"diff", receipt.ID, "--project", project})
-	if err := command.Execute(); err != nil || output.String() != "published.md\n" {
-		t.Fatalf("descriptor-held recovery diff after stage replacement = %q, %v", output.String(), err)
+	if err := command.Execute(); err == nil {
+		t.Fatalf("recovery diff accepted a stage replacement after snapshot: %q", output.String())
 	}
 	if diffSnapshotCalls != 2 {
 		t.Fatalf("recovery diff snapshot calls = %d, want exactly 2", diffSnapshotCalls)
@@ -1287,6 +1287,41 @@ func TestLifecycleRecoveryDiffUsesOneValidatedSnapshotPair(t *testing.T) {
 	info, err := os.Lstat(receipt.RecoveryRoot)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("diff stage replacement fixture = %v, %v", info, err)
+	}
+}
+
+func TestLifecycleRecoveryDiffUsesOneValidatedSnapshotPair(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalValidationSnapshot := lifecycleRecoverySnapshot
+	lifecycleRecoverySnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
+		t.Fatal("recovery diff opened a separate validation snapshot pair")
+		return specTreeSnapshot{}, nil
+	}
+	t.Cleanup(func() { lifecycleRecoverySnapshot = originalValidationSnapshot })
+	originalDiffSnapshot := lifecycleRecoveryDiffSnapshot
+	diffSnapshotCalls := 0
+	lifecycleRecoveryDiffSnapshot = func(tree *stagedSpecTree) (specTreeSnapshot, error) {
+		diffSnapshotCalls++
+		return originalDiffSnapshot(tree)
+	}
+	t.Cleanup(func() { lifecycleRecoveryDiffSnapshot = originalDiffSnapshot })
+	command := lifecycleRecoveryCommand()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"diff", receipt.ID, "--project", project})
+	if err := command.Execute(); err != nil || output.String() != "published.md\n" {
+		t.Fatalf("one-pair recovery diff = %q, %v", output.String(), err)
+	}
+	if diffSnapshotCalls != 2 {
+		t.Fatalf("recovery diff snapshot calls = %d, want exactly 2", diffSnapshotCalls)
 	}
 }
 

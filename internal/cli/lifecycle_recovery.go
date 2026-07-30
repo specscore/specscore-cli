@@ -402,14 +402,8 @@ func lifecycleRecoveryReceiptSnapshots(
 		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("opening retained predecessor descriptor: %w", err)
 	}
 	defer func() { _ = closeStagedSpecTree(stage) }()
-	if receipt.RecoveryRootIdentity != "" {
-		identity, err := lifecycleStageIdentity(stage)
-		if err != nil {
-			return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("identifying retained predecessor descriptor: %w", err)
-		}
-		if identity != receipt.RecoveryRootIdentity {
-			return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("retained predecessor identity does not match receipt")
-		}
+	if err := lifecycleRecoveryStageMatches(project, stageName, stage, receipt.RecoveryRootIdentity); err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("validating retained predecessor descriptor: %w", err)
 	}
 	priorSpec, err := openLifecycleProjectChildNoFollow(stage, "spec")
 	if err != nil {
@@ -420,5 +414,30 @@ func lifecycleRecoveryReceiptSnapshots(
 	if err != nil {
 		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("snapshotting retained predecessor spec descriptor: %w", err)
 	}
+	if err := lifecycleRecoveryStageMatches(project, stageName, stage, receipt.RecoveryRootIdentity); err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("revalidating retained predecessor descriptor: %w", err)
+	}
 	return live, prior, nil
+}
+
+// lifecycleRecoveryStageMatches rebinds the project entry to the held stage
+// descriptor and, for protocol-v2 transactions, its persisted device/inode
+// token. It is deliberately run both before and after predecessor snapshotting:
+// a raw rename during the snapshot must not be accepted as a valid recovery
+// root merely because the old descriptor remained readable.
+func lifecycleRecoveryStageMatches(project *stagedSpecTree, stageName string, stage *stagedSpecTree, expectedIdentity string) error {
+	if err := lifecycleProjectChildMatches(project, stageName, stage); err != nil {
+		return err
+	}
+	if expectedIdentity == "" {
+		return nil
+	}
+	identity, err := lifecycleStageIdentity(stage)
+	if err != nil {
+		return err
+	}
+	if identity != expectedIdentity {
+		return fmt.Errorf("retained predecessor identity does not match receipt")
+	}
+	return nil
 }
