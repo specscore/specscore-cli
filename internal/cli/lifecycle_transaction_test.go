@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -104,6 +105,51 @@ func TestRunLifecycleTransactionFailureRetainsPreparedReceipt(t *testing.T) {
 	}
 	if _, err := readLifecycleReceipt(project, receipt.ID); err != nil {
 		t.Fatalf("prepared receipt was not retained: %v", err)
+	}
+}
+
+func TestRunLifecycleTransactionWritesPreparedIntentBeforeCreatingStage(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalWrite := lifecycleTransactionWriteReceipt
+	writes := 0
+	lifecycleTransactionWriteReceipt = func(descriptor *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
+		writes++
+		if writes == 1 {
+			if !receipt.PublishingIntentRequired || receipt.State != "prepared" {
+				t.Fatalf("first lifecycle receipt = %#v", receipt)
+			}
+			if _, statErr := os.Stat(receipt.RecoveryRoot); !os.IsNotExist(statErr) {
+				t.Fatalf("prepared intent followed staged-tree creation: %v", statErr)
+			}
+		}
+		return originalWrite(descriptor, receipt)
+	}
+	t.Cleanup(func() { lifecycleTransactionWriteReceipt = originalWrite })
+	if _, err := RunLifecycleTransaction(project, func(string) error { return nil }); err != nil {
+		t.Fatalf("transaction with pre-stage prepared intent: %v", err)
+	}
+}
+
+func TestRunLifecycleTransactionPreparedIntentFailureCreatesNoStage(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalWrite := lifecycleTransactionWriteReceipt
+	lifecycleTransactionWriteReceipt = func(*stagedSpecTree, LifecycleTransactionReceipt) error {
+		return errors.New("prepared intent persistence failed")
+	}
+	t.Cleanup(func() { lifecycleTransactionWriteReceipt = originalWrite })
+	if _, err := RunLifecycleTransaction(project, func(string) error { return nil }); err == nil {
+		t.Fatal("prepared intent persistence failure accepted")
+	}
+	entries, err := os.ReadDir(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".specscore-txn-") {
+			t.Fatalf("unjournaled staged tree remained after prepared intent failure: %s", entry.Name())
+		}
 	}
 }
 
@@ -773,7 +819,7 @@ func TestLifecycleRecoveryDiffFailureModes(t *testing.T) {
 		t.Fatalf("no-diff recovery output = %q, %v", output.String(), err)
 	}
 	originalDiffSnapshot := lifecycleRecoveryDiffSnapshot
-	lifecycleRecoveryDiffSnapshot = func(string) (specTreeSnapshot, error) {
+	lifecycleRecoveryDiffSnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
 		return specTreeSnapshot{}, errors.New("live diff snapshot failed")
 	}
 	if err := runDiff(noDiff.ID); err == nil {
@@ -781,12 +827,12 @@ func TestLifecycleRecoveryDiffFailureModes(t *testing.T) {
 	}
 	lifecycleRecoveryDiffSnapshot = originalDiffSnapshot
 	diffSnapshots := 0
-	lifecycleRecoveryDiffSnapshot = func(path string) (specTreeSnapshot, error) {
+	lifecycleRecoveryDiffSnapshot = func(tree *stagedSpecTree) (specTreeSnapshot, error) {
 		diffSnapshots++
 		if diffSnapshots == 2 {
 			return specTreeSnapshot{}, errors.New("prior diff snapshot failed")
 		}
-		return originalDiffSnapshot(path)
+		return originalDiffSnapshot(tree)
 	}
 	if err := runDiff(noDiff.ID); err == nil {
 		t.Fatal("prior diff snapshot failure accepted")
@@ -933,7 +979,7 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 	}
 	writeIntent(intent)
 	originalSnapshot := lifecycleRecoverySnapshot
-	lifecycleRecoverySnapshot = func(string) (specTreeSnapshot, error) {
+	lifecycleRecoverySnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
 		return specTreeSnapshot{}, errors.New("publishing intent snapshot failed")
 	}
 	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
@@ -956,6 +1002,71 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 	}
 }
 
+func TestLifecycleRecoveryValidationHoldsStageDescriptorAcrossPathSwap(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSnapshot := lifecycleRecoverySnapshot
+	calls := 0
+	movedStage := receipt.RecoveryRoot + ".moved"
+	lifecycleRecoverySnapshot = func(tree *stagedSpecTree) (specTreeSnapshot, error) {
+		calls++
+		if calls == 2 {
+			if renameErr := os.Rename(receipt.RecoveryRoot, movedStage); renameErr != nil {
+				return specTreeSnapshot{}, renameErr
+			}
+			if linkErr := os.Symlink(movedStage, receipt.RecoveryRoot); linkErr != nil {
+				return specTreeSnapshot{}, linkErr
+			}
+		}
+		return originalSnapshot(tree)
+	}
+	t.Cleanup(func() { lifecycleRecoverySnapshot = originalSnapshot })
+	if err := validateLifecycleReceipt(project, receipt); err != nil {
+		t.Fatalf("descriptor-held recovery validation after stage path swap: %v", err)
+	}
+	info, err := os.Lstat(receipt.RecoveryRoot)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("stage swap fixture = %v, %v", info, err)
+	}
+}
+
+func TestLifecycleRecoveryListHoldsJournalAcrossReplacement(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(project, ".specscore-recovery")
+	movedJournal := journal + ".moved"
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryReadDir = func(file *os.File, count int) ([]os.DirEntry, error) {
+		entries, readErr := file.ReadDir(count)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if renameErr := os.Rename(journal, movedJournal); renameErr != nil {
+			return nil, renameErr
+		}
+		if mkdirErr := os.Mkdir(journal, 0o700); mkdirErr != nil {
+			return nil, mkdirErr
+		}
+		return entries, nil
+	}
+	receipts, err := readLifecycleReceipts(project)
+	if err != nil || len(receipts) != 1 || receipts[0].ID != receipt.ID {
+		t.Fatalf("recovery list after journal replacement = %#v, %v", receipts, err)
+	}
+}
+
 func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 	project := t.TempDir()
 	journal := filepath.Join(project, ".specscore-recovery")
@@ -966,11 +1077,19 @@ func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 		mustWriteLifecycleFile(t, path, content)
 	}
 	write("original\n")
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, "../escape.json"); err == nil {
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(nil, "../escape.json"); err == nil {
 		t.Fatal("unsafe recovery filename accepted")
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(t.TempDir(), name); err == nil {
+	if _, err := openLifecycleRecoveryHandleNoFollow(t.TempDir()); err == nil {
 		t.Fatal("missing recovery journal accepted")
+	}
+	withHandle := func(read func(*lifecycleRecoveryHandle) error) error {
+		handle, err := openLifecycleRecoveryHandleNoFollow(project)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = closeLifecycleRecoveryHandle(handle) }()
+		return read(handle)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -978,7 +1097,10 @@ func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 	if err := os.Symlink("other.json", path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("symlinked recovery receipt accepted")
 	}
 	if err := os.Remove(path); err != nil {
@@ -987,8 +1109,32 @@ func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("directory recovery receipt accepted")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- withHandle(func(handle *lifecycleRecoveryHandle) error {
+			_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+			return err
+		})
+	}()
+	select {
+	case fifoErr := <-done:
+		if fifoErr == nil {
+			t.Fatal("FIFO recovery receipt accepted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO recovery receipt blocked despite O_NONBLOCK")
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -999,42 +1145,54 @@ func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 	lifecycleRecoveryOpenProject = func(string) (*stagedSpecTree, error) {
 		return nil, errors.New("project descriptor open failed")
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if _, err := openLifecycleRecoveryHandleNoFollow(project); err == nil {
 		t.Fatal("project descriptor open failure accepted")
 	}
 	resetLifecycleRecoveryReadSeams(t)
 	lifecycleRecoveryOpenChild = func(*stagedSpecTree, string) (*stagedSpecTree, error) {
 		return nil, errors.New("journal descriptor open failed")
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if _, err := openLifecycleRecoveryHandleNoFollow(project); err == nil {
 		t.Fatal("journal descriptor open failure accepted")
 	}
 	resetLifecycleRecoveryReadSeams(t)
 	lifecycleRecoveryOpenFileAt = func(int, string, int, uint32) (int, error) {
 		return -1, errors.New("receipt descriptor open failed")
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("receipt descriptor open failure accepted")
 	}
 	resetLifecycleRecoveryReadSeams(t)
 	lifecycleRecoveryFileStat = func(*os.File) (os.FileInfo, error) {
 		return nil, errors.New("pre-read stat failed")
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("pre-read stat failure accepted")
 	}
 	resetLifecycleRecoveryReadSeams(t)
 	lifecycleRecoveryBeforeRead = func(*os.File) error {
 		return errors.New("pre-read hook failed")
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("pre-read hook failure accepted")
 	}
 	resetLifecycleRecoveryReadSeams(t)
 	lifecycleRecoveryReadAll = func(io.Reader) ([]byte, error) {
 		return nil, errors.New("receipt read failed")
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("receipt read failure accepted")
 	}
 	resetLifecycleRecoveryReadSeams(t)
@@ -1046,14 +1204,20 @@ func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 		}
 		return file.Stat()
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("post-read stat failure accepted")
 	}
 	resetLifecycleRecoveryReadSeams(t)
 	lifecycleRecoveryBeforeRead = func(*os.File) error {
 		return os.WriteFile(path, []byte("changed\n"), 0o600)
 	}
-	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+	if err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		_, err := readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return err
+	}); err == nil {
 		t.Fatal("receipt changed while reading accepted")
 	}
 	write("original\n")
@@ -1064,7 +1228,12 @@ func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 		}
 		return os.Symlink("other.json", path)
 	}
-	data, err := readLifecycleRecoveryRegularFileNoFollow(project, name)
+	var data []byte
+	err := withHandle(func(handle *lifecycleRecoveryHandle) error {
+		var readErr error
+		data, readErr = readLifecycleRecoveryRegularFileNoFollow(handle, name)
+		return readErr
+	})
 	if err != nil || string(data) != "original\n" {
 		t.Fatalf("descriptor-held receipt after pathname swap = %q, %v", data, err)
 	}
@@ -1083,6 +1252,86 @@ func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
 	}
 	if _, err := readLifecycleReceipt(project, "receipt-1"); err == nil {
 		t.Fatal("symlinked current receipt accepted through descriptor reader")
+	}
+}
+
+func TestLifecycleRecoveryHandleAndSnapshotDefensiveBranches(t *testing.T) {
+	if err := closeLifecycleRecoveryHandle(nil); err != nil {
+		t.Fatalf("closing nil lifecycle recovery handle: %v", err)
+	}
+	if _, err := readLifecycleRecoveryEntriesNoFollow(nil); err == nil {
+		t.Fatal("closed lifecycle recovery journal accepted for enumeration")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(nil, "receipt-1.json"); err == nil {
+		t.Fatal("closed lifecycle recovery journal accepted for receipt read")
+	}
+	if _, err := readLifecycleReceiptWithHandle(t.TempDir(), nil, "bad.id"); err == nil {
+		t.Fatal("invalid lifecycle transaction id accepted with a held recovery handle")
+	}
+
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "live\n")
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryOpenProject = func(string) (*stagedSpecTree, error) {
+		return nil, errors.New("receipt handle open failed")
+	}
+	if _, err := readLifecycleReceipt(project, "receipt-1"); err == nil {
+		t.Fatal("receipt read accepted a lifecycle recovery handle-open failure")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+
+	missingProject := filepath.Join(t.TempDir(), "missing-project")
+	missingReceipt := LifecycleTransactionReceipt{
+		ID:             "missing-project",
+		State:          "prepared",
+		ProjectRoot:    missingProject,
+		RecoveryRoot:   filepath.Join(missingProject, ".specscore-txn-missing-project"),
+		BaselineDigest: "baseline",
+	}
+	if err := validateLifecycleReceipt(missingProject, missingReceipt); err == nil {
+		t.Fatal("receipt validation accepted a missing project descriptor")
+	}
+
+	receipt := LifecycleTransactionReceipt{
+		ID:             "snapshot-1",
+		State:          "committed",
+		ProjectRoot:    project,
+		RecoveryRoot:   filepath.Join(project, ".specscore-txn-snapshot-1"),
+		BaselineDigest: "baseline",
+		StagedDigest:   "staged",
+	}
+	if _, _, err := lifecycleRecoveryReceiptSnapshots(project, nil, receipt, lifecycleRecoverySnapshot); err == nil {
+		t.Fatal("closed project descriptor accepted for lifecycle recovery snapshot")
+	}
+	invalidReceipt := receipt
+	invalidReceipt.ID = "bad.id"
+	if _, _, err := lifecycleRecoveryReceiptSnapshots(project, nil, invalidReceipt, lifecycleRecoverySnapshot); err == nil {
+		t.Fatal("invalid receipt accepted for lifecycle recovery snapshot")
+	}
+
+	withoutSpec := t.TempDir()
+	withoutSpecProject, err := openLifecycleProjectNoFollow(withoutSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(withoutSpecProject) })
+	withoutSpecReceipt := receipt
+	withoutSpecReceipt.ProjectRoot = withoutSpec
+	withoutSpecReceipt.RecoveryRoot = filepath.Join(withoutSpec, ".specscore-txn-snapshot-1")
+	if _, _, err := lifecycleRecoveryReceiptSnapshots(withoutSpec, withoutSpecProject, withoutSpecReceipt, lifecycleRecoverySnapshot); err == nil {
+		t.Fatal("missing live spec accepted for lifecycle recovery snapshot")
+	}
+
+	if err := os.Mkdir(filepath.Join(project, ".specscore-txn-snapshot-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	projectDescriptor, err := openLifecycleProjectNoFollow(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(projectDescriptor) })
+	if _, _, err := lifecycleRecoveryReceiptSnapshots(project, projectDescriptor, receipt, lifecycleRecoverySnapshot); err == nil {
+		t.Fatal("missing retained predecessor spec accepted for lifecycle recovery snapshot")
 	}
 }
 

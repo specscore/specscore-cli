@@ -105,32 +105,31 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	if err != nil {
 		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("generating lifecycle transaction id: %v", err)
 	}
-	stage, err := lifecycleTransactionCreateStage(project, id)
-	if err != nil {
-		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("creating staged lifecycle project: %v", err)
-	}
-	stagePath := stage.path
-	defer func() { _ = closeStagedSpecTree(stage) }()
-	stageSpec, err := lifecycleTransactionCreateStageSpec(stage, baseline)
-	if err != nil {
-		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("materializing staged spec tree: %v", err)
-	}
-	defer func() { _ = closeStagedSpecTree(stageSpec) }()
-	if err := lifecycleTransactionFreezeContext(project, stage); err != nil {
-		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("freezing staged project context: %v", err)
-	}
-
 	receipt := LifecycleTransactionReceipt{
 		ID:                       id,
 		State:                    "prepared",
 		ProjectRoot:              projectRoot,
-		RecoveryRoot:             stagePath,
+		RecoveryRoot:             filepath.Join(projectRoot, ".specscore-txn-"+id),
 		BaselineDigest:           lifecycleSnapshotDigest(baseline),
 		CreatedAt:                time.Now().UTC().Format(time.RFC3339Nano),
 		PublishingIntentRequired: true,
 	}
 	if err := lifecycleTransactionWriteReceipt(project, receipt); err != nil {
 		return LifecycleTransactionReceipt{}, err
+	}
+	stage, err := lifecycleTransactionCreateStage(project, id)
+	if err != nil {
+		return receipt, exitcode.UnexpectedErrorf("creating staged lifecycle project: %v", err)
+	}
+	stagePath := stage.path
+	defer func() { _ = closeStagedSpecTree(stage) }()
+	stageSpec, err := lifecycleTransactionCreateStageSpec(stage, baseline)
+	if err != nil {
+		return receipt, exitcode.UnexpectedErrorf("materializing staged spec tree: %v", err)
+	}
+	defer func() { _ = closeStagedSpecTree(stageSpec) }()
+	if err := lifecycleTransactionFreezeContext(project, stage); err != nil {
+		return receipt, exitcode.UnexpectedErrorf("freezing staged project context: %v", err)
 	}
 
 	if err := lifecycleTransactionRunStaged(stage, op); err != nil {

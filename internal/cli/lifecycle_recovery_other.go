@@ -7,10 +7,16 @@ import (
 	"os"
 )
 
-func readLifecycleRecoveryEntriesNoFollow(string) ([]os.DirEntry, error) {
+func openLifecycleRecoveryHandleNoFollow(string) (*lifecycleRecoveryHandle, error) {
 	return nil, fmt.Errorf("secure lifecycle recovery reads are unavailable on this platform")
 }
 
-func readLifecycleRecoveryRegularFileNoFollow(string, string) ([]byte, error) {
+func closeLifecycleRecoveryHandle(*lifecycleRecoveryHandle) error { return nil }
+
+func readLifecycleRecoveryEntriesNoFollow(*lifecycleRecoveryHandle) ([]os.DirEntry, error) {
+	return nil, fmt.Errorf("secure lifecycle recovery reads are unavailable on this platform")
+}
+
+func readLifecycleRecoveryRegularFileNoFollow(*lifecycleRecoveryHandle, string) ([]byte, error) {
 	return nil, fmt.Errorf("secure lifecycle recovery reads are unavailable on this platform")
 }

@@ -22,45 +22,58 @@ var (
 	lifecycleRecoveryReadDir     = func(file *os.File, count int) ([]os.DirEntry, error) { return file.ReadDir(count) }
 )
 
-// readLifecycleRecoveryEntriesNoFollow holds the project and journal
-// descriptors while enumerating recovery entries. Names are subsequently
-// reopened through the same no-follow protocol before their contents are used.
-func readLifecycleRecoveryEntriesNoFollow(projectRoot string) ([]os.DirEntry, error) {
+func openLifecycleRecoveryHandleNoFollow(projectRoot string) (*lifecycleRecoveryHandle, error) {
 	project, err := lifecycleRecoveryOpenProject(projectRoot)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = closeStagedSpecTree(project) }()
 	journal, err := lifecycleRecoveryOpenChild(project, ".specscore-recovery")
 	if err != nil {
+		_ = closeStagedSpecTree(project)
 		return nil, err
 	}
-	defer func() { _ = closeStagedSpecTree(journal) }()
-	return lifecycleRecoveryReadDir(journal.root, -1)
+	return &lifecycleRecoveryHandle{project: project, journal: journal}, nil
 }
 
-// readLifecycleRecoveryRegularFileNoFollow holds project and journal
-// descriptors while opening the requested journal entry with O_NOFOLLOW. The
-// entry is then read through that held descriptor, so a pathname replacement
-// after open cannot redirect recovery to attacker-controlled content.
-func readLifecycleRecoveryRegularFileNoFollow(projectRoot, name string) ([]byte, error) {
+func closeLifecycleRecoveryHandle(handle *lifecycleRecoveryHandle) error {
+	if handle == nil {
+		return nil
+	}
+	var closeErr error
+	if handle.journal != nil {
+		closeErr = closeStagedSpecTree(handle.journal)
+	}
+	if handle.project != nil {
+		if err := closeStagedSpecTree(handle.project); closeErr == nil {
+			closeErr = err
+		}
+	}
+	return closeErr
+}
+
+// readLifecycleRecoveryEntriesNoFollow keeps the journal descriptor open
+// through subsequent canonical/intent pair validation.
+func readLifecycleRecoveryEntriesNoFollow(handle *lifecycleRecoveryHandle) ([]os.DirEntry, error) {
+	if handle == nil || handle.journal == nil || handle.journal.root == nil {
+		return nil, fmt.Errorf("lifecycle recovery journal descriptor is closed")
+	}
+	return lifecycleRecoveryReadDir(handle.journal.root, -1)
+}
+
+// readLifecycleRecoveryRegularFileNoFollow opens the requested journal entry
+// under a held journal descriptor. O_NONBLOCK prevents FIFOs from stalling
+// recovery before their post-open regular-file check.
+func readLifecycleRecoveryRegularFileNoFollow(handle *lifecycleRecoveryHandle, name string) ([]byte, error) {
 	if filepath.Base(name) != name || !strings.HasSuffix(name, ".json") {
 		return nil, fmt.Errorf("invalid lifecycle recovery filename %q", name)
 	}
-	project, err := lifecycleRecoveryOpenProject(projectRoot)
-	if err != nil {
-		return nil, err
+	if handle == nil || handle.journal == nil || handle.journal.root == nil {
+		return nil, fmt.Errorf("lifecycle recovery journal descriptor is closed")
 	}
-	defer func() { _ = closeStagedSpecTree(project) }()
-	journal, err := lifecycleRecoveryOpenChild(project, ".specscore-recovery")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = closeStagedSpecTree(journal) }()
 	fd, err := lifecycleRecoveryOpenFileAt(
-		int(journal.root.Fd()),
+		int(handle.journal.root.Fd()),
 		name,
-		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW,
+		unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC|unix.O_NOFOLLOW,
 		0,
 	)
 	if err != nil {

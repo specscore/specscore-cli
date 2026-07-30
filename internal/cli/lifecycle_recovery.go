@@ -14,9 +14,14 @@ import (
 
 var (
 	lifecycleRecoveryAbs          = filepath.Abs
-	lifecycleRecoverySnapshot     = snapshotSpecTreeNoFollow
-	lifecycleRecoveryDiffSnapshot = snapshotSpecTreeNoFollow
+	lifecycleRecoverySnapshot     = snapshotStagedSpecTreeNoFollow
+	lifecycleRecoveryDiffSnapshot = snapshotStagedSpecTreeNoFollow
 )
+
+type lifecycleRecoveryHandle struct {
+	project *stagedSpecTree
+	journal *stagedSpecTree
+}
 
 // lifecycleRecoveryCommand intentionally exposes inspection only. An exchanged
 // predecessor may still receive a write through an old descriptor, so removal
@@ -63,20 +68,21 @@ func lifecycleRecoveryDiffCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			receipt, err := readLifecycleReceipt(root, args[0])
+			handle, err := openLifecycleRecoveryHandleNoFollow(root)
+			if err != nil {
+				return exitcode.UnexpectedErrorf("opening lifecycle recovery journal without following links: %v", err)
+			}
+			defer func() { _ = closeLifecycleRecoveryHandle(handle) }()
+			receipt, err := readLifecycleReceiptWithHandle(root, handle, args[0])
 			if err != nil {
 				return err
 			}
 			if receipt.State != "committed" {
 				return exitcode.ConflictErrorf("transaction %s is %s; no exchanged predecessor is available to diff", receipt.ID, receipt.State)
 			}
-			live, err := lifecycleRecoveryDiffSnapshot(filepath.Join(root, "spec"))
+			live, prior, err := lifecycleRecoveryReceiptSnapshots(root, handle.project, receipt, lifecycleRecoveryDiffSnapshot)
 			if err != nil {
-				return exitcode.UnexpectedErrorf("snapshotting live spec tree: %v", err)
-			}
-			prior, err := lifecycleRecoveryDiffSnapshot(filepath.Join(receipt.RecoveryRoot, "spec"))
-			if err != nil {
-				return exitcode.UnexpectedErrorf("snapshotting retained predecessor: %v", err)
+				return exitcode.UnexpectedErrorf("snapshotting descriptor-rooted lifecycle recovery trees: %v", err)
 			}
 			paths := unionSnapshotPaths(
 				changedSnapshotFiles(live, prior),
@@ -102,10 +108,15 @@ func lifecycleRecoveryProjectRoot(cmd *cobra.Command) (string, error) {
 }
 
 func readLifecycleReceipts(projectRoot string) ([]LifecycleTransactionReceipt, error) {
-	entries, err := readLifecycleRecoveryEntriesNoFollow(projectRoot)
+	handle, err := openLifecycleRecoveryHandleNoFollow(projectRoot)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, exitcode.UnexpectedErrorf("opening lifecycle recovery journal without following links: %v", err)
+	}
+	defer func() { _ = closeLifecycleRecoveryHandle(handle) }()
+	entries, err := readLifecycleRecoveryEntriesNoFollow(handle)
 	if err != nil {
 		return nil, exitcode.UnexpectedErrorf("reading lifecycle recovery journal: %v", err)
 	}
@@ -141,7 +152,7 @@ func readLifecycleReceipts(projectRoot string) ([]LifecycleTransactionReceipt, e
 	sort.Strings(ids)
 	receipts := make([]LifecycleTransactionReceipt, 0, len(ids))
 	for _, id := range ids {
-		receipt, err := readLifecycleReceipt(projectRoot, id)
+		receipt, err := readLifecycleReceiptWithHandle(projectRoot, handle, id)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +165,22 @@ func readLifecycleReceipt(projectRoot, id string) (LifecycleTransactionReceipt, 
 	if !validLifecycleTransactionID(id) {
 		return LifecycleTransactionReceipt{}, exitcode.InvalidArgsErrorf("invalid lifecycle transaction id %q", id)
 	}
-	data, err := readLifecycleRecoveryRegularFileNoFollow(projectRoot, id+".json")
+	handle, err := openLifecycleRecoveryHandleNoFollow(projectRoot)
+	if os.IsNotExist(err) {
+		return LifecycleTransactionReceipt{}, exitcode.NotFoundErrorf("lifecycle transaction receipt not found: %s", id)
+	}
+	if err != nil {
+		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("opening lifecycle recovery journal without following links: %v", err)
+	}
+	defer func() { _ = closeLifecycleRecoveryHandle(handle) }()
+	return readLifecycleReceiptWithHandle(projectRoot, handle, id)
+}
+
+func readLifecycleReceiptWithHandle(projectRoot string, handle *lifecycleRecoveryHandle, id string) (LifecycleTransactionReceipt, error) {
+	if !validLifecycleTransactionID(id) {
+		return LifecycleTransactionReceipt{}, exitcode.InvalidArgsErrorf("invalid lifecycle transaction id %q", id)
+	}
+	data, err := readLifecycleRecoveryRegularFileNoFollow(handle, id+".json")
 	if os.IsNotExist(err) {
 		return LifecycleTransactionReceipt{}, exitcode.NotFoundErrorf("lifecycle transaction receipt not found: %s", id)
 	}
@@ -168,17 +194,32 @@ func readLifecycleReceipt(projectRoot, id string) (LifecycleTransactionReceipt, 
 	if receipt.ID != id {
 		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("lifecycle transaction receipt identity mismatch for %s", id)
 	}
-	if err := validateLifecycleReceipt(projectRoot, receipt); err != nil {
+	if err := validateLifecycleReceiptWithProject(projectRoot, handle.project, receipt); err != nil {
 		return LifecycleTransactionReceipt{}, err
 	}
-	if err := validateLifecyclePublishingIntent(projectRoot, receipt); err != nil {
+	if err := validateLifecyclePublishingIntentWithHandle(projectRoot, handle, receipt); err != nil {
 		return LifecycleTransactionReceipt{}, err
 	}
 	return receipt, nil
 }
 
 func validateLifecyclePublishingIntent(projectRoot string, receipt LifecycleTransactionReceipt) error {
-	data, err := readLifecycleRecoveryRegularFileNoFollow(projectRoot, receipt.ID+".publishing.json")
+	handle, err := openLifecycleRecoveryHandleNoFollow(projectRoot)
+	if os.IsNotExist(err) {
+		if receipt.State == "committed" && receipt.PublishingIntentRequired {
+			return exitcode.UnexpectedErrorf("marked committed lifecycle receipt %s is missing its publishing intent", receipt.ID)
+		}
+		return nil
+	}
+	if err != nil {
+		return exitcode.UnexpectedErrorf("opening lifecycle recovery journal without following links: %v", err)
+	}
+	defer func() { _ = closeLifecycleRecoveryHandle(handle) }()
+	return validateLifecyclePublishingIntentWithHandle(projectRoot, handle, receipt)
+}
+
+func validateLifecyclePublishingIntentWithHandle(projectRoot string, handle *lifecycleRecoveryHandle, receipt LifecycleTransactionReceipt) error {
+	data, err := readLifecycleRecoveryRegularFileNoFollow(handle, receipt.ID+".publishing.json")
 	if os.IsNotExist(err) {
 		if receipt.State == "committed" && receipt.PublishingIntentRequired {
 			return exitcode.UnexpectedErrorf("marked committed lifecycle receipt %s is missing its publishing intent", receipt.ID)
@@ -203,37 +244,33 @@ func validateLifecyclePublishingIntent(projectRoot string, receipt LifecycleTran
 		intent.PublishingIntentRequired != receipt.PublishingIntentRequired {
 		return exitcode.UnexpectedErrorf("lifecycle publishing intent does not match receipt %s", receipt.ID)
 	}
-	if err := validateLifecycleReceipt(projectRoot, intent); err != nil {
+	if err := validateLifecycleReceiptWithProject(projectRoot, handle.project, intent); err != nil {
 		return exitcode.UnexpectedErrorf("validating lifecycle publishing intent: %v", err)
 	}
 	return nil
 }
 
 func validateLifecycleReceipt(projectRoot string, receipt LifecycleTransactionReceipt) error {
-	if !validLifecycleTransactionID(receipt.ID) {
-		return exitcode.UnexpectedErrorf("invalid lifecycle transaction receipt id %q", receipt.ID)
-	}
-	if receipt.State != "prepared" && receipt.State != "publishing" && receipt.State != "committed" {
-		return exitcode.UnexpectedErrorf("invalid lifecycle transaction state %q", receipt.State)
-	}
-	root, err := lifecycleRecoveryAbs(projectRoot)
+	root, _, err := lifecycleRecoveryReceiptStageName(projectRoot, receipt)
 	if err != nil {
-		return exitcode.UnexpectedErrorf("resolving recovery project root: %v", err)
+		return err
 	}
-	if filepath.Clean(receipt.ProjectRoot) != root {
-		return exitcode.UnexpectedErrorf("lifecycle receipt project-root mismatch")
-	}
-	recoveryRoot := filepath.Clean(receipt.RecoveryRoot)
-	rel, err := filepath.Rel(root, recoveryRoot)
-	if err != nil || filepath.Dir(rel) != "." || !strings.HasPrefix(filepath.Base(rel), ".specscore-txn-") {
-		return exitcode.UnexpectedErrorf("lifecycle receipt recovery-root escapes its project")
-	}
-	if receipt.BaselineDigest == "" || ((receipt.State == "publishing" || receipt.State == "committed") && receipt.StagedDigest == "") {
-		return exitcode.UnexpectedErrorf("lifecycle receipt is missing its integrity digest")
-	}
-	live, err := lifecycleRecoverySnapshot(filepath.Join(root, "spec"))
+	project, err := openLifecycleProjectNoFollow(root)
 	if err != nil {
-		return exitcode.UnexpectedErrorf("snapshotting live spec for lifecycle receipt validation: %v", err)
+		return exitcode.UnexpectedErrorf("opening lifecycle project without following links: %v", err)
+	}
+	defer func() { _ = closeStagedSpecTree(project) }()
+	return validateLifecycleReceiptWithProject(root, project, receipt)
+}
+
+func validateLifecycleReceiptWithProject(projectRoot string, project *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
+	_, _, err := lifecycleRecoveryReceiptStageName(projectRoot, receipt)
+	if err != nil {
+		return err
+	}
+	live, prior, err := lifecycleRecoveryReceiptSnapshots(projectRoot, project, receipt, lifecycleRecoverySnapshot)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("snapshotting descriptor-rooted lifecycle receipt trees: %v", err)
 	}
 	liveDigest := lifecycleSnapshotDigest(live)
 	if receipt.State == "prepared" {
@@ -241,10 +278,6 @@ func validateLifecycleReceipt(projectRoot string, receipt LifecycleTransactionRe
 			return exitcode.UnexpectedErrorf("prepared lifecycle receipt digest does not match the live spec tree")
 		}
 		return nil
-	}
-	prior, snapshotErr := lifecycleRecoverySnapshot(filepath.Join(recoveryRoot, "spec"))
-	if snapshotErr != nil {
-		return exitcode.UnexpectedErrorf("snapshotting retained predecessor for lifecycle receipt validation: %v", snapshotErr)
 	}
 	priorDigest := lifecycleSnapshotDigest(prior)
 	if receipt.State == "publishing" {
@@ -257,10 +290,78 @@ func validateLifecycleReceipt(projectRoot string, receipt LifecycleTransactionRe
 	if liveDigest != receipt.StagedDigest {
 		return exitcode.UnexpectedErrorf("lifecycle receipt digest does not match the live spec tree")
 	}
-	if receipt.State == "committed" {
-		if priorDigest != receipt.BaselineDigest {
-			return exitcode.UnexpectedErrorf("lifecycle receipt digest does not match its retained predecessor")
-		}
+	if priorDigest != receipt.BaselineDigest {
+		return exitcode.UnexpectedErrorf("lifecycle receipt digest does not match its retained predecessor")
 	}
 	return nil
+}
+
+func lifecycleRecoveryReceiptStageName(projectRoot string, receipt LifecycleTransactionReceipt) (string, string, error) {
+	if !validLifecycleTransactionID(receipt.ID) {
+		return "", "", exitcode.UnexpectedErrorf("invalid lifecycle transaction receipt id %q", receipt.ID)
+	}
+	if receipt.State != "prepared" && receipt.State != "publishing" && receipt.State != "committed" {
+		return "", "", exitcode.UnexpectedErrorf("invalid lifecycle transaction state %q", receipt.State)
+	}
+	root, err := lifecycleRecoveryAbs(projectRoot)
+	if err != nil {
+		return "", "", exitcode.UnexpectedErrorf("resolving recovery project root: %v", err)
+	}
+	if filepath.Clean(receipt.ProjectRoot) != root {
+		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt project-root mismatch")
+	}
+	recoveryRoot := filepath.Clean(receipt.RecoveryRoot)
+	rel, err := filepath.Rel(root, recoveryRoot)
+	if err != nil || filepath.Dir(rel) != "." || !strings.HasPrefix(filepath.Base(rel), ".specscore-txn-") {
+		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt recovery-root escapes its project")
+	}
+	if receipt.BaselineDigest == "" || ((receipt.State == "publishing" || receipt.State == "committed") && receipt.StagedDigest == "") {
+		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt is missing its integrity digest")
+	}
+	return root, filepath.Base(rel), nil
+}
+
+// lifecycleRecoveryReceiptSnapshots traverses project → stage → spec entirely
+// through held no-follow descriptors. RecoveryRoot is used only to derive the
+// validated direct child name; it is never reopened as a pathname.
+func lifecycleRecoveryReceiptSnapshots(
+	projectRoot string,
+	project *stagedSpecTree,
+	receipt LifecycleTransactionReceipt,
+	snapshot func(*stagedSpecTree) (specTreeSnapshot, error),
+) (specTreeSnapshot, specTreeSnapshot, error) {
+	_, stageName, err := lifecycleRecoveryReceiptStageName(projectRoot, receipt)
+	if err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, err
+	}
+	if project == nil || project.root == nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("lifecycle recovery project descriptor is closed")
+	}
+	liveSpec, err := openLifecycleProjectChildNoFollow(project, "spec")
+	if err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("opening live spec descriptor: %w", err)
+	}
+	defer func() { _ = closeStagedSpecTree(liveSpec) }()
+	live, err := snapshot(liveSpec)
+	if err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("snapshotting live spec descriptor: %w", err)
+	}
+	if receipt.State == "prepared" {
+		return live, specTreeSnapshot{}, nil
+	}
+	stage, err := openLifecycleProjectChildNoFollow(project, stageName)
+	if err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("opening retained predecessor descriptor: %w", err)
+	}
+	defer func() { _ = closeStagedSpecTree(stage) }()
+	priorSpec, err := openLifecycleProjectChildNoFollow(stage, "spec")
+	if err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("opening retained predecessor spec descriptor: %w", err)
+	}
+	defer func() { _ = closeStagedSpecTree(priorSpec) }()
+	prior, err := snapshot(priorSpec)
+	if err != nil {
+		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("snapshotting retained predecessor spec descriptor: %w", err)
+	}
+	return live, prior, nil
 }
