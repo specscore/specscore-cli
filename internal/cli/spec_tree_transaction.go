@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -22,12 +23,35 @@ import (
 // lint fixers touch (indexes, footers, mirrors, and any newly-created artifact).
 type specTreeSnapshot struct {
 	files       map[string]specTreeFile
-	directories map[string]os.FileMode
+	directories map[string]specTreeDirectory
 }
 
 type specTreeFile struct {
-	content []byte
-	mode    os.FileMode
+	content  []byte
+	mode     os.FileMode
+	metadata specTreeEntryMetadata
+}
+
+type specTreeDirectory struct {
+	mode     os.FileMode
+	metadata specTreeEntryMetadata
+}
+
+// specTreeEntryMetadata contains the descriptor-readable metadata that must
+// travel with a copy-on-write tree.  The scanner captures xattrs (including
+// filesystem ACL representations) by descriptor and the stage materialiser
+// restores them by descriptor; unsupported metadata fails closed instead.
+type specTreeEntryMetadata struct {
+	extendedAttributes map[string][]byte
+	modificationTime   time.Time
+}
+
+// stagedSpecTree keeps the descriptor used for every private-tree operation
+// alive until publication has classified the exchange. The pathname is only a
+// publication label; lint and materialisation use the descriptor handoff.
+type stagedSpecTree struct {
+	path string
+	root *os.File
 }
 
 // specTreeTransaction marks the full lifecycle transaction boundary. It is
@@ -48,6 +72,7 @@ type specTreeTransaction struct {
 	ownedLifecyclePaths  map[string]bool
 	preLintUnownedPaths  []string
 	recoveryPaths        []string
+	passthrough          bool
 }
 
 // lifecycleReleaseError retains the lifecycle command error as the unwrap
@@ -77,32 +102,43 @@ func (err *lifecycleReleaseError) Unwrap() error {
 
 // Testable indirections for rollback I/O failures.
 var (
-	transactionReadFile     = os.ReadFile
-	transactionRemove       = os.Remove
-	transactionOpenFile     = os.OpenFile
-	transactionCloseFile    = func(file *os.File) error { return file.Close() }
-	transactionLstat        = os.Lstat
-	transactionRel          = filepath.Rel
-	transactionMkdirTemp    = os.MkdirTemp
-	transactionChmod        = os.Chmod
-	transactionRemoveAll    = os.RemoveAll
-	transactionScratchMkdir = os.MkdirAll
-	transactionScratchWrite = os.WriteFile
+	transactionReadFile  = os.ReadFile
+	transactionOpenFile  = os.OpenFile
+	transactionCloseFile = func(file *os.File) error { return file.Close() }
+	transactionLstat     = os.Lstat
+	transactionRel       = filepath.Rel
+	transactionMkdirTemp = os.MkdirTemp
+	transactionRemoveAll = os.RemoveAll
 	// The no-follow traversal supplies an already-open descriptor to this
 	// reader; keeping it injectable makes descriptor-read failures testable
 	// without ever reopening a path by name.
 	transactionReadSnapshotFile = io.ReadAll
 	transactionSnapshot         = snapshotSpecTreeForTransaction
+	transactionSnapshotStaged   = snapshotStagedSpecTreeNoFollow
+	transactionStageMatchesPath = stagedSpecTreeMatchesPath
+	transactionStagePublishedAt = stagedSpecTreePublishedAt
+	transactionCloseStagedTree  = closeStagedSpecTree
 	transactionPublishTree      = publishSpecTreeNoReplace
 	// transactionAfterRecoveryClaim is a deterministic test seam between the
 	// two no-replace renames. Production leaves it as a no-op; tests install a
 	// raw successor here to prove the second rename never overwrites it.
 	transactionAfterRecoveryClaim = func() {}
-	transactionLockFile           = acquireLifecycleFileLock
-	transactionProcessAlive       = defaultProcessAlive
+	// The test seam runs after the final stage-name identity check and before
+	// exchange. Lint has already run through the retained descriptor, so a
+	// replacement installed here must remain untouched and be classified after
+	// the atomic exchange rather than published as trusted output.
+	transactionAfterStageValidation = func() {}
+	transactionLockFile             = acquireLifecycleFileLock
+	transactionProcessAlive         = defaultProcessAlive
+	// Platforms without the descriptor-relative implementation preserve the
+	// historical lifecycle flow rather than silently disabling every mutating
+	// command. This seam gives the platform adapter runtime coverage on Unix.
+	transactionPlatformSupportsSecureMutation = platformSupportsSecureLifecycleTransaction
 )
 
 var errLifecycleLockHeld = errors.New("lifecycle lock is held")
+
+const maxRetainedLifecycleTrees = 8
 
 func snapshotSpecTreeForTransaction(specRoot string) (specTreeSnapshot, error) {
 	return snapshotSpecTreeNoFollow(specRoot)
@@ -111,6 +147,16 @@ func snapshotSpecTreeForTransaction(specRoot string) (specTreeSnapshot, error) {
 func beginSpecTreeTransaction(specRoot string, lifecycleOwnedPaths ...string) (*specTreeTransaction, error) {
 	ownedPaths, err := normalizeLifecycleOwnedPaths(lifecycleOwnedPaths)
 	if err != nil {
+		return nil, err
+	}
+	if !transactionPlatformSupportsSecureMutation() {
+		return &specTreeTransaction{
+			specRoot:            specRoot,
+			ownedLifecyclePaths: ownedPaths,
+			passthrough:         true,
+		}, nil
+	}
+	if err := ensureLifecycleRecoveryCapacity(specRoot); err != nil {
 		return nil, err
 	}
 	// The lock is outside spec/ so it is never part of the snapshot that might
@@ -132,6 +178,33 @@ func beginSpecTreeTransaction(specRoot string, lifecycleOwnedPaths ...string) (*
 		lockFile:            lockFile,
 		ownedLifecyclePaths: ownedPaths,
 	}, nil
+}
+
+// ensureLifecycleRecoveryCapacity bounds the predecessor trees intentionally
+// retained by atomic exchange. Removing an exchanged directory by pathname
+// after an identity check has an unavoidable final pathname race, so this
+// transaction never does that. Once the cap is reached we fail before the
+// lifecycle package mutates anything and tell the operator where to inspect
+// and deliberately reclaim verified historical trees.
+func ensureLifecycleRecoveryCapacity(specRoot string) error {
+	entries, err := os.ReadDir(filepath.Dir(specRoot))
+	if err != nil {
+		return fmt.Errorf("inspecting retained lifecycle trees: %w", err)
+	}
+	retained := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".specscore-lint-stage-") {
+			retained++
+		}
+	}
+	if retained >= maxRetainedLifecycleTrees {
+		return exitcode.ConflictErrorf(
+			"lifecycle recovery retention limit (%d) reached beside %s; inspect retained .specscore-lint-stage-* trees, preserve any raw work, then manually reclaim only verified predecessors before retrying",
+			maxRetainedLifecycleTrees,
+			specRoot,
+		)
+	}
+	return nil
 }
 
 func normalizeLifecycleOwnedPaths(paths []string) (map[string]bool, error) {
@@ -296,12 +369,20 @@ func (transaction *specTreeTransaction) postMutationHook() func() error {
 // ownership evidence an opaque callback cannot provide: raw writers during the
 // lint pass cannot be mistaken for the linter and overwritten by rollback.
 func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string) error) func() error {
+	if transaction.passthrough {
+		return func() error { return run(transaction.specRoot) }
+	}
 	return func() error {
+		// The lifecycle package has already changed its source artifact before
+		// calling us. Claim the outer rollback boundary before the first read:
+		// a failed snapshot cannot prove that a pathname is still command-owned,
+		// so returning a normal error here would let the package blindly write
+		// through a raw successor.
+		transaction.postMutationStarted = true
 		before, err := transactionSnapshot(transaction.specRoot)
 		if err != nil {
-			return exitcode.UnexpectedErrorf("snapshotting spec before lint --fix: %v", err)
+			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("snapshotting spec before lint --fix: %v", err))
 		}
-		transaction.postMutationStarted = true
 		transaction.preLintSnapshot = &before
 		if unownedPaths := transaction.unownedPreLintPaths(before); len(unownedPaths) > 0 {
 			transaction.preLintUnownedPaths = unownedPaths
@@ -310,18 +391,19 @@ func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string
 				"uncoordinated spec changes before lint --fix at %s", strings.Join(unownedPaths, ", ")))
 		}
 
-		cloneRoot, err := stageSpecTreeSnapshot(transaction.specRoot, before)
+		stage, err := openStagedSpecTreeSnapshot(transaction.specRoot, before)
 		if err != nil {
 			transaction.postLintSnapshot = &before
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("creating isolated lint tree: %v", err))
 		}
-		stageRetained := false
+		stageRetained, stagePublished := false, false
 		defer func() {
-			if !stageRetained {
-				_ = transactionRemoveAll(cloneRoot)
+			_ = closeStagedSpecTree(stage)
+			if !stageRetained && !stagePublished {
+				_ = transactionRemoveAll(stage.path)
 			}
 		}()
-		runErr := run(cloneRoot)
+		runErr := runLintInStagedSpecTree(stage, run)
 		if runErr != nil {
 			// No linter bytes were applied to the live tree, so only the
 			// lifecycle mutation needs rollback. Capture live state so finish
@@ -336,7 +418,7 @@ func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string
 			}
 			return lifecycle.DeferRollback(runErr)
 		}
-		afterClone, err := transactionSnapshot(cloneRoot)
+		afterClone, err := transactionSnapshotStaged(stage)
 		if err != nil {
 			transaction.postLintSnapshot = &before
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("snapshotting isolated lint output: %v", err))
@@ -350,30 +432,57 @@ func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string
 			transaction.preLintUnownedPaths = changed
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("uncoordinated spec changes during lint --fix at %s", strings.Join(changed, ", ")))
 		}
-		if reflect.DeepEqual(before, afterClone) {
+		if specTreeSnapshotsEqual(before, afterClone) {
 			transaction.postLintSnapshot = &before
 			return lifecycle.DeferRollback(nil)
 		}
-		recoveryPath, err := transactionPublishTree(transaction.specRoot, cloneRoot)
+		stageMatches, err := transactionStageMatchesPath(stage)
+		if err != nil || !stageMatches {
+			transaction.postLintSnapshot = &before
+			if err != nil {
+				return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("validating staged lint tree identity: %v", err))
+			}
+			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("staged lint tree was replaced before publication; preserved live spec tree"))
+		}
+		transactionAfterStageValidation()
+		recoveryPath, err := transactionPublishTree(transaction.specRoot, stage.path)
 		if err != nil {
 			if recoveryPath != "" {
 				// The publisher already moved the old tree aside. Retain the
 				// stage as well: the subsequent no-replace claim found a raw
 				// successor, so deleting either candidate would lose evidence.
 				stageRetained = true
-				transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath, cloneRoot)
-				err = fmt.Errorf("%w; retained staged lint tree at %s", err, cloneRoot)
+				transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath, stage.path)
+				err = fmt.Errorf("%w; retained staged lint tree at %s", err, stage.path)
 			}
 			current, _ := transactionSnapshot(transaction.specRoot)
 			transaction.postLintSnapshot = &current
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("atomically publishing isolated lint tree: %v", err))
 		}
-		transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath)
+		stagePublished = true
+		publishedMatches, matchErr := transactionStagePublishedAt(stage, transaction.specRoot)
+		if matchErr != nil || !publishedMatches {
+			stageRetained = true
+			transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath)
+			if matchErr != nil {
+				return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("validating published staged tree identity: %v; retained prior live tree at %s", matchErr, recoveryPath))
+			}
+			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("staged lint tree was replaced during publication; raw successor remains live and prior live tree is retained at %s", recoveryPath))
+		}
+		previous, previousErr := transactionSnapshot(recoveryPath)
+		if previousErr != nil || !specTreeSnapshotsEqual(previous, before) {
+			stageRetained = true
+			transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath)
+			if previousErr != nil {
+				return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("snapshotting prior live tree after publication: %v; retained it at %s", previousErr, recoveryPath))
+			}
+			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("raw changes raced lifecycle publication; raw predecessor is retained at %s", recoveryPath))
+		}
 		after, err := transactionSnapshot(transaction.specRoot)
 		if err != nil {
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("snapshotting spec after lint manifest: %v", err))
 		}
-		if !reflect.DeepEqual(after, afterClone) {
+		if !specTreeSnapshotsEqual(after, afterClone) {
 			transaction.postLintSnapshot = &after
 			transaction.preLintUnownedPaths = changedSnapshotPaths(afterClone, after)
 			return lifecycle.DeferRollback(exitcode.UnexpectedErrorf("uncoordinated spec changes while applying lint manifest at %s", strings.Join(transaction.preLintUnownedPaths, ", ")))
@@ -386,59 +495,54 @@ func (transaction *specTreeTransaction) postMutationHookWithLint(run func(string
 // stageSpecTreeSnapshot materializes a private sibling of specRoot.  It must
 // be a sibling, rather than a system-temp directory, because publication uses
 // a same-directory no-replace rename as its atomic claim.
-func stageSpecTreeSnapshot(specRoot string, snapshot specTreeSnapshot) (string, error) {
+func openStagedSpecTreeSnapshot(specRoot string, snapshot specTreeSnapshot) (*stagedSpecTree, error) {
 	if err := validateSpecTreeSnapshot(snapshot); err != nil {
-		return "", err
+		return nil, err
 	}
 	stageRoot, err := transactionMkdirTemp(filepath.Dir(specRoot), ".specscore-lint-stage-")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if rootMode, ok := snapshot.directories["."]; ok {
-		if err := transactionChmod(stageRoot, rootMode.Perm()); err != nil {
-			_ = transactionRemoveAll(stageRoot)
-			return "", fmt.Errorf("preparing isolated lint tree: %w", err)
-		}
-	}
-	if err := materializeSpecSnapshot(stageRoot, snapshot); err != nil {
+	stage, err := openStagedSpecTreeNoFollow(stageRoot)
+	if err != nil {
 		_ = transactionRemoveAll(stageRoot)
-		return "", fmt.Errorf("materializing isolated lint tree: %w", err)
+		return nil, fmt.Errorf("opening isolated lint tree without following links: %w", err)
 	}
-	return stageRoot, nil
+	if err := materializeStagedSpecTreeNoFollow(stage, snapshot); err != nil {
+		_ = closeStagedSpecTree(stage)
+		_ = transactionRemoveAll(stageRoot)
+		return nil, fmt.Errorf("materializing isolated lint tree: %w", err)
+	}
+	return stage, nil
 }
 
-// materializeSpecSnapshot creates an isolated copy for lint execution. It
-// deliberately uses direct filesystem I/O rather than transaction restore
-// seams: fault-injection of the real rollback path must not prevent a private
-// scratch tree from being populated before that rollback is exercised.
+// stageSpecTreeSnapshot remains a focused-test compatibility helper. Runtime
+// lifecycle code must use openStagedSpecTreeSnapshot so it never loses the
+// descriptor identity before lint or publication.
+func stageSpecTreeSnapshot(specRoot string, snapshot specTreeSnapshot) (string, error) {
+	stage, err := openStagedSpecTreeSnapshot(specRoot, snapshot)
+	if err != nil {
+		return "", err
+	}
+	if err := transactionCloseStagedTree(stage); err != nil {
+		_ = transactionRemoveAll(stage.path)
+		return "", err
+	}
+	return stage.path, nil
+}
+
+// materializeSpecSnapshot is retained for focused callers and tests. Runtime
+// lifecycle code uses openStagedSpecTreeSnapshot; this helper nevertheless
+// uses the same descriptor-relative materialiser so it cannot silently lose
+// xattrs, modes, or nanosecond timestamps.
 func materializeSpecSnapshot(root string, snapshot specTreeSnapshot) error {
-	if err := validateSpecTreeSnapshot(snapshot); err != nil {
+	stage, err := openStagedSpecTreeNoFollow(root)
+	if err != nil {
+		return fmt.Errorf("opening isolated materialisation root without following links: %w", err)
+	}
+	defer func() { _ = closeStagedSpecTree(stage) }()
+	if err := materializeStagedSpecTreeNoFollow(stage, snapshot); err != nil {
 		return err
-	}
-	directories := make([]string, 0, len(snapshot.directories))
-	for rel := range snapshot.directories {
-		directories = append(directories, rel)
-	}
-	sort.Strings(directories)
-	for _, rel := range directories {
-		if err := transactionScratchMkdir(filepath.Join(root, rel), snapshot.directories[rel].Perm()); err != nil {
-			return fmt.Errorf("creating directory %s: %w", rel, err)
-		}
-	}
-	files := make([]string, 0, len(snapshot.files))
-	for rel := range snapshot.files {
-		files = append(files, rel)
-	}
-	sort.Strings(files)
-	for _, rel := range files {
-		file := snapshot.files[rel]
-		path := filepath.Join(root, rel)
-		if err := transactionScratchMkdir(filepath.Dir(path), 0o755); err != nil {
-			return fmt.Errorf("creating file parent %s: %w", rel, err)
-		}
-		if err := transactionScratchWrite(path, file.content, file.mode.Perm()); err != nil {
-			return fmt.Errorf("writing file %s: %w", rel, err)
-		}
 	}
 	return nil
 }
@@ -450,14 +554,12 @@ func validateSpecTreeSnapshot(snapshot specTreeSnapshot) error {
 	if _, ok := snapshot.directories["."]; !ok {
 		return errors.New("snapshot is missing its root directory")
 	}
-	for _, paths := range []map[string]os.FileMode{snapshot.directories} {
-		for rel := range paths {
-			if rel == "." {
-				continue
-			}
-			if err := validateSnapshotRelativePath(rel); err != nil {
-				return err
-			}
+	for rel := range snapshot.directories {
+		if rel == "." {
+			continue
+		}
+		if err := validateSnapshotRelativePath(rel); err != nil {
+			return err
 		}
 	}
 	for rel := range snapshot.files {
@@ -482,6 +584,9 @@ func validateSnapshotRelativePath(rel string) error {
 // every declared lifecycle artifact; otherwise a raw writer won the race and
 // rollback is conservatively withheld.
 func (transaction *specTreeTransaction) captureLifecycleMutationState() error {
+	if transaction.passthrough {
+		return nil
+	}
 	snapshot, err := transactionSnapshot(transaction.specRoot)
 	if err != nil {
 		transaction.postMutationStarted = true
@@ -495,6 +600,9 @@ func (transaction *specTreeTransaction) captureLifecycleMutationState() error {
 // the hook began are handled by the lifecycle package's own rollback and require
 // no transaction restoration.
 func (transaction *specTreeTransaction) finish(actionErr error) error {
+	if transaction.passthrough {
+		return actionErr
+	}
 	if actionErr == nil || !transaction.postMutationStarted {
 		return actionErr
 	}
@@ -601,27 +709,55 @@ func (transaction *specTreeTransaction) restoreLintMutations() error {
 		return &concurrentSpecChangesError{paths: conflicts}
 	}
 
-	stageRoot, err := stageSpecTreeSnapshot(transaction.specRoot, transaction.snapshot)
-	if err != nil {
-		return fmt.Errorf("staging pre-transition snapshot for atomic rollback: %w", err)
-	}
-	stageRetained := false
-	defer func() {
-		if !stageRetained {
-			_ = transactionRemoveAll(stageRoot)
-		}
-	}()
-	recoveryPath, err := transactionPublishTree(transaction.specRoot, stageRoot)
+	recoveryPath, err := publishSnapshotFromHeldStage(transaction.specRoot, transaction.snapshot, current)
 	if err != nil {
 		if recoveryPath != "" {
-			stageRetained = true
-			transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath, stageRoot)
-			return fmt.Errorf("atomically publishing pre-transition snapshot: %w; retained staged snapshot at %s", err, stageRoot)
+			transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath)
+			return fmt.Errorf("atomically publishing pre-transition snapshot: %w; retained prior live tree at %s", err, recoveryPath)
 		}
 		return fmt.Errorf("atomically publishing pre-transition snapshot: %w", err)
 	}
-	transaction.recoveryPaths = append(transaction.recoveryPaths, recoveryPath)
 	return nil
+}
+
+// publishSnapshotFromHeldStage is the rollback counterpart to the post-lint
+// publisher. It holds the staged tree descriptor through materialisation,
+// final name validation, exchange, and published-identity validation. The
+// previous live tree is checked against expectedPrevious after exchange; on
+// any uncertainty its pathname is returned for explicit recovery rather than
+// being cleaned by name.
+func publishSnapshotFromHeldStage(specRoot string, snapshot, expectedPrevious specTreeSnapshot) (string, error) {
+	stage, err := openStagedSpecTreeSnapshot(specRoot, snapshot)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = closeStagedSpecTree(stage) }()
+	matches, err := transactionStageMatchesPath(stage)
+	if err != nil {
+		return "", fmt.Errorf("validating staged rollback tree identity: %w", err)
+	}
+	if !matches {
+		return "", errors.New("staged rollback tree was replaced before publication")
+	}
+	recoveryPath, err := transactionPublishTree(specRoot, stage.path)
+	if err != nil {
+		return recoveryPath, err
+	}
+	published, err := transactionStagePublishedAt(stage, specRoot)
+	if err != nil {
+		return recoveryPath, fmt.Errorf("validating published rollback tree identity: %w", err)
+	}
+	if !published {
+		return recoveryPath, errors.New("staged rollback tree was replaced during publication")
+	}
+	previous, err := transactionSnapshot(recoveryPath)
+	if err != nil {
+		return recoveryPath, fmt.Errorf("snapshotting prior live tree after rollback publication: %w", err)
+	}
+	if !specTreeSnapshotsEqual(previous, expectedPrevious) {
+		return recoveryPath, errors.New("raw changes raced rollback publication")
+	}
+	return recoveryPath, nil
 }
 
 func unionSnapshotPaths(left, right []string) []string {
@@ -694,22 +830,15 @@ func applySpecSnapshotDiff(specRoot string, before, after specTreeSnapshot) erro
 	if err != nil {
 		return fmt.Errorf("snapshotting live tree before atomic manifest publication: %w", err)
 	}
-	if !reflect.DeepEqual(current, before) {
+	if !specTreeSnapshotsEqual(current, before) {
 		return &concurrentSpecChangesError{paths: changedSnapshotPaths(before, current)}
 	}
 	stageRoot, err := stageSpecTreeSnapshot(specRoot, after)
 	if err != nil {
 		return err
 	}
-	stageRetained := false
-	defer func() {
-		if !stageRetained {
-			_ = transactionRemoveAll(stageRoot)
-		}
-	}()
 	if recoveryPath, err := transactionPublishTree(specRoot, stageRoot); err != nil {
 		if recoveryPath != "" {
-			stageRetained = true
 			return fmt.Errorf("%w; retained staged manifest at %s", err, stageRoot)
 		}
 		return err
@@ -720,13 +849,34 @@ func applySpecSnapshotDiff(specRoot string, before, after specTreeSnapshot) erro
 func snapshotFileEqual(left, right specTreeSnapshot, rel string) bool {
 	leftFile, leftExists := left.files[rel]
 	rightFile, rightExists := right.files[rel]
-	return leftExists == rightExists && (!leftExists || (leftFile.mode == rightFile.mode && bytes.Equal(leftFile.content, rightFile.content)))
+	return leftExists == rightExists && (!leftExists || (leftFile.mode == rightFile.mode && bytes.Equal(leftFile.content, rightFile.content) && reflect.DeepEqual(leftFile.metadata, rightFile.metadata)))
 }
 
 func snapshotDirectoryEqual(left, right specTreeSnapshot, rel string) bool {
 	leftDirectory, leftExists := left.directories[rel]
 	rightDirectory, rightExists := right.directories[rel]
-	return leftExists == rightExists && (!leftExists || leftDirectory == rightDirectory)
+	// Moving or creating an owned lifecycle artifact updates every ancestor
+	// directory mtime. That is expected filesystem bookkeeping, not an
+	// unowned tree edit. Modes and xattrs remain part of the conflict proof;
+	// the staged materialiser still restores the captured timestamp exactly.
+	return leftExists == rightExists && (!leftExists || (leftDirectory.mode == rightDirectory.mode && reflect.DeepEqual(leftDirectory.metadata.extendedAttributes, rightDirectory.metadata.extendedAttributes)))
+}
+
+func specTreeSnapshotsEqual(left, right specTreeSnapshot) bool {
+	if len(left.files) != len(right.files) || len(left.directories) != len(right.directories) {
+		return false
+	}
+	for rel := range left.files {
+		if !snapshotFileEqual(left, right, rel) {
+			return false
+		}
+	}
+	for rel := range left.directories {
+		if !snapshotDirectoryEqual(left, right, rel) {
+			return false
+		}
+	}
+	return true
 }
 
 func snapshotDirectoryHasExternalDescendant(current, expected specTreeSnapshot, rel string) bool {
@@ -752,15 +902,8 @@ func (snapshot specTreeSnapshot) restore(specRoot string) error {
 	if err != nil {
 		return fmt.Errorf("staging snapshot restore: %w", err)
 	}
-	stageRetained := false
-	defer func() {
-		if !stageRetained {
-			_ = transactionRemoveAll(stageRoot)
-		}
-	}()
 	if recoveryPath, err := transactionPublishTree(specRoot, stageRoot); err != nil {
 		if recoveryPath != "" {
-			stageRetained = true
 			return fmt.Errorf("atomically publishing snapshot restore: %w; retained staged snapshot at %s", err, stageRoot)
 		}
 		return fmt.Errorf("atomically publishing snapshot restore: %w", err)

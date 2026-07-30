@@ -4,23 +4,15 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
 
-var (
-	publishRecoveryMkdirTemp = os.MkdirTemp
-	publishRecoveryUnlinkat  = unix.Unlinkat
-)
-
-// publishSpecTreeNoReplace publishes a fully materialized sibling tree using
-// Darwin's RENAME_EXCL primitive. Neither rename can replace a pathname that
-// appeared after we inspected it: a competing writer gets a conflict, while
-// the pre-publish tree is retained at the returned recovery path for manual
-// reconciliation. Retaining the old inode is intentional; deleting it later
-// would reintroduce a race with writers holding an old directory descriptor.
+// publishSpecTreeNoReplace atomically exchanges the live and staged sibling
+// trees. The historical live tree lands at stageRoot and is classified by the
+// caller before any cleanup; unlike a two-step rename, spec/ is never absent
+// for a raw writer to recreate as a successor.
 func publishSpecTreeNoReplace(specRoot, stageRoot string) (string, error) {
 	parent := filepath.Dir(specRoot)
 	rootName := filepath.Base(specRoot)
@@ -32,20 +24,9 @@ func publishSpecTreeNoReplace(specRoot, stageRoot string) (string, error) {
 		return "", fmt.Errorf("opening spec parent without following links: %w", err)
 	}
 	defer func() { _ = unix.Close(parentFD) }()
-	recoveryPath, err := publishRecoveryMkdirTemp(parent, ".specscore-lifecycle-recovery-")
-	if err != nil {
-		return "", fmt.Errorf("reserving lifecycle recovery path: %w", err)
-	}
-	recoveryName := filepath.Base(recoveryPath)
-	if err := publishRecoveryUnlinkat(parentFD, recoveryName, unix.AT_REMOVEDIR); err != nil {
-		return "", fmt.Errorf("opening lifecycle recovery destination: %w", err)
-	}
-	if err := unix.RenameatxNp(parentFD, rootName, parentFD, recoveryName, unix.RENAME_EXCL); err != nil {
-		return "", fmt.Errorf("claiming current spec tree for safe publication: %w", err)
-	}
 	transactionAfterRecoveryClaim()
-	if err := unix.RenameatxNp(parentFD, filepath.Base(stageRoot), parentFD, rootName, unix.RENAME_EXCL); err != nil {
-		return recoveryPath, fmt.Errorf("publishing staged spec tree without replacing a successor: %w; recover the preserved tree at %s", err, recoveryPath)
+	if err := unix.RenameatxNp(parentFD, filepath.Base(stageRoot), parentFD, rootName, unix.RENAME_SWAP); err != nil {
+		return "", fmt.Errorf("atomically exchanging staged spec tree: %w", err)
 	}
-	return recoveryPath, nil
+	return stageRoot, nil
 }

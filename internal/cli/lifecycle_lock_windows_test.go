@@ -23,13 +23,6 @@ func TestReleaseLifecycleLockedFile_RetainsPathAfterClose(t *testing.T) {
 		_ = file.Close()
 		t.Fatal(err)
 	}
-	originalRemove := transactionRemove
-	transactionRemove = func(string) error {
-		t.Fatal("Windows lock release attempted pathname unlink after close")
-		return nil
-	}
-	t.Cleanup(func() { transactionRemove = originalRemove })
-
 	if err := releaseLifecycleLockedFile(lockPath, file); err != nil {
 		t.Fatal(err)
 	}

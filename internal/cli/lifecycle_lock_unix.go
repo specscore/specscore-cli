@@ -19,16 +19,12 @@ func acquireLifecycleFileLock(file *os.File) error {
 }
 
 func releaseLifecycleLockedFile(lockPath string, lockFile *os.File) error {
-	removeErr := transactionRemove(lockPath)
-	closeErr := transactionCloseFile(lockFile)
-	if removeErr != nil && !os.IsNotExist(removeErr) {
-		if closeErr != nil {
-			return exitcode.UnexpectedErrorf("releasing lifecycle transaction lock %s: %v; additionally closing it failed: %v", lockPath, removeErr, closeErr)
-		}
-		return exitcode.UnexpectedErrorf("releasing lifecycle transaction lock %s: %v", lockPath, removeErr)
-	}
-	if closeErr != nil {
-		return exitcode.UnexpectedErrorf("closing lifecycle transaction lock %s: %v", lockPath, closeErr)
+	// Unlinking by pathname before or after close can delete a replacement lock
+	// file opened by another process. Keep the benign stable pathname on every
+	// platform; acquisition takes an OS lock on the opened inode, never trusts
+	// pathname absence.
+	if err := transactionCloseFile(lockFile); err != nil {
+		return exitcode.UnexpectedErrorf("closing lifecycle transaction lock %s: %v", lockPath, err)
 	}
 	return nil
 }

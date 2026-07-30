@@ -18,7 +18,7 @@ func findLifecycleRecoveryTree(t *testing.T, parent string) string {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".specscore-lifecycle-recovery-") {
+		if entry.IsDir() && (strings.HasPrefix(entry.Name(), ".specscore-lifecycle-recovery-") || strings.HasPrefix(entry.Name(), ".specscore-lint-stage-")) {
 			return filepath.Join(parent, entry.Name())
 		}
 	}

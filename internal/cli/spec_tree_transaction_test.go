@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -91,29 +92,14 @@ func TestSpecTreeSnapshotReadAndWalkFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("non-regular files are excluded", func(t *testing.T) {
+	t.Run("non-regular files fail closed", func(t *testing.T) {
 		root := t.TempDir()
 		link := filepath.Join(root, "link")
 		if err := os.Symlink("not-followed", link); err != nil {
 			t.Skipf("symlink unavailable: %v", err)
 		}
-		snapshot, err := snapshotSpecTreeForTransaction(root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(snapshot.files) != 0 {
-			t.Fatalf("non-regular link entered file snapshot: %#v", snapshot.files)
-		}
-		if err := snapshot.restore(root); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Lstat(link); !os.IsNotExist(err) {
-			t.Fatalf("live symlink should be retained only in the recovery tree, err=%v", err)
-		}
-		if recovery := findLifecycleRecoveryTree(t, filepath.Dir(root)); recovery == "" {
-			t.Fatal("copy-on-write restore did not retain the excluded link in recovery")
-		} else if info, err := os.Lstat(filepath.Join(recovery, "link")); err != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("excluded symlink not preserved for manual recovery: info=%v err=%v", info, err)
+		if _, err := snapshotSpecTreeForTransaction(root); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+			t.Fatalf("symlink snapshot error = %v", err)
 		}
 	})
 }
@@ -173,15 +159,21 @@ func TestTransactionManifestApplication(t *testing.T) {
 			t.Fatal(err)
 		}
 		after := specTreeSnapshot{
-			directories: map[string]os.FileMode{".": before.directories["."], "new": os.ModeDir | 0o700},
+			directories: map[string]specTreeDirectory{".": before.directories["."], "new": {mode: os.ModeDir | 0o700}},
 			files:       map[string]specTreeFile{"new/index.md": {content: []byte("new"), mode: 0o600}},
 		}
 		if err := applySpecSnapshotDiff(root, before, after); err != nil {
 			t.Fatal(err)
 		}
 		got, err := snapshotSpecTreeForTransaction(root)
-		if err != nil || !reflect.DeepEqual(got, after) {
-			t.Fatalf("manifest result = %#v, %v; want %#v", got, err, after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if file := got.files["new/index.md"]; !bytes.Equal(file.content, []byte("new")) || file.mode.Perm() != 0o600 {
+			t.Fatalf("manifest file = %#v", file)
+		}
+		if dir := got.directories["new"]; dir.mode.Perm() != 0o700 {
+			t.Fatalf("manifest directory = %#v", dir)
 		}
 	})
 
@@ -220,10 +212,10 @@ func TestTransactionManifestApplication(t *testing.T) {
 		if err := os.WriteFile(fileRoot, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := materializeSpecSnapshot(fileRoot, specTreeSnapshot{directories: map[string]os.FileMode{"nested": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}); err == nil {
+		if err := materializeSpecSnapshot(fileRoot, specTreeSnapshot{directories: map[string]specTreeDirectory{"nested": {mode: os.ModeDir | 0o755}}, files: map[string]specTreeFile{}}); err == nil {
 			t.Fatal("materialization through a file root succeeded")
 		}
-		if err := applySpecSnapshotDiff(root, specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{}}, specTreeSnapshot{directories: map[string]os.FileMode{".": os.ModeDir | 0o755}, files: map[string]specTreeFile{"../escape.md": {content: []byte("x"), mode: 0o644}}}); err == nil {
+		if err := applySpecSnapshotDiff(root, specTreeSnapshot{directories: map[string]specTreeDirectory{".": {mode: os.ModeDir | 0o755}}, files: map[string]specTreeFile{}}, specTreeSnapshot{directories: map[string]specTreeDirectory{".": {mode: os.ModeDir | 0o755}}, files: map[string]specTreeFile{"../escape.md": {content: []byte("x"), mode: 0o644}}}); err == nil {
 			t.Fatal("manifest path escape succeeded")
 		}
 	})
@@ -298,8 +290,8 @@ func TestSpecTreeTransaction_LockFailuresAreReportedAndCleanedUp(t *testing.T) {
 		if _, err := beginSpecTreeTransaction(specRoot); err == nil || !strings.Contains(err.Error(), "forced snapshot failure") {
 			t.Fatalf("error = %v, want snapshot failure", err)
 		}
-		if _, err := os.Stat(filepath.Join(root, ".specscore-lifecycle.lock")); !os.IsNotExist(err) {
-			t.Fatalf("snapshot failure left lifecycle lock behind: %v", err)
+		if info, err := os.Stat(filepath.Join(root, ".specscore-lifecycle.lock")); err != nil || info.IsDir() {
+			t.Fatalf("snapshot failure did not retain a benign close-only lock file: info=%v err=%v", info, err)
 		}
 	})
 
@@ -312,12 +304,8 @@ func TestSpecTreeTransaction_LockFailuresAreReportedAndCleanedUp(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		originalRemove := transactionRemove
-		transactionRemove = func(string) error { return errors.New("forced lock release failure") }
-		t.Cleanup(func() { transactionRemove = originalRemove })
-
-		if err := transaction.release(); err == nil || !strings.Contains(err.Error(), "forced lock release failure") {
-			t.Fatalf("error = %v, want lock release failure", err)
+		if err := transaction.release(); err != nil {
+			t.Fatalf("close-only release error = %v", err)
 		}
 	})
 
@@ -369,8 +357,8 @@ func TestSpecTreeTransaction_LockFailuresAreReportedAndCleanedUp(t *testing.T) {
 		if err := transaction.release(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-			t.Fatalf("released lock file remains: %v", err)
+		if info, err := os.Stat(lockPath); err != nil || info.IsDir() {
+			t.Fatalf("released close-only lock file missing: info=%v err=%v", info, err)
 		}
 	})
 }
@@ -575,17 +563,16 @@ func TestSpecTreeTransaction_DefensiveRecoveryBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("unlink and close failures are both retained", func(t *testing.T) {
+	t.Run("close failure is retained", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "lock")
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 		if err != nil {
 			t.Fatal(err)
 		}
-		originalRemove, originalClose := transactionRemove, transactionCloseFile
-		transactionRemove = func(string) error { return errors.New("unlink failed") }
+		originalClose := transactionCloseFile
 		transactionCloseFile = func(*os.File) error { return errors.New("close failed") }
-		t.Cleanup(func() { transactionRemove, transactionCloseFile = originalRemove, originalClose; _ = file.Close() })
-		if err := releaseLifecycleLockFile(path, file); err == nil || !strings.Contains(err.Error(), "unlink failed") || !strings.Contains(err.Error(), "close failed") {
+		t.Cleanup(func() { transactionCloseFile = originalClose; _ = file.Close() })
+		if err := releaseLifecycleLockFile(path, file); err == nil || !strings.Contains(err.Error(), "close failed") {
 			t.Fatalf("release error = %v", err)
 		}
 	})
@@ -760,34 +747,6 @@ func TestSpecTreeTransaction_DefensiveRecoveryBranches(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
-		t.Run("root permissions", func(t *testing.T) {
-			transaction := newTransaction(t)
-			original := transactionChmod
-			transactionChmod = func(string, os.FileMode) error { return errors.New("chmod failed") }
-			t.Cleanup(func() { transactionChmod = original })
-			if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "preparing isolated lint tree") {
-				t.Fatalf("error = %v", err)
-			}
-		})
-		t.Run("materialize directory and file", func(t *testing.T) {
-			transaction := newTransaction(t)
-			originalMkdir := transactionScratchMkdir
-			transactionScratchMkdir = func(string, os.FileMode) error { return errors.New("scratch mkdir failed") }
-			if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "materializing isolated lint tree") {
-				t.Fatalf("mkdir error = %v", err)
-			}
-			if err := transaction.release(); err != nil {
-				t.Fatal(err)
-			}
-			transactionScratchMkdir = originalMkdir
-			transaction = newTransaction(t)
-			originalWrite := transactionScratchWrite
-			transactionScratchWrite = func(string, []byte, os.FileMode) error { return errors.New("scratch write failed") }
-			t.Cleanup(func() { transactionScratchMkdir, transactionScratchWrite = originalMkdir, originalWrite })
-			if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err == nil || !strings.Contains(err.Error(), "materializing isolated lint tree") {
-				t.Fatalf("write error = %v", err)
-			}
-		})
 	})
 
 	t.Run("snapshot failures at every isolated lint boundary defer rollback", func(t *testing.T) {
@@ -811,8 +770,7 @@ func TestSpecTreeTransaction_DefensiveRecoveryBranches(t *testing.T) {
 		}{
 			{"before lint", 1, "before lint --fix"},
 			{"after lint failure", 2, "after isolated lint failure"},
-			{"isolated output", 2, "isolated lint output"},
-			{"before manifest", 3, "before applying lint manifest"},
+			{"before manifest", 2, "before applying lint manifest"},
 			{"after manifest", 4, "after lint manifest"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -990,10 +948,6 @@ func TestReleaseSpecTreeTransaction_PreservesActionError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalRemove := transactionRemove
-	transactionRemove = func(string) error { return errors.New("forced lock release failure") }
-	t.Cleanup(func() { transactionRemove = originalRemove })
-
 	actionErr := exitcode.InvalidStateError("the lifecycle action failed")
 	resultErr := error(actionErr)
 	releaseSpecTreeTransaction(transaction, &resultErr)
@@ -1003,35 +957,23 @@ func TestReleaseSpecTreeTransaction_PreservesActionError(t *testing.T) {
 	if got := exitCodeOfErr(resultErr); got != exitcode.InvalidState {
 		t.Fatalf("exit code = %d, want primary action code %d; err=%v", got, exitcode.InvalidState, resultErr)
 	}
-	if !strings.Contains(resultErr.Error(), "forced lock release failure") {
-		t.Fatalf("release error was not surfaced: %v", resultErr)
+	if resultErr.Error() != actionErr.Error() {
+		t.Fatalf("close-only release altered action error: %v", resultErr)
 	}
 }
 
-func TestPlanChangeStatus_LockReleaseFailureIsReturned_CLI(t *testing.T) {
+func TestPlanChangeStatus_CloseOnlyLockReleasePreservesSuccess_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
-	originalRemove := transactionRemove
-	transactionRemove = func(path string) error {
-		if filepath.Base(path) == ".specscore-lifecycle.lock" {
-			return errors.New("forced lock release failure")
-		}
-		return originalRemove(path)
-	}
-
 	_, _, err := runPlan(t, "change-status", "auth", "--to=in review")
-	transactionRemove = originalRemove
-	if err == nil || !strings.Contains(err.Error(), "forced lock release failure") {
-		t.Fatalf("command error = %v, want surfaced lock release failure", err)
-	}
-	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
-		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	if err != nil {
+		t.Fatalf("command error = %v", err)
 	}
 	body, readErr := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
 	if readErr != nil || !strings.Contains(string(body), "**Status:** In Review") {
 		t.Fatalf("successful action was rolled back after release failure: body=%q err=%v", body, readErr)
 	}
-	if cleanupErr := os.RemoveAll(filepath.Join(root, ".specscore-lifecycle.lock")); cleanupErr != nil {
-		t.Fatalf("clean up intentionally retained lock: %v", cleanupErr)
+	if info, lockErr := os.Stat(filepath.Join(root, ".specscore-lifecycle.lock")); lockErr != nil || info.IsDir() {
+		t.Fatalf("close-only lock pathname missing: info=%v err=%v", info, lockErr)
 	}
 }
 

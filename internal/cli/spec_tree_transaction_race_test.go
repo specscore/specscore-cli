@@ -41,24 +41,15 @@ func TestSnapshotSpecTreeNoFollow_RejectsEntrySwappedToSymlink(t *testing.T) {
 	}
 	t.Cleanup(func() { transactionBeforeSnapshotOpenat = original })
 
-	snapshot, err := snapshotSpecTreeForTransaction(root)
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	if _, found := snapshot.files["tracked.md"]; found {
-		t.Fatal("snapshot accepted a symlink swapped after directory enumeration")
+	if _, err := snapshotSpecTreeForTransaction(root); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("snapshot error = %v, want symlink refusal", err)
 	}
 	if got, err := os.ReadFile(external); err != nil || string(got) != "outside\n" {
 		t.Fatalf("snapshot followed or changed external target: %q, %v", got, err)
 	}
 }
 
-// TestPublishSpecTreeNoReplace_PreservesRawSuccessor places a raw directory
-// at spec/ in the only possible gap between claiming the old tree and
-// publishing the staged result. The second no-replace rename must fail rather
-// than overwrite that successor; both the old tree and staged tree remain
-// available for recovery.
-func TestPublishSpecTreeNoReplace_PreservesRawSuccessor(t *testing.T) {
+func TestPublishSpecTreeNoReplace_ExchangeRetainsRawPredecessor(t *testing.T) {
 	project := t.TempDir()
 	specRoot := filepath.Join(project, "spec")
 	if err := os.Mkdir(specRoot, 0o755); err != nil {
@@ -77,37 +68,28 @@ func TestPublishSpecTreeNoReplace_PreservesRawSuccessor(t *testing.T) {
 
 	original := transactionAfterRecoveryClaim
 	transactionAfterRecoveryClaim = func() {
-		if err := os.Mkdir(specRoot, 0o755); err != nil {
-			t.Fatalf("create raw successor: %v", err)
-		}
 		if err := os.WriteFile(filepath.Join(specRoot, "raw.md"), []byte("raw writer\n"), 0o644); err != nil {
-			t.Fatalf("write raw successor: %v", err)
+			t.Fatalf("write raw predecessor: %v", err)
 		}
 	}
 	t.Cleanup(func() { transactionAfterRecoveryClaim = original })
 
-	recoveryPath, err := publishSpecTreeNoReplace(specRoot, stageRoot)
-	if err == nil || !strings.Contains(err.Error(), "without replacing a successor") {
-		t.Fatalf("publish error = %v, want no-replace conflict", err)
+	oldPath, err := publishSpecTreeNoReplace(specRoot, stageRoot)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if recoveryPath == "" {
-		t.Fatal("publish did not report the preserved recovery tree")
+	if oldPath != stageRoot {
+		t.Fatalf("old tree path = %q, want %q", oldPath, stageRoot)
 	}
-	if got, readErr := os.ReadFile(filepath.Join(specRoot, "raw.md")); readErr != nil || string(got) != "raw writer\n" {
-		t.Fatalf("raw successor was overwritten: %q, %v", got, readErr)
+	if got, readErr := os.ReadFile(filepath.Join(specRoot, "after.md")); readErr != nil || string(got) != "after\n" {
+		t.Fatalf("published tree = %q, %v", got, readErr)
 	}
-	if got, readErr := os.ReadFile(filepath.Join(recoveryPath, "before.md")); readErr != nil || string(got) != "before\n" {
-		t.Fatalf("pre-publication tree was not retained: %q, %v", got, readErr)
-	}
-	if got, readErr := os.ReadFile(filepath.Join(stageRoot, "after.md")); readErr != nil || string(got) != "after\n" {
-		t.Fatalf("staged tree was lost after no-replace conflict: %q, %v", got, readErr)
+	if got, readErr := os.ReadFile(filepath.Join(stageRoot, "raw.md")); readErr != nil || string(got) != "raw writer\n" {
+		t.Fatalf("raw predecessor = %q, %v", got, readErr)
 	}
 }
 
-// The lifecycle hook must not clean up a staged tree after the publisher has
-// moved the old tree aside but refused to replace a raw successor. Both trees
-// are necessary to reconcile the interrupted publication.
-func TestPostMutationHook_PublishConflictRetainsBothCandidateTrees(t *testing.T) {
+func TestPostMutationHook_ExchangeRetainsRawPredecessor(t *testing.T) {
 	project := t.TempDir()
 	specRoot := filepath.Join(project, "spec")
 	if err := os.Mkdir(specRoot, 0o755); err != nil {
@@ -124,11 +106,8 @@ func TestPostMutationHook_PublishConflictRetainsBothCandidateTrees(t *testing.T)
 
 	original := transactionAfterRecoveryClaim
 	transactionAfterRecoveryClaim = func() {
-		if err := os.Mkdir(specRoot, 0o755); err != nil {
-			t.Fatalf("create raw successor: %v", err)
-		}
 		if err := os.WriteFile(filepath.Join(specRoot, "raw.md"), []byte("raw writer\n"), 0o644); err != nil {
-			t.Fatalf("write raw successor: %v", err)
+			t.Fatalf("write raw predecessor: %v", err)
 		}
 	}
 	t.Cleanup(func() { transactionAfterRecoveryClaim = original })
@@ -136,28 +115,28 @@ func TestPostMutationHook_PublishConflictRetainsBothCandidateTrees(t *testing.T)
 	err = transaction.postMutationHookWithLint(func(stageRoot string) error {
 		return os.WriteFile(filepath.Join(stageRoot, "README.md"), []byte("lint output\n"), 0o644)
 	})()
-	if err == nil || !strings.Contains(err.Error(), "retained staged lint tree") {
-		t.Fatalf("hook error = %v, want preserved stage", err)
+	if err == nil || !strings.Contains(err.Error(), "raw changes raced") {
+		t.Fatalf("hook error = %v, want retained raw predecessor", err)
 	}
-	if got, readErr := os.ReadFile(filepath.Join(specRoot, "raw.md")); readErr != nil || string(got) != "raw writer\n" {
-		t.Fatalf("raw successor = %q, %v", got, readErr)
-	}
-	if recovery := findLifecycleRecoveryTree(t, project); recovery == "" {
-		t.Fatal("old spec tree was not retained for recovery")
-	} else if got, readErr := os.ReadFile(filepath.Join(recovery, "README.md")); readErr != nil || string(got) != "before\n" {
-		t.Fatalf("recovery tree = %q, %v", got, readErr)
+	if got, readErr := os.ReadFile(filepath.Join(specRoot, "README.md")); readErr != nil || string(got) != "lint output\n" {
+		t.Fatalf("published lint output = %q, %v", got, readErr)
 	}
 	for _, entry := range mustReadDir(t, project) {
 		if strings.HasPrefix(entry.Name(), ".specscore-lint-stage-") {
-			if got, readErr := os.ReadFile(filepath.Join(project, entry.Name(), "README.md")); readErr != nil || string(got) != "lint output\n" {
-				t.Fatalf("staged lint tree = %q, %v", got, readErr)
+			if got, readErr := os.ReadFile(filepath.Join(project, entry.Name(), "raw.md")); readErr != nil || string(got) != "raw writer\n" {
+				t.Fatalf("raw predecessor tree = %q, %v", got, readErr)
 			}
 			return
 		}
 	}
-	t.Fatal("staged lint tree was discarded after publication conflict")
+	t.Fatal("raw predecessor tree was discarded after exchange")
 }
 
+// TestPublishSpecTreeNoReplace_PreservesRawSuccessor places a raw directory
+// at spec/ in the only possible gap between claiming the old tree and
+// publishing the staged result. The second no-replace rename must fail rather
+// than overwrite that successor; both the old tree and staged tree remain
+// available for recovery.
 func mustReadDir(t *testing.T, path string) []os.DirEntry {
 	t.Helper()
 	entries, err := os.ReadDir(path)

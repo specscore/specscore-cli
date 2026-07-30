@@ -4,6 +4,8 @@ package cli
 
 import "fmt"
 
+func platformSupportsSecureLifecycleTransaction() bool { return false }
+
 // Windows does not expose an equivalent descriptor-relative no-reparse-point
 // traversal through the portable Go API used by this CLI.  Refuse lifecycle
 // filesystem transactions rather than traversing a path that a junction or
