@@ -59,7 +59,17 @@ legal-transition matrix:
 (planning, queued, in_progress, blocked, complete, failed, aborted); a missing
 or unrecognized value exits 2. An illegal (from, to) pair — including re-running
 on the current status — exits 4. On success the verb performs a pure file
-rewrite of the **Status:** line and prints "<task>: <from> → <to>".`,
+rewrite of the **Status:** line and prints "<task>: <from> → <to>".
+
+--note and --evidence are optional annotations, valid on ANY transition (not
+restricted to --to=complete like the provenance flags): --note records a
+free-text justification, --evidence records a comma-separated list of
+supporting references (commit SHAs, PR URLs, file paths, deploy or monitoring
+links). Both are written as their own field ("**Note:**" / "**Evidence:**")
+immediately after **Status:** (and after **Implemented-by:** when provenance
+is also written in the same call), in the same atomic rewrite. Neither is
+required, and — unlike ImplementationCommit — neither is syntactically
+validated. Not supported together with --amend-provenance.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -76,6 +86,9 @@ rewrite of the **Status:** line and prints "<task>: <from> → <to>".`,
 	cmd.Flags().String("repo", "", "provenance: implementing repo slug or clone URL (omitted for same-repo bare sha)")
 	cmd.Flags().String("branch", "", "provenance: implementing branch (optional trailing \"(<branch>)\")")
 	cmd.Flags().Bool("amend-provenance", false, "re-stamp **Implemented-by:** on an already-complete task WITHOUT a status transition (mutually exclusive with --to)")
+	// Annotation flags: optional on any transition, independent of --to value.
+	cmd.Flags().String("note", "", "optional free-text annotation written as **Note:** (any transition; not supported with --amend-provenance)")
+	cmd.Flags().String("evidence", "", "optional comma-separated supporting references written as **Evidence:** (any transition; not supported with --amend-provenance)")
 	return cmd
 }
 
@@ -109,6 +122,14 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 		if toRaw != "" {
 			return exitcode.InvalidArgsError(
 				"--amend-provenance is mutually exclusive with --to")
+		}
+		// --note/--evidence annotate a status transition; --amend-provenance is
+		// not one (it corrects a field on an already-complete task without
+		// moving Status), so the two are rejected together rather than silently
+		// dropping the annotation.
+		if noteFromFlags(cmd) != "" || len(evidenceFromFlags(cmd)) > 0 {
+			return exitcode.InvalidArgsError(
+				"--note/--evidence are not supported together with --amend-provenance")
 		}
 		// Reuse the shared provenance-flag validation: when any provenance flag is
 		// present an explicit --commit is required (the "complete" predicate is
@@ -176,12 +197,16 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 
 	// Implementation-commit provenance is written ONLY when completing, and only
 	// from explicit flags — the verb NEVER reads ambient git HEAD
-	// (cli/task/change-status#ac:provenance-not-derived-from-head).
+	// (cli/task/change-status#ac:provenance-not-derived-from-head). --note and
+	// --evidence are independent optional annotations, valid on ANY transition,
+	// written in the same atomic pass alongside provenance when both are given.
+	ref := ""
 	if to == lifecycle.TaskComplete {
-		if ref := implementedByRefFromFlags(cmd); ref != "" {
-			if err := writeBoardImplementedBy(taskFilePath, ref); err != nil {
-				return exitcode.UnexpectedErrorf("writing provenance: %v", err)
-			}
+		ref = implementedByRefFromFlags(cmd)
+	}
+	if fields := buildExtraTaskFieldLines(ref, noteFromFlags(cmd), evidenceFromFlags(cmd)); len(fields) > 0 {
+		if err := writeBoardExtraFields(taskFilePath, fields); err != nil {
+			return exitcode.UnexpectedErrorf("writing task fields: %v", err)
 		}
 	}
 
@@ -246,16 +271,62 @@ func assembleImplementedByRef(repo, commit, branch string) string {
 	return ref
 }
 
-// errNoStatusForProvenance is returned by writeBoardImplementedBy when the file
-// has no `**Status:**` line to anchor the provenance field to. This is
-// defensive: board mode always runs lifecycle.Rewrite first, which guarantees a
-// status line.
+// noteFromFlags returns the trimmed --note value, or "" when absent/blank.
+// --note is an optional free-text annotation, valid on ANY transition —
+// unlike the provenance flags it is not restricted to --to=complete.
+func noteFromFlags(cmd *cobra.Command) string {
+	note, _ := cmd.Flags().GetString("note")
+	return strings.TrimSpace(note)
+}
+
+// evidenceFromFlags parses --evidence into its comma-separated, trimmed,
+// non-empty refs, in source order. Returns nil when absent/blank. Like
+// --note, --evidence is valid on ANY transition and carries unstructured
+// references (never syntactically validated, unlike **Implemented-by:**).
+func evidenceFromFlags(cmd *cobra.Command) []string {
+	raw, _ := cmd.Flags().GetString("evidence")
+	var out []string
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.TrimSpace(e)
+		if e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// buildExtraTaskFieldLines formats the optional Implemented-by/Note/Evidence
+// field lines to be inserted immediately after a task's **Status:** line, in
+// this fixed order, in ONE atomic pass. An empty ref/note, or an empty
+// evidence slice, contributes no line — the common case (no flags supplied)
+// returns nil, so callers can skip the write entirely. Evidence entries are
+// joined with ", " (mirroring `plan reconcile`'s Evidence line).
+func buildExtraTaskFieldLines(ref, note string, evidence []string) []string {
+	var out []string
+	if ref != "" {
+		out = append(out, "**Implemented-by:** "+ref)
+	}
+	if note != "" {
+		out = append(out, "**Note:** "+note)
+	}
+	if len(evidence) > 0 {
+		out = append(out, "**Evidence:** "+strings.Join(evidence, ", "))
+	}
+	return out
+}
+
+// errNoStatusForProvenance is returned by writeBoardExtraFields when the file
+// has no `**Status:**` line to anchor the extra fields to. This is defensive:
+// board mode always runs lifecycle.Rewrite first, which guarantees a status
+// line.
 var errNoStatusForProvenance = errors.New("task file has no **Status:** line for provenance placement")
 
-// writeBoardImplementedBy inserts an `**Implemented-by:** <ref>` line into the
-// board task file at path, immediately after its `**Status:**` line. Every other
-// byte is preserved.
-func writeBoardImplementedBy(path, ref string) error {
+// writeBoardExtraFields inserts fields (already formatted "**Name:** value"
+// lines, in caller-supplied order — see buildExtraTaskFieldLines) into the
+// board task file at path, immediately after its `**Status:**` line, in ONE
+// atomic write. Every other byte is preserved. Covers provenance
+// (**Implemented-by:**) and the optional **Note:**/**Evidence:** annotations.
+func writeBoardExtraFields(path string, fields []string) error {
 	data, err := osReadFileFn(path)
 	if err != nil {
 		return err
@@ -271,20 +342,40 @@ func writeBoardImplementedBy(path, ref string) error {
 	if idx < 0 {
 		return errNoStatusForProvenance
 	}
-	lines = withImplementedByLine(lines, idx, ref)
+	lines = withExtraFieldLines(lines, idx, fields)
 	return osWriteFileFn(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
-// withImplementedByLine returns lines with `**Implemented-by:** ref` inserted
-// immediately after lines[statusIdx], keeping it adjacent to the `**Status:**`
-// line in both board files and plan-inline task blocks.
-func withImplementedByLine(lines []string, statusIdx int, ref string) []string {
-	field := "**Implemented-by:** " + ref
-	out := make([]string, 0, len(lines)+1)
-	out = append(out, lines[:statusIdx+1]...)
-	out = append(out, field)
-	out = append(out, lines[statusIdx+1:]...)
+// writeBoardImplementedBy inserts an `**Implemented-by:** <ref>` line into the
+// board task file at path, immediately after its `**Status:**` line. Every
+// other byte is preserved. Kept as a thin single-field wrapper over
+// writeBoardExtraFields for callers that only ever write provenance.
+func writeBoardImplementedBy(path, ref string) error {
+	return writeBoardExtraFields(path, []string{"**Implemented-by:** " + ref})
+}
+
+// withExtraFieldLines returns lines with fieldLines (already formatted
+// "**Name:** value" strings, in caller-supplied order) inserted immediately
+// after lines[anchorIdx], keeping them adjacent to the **Status:** line in
+// both board files and plan-inline task blocks. A nil/empty fieldLines is a
+// no-op (returns lines unchanged).
+func withExtraFieldLines(lines []string, anchorIdx int, fieldLines []string) []string {
+	if len(fieldLines) == 0 {
+		return lines
+	}
+	out := make([]string, 0, len(lines)+len(fieldLines))
+	out = append(out, lines[:anchorIdx+1]...)
+	out = append(out, fieldLines...)
+	out = append(out, lines[anchorIdx+1:]...)
 	return out
+}
+
+// withImplementedByLine returns lines with `**Implemented-by:** ref` inserted
+// immediately after lines[statusIdx]. Kept as a thin single-field wrapper over
+// withExtraFieldLines; still used by the corrective-restamp path
+// (withAmendedImplementedBy), which manages ONLY the Implemented-by field.
+func withImplementedByLine(lines []string, statusIdx int, ref string) []string {
+	return withExtraFieldLines(lines, statusIdx, []string{"**Implemented-by:** " + ref})
 }
 
 // runTaskChangeStatusPlanInline resolves <task> to the `### Task N:` block in
@@ -335,11 +426,15 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 	}
 	// Provenance is written ONLY when completing, in the same atomic write that
 	// sets the status; values come ONLY from flags (never ambient git HEAD).
+	// --note/--evidence are independent optional annotations, valid on ANY
+	// transition, written in the same atomic pass alongside provenance when
+	// both are given.
 	implementedBy := ""
 	if to == lifecycle.TaskComplete {
 		implementedBy = implementedByRefFromFlags(cmd)
 	}
-	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to, implementedBy); err != nil {
+	extraFields := buildExtraTaskFieldLines(implementedBy, noteFromFlags(cmd), evidenceFromFlags(cmd))
+	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to, extraFields); err != nil {
 		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
 	}
 
@@ -352,19 +447,19 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 // comes from the parse pass over the same file, so it is always in range. This
 // mirrors the per-block status rewrite in pkg/lint (rewriteTaskStatusLines).
 //
-// When implementedByRef is non-empty an `**Implemented-by:** <ref>` line is
-// inserted immediately after the status line, in the same atomic write, so the
-// status flip and provenance write land together.
-func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status, implementedByRef string) error {
+// extraFields (already formatted "**Name:** value" strings, in caller-supplied
+// order — see buildExtraTaskFieldLines) are inserted immediately after the
+// status line, in the same atomic write, so the status flip and any
+// provenance/note/evidence writes land together. A nil/empty extraFields is a
+// pure status rewrite.
+func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status, extraFields []string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	lines := strings.Split(string(data), "\n")
 	lines[statusLine-1] = "**Status:** " + string(to)
-	if implementedByRef != "" {
-		lines = withImplementedByLine(lines, statusLine-1, implementedByRef)
-	}
+	lines = withExtraFieldLines(lines, statusLine-1, extraFields)
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 

@@ -13,6 +13,8 @@ status: Approved
 
 `specscore task change-status <task> --to=<status>` transitions a Task's status and, on completion, OPTIONALLY records **implementation-commit provenance** (`--repo`/`--commit`/`--branch`) onto the task. It is the capture vehicle for the cross-repo [implementation-commit-provenance](https://github.com/specscore/specscore/blob/main/spec/features/implementation-commit-provenance/README.md) feature (specscore meta-spec): the actor that finished the work supplies the commit reference, and the verb writes it into the Task's `implementation_commit` property (surfaced as `**Implemented-by:** <repo>@<sha>`).
 
+The verb also accepts two optional annotation flags, `--note` and `--evidence`, valid on **any** transition (not restricted to `--to=complete` the way the provenance flags are). `--note` records a free-text justification; `--evidence` records a comma-separated list of unstructured supporting references (commit SHAs, PR URLs, file paths, deploy/monitoring links) — distinct from `implementation_commit`, which is a single, syntactically validated code reference. Both are written as their own field (`**Note:**` / `**Evidence:**`) adjacent to `**Status:**`, in the same atomic write as the transition (see [task-annotation-fields](#req-task-annotation-fields)).
+
 The verb is **single-actor file mutation** — it performs no claim/release, locking, or conflict resolution. That deliberately narrow shape is what lets it exist within `specscore`'s local-file-mutation model without reopening the coordination concerns that keep full task-board orchestration out (see [single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)). It resolves a task in **either** of two stores: the `tasks/` board (the existing `task` group's target) or a plan-inline task block addressed by its stable `**Id:**` (whose completion feeds the plan execution-band rollup).
 
 ## Synopsis
@@ -21,6 +23,7 @@ The verb is **single-actor file mutation** — it performs no claim/release, loc
 specscore task change-status <task> --to=<status> \
   [--plan <plan-slug>] \
   [--repo <repo>] [--commit <sha>] [--branch <branch>] \
+  [--note <text>] [--evidence <ref>[,<ref>...]] \
   [--project <path>]
 ```
 
@@ -88,6 +91,19 @@ The verb MUST source the provenance reference **only** from flags — it MUST NO
 
 A wrong or missing provenance reference on an already-`complete` task MUST be correctable without a status transition. The verb accepts an `--amend-provenance` flag that, on a task **already** in `complete`, overwrites `implementation_commit` from the supplied `--repo`/`--commit`/`--branch` (or clears it when no provenance flags are given), then exits `0` with a `<task>: provenance amended` line — distinct from a transition. `--amend-provenance` requires the task already be `complete` (else exit `4`), MUST NOT be combined with `--to` (else exit `2`), and follows the same `--commit`-required and syntactic-only rules as a completion write. Provenance remains a single reference; this is correction, not history. (Outside `--amend-provenance`, the strict matrix still forbids `complete → complete`.)
 
+### Task annotation: note and evidence
+
+#### REQ: task-annotation-fields
+
+`--note <text>` and `--evidence <ref>[,<ref>...]` are OPTIONAL annotations, independent of `--to`'s value — unlike the provenance flags they are NOT restricted to `--to=complete`; either or both MAY be supplied on any legal transition (e.g. a `--note` explaining why a task moved to `blocked`). Neither is required, and re-running with neither flag writes nothing (matching the existing no-provenance-supplied behavior).
+
+- `--note` is written verbatim (after trimming surrounding whitespace) as a `**Note:**` field. A blank/whitespace-only `--note` writes nothing (treated as absent).
+- `--evidence` is split on commas, each entry trimmed, empty entries dropped, and the result written as a single `**Evidence:**` field with entries rejoined by `", "` — mirroring [`plan reconcile`](../../plan/reconcile/README.md)'s `--evidence` flag. An `--evidence` value that reduces to zero entries after trimming writes nothing.
+- Both fields are written in the SAME atomic rewrite as the status transition (or, for `--to=complete`, the same write as `**Implemented-by:**`), in the fixed order `**Implemented-by:**` → `**Note:**` → `**Evidence:**`, immediately after `**Status:**`.
+- `--note`/`--evidence` are syntactically UNVALIDATED free text/refs — unlike `implementation_commit` ([provenance-ref-assembly](#req-provenance-ref-assembly)), which is a single, format-checked code reference. This is a deliberate distinction: `**Implemented-by:**` answers "which commit did the work"; `**Note:**`/`**Evidence:**` answer "what backs the claim that it's actually done" (e.g. a live-URL check, a manual QA note) — a broader, unstructured category that a strict commit-ref format cannot carry.
+- `--note`/`--evidence` MUST NOT be combined with `--amend-provenance` (exit `2`) — `--amend-provenance` is a provenance-only corrective re-stamp, not a transition, and silently dropping an annotation flag would be a footgun. A future amend-style corrective path for `**Note:**`/`**Evidence:**` is an [Open Question](#open-questions).
+- Neither field is part of the [KindTask](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#optional-task-id) transition matrix or the plan execution-band rollup: `**Note:**`/`**Evidence:**` are pure annotations that never influence [task-legal-transition-matrix](#req-task-legal-transition-matrix) or [plan#req:status-rollup](https://specscore.md/plan-specification#req-status-rollup). They are parsed by `pkg/plan` (`Task.Note`/`Task.Evidence`) but are NOT yet surfaced by `plan info`'s structured output — a human or tool reads them directly from the plan file today; surfacing them in `plan info` is a deferred [Open Question](#open-questions).
+
 ## Parameters
 
 | Name | Required | Description |
@@ -104,14 +120,16 @@ A wrong or missing provenance reference on an already-`complete` task MUST be co
 | `--commit` | Conditional | Implementing commit sha. **Required when any provenance flag is present.** Provenance context only. |
 | `--branch` | No | Branch the commit landed on. Provenance flag; provenance context only. |
 | `--amend-provenance` | No | Correct/overwrite `implementation_commit` on an already-`complete` task without a status transition. Mutually exclusive with `--to`. |
+| `--note` | No | Optional free-text annotation written as `**Note:**`. Valid on ANY transition. NOT supported with `--amend-provenance`. |
+| `--evidence` | No | Optional comma-separated supporting references written as `**Evidence:**`. Valid on ANY transition. NOT supported with `--amend-provenance`. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
 
 ## Exit codes
 
 | Code | Condition |
 |---|---|
-| `0` | Transition succeeded (status rewritten; provenance written if supplied; index synced) — OR — provenance amended via `--amend-provenance`. |
-| `2` | Missing/unknown `--to`; a provenance flag with non-`complete` `--to`; a provenance flag set without `--commit`; `--amend-provenance` combined with `--to`. |
+| `0` | Transition succeeded (status rewritten; provenance/note/evidence written if supplied; index synced) — OR — provenance amended via `--amend-provenance`. |
+| `2` | Missing/unknown `--to`; a provenance flag with non-`complete` `--to`; a provenance flag set without `--commit`; `--amend-provenance` combined with `--to`; `--note`/`--evidence` combined with `--amend-provenance`. |
 | `3` | `<task>` resolves to no task in the requested store (plan-inline: no block with matching `**Id:**`). |
 | `4` | `(current_status, --to)` not a legal transition; or `--amend-provenance` on a task not in `complete`. |
 | `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
@@ -132,11 +150,13 @@ A wrong or missing provenance reference on an already-`complete` task MUST be co
 - Auto-deriving the commit from ambient `git HEAD`, and verifying the sha exists in the repo ([provenance-not-derived-not-verified](#req-provenance-not-derived-not-verified)).
 - Recording more than one commit per task (single reference — MVP).
 - Reachability detection / lost-commit recovery — the meta-spec feature's Not Doing carries.
-- A `--note`/`## Resolution` mechanism for tasks — deferred; not part of this MVP.
+- Syntactic validation of `--note`/`--evidence` values — unlike `implementation_commit`, they are free text / unstructured refs by design ([task-annotation-fields](#req-task-annotation-fields)).
+- Amending `**Note:**`/`**Evidence:**` on an already-transitioned task without a further status transition (the way `--amend-provenance` corrects provenance) — deferred; see [Open Questions](#open-questions).
+- Surfacing `**Note:**`/`**Evidence:**` in `plan info`'s structured output — parsed by `pkg/plan` today but not yet queryable through the CLI; deferred, see [Open Questions](#open-questions).
 
 ## Rehearse Integration
 
-CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path transition, the provenance-on-complete write, the provenance-flag-without-complete rejection (exit `2`), the illegal-transition rejection (exit `4`), not-found resolution (exit `3`), and the `--amend-provenance` corrective re-stamp. Both board-mode and plan-inline (by `**Id:**`) scenarios are fully specified.
+CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path transition, the provenance-on-complete write, the provenance-flag-without-complete rejection (exit `2`), the illegal-transition rejection (exit `4`), not-found resolution (exit `3`), the `--amend-provenance` corrective re-stamp, and the `--note`/`--evidence` annotation write (including on a non-`complete` transition, and its rejection alongside `--amend-provenance`). Both board-mode and plan-inline (by `**Id:**`) scenarios are fully specified.
 
 ## Acceptance Criteria
 
@@ -228,11 +248,54 @@ CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path
 **When** the user runs `specscore task change-status auth --amend-provenance --repo backstage --commit a1b2c3d`
 **Then** the command exits `0`, overwrites `implementation_commit` to `backstage@a1b2c3d` without changing the `complete` status, and prints `auth: provenance amended` — and the same invocation with `--to` set instead exits `2`, while `--amend-provenance` on a non-`complete` task exits `4`.
 
+### AC: note-and-evidence-any-transition
+
+**Requirements:** [cli/task/change-status#req:task-annotation-fields](#req-task-annotation-fields)
+
+**Given** a plan-inline task block `**Id:** setup` in `spec/plans/auth.md` at `**Status:** in_progress`
+**When** the user runs `specscore task change-status setup --plan auth --to=blocked --note "waiting on Firebase console access"`
+**Then** the command exits `0`, sets the block's status to `blocked`, and writes `**Note:** waiting on Firebase console access` immediately after `**Status:**` — demonstrating `--note` is valid on a non-`complete` transition, unlike the provenance flags.
+
+### AC: note-and-evidence-with-provenance-ordering
+
+**Requirements:** [cli/task/change-status#req:task-annotation-fields](#req-task-annotation-fields)
+
+**Given** a board task `tasks/auth/README.md` in `**Status:** in_progress`
+**When** the user runs `specscore task change-status auth --to=complete --repo sneat-co/chess --commit cfabf5e --note "shipped to production, verified live" --evidence cfabf5e,https://example.com/live`
+**Then** the command exits `0` and writes, in ONE atomic rewrite immediately after `**Status:** complete`, three fields in fixed order: `**Implemented-by:** sneat-co/chess@cfabf5e`, then `**Note:** shipped to production, verified live`, then `**Evidence:** cfabf5e, https://example.com/live`.
+
+### AC: note-evidence-blank-writes-nothing
+
+**Requirements:** [cli/task/change-status#req:task-annotation-fields](#req-task-annotation-fields)
+
+**Given** a board task `tasks/auth/README.md` in `**Status:** in_progress`
+**When** the user runs `specscore task change-status auth --to=complete --note "   " --evidence " , ,"`
+**Then** the command exits `0`, sets status `complete`, and writes neither a `**Note:**` nor an `**Evidence:**` field — both reduce to empty after trimming and are treated as absent.
+
+### AC: note-evidence-not-written-on-rejected-transition
+
+**Requirements:** [cli/task/change-status#req:task-annotation-fields](#req-task-annotation-fields)
+
+**Given** a board task `tasks/auth/README.md` in `**Status:** planning`
+**When** the user runs `specscore task change-status auth --to=complete --note "should not land"` (an illegal `planning → complete` pair)
+**Then** the command exits `4` (InvalidTransition) and the task file is byte-unchanged — no `**Note:**` field is written on a rejected transition.
+
+### AC: note-evidence-with-amend-provenance-rejected
+
+**Requirements:** [cli/task/change-status#req:task-annotation-fields](#req-task-annotation-fields)
+
+**Given** a board task `tasks/auth/README.md` already `**Status:** complete`
+**When** the user runs `specscore task change-status auth --amend-provenance --commit a1b2c3d --note "not allowed here"`
+**Then** the command exits `2` (InvalidArgs) naming `--amend-provenance` as incompatible with `--note`/`--evidence`, and the task file is byte-unchanged. The same holds for `--evidence` in place of `--note`.
+
 ## Open Questions
 
 - ~~Plan-inline task addressing~~ — **Resolved:** an explicit stable `**Id:**` on the task block (see [task-dual-target-resolution](#req-task-dual-target-resolution)); the plan task-block `**Id:**` field is added upstream in the `plan` Feature.
 - ~~Corrective re-stamp of an already-`complete` task~~ — **Resolved:** the `--amend-provenance` path ([provenance-corrective-restamp](#req-provenance-corrective-restamp)).
+- ~~A `--note`/annotation mechanism for tasks~~ — **Resolved:** [task-annotation-fields](#req-task-annotation-fields) adds `--note`/`--evidence`, valid on any transition, written adjacent to `**Status:**`.
 - Is the MVP transition matrix complete? Should `depends_on` gating (`queued → in_progress` only when dependencies are `complete`) be enforced here or left to orchestrators? (Still open.)
+- Should `**Note:**`/`**Evidence:**` be correctable via an `--amend-note`/`--amend-evidence`-style path (mirroring `--amend-provenance`) without a further status transition? Deferred — no motivating case yet; `--amend-provenance` today explicitly rejects `--note`/`--evidence` rather than silently ignoring them.
+- Should `plan info` surface each task's `**Note:**`/`**Evidence:**` (already parsed into `pkg/plan.Task`) the way it surfaces `ImplementationEvidence` (`**Implemented-by:**` refs) today? Deferred — not required by the motivating case (a plain rollup count), and it would need a decision on whether to fold it into `ImplementationEvidence` or add a parallel field.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

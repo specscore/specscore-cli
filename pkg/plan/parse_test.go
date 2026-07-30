@@ -775,3 +775,67 @@ No provenance here.
 		t.Fatalf("task2 implemented-by should be absent: present=%v value=%q line=%d", t2.ImplementedByPresent, t2.ImplementationCommit, t2.ImplementedByLine)
 	}
 }
+
+// TestParse_NoteAndEvidenceFields covers the `**Note:**`/`**Evidence:**`
+// optional per-task annotations written by `task change-status
+// --note=/--evidence=` (cli/task/change-status). Evidence is a comma-separated
+// list; Note is free text. Both are independent of ImplementedBy/
+// ImplementationCommit (a syntactically validated code reference — P-008).
+func TestParse_NoteAndEvidenceFields(t *testing.T) {
+	dir := t.TempDir()
+	plansDir := filepath.Join(dir, "plans")
+	body := `# Plan: Sample
+
+**Status:** Draft
+**Source Feature:** sample
+
+## Tasks
+
+### Task 1: First task
+
+**Status:** complete
+**Implemented-by:** sneat-co/chess@cfabf5e
+**Note:** shipped to production, verified live
+**Evidence:** cfabf5e, https://chessraiders.com/board/
+
+### Task 2: Second task
+
+**Status:** planning
+
+No note or evidence here.
+`
+	p, err := Parse(writePlan(t, plansDir, "notes", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Tasks) != 2 {
+		t.Fatalf("got %d tasks", len(p.Tasks))
+	}
+	t1 := p.Tasks[0]
+	if !t1.NotePresent || t1.Note != "shipped to production, verified live" {
+		t.Fatalf("task1 note present=%v value=%q", t1.NotePresent, t1.Note)
+	}
+	if t1.NoteLine == 0 {
+		t.Fatal("task1 NoteLine should be set")
+	}
+	wantEvidence := []string{"cfabf5e", "https://chessraiders.com/board/"}
+	if !t1.EvidencePresent || len(t1.Evidence) != len(wantEvidence) {
+		t.Fatalf("task1 evidence present=%v value=%v", t1.EvidencePresent, t1.Evidence)
+	}
+	for i, want := range wantEvidence {
+		if t1.Evidence[i] != want {
+			t.Fatalf("task1 evidence[%d] = %q; want %q", i, t1.Evidence[i], want)
+		}
+	}
+	if t1.EvidenceLine == 0 {
+		t.Fatal("task1 EvidenceLine should be set")
+	}
+
+	t2 := p.Tasks[1]
+	if t2.NotePresent || t2.Note != "" || t2.NoteLine != 0 {
+		t.Fatalf("task2 note should be absent: present=%v value=%q line=%d", t2.NotePresent, t2.Note, t2.NoteLine)
+	}
+	if t2.EvidencePresent || len(t2.Evidence) != 0 || t2.EvidenceLine != 0 {
+		t.Fatalf("task2 evidence should be absent: present=%v value=%v line=%d", t2.EvidencePresent, t2.Evidence, t2.EvidenceLine)
+	}
+}
