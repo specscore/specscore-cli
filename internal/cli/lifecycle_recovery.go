@@ -14,7 +14,6 @@ import (
 
 var (
 	lifecycleRecoveryAbs          = filepath.Abs
-	lifecycleRecoveryLstat        = os.Lstat
 	lifecycleRecoverySnapshot     = snapshotSpecTreeNoFollow
 	lifecycleRecoveryDiffSnapshot = snapshotSpecTreeNoFollow
 )
@@ -103,51 +102,51 @@ func lifecycleRecoveryProjectRoot(cmd *cobra.Command) (string, error) {
 }
 
 func readLifecycleReceipts(projectRoot string) ([]LifecycleTransactionReceipt, error) {
-	dir := filepath.Join(projectRoot, ".specscore-recovery")
-	entries, err := os.ReadDir(dir)
+	entries, err := readLifecycleRecoveryEntriesNoFollow(projectRoot)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, exitcode.UnexpectedErrorf("reading lifecycle recovery journal: %v", err)
 	}
-	receipts := make([]LifecycleTransactionReceipt, 0, len(entries))
+	canonicalIDs := make(map[string]struct{}, len(entries))
+	intentIDs := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
 		if strings.HasSuffix(entry.Name(), ".publishing.json") {
 			id := strings.TrimSuffix(entry.Name(), ".publishing.json")
 			if !validLifecycleTransactionID(id) {
 				return nil, exitcode.UnexpectedErrorf("invalid lifecycle publishing-intent filename %q", entry.Name())
 			}
-			info, err := lifecycleRecoveryLstat(filepath.Join(dir, entry.Name()))
-			if err != nil {
-				return nil, exitcode.UnexpectedErrorf("inspecting lifecycle publishing intent: %v", err)
-			}
-			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-				return nil, exitcode.UnexpectedErrorf("refusing non-regular lifecycle publishing intent %q", entry.Name())
-			}
+			intentIDs[id] = struct{}{}
+			continue
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
 		if !validLifecycleTransactionID(id) {
 			return nil, exitcode.UnexpectedErrorf("invalid lifecycle recovery receipt filename %q", entry.Name())
 		}
-		info, err := lifecycleRecoveryLstat(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			return nil, exitcode.UnexpectedErrorf("inspecting lifecycle recovery receipt: %v", err)
+		canonicalIDs[id] = struct{}{}
+	}
+	for id := range intentIDs {
+		if _, ok := canonicalIDs[id]; !ok {
+			return nil, exitcode.UnexpectedErrorf("orphaned lifecycle publishing intent for %s", id)
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return nil, exitcode.UnexpectedErrorf("refusing non-regular lifecycle recovery receipt %q", entry.Name())
-		}
+	}
+	ids := make([]string, 0, len(canonicalIDs))
+	for id := range canonicalIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	receipts := make([]LifecycleTransactionReceipt, 0, len(ids))
+	for _, id := range ids {
 		receipt, err := readLifecycleReceipt(projectRoot, id)
 		if err != nil {
 			return nil, err
 		}
 		receipts = append(receipts, receipt)
 	}
-	sort.Slice(receipts, func(i, j int) bool { return receipts[i].ID < receipts[j].ID })
 	return receipts, nil
 }
 
@@ -155,8 +154,7 @@ func readLifecycleReceipt(projectRoot, id string) (LifecycleTransactionReceipt, 
 	if !validLifecycleTransactionID(id) {
 		return LifecycleTransactionReceipt{}, exitcode.InvalidArgsErrorf("invalid lifecycle transaction id %q", id)
 	}
-	path := filepath.Join(projectRoot, ".specscore-recovery", id+".json")
-	data, err := os.ReadFile(path)
+	data, err := readLifecycleRecoveryRegularFileNoFollow(projectRoot, id+".json")
 	if os.IsNotExist(err) {
 		return LifecycleTransactionReceipt{}, exitcode.NotFoundErrorf("lifecycle transaction receipt not found: %s", id)
 	}
@@ -173,29 +171,20 @@ func readLifecycleReceipt(projectRoot, id string) (LifecycleTransactionReceipt, 
 	if err := validateLifecycleReceipt(projectRoot, receipt); err != nil {
 		return LifecycleTransactionReceipt{}, err
 	}
-	if receipt.State == "committed" {
-		if err := validateLifecyclePublishingIntent(projectRoot, receipt); err != nil {
-			return LifecycleTransactionReceipt{}, err
-		}
+	if err := validateLifecyclePublishingIntent(projectRoot, receipt); err != nil {
+		return LifecycleTransactionReceipt{}, err
 	}
 	return receipt, nil
 }
 
 func validateLifecyclePublishingIntent(projectRoot string, receipt LifecycleTransactionReceipt) error {
-	path := filepath.Join(projectRoot, ".specscore-recovery", receipt.ID+".publishing.json")
-	info, err := lifecycleRecoveryLstat(path)
+	data, err := readLifecycleRecoveryRegularFileNoFollow(projectRoot, receipt.ID+".publishing.json")
 	if os.IsNotExist(err) {
-		// Receipts created before immutable publishing intent retention remain
-		// readable; all new lifecycle transactions retain one before finality.
+		if receipt.State == "committed" && receipt.PublishingIntentRequired {
+			return exitcode.UnexpectedErrorf("marked committed lifecycle receipt %s is missing its publishing intent", receipt.ID)
+		}
 		return nil
 	}
-	if err != nil {
-		return exitcode.UnexpectedErrorf("inspecting lifecycle publishing intent: %v", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return exitcode.UnexpectedErrorf("refusing non-regular lifecycle publishing intent %q", receipt.ID)
-	}
-	data, err := os.ReadFile(path)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("reading lifecycle publishing intent: %v", err)
 	}
@@ -203,14 +192,16 @@ func validateLifecyclePublishingIntent(projectRoot string, receipt LifecycleTran
 	if err := json.Unmarshal(data, &intent); err != nil {
 		return exitcode.UnexpectedErrorf("parsing lifecycle publishing intent: %v", err)
 	}
-	if intent.State != "publishing" ||
+	if (receipt.State != "publishing" && receipt.State != "committed") ||
+		intent.State != "publishing" ||
 		intent.ID != receipt.ID ||
 		intent.ProjectRoot != receipt.ProjectRoot ||
 		intent.RecoveryRoot != receipt.RecoveryRoot ||
 		intent.BaselineDigest != receipt.BaselineDigest ||
 		intent.StagedDigest != receipt.StagedDigest ||
-		intent.CreatedAt != receipt.CreatedAt {
-		return exitcode.UnexpectedErrorf("lifecycle publishing intent does not match committed receipt %s", receipt.ID)
+		intent.CreatedAt != receipt.CreatedAt ||
+		intent.PublishingIntentRequired != receipt.PublishingIntentRequired {
+		return exitcode.UnexpectedErrorf("lifecycle publishing intent does not match receipt %s", receipt.ID)
 	}
 	if err := validateLifecycleReceipt(projectRoot, intent); err != nil {
 		return exitcode.UnexpectedErrorf("validating lifecycle publishing intent: %v", err)

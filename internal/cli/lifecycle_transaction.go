@@ -28,6 +28,10 @@ type LifecycleTransactionReceipt struct {
 	BaselineDigest string
 	StagedDigest   string
 	CreatedAt      string
+	// PublishingIntentRequired marks protocol-v2 transactions. It is written
+	// before any staged mutation so a committed receipt must retain and validate
+	// its publishing intent rather than silently accepting a missing sidecar.
+	PublishingIntentRequired bool
 }
 
 var (
@@ -117,12 +121,13 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	}
 
 	receipt := LifecycleTransactionReceipt{
-		ID:             id,
-		State:          "prepared",
-		ProjectRoot:    projectRoot,
-		RecoveryRoot:   stagePath,
-		BaselineDigest: lifecycleSnapshotDigest(baseline),
-		CreatedAt:      time.Now().UTC().Format(time.RFC3339Nano),
+		ID:                       id,
+		State:                    "prepared",
+		ProjectRoot:              projectRoot,
+		RecoveryRoot:             stagePath,
+		BaselineDigest:           lifecycleSnapshotDigest(baseline),
+		CreatedAt:                time.Now().UTC().Format(time.RFC3339Nano),
+		PublishingIntentRequired: true,
 	}
 	if err := lifecycleTransactionWriteReceipt(project, receipt); err != nil {
 		return LifecycleTransactionReceipt{}, err

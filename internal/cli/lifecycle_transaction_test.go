@@ -694,14 +694,9 @@ func TestLifecycleRecoveryReadOnlyInspectionFailureModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWriteLifecycleFile(t, filepath.Join(journal, "receipt-1.publishing.json"), "{}")
-	originalIntentLstat := lifecycleRecoveryLstat
-	lifecycleRecoveryLstat = func(string) (os.FileInfo, error) {
-		return nil, errors.New("publishing-intent lstat failed")
-	}
 	if _, err := readLifecycleReceipts(project); err == nil {
-		t.Fatal("publishing-intent lstat failure accepted")
+		t.Fatal("orphaned publishing intent accepted")
 	}
-	lifecycleRecoveryLstat = originalIntentLstat
 	if err := os.Remove(filepath.Join(journal, "receipt-1.publishing.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -834,13 +829,20 @@ func TestLifecycleRecoveryRemainingValidationBranches(t *testing.T) {
 	if _, err := readLifecycleReceipt(project, "invalid"); err == nil {
 		t.Fatal("invalid receipt state accepted")
 	}
-	originalLstat := lifecycleRecoveryLstat
-	lifecycleRecoveryLstat = func(string) (os.FileInfo, error) { return nil, errors.New("receipt lstat failed") }
-	t.Cleanup(func() { lifecycleRecoveryLstat = originalLstat })
-	if _, err := readLifecycleReceipts(project); err == nil {
-		t.Fatal("receipt lstat failure accepted")
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryOpenProject = func(string) (*stagedSpecTree, error) {
+		return nil, errors.New("receipt project open failed")
 	}
-	lifecycleRecoveryLstat = originalLstat
+	if _, err := readLifecycleReceipts(project); err == nil {
+		t.Fatal("receipt descriptor open failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryReadDir = func(*os.File, int) ([]os.DirEntry, error) {
+		return nil, errors.New("recovery journal read failed")
+	}
+	if _, err := readLifecycleReceipts(project); err == nil {
+		t.Fatal("recovery journal descriptor read failure accepted")
+	}
 	originalAbs := lifecycleRecoveryAbs
 	lifecycleRecoveryAbs = func(string) (string, error) { return "", errors.New("receipt root abs failed") }
 	t.Cleanup(func() { lifecycleRecoveryAbs = originalAbs })
@@ -855,13 +857,14 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "staged\n")
 	mustWriteLifecycleFile(t, filepath.Join(recoveryRoot, "spec", "README.md"), "baseline\n")
 	receipt := LifecycleTransactionReceipt{
-		ID:             "intent-1",
-		State:          "committed",
-		ProjectRoot:    project,
-		RecoveryRoot:   recoveryRoot,
-		BaselineDigest: lifecycleDigestAt(t, filepath.Join(recoveryRoot, "spec")),
-		StagedDigest:   lifecycleDigestAt(t, filepath.Join(project, "spec")),
-		CreatedAt:      "2026-07-30T00:00:00Z",
+		ID:                       "intent-1",
+		State:                    "committed",
+		ProjectRoot:              project,
+		RecoveryRoot:             recoveryRoot,
+		BaselineDigest:           lifecycleDigestAt(t, filepath.Join(recoveryRoot, "spec")),
+		StagedDigest:             lifecycleDigestAt(t, filepath.Join(project, "spec")),
+		CreatedAt:                "2026-07-30T00:00:00Z",
+		PublishingIntentRequired: true,
 	}
 	intent := receipt
 	intent.State = "publishing"
@@ -871,7 +874,12 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 		t.Helper()
 		mustWriteLifecycleFile(t, intentPath, mustMarshalReceipt(t, value))
 	}
-	if err := validateLifecyclePublishingIntent(project, receipt); err != nil {
+	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
+		t.Fatal("marked committed receipt without retained intent accepted")
+	}
+	legacy := receipt
+	legacy.PublishingIntentRequired = false
+	if err := validateLifecyclePublishingIntent(project, legacy); err != nil {
 		t.Fatalf("legacy receipt without retained intent: %v", err)
 	}
 	writeIntent(intent)
@@ -885,6 +893,13 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 	if _, err := readLifecycleReceipt(project, receipt.ID); err != nil {
 		t.Fatalf("committed receipt with valid retained intent: %v", err)
 	}
+	if err := os.Remove(intentPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLifecycleReceipt(project, receipt.ID); err == nil {
+		t.Fatal("marked committed receipt with deleted retained intent accepted")
+	}
+	writeIntent(intent)
 	if err := os.Remove(intentPath); err != nil {
 		t.Fatal(err)
 	}
@@ -925,24 +940,150 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 		t.Fatal("publishing intent snapshot failure accepted")
 	}
 	lifecycleRecoverySnapshot = originalSnapshot
-	originalLstat := lifecycleRecoveryLstat
-	lifecycleRecoveryLstat = func(string) (os.FileInfo, error) {
-		return nil, errors.New("publishing intent lstat failed")
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryOpenProject = func(string) (*stagedSpecTree, error) {
+		return nil, errors.New("publishing intent project open failed")
 	}
 	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
-		t.Fatal("publishing intent lstat failure accepted")
+		t.Fatal("publishing intent descriptor open failure accepted")
 	}
-	lifecycleRecoveryLstat = originalLstat
-	if err := os.Remove(intentPath); err != nil {
-		t.Fatal(err)
-	}
-	lifecycleRecoveryLstat = func(string) (os.FileInfo, error) {
-		return lifecycleTestFileInfo{mode: 0o600}, nil
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryReadAll = func(io.Reader) ([]byte, error) {
+		return nil, errors.New("publishing intent read failed")
 	}
 	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
 		t.Fatal("publishing intent read failure accepted")
 	}
-	lifecycleRecoveryLstat = originalLstat
+}
+
+func TestLifecycleRecoveryDescriptorReadFailureAndSwapBranches(t *testing.T) {
+	project := t.TempDir()
+	journal := filepath.Join(project, ".specscore-recovery")
+	name := "receipt-1.json"
+	path := filepath.Join(journal, name)
+	write := func(content string) {
+		t.Helper()
+		mustWriteLifecycleFile(t, path, content)
+	}
+	write("original\n")
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, "../escape.json"); err == nil {
+		t.Fatal("unsafe recovery filename accepted")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(t.TempDir(), name); err == nil {
+		t.Fatal("missing recovery journal accepted")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("other.json", path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("symlinked recovery receipt accepted")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("directory recovery receipt accepted")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	write("original\n")
+
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryOpenProject = func(string) (*stagedSpecTree, error) {
+		return nil, errors.New("project descriptor open failed")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("project descriptor open failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryOpenChild = func(*stagedSpecTree, string) (*stagedSpecTree, error) {
+		return nil, errors.New("journal descriptor open failed")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("journal descriptor open failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryOpenFileAt = func(int, string, int, uint32) (int, error) {
+		return -1, errors.New("receipt descriptor open failed")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("receipt descriptor open failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryFileStat = func(*os.File) (os.FileInfo, error) {
+		return nil, errors.New("pre-read stat failed")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("pre-read stat failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryBeforeRead = func(*os.File) error {
+		return errors.New("pre-read hook failed")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("pre-read hook failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryReadAll = func(io.Reader) ([]byte, error) {
+		return nil, errors.New("receipt read failed")
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("receipt read failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	statCalls := 0
+	lifecycleRecoveryFileStat = func(file *os.File) (os.FileInfo, error) {
+		statCalls++
+		if statCalls == 2 {
+			return nil, errors.New("post-read stat failed")
+		}
+		return file.Stat()
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("post-read stat failure accepted")
+	}
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryBeforeRead = func(*os.File) error {
+		return os.WriteFile(path, []byte("changed\n"), 0o600)
+	}
+	if _, err := readLifecycleRecoveryRegularFileNoFollow(project, name); err == nil {
+		t.Fatal("receipt changed while reading accepted")
+	}
+	write("original\n")
+	resetLifecycleRecoveryReadSeams(t)
+	lifecycleRecoveryBeforeRead = func(*os.File) error {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		return os.Symlink("other.json", path)
+	}
+	data, err := readLifecycleRecoveryRegularFileNoFollow(project, name)
+	if err != nil || string(data) != "original\n" {
+		t.Fatalf("descriptor-held receipt after pathname swap = %q, %v", data, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	write("not-json")
+	if _, err := readLifecycleReceipt(project, "receipt-1"); err == nil {
+		t.Fatal("invalid current receipt accepted through descriptor reader")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("other.json", path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLifecycleReceipt(project, "receipt-1"); err == nil {
+		t.Fatal("symlinked current receipt accepted through descriptor reader")
+	}
 }
 
 func TestLifecycleDigestAndReceiptWriterErrorBranches(t *testing.T) {
@@ -1650,6 +1791,33 @@ func resetLifecyclePublicationSeams(t *testing.T) {
 	t.Cleanup(func() {
 		lifecyclePublicationExchange = originalExchange
 		lifecyclePublicationFsync = originalFsync
+	})
+}
+
+func resetLifecycleRecoveryReadSeams(t *testing.T) {
+	t.Helper()
+	originalOpenProject := lifecycleRecoveryOpenProject
+	originalOpenChild := lifecycleRecoveryOpenChild
+	originalOpenFileAt := lifecycleRecoveryOpenFileAt
+	originalFileStat := lifecycleRecoveryFileStat
+	originalReadAll := lifecycleRecoveryReadAll
+	originalBeforeRead := lifecycleRecoveryBeforeRead
+	originalReadDir := lifecycleRecoveryReadDir
+	lifecycleRecoveryOpenProject = openLifecycleProjectNoFollow
+	lifecycleRecoveryOpenChild = openLifecycleProjectChildNoFollow
+	lifecycleRecoveryOpenFileAt = unix.Openat
+	lifecycleRecoveryFileStat = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
+	lifecycleRecoveryReadAll = io.ReadAll
+	lifecycleRecoveryBeforeRead = func(*os.File) error { return nil }
+	lifecycleRecoveryReadDir = func(file *os.File, count int) ([]os.DirEntry, error) { return file.ReadDir(count) }
+	t.Cleanup(func() {
+		lifecycleRecoveryOpenProject = originalOpenProject
+		lifecycleRecoveryOpenChild = originalOpenChild
+		lifecycleRecoveryOpenFileAt = originalOpenFileAt
+		lifecycleRecoveryFileStat = originalFileStat
+		lifecycleRecoveryReadAll = originalReadAll
+		lifecycleRecoveryBeforeRead = originalBeforeRead
+		lifecycleRecoveryReadDir = originalReadDir
 	})
 }
 
