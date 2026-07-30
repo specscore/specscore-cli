@@ -312,13 +312,14 @@ func lifecycleRecoveryReceiptStageName(projectRoot string, receipt LifecycleTran
 	}
 	recoveryRoot := filepath.Clean(receipt.RecoveryRoot)
 	rel, err := filepath.Rel(root, recoveryRoot)
-	if err != nil || filepath.Dir(rel) != "." || !strings.HasPrefix(filepath.Base(rel), ".specscore-txn-") {
-		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt recovery-root escapes its project")
+	stageName := ".specscore-txn-" + receipt.ID
+	if err != nil || rel != stageName {
+		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt recovery-root does not match its transaction")
 	}
 	if receipt.BaselineDigest == "" || ((receipt.State == "publishing" || receipt.State == "committed") && receipt.StagedDigest == "") {
 		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt is missing its integrity digest")
 	}
-	return root, filepath.Base(rel), nil
+	return root, stageName, nil
 }
 
 // lifecycleRecoveryReceiptSnapshots traverses project → stage → spec entirely

@@ -1308,6 +1308,26 @@ func TestLifecycleRecoveryHandleAndSnapshotDefensiveBranches(t *testing.T) {
 	if _, _, err := lifecycleRecoveryReceiptSnapshots(project, nil, invalidReceipt, lifecycleRecoverySnapshot); err == nil {
 		t.Fatal("invalid receipt accepted for lifecycle recovery snapshot")
 	}
+	siblingRoot := filepath.Join(project, ".specscore-txn-other-transaction")
+	mustWriteLifecycleFile(t, filepath.Join(siblingRoot, "spec", "README.md"), "older live tree\n")
+	mismatchedStageReceipt := receipt
+	mismatchedStageReceipt.RecoveryRoot = siblingRoot
+	mismatchedStageReceipt.BaselineDigest = lifecycleDigestAt(t, filepath.Join(siblingRoot, "spec"))
+	mismatchedStageReceipt.StagedDigest = lifecycleDigestAt(t, filepath.Join(project, "spec"))
+	originalSnapshot := lifecycleRecoverySnapshot
+	t.Cleanup(func() { lifecycleRecoverySnapshot = originalSnapshot })
+	snapshotCalls := 0
+	lifecycleRecoverySnapshot = func(tree *stagedSpecTree) (specTreeSnapshot, error) {
+		snapshotCalls++
+		return originalSnapshot(tree)
+	}
+	if err := validateLifecycleReceipt(project, mismatchedStageReceipt); err == nil {
+		t.Fatal("receipt accepted a valid retained predecessor directory belonging to another transaction")
+	}
+	lifecycleRecoverySnapshot = originalSnapshot
+	if snapshotCalls != 0 {
+		t.Fatalf("mismatched retained predecessor reached descriptor traversal: %d snapshots", snapshotCalls)
+	}
 
 	withoutSpec := t.TempDir()
 	withoutSpecProject, err := openLifecycleProjectNoFollow(withoutSpec)
