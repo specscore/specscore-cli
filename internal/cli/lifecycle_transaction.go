@@ -49,6 +49,7 @@ var (
 	lifecycleTransactionNewID             = newLifecycleTransactionID
 	lifecycleTransactionRandomRead        = cryptorand.Read
 	lifecycleTransactionWriteReceipt      = writeLifecycleReceipt
+	lifecycleTransactionRetainIntent      = retainLifecyclePublishingIntent
 	lifecycleReceiptMarshal               = json.MarshalIndent
 )
 
@@ -172,11 +173,35 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	if err := lifecycleTransactionVerifySnapshot(liveSpec, baseline); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("recovery predecessor changed during lifecycle publication; retained recovery tree at %s: %v", stagePath, err)
 	}
-	receipt.State = "committed"
-	if err := lifecycleTransactionWriteReceipt(project, receipt); err != nil {
-		return receipt, err
+	if err := lifecycleTransactionRetainIntent(project, receipt); err != nil {
+		return lifecycleOutcomeUncertainReceipt(receipt), lifecycleOutcomeUncertainError(projectRoot, receipt, err)
 	}
-	return receipt, nil
+	committedReceipt := receipt
+	committedReceipt.State = "committed"
+	if err := lifecycleTransactionWriteReceipt(project, committedReceipt); err != nil {
+		return lifecycleOutcomeUncertainReceipt(receipt), lifecycleOutcomeUncertainError(projectRoot, receipt, err)
+	}
+	return committedReceipt, nil
+}
+
+// lifecycleOutcomeUncertainReceipt is returned only when durable publication
+// succeeded but the final receipt protocol reported an error. POSIX fsync
+// errors are outcome-ambiguous: the final namespace update may or may not
+// already survive a power loss, so callers must inspect the recovery receipt
+// rather than infer either publishing or committed.
+func lifecycleOutcomeUncertainReceipt(receipt LifecycleTransactionReceipt) LifecycleTransactionReceipt {
+	receipt.State = "outcome-uncertain"
+	return receipt
+}
+
+func lifecycleOutcomeUncertainError(projectRoot string, receipt LifecycleTransactionReceipt, cause error) error {
+	return exitcode.ConflictErrorf(
+		"lifecycle transaction %s outcome uncertain after durable publication; inspect recovery receipt .specscore-recovery/%s.json with specscore recovery list --project %s before retrying: %v",
+		receipt.ID,
+		receipt.ID,
+		projectRoot,
+		cause,
+	)
 }
 
 func newLifecycleTransactionID() (string, error) {

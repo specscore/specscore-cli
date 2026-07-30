@@ -31,3 +31,6 @@ func materializeLifecycleProjectContext(*stagedSpecTree, *stagedSpecTree) error 
 func writeLifecycleReceiptNoFollow(*stagedSpecTree, string, []byte) error {
 	return fmt.Errorf("secure lifecycle transactions are unavailable on this platform")
 }
+func retainLifecyclePublishingIntent(*stagedSpecTree, LifecycleTransactionReceipt) error {
+	return fmt.Errorf("secure lifecycle transactions are unavailable on this platform")
+}

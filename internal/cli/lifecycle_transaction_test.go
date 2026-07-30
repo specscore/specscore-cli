@@ -43,6 +43,17 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 	if receipt.State != "committed" || receipt.ID == "" || receipt.StagedDigest == "" {
 		t.Fatalf("receipt = %#v", receipt)
 	}
+	intentData, err := os.ReadFile(filepath.Join(project, ".specscore-recovery", receipt.ID+".publishing.json"))
+	if err != nil {
+		t.Fatalf("retained publishing intent: %v", err)
+	}
+	var intent LifecycleTransactionReceipt
+	if err := json.Unmarshal(intentData, &intent); err != nil {
+		t.Fatalf("parse retained publishing intent: %v", err)
+	}
+	if intent.State != "publishing" || intent.ID != receipt.ID || intent.StagedDigest != receipt.StagedDigest {
+		t.Fatalf("retained publishing intent = %#v", intent)
+	}
 	if _, err := os.Stat(filepath.Join(project, "spec", "new.md")); err != nil {
 		t.Fatalf("published staged file missing: %v", err)
 	}
@@ -183,6 +194,61 @@ func TestRunLifecycleTransactionRetainsPublishingReceiptWhenPublicationSyncFails
 			}
 			if stored.State != "publishing" {
 				t.Fatalf("stored receipt state = %q, want publishing", stored.State)
+			}
+		})
+	}
+}
+
+func TestRunLifecycleTransactionReportsOutcomeUncertainOnFinalReceiptDurabilityFailure(t *testing.T) {
+	for _, failure := range []struct {
+		name    string
+		arrange func()
+	}{
+		{name: "final namespace", arrange: func() {
+			calls := 0
+			lifecycleReceiptRenameAt = func(oldDirFD int, oldName string, newDirFD int, newName string) error {
+				calls++
+				if calls == 3 {
+					return errors.New("final receipt namespace interrupted")
+				}
+				return unix.Renameat(oldDirFD, oldName, newDirFD, newName)
+			}
+		}},
+		{name: "final temporary receipt fsync", arrange: func() {
+			failLifecycleReceiptFsyncAt(9, "final temporary receipt fsync interrupted")
+		}},
+		{name: "final journal fsync", arrange: func() {
+			failLifecycleReceiptFsyncAt(10, "final journal fsync interrupted")
+		}},
+		{name: "final journal parent fsync", arrange: func() {
+			failLifecycleReceiptFsyncAt(11, "final journal parent fsync interrupted")
+		}},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			resetLifecycleReceiptSeams(t)
+			project := t.TempDir()
+			mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+			failure.arrange()
+			receipt, err := RunLifecycleTransaction(project, func(string) error {
+				return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+			})
+			if err == nil || !strings.Contains(err.Error(), "outcome uncertain") ||
+				!strings.Contains(err.Error(), receipt.ID) ||
+				!strings.Contains(err.Error(), "specscore recovery list --project "+project) {
+				t.Fatalf("outcome-uncertain error = %v", err)
+			}
+			if receipt.State != "outcome-uncertain" {
+				t.Fatalf("terminal durability failure state = %q", receipt.State)
+			}
+			if _, statErr := os.Stat(filepath.Join(project, ".specscore-recovery", receipt.ID+".publishing.json")); statErr != nil {
+				t.Fatalf("durable publishing intent missing: %v", statErr)
+			}
+			physical, readErr := readLifecycleReceipt(project, receipt.ID)
+			if readErr != nil {
+				t.Fatalf("recovery failed to validate physical receipt and exchange layout: %v", readErr)
+			}
+			if physical.State != "publishing" && physical.State != "committed" {
+				t.Fatalf("physical recovery state = %q", physical.State)
 			}
 		})
 	}
@@ -611,6 +677,34 @@ func TestLifecycleRecoveryReadOnlyInspectionFailureModes(t *testing.T) {
 	if err := os.Remove(filepath.Join(journal, "bad.name.json")); err != nil {
 		t.Fatal(err)
 	}
+	mustWriteLifecycleFile(t, filepath.Join(journal, "bad.name.publishing.json"), "{}")
+	if _, err := readLifecycleReceipts(project); err == nil {
+		t.Fatal("unsafe publishing-intent filename accepted")
+	}
+	if err := os.Remove(filepath.Join(journal, "bad.name.publishing.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("ignored.txt", filepath.Join(journal, "receipt-1.publishing.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLifecycleReceipts(project); err == nil {
+		t.Fatal("symlinked publishing intent accepted")
+	}
+	if err := os.Remove(filepath.Join(journal, "receipt-1.publishing.json")); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteLifecycleFile(t, filepath.Join(journal, "receipt-1.publishing.json"), "{}")
+	originalIntentLstat := lifecycleRecoveryLstat
+	lifecycleRecoveryLstat = func(string) (os.FileInfo, error) {
+		return nil, errors.New("publishing-intent lstat failed")
+	}
+	if _, err := readLifecycleReceipts(project); err == nil {
+		t.Fatal("publishing-intent lstat failure accepted")
+	}
+	lifecycleRecoveryLstat = originalIntentLstat
+	if err := os.Remove(filepath.Join(journal, "receipt-1.publishing.json")); err != nil {
+		t.Fatal(err)
+	}
 	mustWriteLifecycleFile(t, filepath.Join(journal, "dir-entry.json", "nested"), "x")
 	if _, err := readLifecycleReceipts(project); err != nil {
 		t.Fatalf("directory receipt should be skipped: %v", err)
@@ -755,6 +849,102 @@ func TestLifecycleRecoveryRemainingValidationBranches(t *testing.T) {
 	}
 }
 
+func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
+	project := t.TempDir()
+	recoveryRoot := filepath.Join(project, ".specscore-txn-intent-1")
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "staged\n")
+	mustWriteLifecycleFile(t, filepath.Join(recoveryRoot, "spec", "README.md"), "baseline\n")
+	receipt := LifecycleTransactionReceipt{
+		ID:             "intent-1",
+		State:          "committed",
+		ProjectRoot:    project,
+		RecoveryRoot:   recoveryRoot,
+		BaselineDigest: lifecycleDigestAt(t, filepath.Join(recoveryRoot, "spec")),
+		StagedDigest:   lifecycleDigestAt(t, filepath.Join(project, "spec")),
+		CreatedAt:      "2026-07-30T00:00:00Z",
+	}
+	intent := receipt
+	intent.State = "publishing"
+	journal := filepath.Join(project, ".specscore-recovery")
+	intentPath := filepath.Join(journal, receipt.ID+".publishing.json")
+	writeIntent := func(value LifecycleTransactionReceipt) {
+		t.Helper()
+		mustWriteLifecycleFile(t, intentPath, mustMarshalReceipt(t, value))
+	}
+	if err := validateLifecyclePublishingIntent(project, receipt); err != nil {
+		t.Fatalf("legacy receipt without retained intent: %v", err)
+	}
+	writeIntent(intent)
+	if err := validateLifecyclePublishingIntent(project, receipt); err != nil {
+		t.Fatalf("valid retained publishing intent: %v", err)
+	}
+	if _, err := readLifecycleReceipt(project, receipt.ID); err == nil {
+		t.Fatal("committed receipt file missing despite valid intent accepted")
+	}
+	mustWriteLifecycleFile(t, filepath.Join(journal, receipt.ID+".json"), mustMarshalReceipt(t, receipt))
+	if _, err := readLifecycleReceipt(project, receipt.ID); err != nil {
+		t.Fatalf("committed receipt with valid retained intent: %v", err)
+	}
+	if err := os.Remove(intentPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(intentPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
+		t.Fatal("directory publishing intent accepted")
+	}
+	if err := os.Remove(intentPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", intentPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
+		t.Fatal("symlinked publishing intent accepted")
+	}
+	if err := os.Remove(intentPath); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteLifecycleFile(t, intentPath, "not json")
+	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
+		t.Fatal("invalid publishing intent JSON accepted")
+	}
+	mismatch := intent
+	mismatch.CreatedAt = "2026-07-30T00:00:01Z"
+	writeIntent(mismatch)
+	if _, err := readLifecycleReceipt(project, receipt.ID); err == nil {
+		t.Fatal("mismatched publishing intent accepted")
+	}
+	writeIntent(intent)
+	originalSnapshot := lifecycleRecoverySnapshot
+	lifecycleRecoverySnapshot = func(string) (specTreeSnapshot, error) {
+		return specTreeSnapshot{}, errors.New("publishing intent snapshot failed")
+	}
+	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
+		t.Fatal("publishing intent snapshot failure accepted")
+	}
+	lifecycleRecoverySnapshot = originalSnapshot
+	originalLstat := lifecycleRecoveryLstat
+	lifecycleRecoveryLstat = func(string) (os.FileInfo, error) {
+		return nil, errors.New("publishing intent lstat failed")
+	}
+	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
+		t.Fatal("publishing intent lstat failure accepted")
+	}
+	lifecycleRecoveryLstat = originalLstat
+	if err := os.Remove(intentPath); err != nil {
+		t.Fatal(err)
+	}
+	lifecycleRecoveryLstat = func(string) (os.FileInfo, error) {
+		return lifecycleTestFileInfo{mode: 0o600}, nil
+	}
+	if err := validateLifecyclePublishingIntent(project, receipt); err == nil {
+		t.Fatal("publishing intent read failure accepted")
+	}
+	lifecycleRecoveryLstat = originalLstat
+}
+
 func TestLifecycleDigestAndReceiptWriterErrorBranches(t *testing.T) {
 	withoutFiles := rootSnapshot(nil)
 	withFiles := rootSnapshot(map[string]string{"README.md": "content\n"})
@@ -819,6 +1009,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 	originalAfterExchange := lifecycleTransactionAfterExchange
 	originalNewID := lifecycleTransactionNewID
 	originalWrite := lifecycleTransactionWriteReceipt
+	originalRetainIntent := lifecycleTransactionRetainIntent
 	reset := func() {
 		lifecycleTransactionPlatformSupported = originalPlatform
 		lifecycleTransactionAbs = originalAbs
@@ -837,6 +1028,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		lifecycleTransactionAfterExchange = originalAfterExchange
 		lifecycleTransactionNewID = originalNewID
 		lifecycleTransactionWriteReceipt = originalWrite
+		lifecycleTransactionRetainIntent = originalRetainIntent
 	}
 	t.Cleanup(reset)
 	fails := func(name string, arrange func()) {
@@ -984,6 +1176,11 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 				return errors.New("recovery manifest failed")
 			}
 			return nil
+		}
+	})
+	fails("publishing intent", func() {
+		lifecycleTransactionRetainIntent = func(*stagedSpecTree, LifecycleTransactionReceipt) error {
+			return errors.New("publishing intent failed")
 		}
 	})
 	fails("committed receipt", func() {
@@ -1281,6 +1478,80 @@ func TestLifecycleReceiptNativeFailureBranches(t *testing.T) {
 	}
 }
 
+func TestLifecyclePublishingIntentNativeFailureBranches(t *testing.T) {
+	if err := retainLifecyclePublishingIntent(&stagedSpecTree{}, LifecycleTransactionReceipt{ID: "intent-1", State: "publishing"}); err == nil {
+		t.Fatal("closed publishing-intent project accepted")
+	}
+	projectRoot := t.TempDir()
+	project, err := openLifecycleProjectNoFollow(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+	if err := retainLifecyclePublishingIntent(project, LifecycleTransactionReceipt{ID: "intent-1", State: "prepared"}); err == nil {
+		t.Fatal("non-publishing intent accepted")
+	}
+	if err := retainLifecyclePublishingIntent(project, LifecycleTransactionReceipt{ID: "has.dot", State: "publishing"}); err == nil {
+		t.Fatal("unsafe publishing-intent id accepted")
+	}
+	for _, failure := range []struct {
+		name    string
+		arrange func()
+	}{
+		{name: "journal open", arrange: func() {
+			lifecycleJournalOpenAt = func(int, string, int, uint32) (int, error) {
+				return -1, errors.New("publishing-intent journal open failed")
+			}
+		}},
+		{name: "intent link", arrange: func() {
+			lifecycleReceiptLinkAt = func(int, string, int, string, int) error {
+				return errors.New("publishing-intent link failed")
+			}
+		}},
+		{name: "journal fsync", arrange: func() {
+			lifecycleReceiptFsync = func(int) error {
+				return errors.New("publishing-intent journal fsync failed")
+			}
+		}},
+		{name: "journal parent fsync", arrange: func() {
+			failLifecycleReceiptFsyncAt(2, "publishing-intent journal parent fsync failed")
+		}},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			resetLifecycleReceiptSeams(t)
+			stage, stageErr := createLifecycleStageProjectNoFollow(project, "intent-"+strings.ReplaceAll(failure.name, " ", "-"))
+			if stageErr != nil {
+				t.Fatal(stageErr)
+			}
+			t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+			receipt := LifecycleTransactionReceipt{ID: "intent-" + strings.ReplaceAll(failure.name, " ", "-"), State: "publishing"}
+			if err := writeLifecycleReceipt(stage, receipt); err != nil {
+				t.Fatal(err)
+			}
+			failure.arrange()
+			if err := retainLifecyclePublishingIntent(stage, receipt); err == nil {
+				t.Fatalf("%s failure accepted", failure.name)
+			}
+		})
+	}
+	resetLifecycleReceiptSeams(t)
+	stage, err := createLifecycleStageProjectNoFollow(project, "intent-success")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+	receipt := LifecycleTransactionReceipt{ID: "intent-success", State: "publishing"}
+	if err := writeLifecycleReceipt(stage, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := retainLifecyclePublishingIntent(stage, receipt); err != nil {
+		t.Fatalf("retain publishing intent: %v", err)
+	}
+	if err := retainLifecyclePublishingIntent(stage, receipt); err == nil {
+		t.Fatal("existing publishing intent was replaced")
+	}
+}
+
 func resetLifecycleUnixSeams(t *testing.T) {
 	t.Helper()
 	originalStageOpenChild := lifecycleStageOpenChild
@@ -1332,6 +1603,7 @@ func resetLifecycleReceiptSeams(t *testing.T) {
 	originalReceiptClose := lifecycleReceiptClose
 	originalReceiptRenameAt := lifecycleReceiptRenameAt
 	originalReceiptTempName := lifecycleReceiptTempName
+	originalReceiptLinkAt := lifecycleReceiptLinkAt
 	originalJournalOpenAt := lifecycleJournalOpenAt
 	originalJournalMkdirAt := lifecycleJournalMkdirAt
 	lifecycleReceiptOpenAt = unix.Openat
@@ -1341,6 +1613,7 @@ func resetLifecycleReceiptSeams(t *testing.T) {
 	lifecycleReceiptClose = unix.Close
 	lifecycleReceiptRenameAt = unix.Renameat
 	lifecycleReceiptTempName = newLifecycleReceiptTempName
+	lifecycleReceiptLinkAt = unix.Linkat
 	lifecycleJournalOpenAt = unix.Openat
 	lifecycleJournalMkdirAt = unix.Mkdirat
 	t.Cleanup(func() {
@@ -1351,9 +1624,21 @@ func resetLifecycleReceiptSeams(t *testing.T) {
 		lifecycleReceiptClose = originalReceiptClose
 		lifecycleReceiptRenameAt = originalReceiptRenameAt
 		lifecycleReceiptTempName = originalReceiptTempName
+		lifecycleReceiptLinkAt = originalReceiptLinkAt
 		lifecycleJournalOpenAt = originalJournalOpenAt
 		lifecycleJournalMkdirAt = originalJournalMkdirAt
 	})
+}
+
+func failLifecycleReceiptFsyncAt(failAt int, message string) {
+	calls := 0
+	lifecycleReceiptFsync = func(fd int) error {
+		calls++
+		if calls == failAt {
+			return errors.New(message)
+		}
+		return unix.Fsync(fd)
+	}
 }
 
 func resetLifecyclePublicationSeams(t *testing.T) {

@@ -33,6 +33,7 @@ var (
 	lifecycleReceiptClose         = unix.Close
 	lifecycleReceiptRenameAt      = unix.Renameat
 	lifecycleReceiptTempName      = newLifecycleReceiptTempName
+	lifecycleReceiptLinkAt        = unix.Linkat
 	lifecycleJournalOpenAt        = unix.Openat
 	lifecycleJournalMkdirAt       = unix.Mkdirat
 	lifecyclePublicationExchange  = lifecycleExchangeSpecAt
@@ -283,6 +284,38 @@ func writeLifecycleReceiptNoFollow(project *stagedSpecTree, name string, data []
 	}
 	// The journal directory itself is a child of the project. Syncing its
 	// parent makes a newly created journal durable as well as its receipt.
+	return lifecycleReceiptFsync(int(project.root.Fd()))
+}
+
+// retainLifecyclePublishingIntent creates an immutable hard-link to the
+// already-durable publishing receipt before the canonical receipt is replaced
+// by its terminal form. A final fsync error is inherently ambiguous, but this
+// retained intent lets recovery validate the physical receipt and exchange
+// layout without losing the prior publication account.
+func retainLifecyclePublishingIntent(project *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
+	if project == nil || project.root == nil {
+		return fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	if receipt.State != "publishing" || !validLifecycleTransactionID(receipt.ID) {
+		return fmt.Errorf("invalid publishing lifecycle receipt")
+	}
+	journalFD, err := openOrCreateLifecycleJournalDirectory(int(project.root.Fd()))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(journalFD) }()
+	if err := lifecycleReceiptLinkAt(
+		journalFD,
+		receipt.ID+".json",
+		journalFD,
+		receipt.ID+".publishing.json",
+		0,
+	); err != nil {
+		return err
+	}
+	if err := lifecycleReceiptFsync(journalFD); err != nil {
+		return err
+	}
 	return lifecycleReceiptFsync(int(project.root.Fd()))
 }
 

@@ -116,6 +116,20 @@ func readLifecycleReceipts(projectRoot string) ([]LifecycleTransactionReceipt, e
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
+		if strings.HasSuffix(entry.Name(), ".publishing.json") {
+			id := strings.TrimSuffix(entry.Name(), ".publishing.json")
+			if !validLifecycleTransactionID(id) {
+				return nil, exitcode.UnexpectedErrorf("invalid lifecycle publishing-intent filename %q", entry.Name())
+			}
+			info, err := lifecycleRecoveryLstat(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				return nil, exitcode.UnexpectedErrorf("inspecting lifecycle publishing intent: %v", err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return nil, exitcode.UnexpectedErrorf("refusing non-regular lifecycle publishing intent %q", entry.Name())
+			}
+			continue
+		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
 		if !validLifecycleTransactionID(id) {
 			return nil, exitcode.UnexpectedErrorf("invalid lifecycle recovery receipt filename %q", entry.Name())
@@ -159,7 +173,49 @@ func readLifecycleReceipt(projectRoot, id string) (LifecycleTransactionReceipt, 
 	if err := validateLifecycleReceipt(projectRoot, receipt); err != nil {
 		return LifecycleTransactionReceipt{}, err
 	}
+	if receipt.State == "committed" {
+		if err := validateLifecyclePublishingIntent(projectRoot, receipt); err != nil {
+			return LifecycleTransactionReceipt{}, err
+		}
+	}
 	return receipt, nil
+}
+
+func validateLifecyclePublishingIntent(projectRoot string, receipt LifecycleTransactionReceipt) error {
+	path := filepath.Join(projectRoot, ".specscore-recovery", receipt.ID+".publishing.json")
+	info, err := lifecycleRecoveryLstat(path)
+	if os.IsNotExist(err) {
+		// Receipts created before immutable publishing intent retention remain
+		// readable; all new lifecycle transactions retain one before finality.
+		return nil
+	}
+	if err != nil {
+		return exitcode.UnexpectedErrorf("inspecting lifecycle publishing intent: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return exitcode.UnexpectedErrorf("refusing non-regular lifecycle publishing intent %q", receipt.ID)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("reading lifecycle publishing intent: %v", err)
+	}
+	var intent LifecycleTransactionReceipt
+	if err := json.Unmarshal(data, &intent); err != nil {
+		return exitcode.UnexpectedErrorf("parsing lifecycle publishing intent: %v", err)
+	}
+	if intent.State != "publishing" ||
+		intent.ID != receipt.ID ||
+		intent.ProjectRoot != receipt.ProjectRoot ||
+		intent.RecoveryRoot != receipt.RecoveryRoot ||
+		intent.BaselineDigest != receipt.BaselineDigest ||
+		intent.StagedDigest != receipt.StagedDigest ||
+		intent.CreatedAt != receipt.CreatedAt {
+		return exitcode.UnexpectedErrorf("lifecycle publishing intent does not match committed receipt %s", receipt.ID)
+	}
+	if err := validateLifecycleReceipt(projectRoot, intent); err != nil {
+		return exitcode.UnexpectedErrorf("validating lifecycle publishing intent: %v", err)
+	}
+	return nil
 }
 
 func validateLifecycleReceipt(projectRoot string, receipt LifecycleTransactionReceipt) error {
