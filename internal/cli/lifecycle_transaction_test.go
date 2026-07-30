@@ -41,7 +41,7 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 	if err != nil {
 		t.Fatalf("RunLifecycleTransaction: %v", err)
 	}
-	if receipt.State != "committed" || receipt.ID == "" || receipt.StagedDigest == "" {
+	if receipt.State != "committed" || receipt.ID == "" || receipt.StagedDigest == "" || receipt.RecoveryRootIdentity == "" {
 		t.Fatalf("receipt = %#v", receipt)
 	}
 	intentData, err := os.ReadFile(filepath.Join(project, ".specscore-recovery", receipt.ID+".publishing.json"))
@@ -52,7 +52,7 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 	if err := json.Unmarshal(intentData, &intent); err != nil {
 		t.Fatalf("parse retained publishing intent: %v", err)
 	}
-	if intent.State != "publishing" || intent.ID != receipt.ID || intent.StagedDigest != receipt.StagedDigest {
+	if intent.State != "publishing" || intent.ID != receipt.ID || intent.StagedDigest != receipt.StagedDigest || intent.RecoveryRootIdentity != receipt.RecoveryRootIdentity {
 		t.Fatalf("retained publishing intent = %#v", intent)
 	}
 	if _, err := os.Stat(filepath.Join(project, "spec", "new.md")); err != nil {
@@ -121,6 +121,14 @@ func TestRunLifecycleTransactionWritesPreparedIntentBeforeCreatingStage(t *testi
 			}
 			if _, statErr := os.Stat(receipt.RecoveryRoot); !os.IsNotExist(statErr) {
 				t.Fatalf("prepared intent followed staged-tree creation: %v", statErr)
+			}
+		}
+		if writes == 2 {
+			if receipt.State != "prepared" || receipt.RecoveryRootIdentity == "" {
+				t.Fatalf("stage-bound prepared receipt = %#v", receipt)
+			}
+			if _, statErr := os.Stat(filepath.Join(receipt.RecoveryRoot, "spec")); !os.IsNotExist(statErr) {
+				t.Fatalf("stage-bound prepared receipt followed staged spec creation: %v", statErr)
 			}
 		}
 		return originalWrite(descriptor, receipt)
@@ -205,6 +213,165 @@ func TestRunLifecycleTransactionDetectsPostExchangeManifestTampering(t *testing.
 	}
 }
 
+func TestRunLifecycleTransactionRejectsRecoveryRootReplacementBeforePublication(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalBeforePublication := lifecycleTransactionBeforePublication
+	lifecycleTransactionBeforePublication = func(stageSpec *stagedSpecTree) error {
+		stageRoot := filepath.Dir(stageSpec.path)
+		if err := os.Rename(stageRoot, stageRoot+".moved"); err != nil {
+			return err
+		}
+		return os.MkdirAll(filepath.Join(stageRoot, "spec"), 0o700)
+	}
+	t.Cleanup(func() { lifecycleTransactionBeforePublication = originalBeforePublication })
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "staged recovery identity") {
+		t.Fatalf("pre-publication recovery-root replacement error = %v", err)
+	}
+	if receipt.State != "publishing" || receipt.RecoveryRootIdentity == "" {
+		t.Fatalf("pre-publication recovery-root replacement receipt = %#v", receipt)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, "spec", "published.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("replacement before publication still published staged output: %v", statErr)
+	}
+	if _, readErr := readLifecycleReceipt(project, receipt.ID); readErr == nil {
+		t.Fatal("pre-publication replacement receipt was accepted for recovery")
+	}
+}
+
+func TestRunLifecycleTransactionDetectsRecoveryRootReplacementAfterExchange(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalAfterExchange := lifecycleTransactionAfterExchange
+	lifecycleTransactionAfterExchange = func(_ *stagedSpecTree, stageSpec *stagedSpecTree) error {
+		stageRoot := filepath.Dir(stageSpec.path)
+		if err := os.Rename(stageRoot, stageRoot+".moved"); err != nil {
+			return err
+		}
+		return os.MkdirAll(filepath.Join(stageRoot, "spec"), 0o700)
+	}
+	t.Cleanup(func() { lifecycleTransactionAfterExchange = originalAfterExchange })
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "recovery root identity is uncertain") {
+		t.Fatalf("post-exchange recovery-root replacement error = %v", err)
+	}
+	if receipt.State != "publishing" || receipt.RecoveryRootIdentity == "" {
+		t.Fatalf("post-exchange recovery-root replacement receipt = %#v", receipt)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, "spec", "published.md")); statErr != nil {
+		t.Fatalf("post-exchange replacement did not preserve published staged output: %v", statErr)
+	}
+	if _, readErr := readLifecycleReceipt(project, receipt.ID); readErr == nil {
+		t.Fatal("post-exchange replacement receipt was accepted for recovery")
+	}
+}
+
+func TestRunLifecycleTransactionDetectsRecoveryRootReplacementBeforeTerminalReceipt(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalRetainIntent := lifecycleTransactionRetainIntent
+	lifecycleTransactionRetainIntent = func(descriptor *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
+		if err := originalRetainIntent(descriptor, receipt); err != nil {
+			return err
+		}
+		if err := os.Rename(receipt.RecoveryRoot, receipt.RecoveryRoot+".moved"); err != nil {
+			return err
+		}
+		return os.MkdirAll(filepath.Join(receipt.RecoveryRoot, "spec"), 0o700)
+	}
+	t.Cleanup(func() { lifecycleTransactionRetainIntent = originalRetainIntent })
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
+		t.Fatalf("terminal recovery-root replacement error = %v", err)
+	}
+	if receipt.State != "outcome-uncertain" || receipt.RecoveryRootIdentity == "" {
+		t.Fatalf("terminal recovery-root replacement receipt = %#v", receipt)
+	}
+	if _, readErr := readLifecycleReceipt(project, receipt.ID); readErr == nil {
+		t.Fatal("terminal recovery-root replacement receipt was accepted for recovery")
+	}
+}
+
+func TestRunLifecycleTransactionDetectsRecoveryRootReplacementDuringTerminalReceipt(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalWriteReceipt := lifecycleTransactionWriteReceipt
+	lifecycleTransactionWriteReceipt = func(descriptor *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
+		if err := originalWriteReceipt(descriptor, receipt); err != nil {
+			return err
+		}
+		if receipt.State != "committed" {
+			return nil
+		}
+		if err := os.Rename(receipt.RecoveryRoot, receipt.RecoveryRoot+".moved"); err != nil {
+			return err
+		}
+		return os.MkdirAll(filepath.Join(receipt.RecoveryRoot, "spec"), 0o700)
+	}
+	t.Cleanup(func() { lifecycleTransactionWriteReceipt = originalWriteReceipt })
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
+		t.Fatalf("terminal-write recovery-root replacement error = %v", err)
+	}
+	if receipt.State != "outcome-uncertain" || receipt.RecoveryRootIdentity == "" {
+		t.Fatalf("terminal-write recovery-root replacement receipt = %#v", receipt)
+	}
+	if _, readErr := readLifecycleReceipt(project, receipt.ID); readErr == nil {
+		t.Fatal("terminal-write recovery-root replacement receipt was accepted for recovery")
+	}
+}
+
+func TestLifecycleRecoveryRejectsStageIdentityReadFailure(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStageFstat := lifecycleStageFstat
+	lifecycleStageFstat = func(int, *unix.Stat_t) error { return errors.New("stage identity read failed") }
+	t.Cleanup(func() { lifecycleStageFstat = originalStageFstat })
+	if _, readErr := readLifecycleReceipt(project, receipt.ID); readErr == nil {
+		t.Fatal("recovery accepted a stage identity read failure")
+	}
+}
+
+func TestLifecycleStageIdentityFailureBranches(t *testing.T) {
+	if _, err := lifecycleStageIdentity(&stagedSpecTree{}); err == nil {
+		t.Fatal("closed stage descriptor accepted for identity")
+	}
+	root := t.TempDir()
+	stage, err := openLifecycleProjectNoFollow(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+	originalStageFstat := lifecycleStageFstat
+	t.Cleanup(func() { lifecycleStageFstat = originalStageFstat })
+	lifecycleStageFstat = func(int, *unix.Stat_t) error { return errors.New("stage stat failed") }
+	if _, err := lifecycleStageIdentity(stage); err == nil {
+		t.Fatal("stage identity stat failure accepted")
+	}
+	lifecycleStageFstat = func(_ int, stat *unix.Stat_t) error {
+		stat.Mode = unix.S_IFREG
+		return nil
+	}
+	if _, err := lifecycleStageIdentity(stage); err == nil {
+		t.Fatal("non-directory stage descriptor accepted for identity")
+	}
+}
+
 func TestRunLifecycleTransactionRetainsPublishingReceiptWhenPublicationSyncFails(t *testing.T) {
 	for _, failure := range []struct {
 		name string
@@ -254,20 +421,20 @@ func TestRunLifecycleTransactionReportsOutcomeUncertainOnFinalReceiptDurabilityF
 			calls := 0
 			lifecycleReceiptRenameAt = func(oldDirFD int, oldName string, newDirFD int, newName string) error {
 				calls++
-				if calls == 3 {
+				if calls == 4 {
 					return errors.New("final receipt namespace interrupted")
 				}
 				return unix.Renameat(oldDirFD, oldName, newDirFD, newName)
 			}
 		}},
 		{name: "final temporary receipt fsync", arrange: func() {
-			failLifecycleReceiptFsyncAt(9, "final temporary receipt fsync interrupted")
+			failLifecycleReceiptFsyncAt(12, "final temporary receipt fsync interrupted")
 		}},
 		{name: "final journal fsync", arrange: func() {
-			failLifecycleReceiptFsyncAt(10, "final journal fsync interrupted")
+			failLifecycleReceiptFsyncAt(13, "final journal fsync interrupted")
 		}},
 		{name: "final journal parent fsync", arrange: func() {
-			failLifecycleReceiptFsyncAt(11, "final journal parent fsync interrupted")
+			failLifecycleReceiptFsyncAt(14, "final journal parent fsync interrupted")
 		}},
 	} {
 		t.Run(failure.name, func(t *testing.T) {
@@ -912,6 +1079,17 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 		CreatedAt:                "2026-07-30T00:00:00Z",
 		PublishingIntentRequired: true,
 	}
+	recoveryStage, err := openLifecycleProjectNoFollow(recoveryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt.RecoveryRootIdentity, err = lifecycleStageIdentity(recoveryStage)
+	if closeErr := closeStagedSpecTree(recoveryStage); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
 	intent := receipt
 	intent.State = "publishing"
 	journal := filepath.Join(project, ".specscore-recovery")
@@ -1488,6 +1666,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 	originalOpenChild := lifecycleTransactionOpenChild
 	originalCreateStage := lifecycleTransactionCreateStage
 	originalCreateStageSpec := lifecycleTransactionCreateStageSpec
+	originalStageIdentity := lifecycleTransactionStageIdentity
 	originalFreeze := lifecycleTransactionFreezeContext
 	originalRun := lifecycleTransactionRunStaged
 	originalMatches := lifecycleTransactionChildMatches
@@ -1507,6 +1686,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		lifecycleTransactionOpenChild = originalOpenChild
 		lifecycleTransactionCreateStage = originalCreateStage
 		lifecycleTransactionCreateStageSpec = originalCreateStageSpec
+		lifecycleTransactionStageIdentity = originalStageIdentity
 		lifecycleTransactionFreezeContext = originalFreeze
 		lifecycleTransactionRunStaged = originalRun
 		lifecycleTransactionChildMatches = originalMatches
@@ -1557,6 +1737,11 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 	fails("stage spec", func() {
 		lifecycleTransactionCreateStageSpec = func(*stagedSpecTree, specTreeSnapshot) (*stagedSpecTree, error) {
 			return nil, errors.New("stage spec failed")
+		}
+	})
+	fails("stage identity", func() {
+		lifecycleTransactionStageIdentity = func(*stagedSpecTree) (string, error) {
+			return "", errors.New("stage identity failed")
 		}
 	})
 	fails("context freeze", func() {
@@ -1613,6 +1798,36 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 			calls++
 			if calls == 2 {
 				return errors.New("staged identity failed")
+			}
+			return nil
+		}
+	})
+	fails("recovery stage identity read", func() {
+		calls := 0
+		lifecycleTransactionStageIdentity = func(stage *stagedSpecTree) (string, error) {
+			calls++
+			if calls == 2 {
+				return "", errors.New("recovery stage identity read failed")
+			}
+			return originalStageIdentity(stage)
+		}
+	})
+	fails("recovery stage identity mismatch", func() {
+		calls := 0
+		lifecycleTransactionStageIdentity = func(stage *stagedSpecTree) (string, error) {
+			calls++
+			if calls == 2 {
+				return "replacement-stage-identity", nil
+			}
+			return originalStageIdentity(stage)
+		}
+	})
+	fails("recovery predecessor identity", func() {
+		calls := 0
+		lifecycleTransactionChildMatches = func(*stagedSpecTree, string, *stagedSpecTree) error {
+			calls++
+			if calls == 6 {
+				return errors.New("recovery predecessor identity failed")
 			}
 			return nil
 		}

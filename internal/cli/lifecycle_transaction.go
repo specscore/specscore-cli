@@ -21,13 +21,17 @@ import (
 // still write to that inode after exchange, so automatic reclamation would
 // discard evidence that cannot safely be reconstructed.
 type LifecycleTransactionReceipt struct {
-	ID             string
-	State          string
-	ProjectRoot    string
-	RecoveryRoot   string
-	BaselineDigest string
-	StagedDigest   string
-	CreatedAt      string
+	ID           string
+	State        string
+	ProjectRoot  string
+	RecoveryRoot string
+	// RecoveryRootIdentity is the device/inode identity of the held recovery
+	// stage directory. Protocol-v2 publishing/committed receipts require it so
+	// reopening RecoveryRoot cannot silently bind another transaction's tree.
+	RecoveryRootIdentity string
+	BaselineDigest       string
+	StagedDigest         string
+	CreatedAt            string
 	// PublishingIntentRequired marks protocol-v2 transactions. It is written
 	// before any staged mutation so a committed receipt must retain and validate
 	// its publishing intent rather than silently accepting a missing sidecar.
@@ -42,6 +46,7 @@ var (
 	lifecycleTransactionOpenChild         = openLifecycleProjectChildNoFollow
 	lifecycleTransactionCreateStage       = createLifecycleStageProjectNoFollow
 	lifecycleTransactionCreateStageSpec   = createLifecycleStageSpecNoFollow
+	lifecycleTransactionStageIdentity     = lifecycleStageIdentity
 	lifecycleTransactionFreezeContext     = materializeLifecycleProjectContext
 	lifecycleTransactionRunStaged         = runLifecycleInStagedProject
 	lifecycleTransactionChildMatches      = lifecycleProjectChildMatches
@@ -123,6 +128,16 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	}
 	stagePath := stage.path
 	defer func() { _ = closeStagedSpecTree(stage) }()
+	receipt.RecoveryRootIdentity, err = lifecycleTransactionStageIdentity(stage)
+	if err != nil {
+		return receipt, exitcode.UnexpectedErrorf("identifying staged lifecycle project: %v", err)
+	}
+	// The first receipt is intentionally durable before the stage exists. This
+	// second prepared update binds that now-held stage directory before any of
+	// its spec/context descendants are created or materialized.
+	if err := lifecycleTransactionWriteReceipt(project, receipt); err != nil {
+		return receipt, err
+	}
 	stageSpec, err := lifecycleTransactionCreateStageSpec(stage, baseline)
 	if err != nil {
 		return receipt, exitcode.UnexpectedErrorf("materializing staged spec tree: %v", err)
@@ -153,6 +168,9 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	if err := lifecycleTransactionChildMatches(stage, "spec", stageSpec); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("validating staged spec identity before publication: %v", err)
 	}
+	if err := lifecycleTransactionRecoveryStageMatches(project, id, stage, receipt.RecoveryRootIdentity); err != nil {
+		return receipt, exitcode.UnexpectedErrorf("validating staged recovery identity before publication: %v", err)
+	}
 	if err := lifecycleTransactionVerifySnapshot(liveSpec, baseline); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("live spec changed before lifecycle publication: %v", err)
 	}
@@ -168,6 +186,9 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	if err := lifecycleTransactionChildMatches(project, "spec", stageSpec); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("published spec identity is uncertain; retained recovery tree at %s: %v", stagePath, err)
 	}
+	if err := lifecycleTransactionRecoveryStageMatches(project, id, stage, receipt.RecoveryRootIdentity); err != nil {
+		return receipt, exitcode.UnexpectedErrorf("recovery root identity is uncertain; retained recovery tree at %s: %v", stagePath, err)
+	}
 	if err := lifecycleTransactionChildMatches(stage, "spec", liveSpec); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("recovery predecessor identity is uncertain; retained recovery tree at %s: %v", stagePath, err)
 	}
@@ -180,12 +201,37 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	if err := lifecycleTransactionRetainIntent(project, receipt); err != nil {
 		return lifecycleOutcomeUncertainReceipt(receipt), lifecycleOutcomeUncertainError(projectRoot, receipt, err)
 	}
+	if err := lifecycleTransactionRecoveryStageMatches(project, id, stage, receipt.RecoveryRootIdentity); err != nil {
+		return lifecycleOutcomeUncertainReceipt(receipt), lifecycleOutcomeUncertainError(projectRoot, receipt, err)
+	}
 	committedReceipt := receipt
 	committedReceipt.State = "committed"
 	if err := lifecycleTransactionWriteReceipt(project, committedReceipt); err != nil {
 		return lifecycleOutcomeUncertainReceipt(receipt), lifecycleOutcomeUncertainError(projectRoot, receipt, err)
 	}
+	if err := lifecycleTransactionRecoveryStageMatches(project, id, stage, receipt.RecoveryRootIdentity); err != nil {
+		return lifecycleOutcomeUncertainReceipt(receipt), lifecycleOutcomeUncertainError(projectRoot, receipt, err)
+	}
 	return committedReceipt, nil
+}
+
+// lifecycleTransactionRecoveryStageMatches proves that the recovery-root name
+// is still the held stage directory and that its durable identity has not been
+// replaced. It is checked before publication and immediately before and after
+// recording a terminal receipt; recovery repeats the token check before
+// opening spec.
+func lifecycleTransactionRecoveryStageMatches(project *stagedSpecTree, id string, stage *stagedSpecTree, expectedIdentity string) error {
+	if err := lifecycleTransactionChildMatches(project, ".specscore-txn-"+id, stage); err != nil {
+		return err
+	}
+	actualIdentity, err := lifecycleTransactionStageIdentity(stage)
+	if err != nil {
+		return err
+	}
+	if expectedIdentity == "" || actualIdentity != expectedIdentity {
+		return fmt.Errorf("recovery stage identity changed")
+	}
+	return nil
 }
 
 // lifecycleOutcomeUncertainReceipt is returned only when durable publication

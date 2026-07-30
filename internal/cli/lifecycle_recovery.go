@@ -277,6 +277,7 @@ func readLifecyclePublishingIntentIdentityWithHandle(handle *lifecycleRecoveryHa
 		intent.ID != receipt.ID ||
 		intent.ProjectRoot != receipt.ProjectRoot ||
 		intent.RecoveryRoot != receipt.RecoveryRoot ||
+		intent.RecoveryRootIdentity != receipt.RecoveryRootIdentity ||
 		intent.BaselineDigest != receipt.BaselineDigest ||
 		intent.StagedDigest != receipt.StagedDigest ||
 		intent.CreatedAt != receipt.CreatedAt ||
@@ -360,7 +361,9 @@ func lifecycleRecoveryReceiptStageName(projectRoot string, receipt LifecycleTran
 	if err != nil || rel != stageName {
 		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt recovery-root does not match its transaction")
 	}
-	if receipt.BaselineDigest == "" || ((receipt.State == "publishing" || receipt.State == "committed") && receipt.StagedDigest == "") {
+	if receipt.BaselineDigest == "" ||
+		((receipt.State == "publishing" || receipt.State == "committed") && receipt.StagedDigest == "") ||
+		(receipt.PublishingIntentRequired && (receipt.State == "publishing" || receipt.State == "committed") && receipt.RecoveryRootIdentity == "") {
 		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt is missing its integrity digest")
 	}
 	return root, stageName, nil
@@ -399,6 +402,15 @@ func lifecycleRecoveryReceiptSnapshots(
 		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("opening retained predecessor descriptor: %w", err)
 	}
 	defer func() { _ = closeStagedSpecTree(stage) }()
+	if receipt.RecoveryRootIdentity != "" {
+		identity, err := lifecycleStageIdentity(stage)
+		if err != nil {
+			return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("identifying retained predecessor descriptor: %w", err)
+		}
+		if identity != receipt.RecoveryRootIdentity {
+			return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("retained predecessor identity does not match receipt")
+		}
+	}
 	priorSpec, err := openLifecycleProjectChildNoFollow(stage, "spec")
 	if err != nil {
 		return specTreeSnapshot{}, specTreeSnapshot{}, fmt.Errorf("opening retained predecessor spec descriptor: %w", err)

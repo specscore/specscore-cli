@@ -16,6 +16,7 @@ import (
 var (
 	lifecycleStageOpenChild       = openLifecycleProjectChildNoFollow
 	lifecycleStageMaterialize     = materializeStagedSpecTreeNoFollow
+	lifecycleStageFstat           = unix.Fstat
 	lifecycleChildStat            = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
 	lifecycleContextCopyFile      = copyOptionalLifecycleRegularFile
 	lifecycleContextCopyDirectory = copyOptionalLifecycleDirectory
@@ -53,6 +54,20 @@ func createLifecycleStageProjectNoFollow(project *stagedSpecTree, id string) (*s
 		return nil, err
 	}
 	return openLifecycleProjectChildNoFollow(project, name)
+}
+
+func lifecycleStageIdentity(stage *stagedSpecTree) (string, error) {
+	if stage == nil || stage.root == nil {
+		return "", fmt.Errorf("lifecycle stage descriptor is closed")
+	}
+	var stat unix.Stat_t
+	if err := lifecycleStageFstat(int(stage.root.Fd()), &stat); err != nil {
+		return "", err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return "", fmt.Errorf("lifecycle stage descriptor is not a directory")
+	}
+	return fmt.Sprintf("%x:%x", uint64(stat.Dev), uint64(stat.Ino)), nil
 }
 
 func openLifecycleProjectChildNoFollow(project *stagedSpecTree, name string) (*stagedSpecTree, error) {

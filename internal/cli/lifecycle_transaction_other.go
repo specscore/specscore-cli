@@ -10,6 +10,9 @@ func openLifecycleProjectNoFollow(string) (*stagedSpecTree, error) {
 func createLifecycleStageProjectNoFollow(*stagedSpecTree, string) (*stagedSpecTree, error) {
 	return nil, fmt.Errorf("secure lifecycle transactions are unavailable on this platform")
 }
+func lifecycleStageIdentity(*stagedSpecTree) (string, error) {
+	return "", fmt.Errorf("secure lifecycle transactions are unavailable on this platform")
+}
 func openLifecycleProjectChildNoFollow(*stagedSpecTree, string) (*stagedSpecTree, error) {
 	return nil, fmt.Errorf("secure lifecycle transactions are unavailable on this platform")
 }
