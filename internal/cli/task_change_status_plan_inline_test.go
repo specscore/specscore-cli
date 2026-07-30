@@ -14,7 +14,7 @@ import (
 // file cannot arise post-parse, so it is exercised as a unit).
 func TestRewritePlanTaskStatusLine_ReadError(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.md")
-	if err := rewritePlanTaskStatusLine(missing, 1, lifecycle.TaskComplete, ""); err == nil {
+	if err := rewritePlanTaskStatusLine(missing, 1, lifecycle.TaskComplete, nil); err == nil {
 		t.Fatal("expected ReadFile error for missing file, got nil")
 	}
 }

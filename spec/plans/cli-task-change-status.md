@@ -61,6 +61,16 @@ Reject (exit `2`) any provenance flag supplied with a non-`complete` `--to`, and
 
 Implement `--amend-provenance` to overwrite (or clear) `implementation_commit` on a task already in `complete` without a status transition — mutually exclusive with `--to` (exit `2`), requiring `complete` (else exit `4`), and following the same `--commit`-required and syntactic-only rules. Emit `<task>: provenance amended`.
 
+### Task 6: `--note`/`--evidence` task annotation, valid on any transition
+
+**Id:** note-evidence-annotation
+**Verifies:** cli/task/change-status#ac:note-and-evidence-any-transition, cli/task/change-status#ac:note-and-evidence-with-provenance-ordering, cli/task/change-status#ac:note-evidence-blank-writes-nothing, cli/task/change-status#ac:note-evidence-not-written-on-rejected-transition, cli/task/change-status#ac:note-evidence-with-amend-provenance-rejected
+**Depends-On:** 3
+**Status:** complete
+**Note:** implemented + tested in this same change; self-dogfooded on this repo's own spec tree
+
+Add optional `--note`/`--evidence` annotation flags to `task change-status`, valid on ANY transition (unlike the provenance flags, not restricted to `--to=complete`) — the founder-reported gap: no way to record "Task 1 of 7 is now complete" with a justification and supporting references while a plan is mid-execution (`plan reconcile --tasks=complete` is all-or-nothing; `plan change-status` only moves the Plan). `--note` is free text; `--evidence` is a comma-separated, unstructured reference list — deliberately distinct from the syntactically validated `implementation_commit`. Both write in the SAME atomic rewrite as the status transition (order: `**Implemented-by:**` → `**Note:**` → `**Evidence:**`, immediately after `**Status:**`), are rejected together with `--amend-provenance` (exit `2`, no silent drop), and reduce to a no-write when blank/empty after trimming. `pkg/plan.Task` gains `Note`/`Evidence` fields; neither participates in the transition matrix or the plan execution-band rollup.
+
 ## Open Questions
 
 None at this time.

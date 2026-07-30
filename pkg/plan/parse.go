@@ -113,6 +113,24 @@ type Task struct {
 	ImplementationCommit string // raw value of `**Implemented-by:**`; empty when absent or empty
 	ImplementedByLine    int    // 1-based line of `**Implemented-by:**`; 0 when absent
 	ImplementedByPresent bool   // true when the field was present (even with an empty value)
+
+	// Note is a free-text annotation written by `task change-status --note=`,
+	// adjacent to the task's **Status:** (and any **Implemented-by:**). Distinct
+	// from ImplementationCommit: Note carries qualitative context (e.g. "verified
+	// live"), not a code reference.
+	Note        string // raw value of `**Note:**`; empty when absent or empty
+	NoteLine    int    // 1-based line of `**Note:**`; 0 when absent
+	NotePresent bool   // true when the field was present (even with an empty value)
+
+	// Evidence is a list of supporting references written by
+	// `task change-status --evidence=`, adjacent to the task's **Status:**.
+	// Unlike ImplementationCommit (a syntactically validated code reference —
+	// P-008), Evidence is unstructured: commit SHAs, PR URLs, file paths,
+	// deploy/monitoring links, or anything else backing the claim.
+	Evidence        []string // parsed comma-separated refs from `**Evidence:**`, in source order
+	EvidenceRaw     string   // raw value as written
+	EvidenceLine    int      // 1-based line of `**Evidence:**`; 0 when absent
+	EvidencePresent bool     // true when the field was present (even with an empty value)
 }
 
 // DeferredAC is a single `- <feature-slug>#ac:<ac-slug> — <reason>` line.
@@ -383,6 +401,15 @@ func parseTaskBody(t *Task) {
 			t.ImplementedByPresent = true
 			t.ImplementedByLine = absLine
 			t.ImplementationCommit = val
+		case "Note":
+			t.NotePresent = true
+			t.NoteLine = absLine
+			t.Note = val
+		case "Evidence":
+			t.EvidencePresent = true
+			t.EvidenceLine = absLine
+			t.EvidenceRaw = val
+			t.Evidence = splitCommaList(val)
 		}
 	}
 }
