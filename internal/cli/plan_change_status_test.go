@@ -74,6 +74,22 @@ func TestPlanChangeStatus_DraftToInReview_CLI(t *testing.T) {
 	}
 }
 
+// AC: draft-to-approved-direct-happy-path
+func TestPlanChangeStatus_DraftToApprovedDirect_CLI(t *testing.T) {
+	root := stagePlan(t, "auth", "Draft")
+	stdout, stderr, err := runPlan(t, "change-status", "auth", "--to=approved")
+	if err != nil {
+		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
+	}
+	if want := "auth: Draft → Approved\n"; stdout != want {
+		t.Errorf("stdout = %q; want %q", stdout, want)
+	}
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	if !strings.Contains(string(body), "**Status:** Approved") {
+		t.Errorf("status not rewritten:\n%s", body)
+	}
+}
+
 // AC: in-review-to-approved-happy-path + case-insensitive
 func TestPlanChangeStatus_InReviewToApproved_CaseInsensitive_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "In Review")

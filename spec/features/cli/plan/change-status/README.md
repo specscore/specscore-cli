@@ -39,6 +39,7 @@ Only the human-authored `(from, to)` pairs below are accepted; any other pair ex
 | From | To | Notes |
 |---|---|---|
 | `Draft` | `In Review` | submit for review |
+| `Draft` | `Approved` | direct approve — fast-track, skips review |
 | `In Review` | `Draft` | revisions requested |
 | `In Review` | `Approved` | approve |
 | `In Review` | `Rejected` | rejected outright (not sent back for revisions) |
@@ -60,7 +61,7 @@ Only the human-authored `(from, to)` pairs below are accepted; any other pair ex
 
 #### REQ: legal-transition-matrix
 
-The verb MUST accept only the human-authored `(from, to)` pairs in the matrix above; any other pair MUST exit `4` (InvalidTransition) per [lifecycle-transitions#req:state-machine-strictness](../../lifecycle-transitions/README.md#req-state-machine-strictness), with a stderr message naming both the current status and the legal target statuses from the current state. Reverse and skip transitions (e.g. `Approved → Draft`, `Draft → Implemented`) are NOT in the matrix and exit `4`. Per the Meta's [not-idempotent](../../lifecycle-transitions/README.md#req-not-idempotent) invariant, re-running on the current status exits `4`.
+The verb MUST accept only the human-authored `(from, to)` pairs in the matrix above; any other pair MUST exit `4` (InvalidTransition) per [lifecycle-transitions#req:state-machine-strictness](../../lifecycle-transitions/README.md#req-state-machine-strictness), with a stderr message naming both the current status and the legal target statuses from the current state. Reverse and skip transitions (e.g. `Approved → Draft`, `Draft → Implemented`) are NOT in the matrix and exit `4`. Per the Meta's [not-idempotent](../../lifecycle-transitions/README.md#req-not-idempotent) invariant, re-running on the current status exits `4`. `Draft → Approved` is a direct, human-authored fast-track arc: a reviewer may approve a plan without first routing it through `In Review`, mirroring the Idea and Feature matrices where the same direct arc is already legal. The two-step `Draft → In Review → Approved` path remains legal and unchanged.
 
 #### REQ: execution-band-not-settable
 
@@ -152,6 +153,14 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 **Given** `spec/plans/auth.md` in `**Status:** In Review`
 **When** the user runs `specscore plan change-status auth --to=approved`
 **Then** the command exits `0` with stdout `auth: In Review → Approved\n`.
+
+### AC: draft-to-approved-direct-happy-path
+
+**Requirements:** [cli/plan/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+**Given** `spec/plans/auth.md` containing `**Status:** Draft`
+**When** the user runs `specscore plan change-status auth --to=approved`
+**Then** the command exits `0`, writes exactly `auth: Draft → Approved\n` to stdout, and rewrites the Status line to `Approved`. The two-step `Draft → In Review → Approved` path (the two ACs above) remains legal and unaffected by this direct arc.
 
 ### AC: execution-band-rejected
 

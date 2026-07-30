@@ -204,6 +204,7 @@ var transitionMatrix = map[Kind][]transitionRow{
 	// Deprecated by a human.
 	KindPlan: {
 		{From: PlanDraft, To: PlanInReview},
+		{From: PlanDraft, To: PlanApproved}, // direct approve — skips review
 		{From: PlanInReview, To: PlanDraft}, // revisions requested
 		{From: PlanInReview, To: PlanApproved},
 		{From: PlanInReview, To: PlanRejected},

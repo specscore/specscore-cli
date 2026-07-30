@@ -49,6 +49,7 @@ var expectedLegal = map[Kind][]transitionRow{
 	},
 	KindPlan: {
 		{From: PlanDraft, To: PlanInReview},
+		{From: PlanDraft, To: PlanApproved},
 		{From: PlanInReview, To: PlanDraft},
 		{From: PlanInReview, To: PlanApproved},
 		{From: PlanInReview, To: PlanRejected},

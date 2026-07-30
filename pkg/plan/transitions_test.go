@@ -77,6 +77,26 @@ func TestChangeStatus_HappyPath_DraftToInReview(t *testing.T) {
 	}
 }
 
+func TestChangeStatus_HappyPath_DraftToApprovedDirect(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	res, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanApproved, PostMutation: okHook,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if res.From != lifecycle.PlanDraft || res.To != lifecycle.PlanApproved {
+		t.Errorf("result = %+v", res)
+	}
+	body, _ := os.ReadFile(path)
+	if !strings.Contains(string(body), "**Status:** Approved") {
+		t.Errorf("status not rewritten:\n%s", body)
+	}
+	if !strings.Contains(string(body), "status: Approved") {
+		t.Errorf("frontmatter mirror not rewritten:\n%s", body)
+	}
+}
+
 func TestChangeStatus_Withdrawn_WritesResolution(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Approved")
 	_, err := ChangeStatus(ChangeStatusOptions{
