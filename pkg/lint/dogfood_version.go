@@ -21,11 +21,16 @@ import (
 // the pin is a deliberate human action per the standard
 // `# bump intentionally via PR` convention in dogfood workflows.
 type dogfoodVersionChecker struct {
-	cliVersion string // the running CLI's own semver, or "dev"/"" to disable
+	cliVersion  string // the running CLI's own semver, or "dev"/"" to disable
+	projectRoot string
 }
 
-func newDogfoodVersionChecker(cliVersion string) checker {
-	return &dogfoodVersionChecker{cliVersion: cliVersion}
+func newDogfoodVersionChecker(cliVersion string, projectRoots ...string) checker {
+	var projectRoot string
+	if len(projectRoots) > 0 {
+		projectRoot = projectRoots[0]
+	}
+	return &dogfoodVersionChecker{cliVersion: cliVersion, projectRoot: projectRoot}
 }
 
 func (c *dogfoodVersionChecker) name() string     { return "dogfood-version-bump" }
@@ -46,9 +51,7 @@ func (c *dogfoodVersionChecker) check(specRoot string) ([]Violation, error) {
 		return nil, nil
 	}
 
-	// SpecRoot is `<project>/spec`; workflows live at
-	// `<project>/.github/workflows/`. Derive the project root.
-	projectRoot := filepath.Dir(specRoot)
+	projectRoot := lintProjectRoot(c.projectRoot, specRoot)
 	workflowsDir := filepath.Join(projectRoot, ".github", "workflows")
 
 	entries, err := os.ReadDir(workflowsDir)

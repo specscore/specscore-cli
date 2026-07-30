@@ -38,6 +38,7 @@ type fixTargeter interface {
 }
 
 func newLinter(opts Options) *linter {
+	projectRoot := opts.effectiveProjectRoot()
 	l := &linter{
 		opts:    opts,
 		ruleSet: make(map[string]checker),
@@ -48,7 +49,7 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(oqChecker)
 	l.ruleSet["oq-not-empty"] = oqChecker
 	l.registerChecker(newIndexEntriesChecker())
-	l.registerChecker(newConfigScopeChecker())
+	l.registerChecker(newConfigScopeChecker(projectRoot))
 	l.registerChecker(newPlanHierarchyChecker())
 	l.registerChecker(newPlanROIChecker())
 	l.registerChecker(newPlanIndexChecker())
@@ -56,8 +57,8 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(newFormatFieldChecker())
 	l.registerChecker(newStatusMirrorChecker())
 	l.registerChecker(newFooterFormatMirrorChecker())
-	l.registerChecker(newStudioToolbarChecker())
-	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion))
+	l.registerChecker(newStudioToolbarChecker(projectRoot))
+	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion, projectRoot))
 	l.registerChecker(newImplementsReferenceChecker())
 	l.registerChecker(newImplementationMatrixChecker())
 	l.registerChecker(newOtherPlatformsChecker())
@@ -77,7 +78,7 @@ func newLinter(opts Options) *linter {
 
 	// Register grade checker under all four grade-* rule IDs (one checker,
 	// many rule names; per-rule filtering via Violation.Rule in lint()).
-	grc := newGradeChecker()
+	grc := newGradeChecker(projectRoot)
 	for _, n := range gradeRuleNames {
 		l.ruleSet[n] = grc
 	}

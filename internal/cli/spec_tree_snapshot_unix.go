@@ -27,6 +27,7 @@ var (
 	snapshotFlistxattr              = unix.Flistxattr
 	snapshotFgetxattr               = unix.Fgetxattr
 	snapshotFsetxattr               = unix.Fsetxattr
+	snapshotMetadataEntryTimes      = snapshotEntryTimes
 )
 
 func platformSupportsSecureLifecycleTransaction() bool { return true }
@@ -203,11 +204,22 @@ func captureSnapshotEntryMetadata(file *os.File, info os.FileInfo) (specTreeEntr
 	if !info.IsDir() && stat.Nlink != 1 {
 		return specTreeEntryMetadata{}, fmt.Errorf("hard-linked file with %d links cannot be preserved by isolated lint", stat.Nlink)
 	}
+	if err := validateSnapshotPlatformMetadata(int(file.Fd()), info); err != nil {
+		return specTreeEntryMetadata{}, err
+	}
 	attributes, err := readSnapshotExtendedAttributes(int(file.Fd()))
 	if err != nil {
 		return specTreeEntryMetadata{}, fmt.Errorf("inspecting extended attributes: %w", err)
 	}
-	return specTreeEntryMetadata{extendedAttributes: attributes, modificationTime: info.ModTime()}, nil
+	accessTime, modificationTime, err := snapshotMetadataEntryTimes(info)
+	if err != nil {
+		return specTreeEntryMetadata{}, err
+	}
+	return specTreeEntryMetadata{
+		extendedAttributes: attributes,
+		accessTime:         accessTime,
+		modificationTime:   modificationTime,
+	}, nil
 }
 
 func readSnapshotExtendedAttributes(fd int) (map[string][]byte, error) {
@@ -232,6 +244,9 @@ func readSnapshotExtendedAttributes(fd int) (map[string][]byte, error) {
 		if name == "" || isEphemeralSpecTreeXattr(name) {
 			continue
 		}
+		if isUnpreservableSpecTreeXattr(name) {
+			return nil, fmt.Errorf("cannot preserve ACL, capability, or security xattr %s", name)
+		}
 		valueSize, err := snapshotFgetxattr(fd, name, nil)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s size: %w", name, err)
@@ -252,6 +267,14 @@ func readSnapshotExtendedAttributes(fd int) (map[string][]byte, error) {
 	return attributes, nil
 }
 
+func isUnpreservableSpecTreeXattr(name string) bool {
+	switch name {
+	case "system.posix_acl_access", "system.posix_acl_default", "security.capability", "com.apple.macl":
+		return true
+	}
+	return false
+}
+
 func applyStagedEntryMetadata(fd int, metadata specTreeEntryMetadata) error {
 	names := make([]string, 0, len(metadata.extendedAttributes))
 	for name := range metadata.extendedAttributes {
@@ -263,9 +286,9 @@ func applyStagedEntryMetadata(fd int, metadata specTreeEntryMetadata) error {
 			return fmt.Errorf("setting %s: %w", name, err)
 		}
 	}
-	if !metadata.modificationTime.IsZero() {
-		if err := setStagedEntryModificationTime(fd, metadata.modificationTime); err != nil {
-			return fmt.Errorf("setting modification time: %w", err)
+	if !metadata.accessTime.IsZero() || !metadata.modificationTime.IsZero() {
+		if err := setStagedEntryTimes(fd, metadata.accessTime, metadata.modificationTime); err != nil {
+			return fmt.Errorf("setting access/modification times: %w", err)
 		}
 	}
 	return nil

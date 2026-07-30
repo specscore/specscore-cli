@@ -55,7 +55,7 @@ func TestSpecTreeSnapshotRestore_RestoresExactFilesAndRemovesNewFiles(t *testing
 	if err != nil {
 		t.Fatalf("snapshot after restore: %v", err)
 	}
-	if !reflect.DeepEqual(after, before) {
+	if !specTreeSnapshotsEqual(after, before) {
 		t.Fatalf("restored snapshot differs\nwant: %#v\n got: %#v", before, after)
 	}
 	if _, err := os.Stat(createdPath); !os.IsNotExist(err) {
@@ -242,7 +242,7 @@ func TestSpecTreeTransaction_LockExcludesConcurrentLifecycleCommands(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(after, before) {
+	if !specTreeSnapshotsEqual(after, before) {
 		t.Fatalf("rejected concurrent lifecycle command mutated the spec tree\nwant: %#v\n got: %#v", before, after)
 	}
 	if err := transaction.release(); err != nil {
@@ -813,40 +813,6 @@ func TestLifecycleCommandAdapterDefensiveSeams(t *testing.T) {
 		}
 	})
 
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T) error
-	}{
-		{
-			name: "plan owned path failure",
-			run: func(t *testing.T) error {
-				stagePlan(t, "auth", "Draft")
-				_, _, err := runPlan(t, "change-status", "auth", "--to=in review")
-				return err
-			},
-		},
-		{
-			name: "sidekick owned path failure",
-			run: func(t *testing.T) error {
-				root := setupSpecRoot(t)
-				withCwd(t, root)
-				if _, _, err := runSidekick(t, "new", "queued seed"); err != nil {
-					return err
-				}
-				_, _, err := runSidekick(t, "change-status", "queued-seed", "--to=implemented")
-				return err
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			original := transactionRel
-			transactionRel = func(string, string) (string, error) { return "", errors.New("owned path failed") }
-			t.Cleanup(func() { transactionRel = original })
-			if err := tc.run(t); err == nil || !strings.Contains(err.Error(), "owned path failed") {
-				t.Fatalf("adapter error = %v", err)
-			}
-		})
-	}
 }
 
 func TestSpecTreeTransaction_ExternalOwnedPreLintMutationIsPreserved(t *testing.T) {
@@ -1015,7 +981,7 @@ func TestSpecTreeTransaction_RestoresAllLintMutationsAfterVerificationFailure(t 
 	if err != nil {
 		t.Fatalf("snapshot after hook: %v", err)
 	}
-	if !reflect.DeepEqual(after, before) {
+	if !specTreeSnapshotsEqual(after, before) {
 		t.Fatalf("lint mutations were not restored\nwant: %#v\n got: %#v", before, after)
 	}
 }
@@ -1057,7 +1023,7 @@ func TestIdeaChangeStatus_LintVerificationFailureRestoresPreexistingMirrorDrift_
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(after, before) {
+	if !specTreeSnapshotsEqual(after, before) {
 		t.Fatalf("failed Idea transition left mutations behind\nwant: %#v\n got: %#v", before, after)
 	}
 	if got, err := os.ReadFile(ideaPath); err != nil || string(got) != driftedBody {
@@ -1096,7 +1062,7 @@ func TestIssueChangeStatus_LintVerificationFailureRestoresFullSpecTree_CLI(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(after, before) {
+	if !specTreeSnapshotsEqual(after, before) {
 		t.Fatalf("failed Issue transition left lint mutations behind\nwant: %#v\n got: %#v", before, after)
 	}
 }
@@ -1130,7 +1096,7 @@ func TestSidekickChangeStatus_LintVerificationFailureRestoresCreatedDirectory_CL
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(after, before) {
+	if !specTreeSnapshotsEqual(after, before) {
 		t.Fatalf("failed Sidekick transition left a created directory or other mutation behind\nwant: %#v\n got: %#v", before, after)
 	}
 	if _, err := os.Stat(archivedDirectory); !os.IsNotExist(err) {

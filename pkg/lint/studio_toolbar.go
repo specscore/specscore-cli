@@ -20,9 +20,15 @@ var gitremoteParseFn = gitremote.Parse
 // the project's resolved studio config and the artifact's path.
 //
 // Replaces the legacy view-link rule (studio-toolbar#req:studio-toolbar-lint-removes-view-link).
-type studioToolbarChecker struct{}
+type studioToolbarChecker struct{ projectRoot string }
 
-func newStudioToolbarChecker() checker { return &studioToolbarChecker{} }
+func newStudioToolbarChecker(projectRoots ...string) checker {
+	var projectRoot string
+	if len(projectRoots) > 0 {
+		projectRoot = projectRoots[0]
+	}
+	return &studioToolbarChecker{projectRoot: projectRoot}
+}
 
 func (c *studioToolbarChecker) name() string     { return "studio-toolbar" }
 func (c *studioToolbarChecker) severity() string { return "error" }
@@ -142,7 +148,7 @@ func resolveProjectIdentity(cfg projectdef.SpecConfig, projectRoot string) (host
 // check is the lint entry point. Walks spec/features/*/README.md and
 // verifies file position 3 byte-equals the canonical toolbar.
 func (c *studioToolbarChecker) check(specRoot string) ([]Violation, error) {
-	projectRoot := filepath.Dir(specRoot)
+	projectRoot := lintProjectRoot(c.projectRoot, specRoot)
 	cfg, err := projectdef.ReadSpecConfig(projectRoot)
 	if err != nil {
 		// The pre-2026-05-19 viewer: block is rejected here. Surface as
@@ -326,7 +332,7 @@ func containsBranchPin(line string) bool {
 // to run when specscore.yaml still contains a viewer: block (the parser
 // surfaces that error, which propagates up via the fixer return).
 func (c *studioToolbarChecker) fix(specRoot string) error {
-	projectRoot := filepath.Dir(specRoot)
+	projectRoot := lintProjectRoot(c.projectRoot, specRoot)
 	cfg, err := projectdef.ReadSpecConfig(projectRoot)
 	if err != nil {
 		// Distinguish "viewer: block is no longer supported" (hard fail —

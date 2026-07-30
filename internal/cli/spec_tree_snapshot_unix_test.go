@@ -57,6 +57,19 @@ func TestSnapshotMetadata_FailClosedBranches(t *testing.T) {
 			t.Fatalf("metadata capture error = %v", err)
 		}
 	})
+	t.Run("metadata capture propagates timestamp failure", func(t *testing.T) {
+		resetSnapshotNoFollowSeams(t)
+		info, err := file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshotMetadataEntryTimes = func(os.FileInfo) (time.Time, time.Time, error) {
+			return time.Time{}, time.Time{}, errors.New("capture timestamp failed")
+		}
+		if _, err := captureSnapshotEntryMetadata(file, info); err == nil || !contains(err, "capture timestamp failed") {
+			t.Fatalf("metadata timestamp error = %v", err)
+		}
+	})
 	t.Run("xattr read failures", func(t *testing.T) {
 		resetSnapshotNoFollowSeams(t)
 		snapshotFlistxattr = func(int, []byte) (int, error) { return 0, errors.New("list failed") }
@@ -127,6 +140,19 @@ func TestSnapshotMetadata_FailClosedBranches(t *testing.T) {
 		}
 		if _, err := readSnapshotExtendedAttributes(int(file.Fd())); err == nil || !contains(err, "changed while reading") {
 			t.Fatalf("value race error = %v", err)
+		}
+	})
+	t.Run("ACL and capability xattrs are rejected before reads", func(t *testing.T) {
+		resetSnapshotNoFollowSeams(t)
+		snapshotFlistxattr = func(_ int, dest []byte) (int, error) {
+			if dest == nil {
+				return len("security.capability\x00"), nil
+			}
+			copy(dest, "security.capability\x00")
+			return len("security.capability\x00"), nil
+		}
+		if _, err := readSnapshotExtendedAttributes(int(file.Fd())); err == nil || !contains(err, "cannot preserve ACL") {
+			t.Fatalf("security xattr error = %v", err)
 		}
 	})
 	t.Run("set xattr failure", func(t *testing.T) {
@@ -268,11 +294,11 @@ func resetSnapshotNoFollowSeams(t *testing.T) {
 	t.Helper()
 	openRoot, openAt := snapshotOpenRoot, snapshotOpenAt
 	stat, readNames, closeFile := snapshotFileStat, snapshotReadDirNames, snapshotClose
-	listXattr, getXattr, setXattr := snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr
+	listXattr, getXattr, setXattr, entryTimes := snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr, snapshotMetadataEntryTimes
 	t.Cleanup(func() {
 		snapshotOpenRoot, snapshotOpenAt = openRoot, openAt
 		snapshotFileStat, snapshotReadDirNames, snapshotClose = stat, readNames, closeFile
-		snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr = listXattr, getXattr, setXattr
+		snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr, snapshotMetadataEntryTimes = listXattr, getXattr, setXattr, entryTimes
 	})
 }
 

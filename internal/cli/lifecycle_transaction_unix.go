@@ -1,0 +1,283 @@
+//go:build darwin || linux
+
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"golang.org/x/sys/unix"
+)
+
+var (
+	lifecycleStageOpenChild       = openLifecycleProjectChildNoFollow
+	lifecycleStageMaterialize     = materializeStagedSpecTreeNoFollow
+	lifecycleChildStat            = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
+	lifecycleContextCopyFile      = copyOptionalLifecycleRegularFile
+	lifecycleContextCopyDirectory = copyOptionalLifecycleDirectory
+	lifecycleContextOpenChild     = openLifecycleProjectChildNoFollow
+	lifecycleContextMkdirAt       = unix.Mkdirat
+	lifecycleContextFileStat      = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
+	lifecycleContextReadAll       = io.ReadAll
+	lifecycleContextWriteAll      = writeAllAtFD
+	lifecycleContextFchmod        = unix.Fchmod
+	lifecycleContextClose         = unix.Close
+	lifecycleReceiptOpenAt        = unix.Openat
+	lifecycleReceiptFstat         = unix.Fstat
+	lifecycleReceiptFtruncate     = unix.Ftruncate
+	lifecycleReceiptSeek          = unix.Seek
+	lifecycleReceiptWriteAll      = writeAllAtFD
+	lifecycleReceiptFsync         = unix.Fsync
+	lifecycleReceiptClose         = unix.Close
+	lifecycleJournalOpenAt        = unix.Openat
+	lifecycleJournalMkdirAt       = unix.Mkdirat
+)
+
+func openLifecycleProjectNoFollow(path string) (*stagedSpecTree, error) {
+	return openStagedSpecTreeNoFollow(path)
+}
+
+func createLifecycleStageProjectNoFollow(project *stagedSpecTree, id string) (*stagedSpecTree, error) {
+	if project == nil || project.root == nil {
+		return nil, fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	name := ".specscore-txn-" + id
+	if err := unix.Mkdirat(int(project.root.Fd()), name, 0o700); err != nil {
+		return nil, err
+	}
+	return openLifecycleProjectChildNoFollow(project, name)
+}
+
+func openLifecycleProjectChildNoFollow(project *stagedSpecTree, name string) (*stagedSpecTree, error) {
+	if project == nil || project.root == nil {
+		return nil, fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	fd, err := unix.Openat(int(project.root.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &stagedSpecTree{path: filepath.Join(project.path, name), root: os.NewFile(uintptr(fd), name)}, nil
+}
+
+func createLifecycleStageSpecNoFollow(project *stagedSpecTree, snapshot specTreeSnapshot) (*stagedSpecTree, error) {
+	return createLifecycleStageDirectoryNoFollow(project, "spec", snapshot)
+}
+
+func createLifecycleStageDirectoryNoFollow(project *stagedSpecTree, name string, snapshot specTreeSnapshot) (*stagedSpecTree, error) {
+	if project == nil || project.root == nil {
+		return nil, fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	if err := unix.Mkdirat(int(project.root.Fd()), name, 0o700); err != nil {
+		return nil, err
+	}
+	stage, err := lifecycleStageOpenChild(project, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := lifecycleStageMaterialize(stage, snapshot); err != nil {
+		_ = closeStagedSpecTree(stage)
+		return nil, err
+	}
+	return stage, nil
+}
+
+func lifecycleProjectChildMatches(project *stagedSpecTree, name string, expected *stagedSpecTree) error {
+	if expected == nil || expected.root == nil {
+		return fmt.Errorf("expected lifecycle child descriptor is closed")
+	}
+	candidate, err := openLifecycleProjectChildNoFollow(project, name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeStagedSpecTree(candidate) }()
+	actualInfo, err := lifecycleChildStat(candidate.root)
+	if err != nil {
+		return err
+	}
+	expectedInfo, err := lifecycleChildStat(expected.root)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(actualInfo, expectedInfo) {
+		return fmt.Errorf("descriptor identity changed")
+	}
+	return nil
+}
+
+func exchangeLifecycleProjectSpecs(realProject, stagedProject *stagedSpecTree) error {
+	return lifecycleExchangeSpecAt(int(stagedProject.root.Fd()), int(realProject.root.Fd()))
+}
+
+func runLifecycleInStagedProject(stage *stagedSpecTree, op func(string) error) error {
+	return runLintInStagedSpecTree(stage, op)
+}
+
+// materializeLifecycleProjectContext freezes every non-spec project input read
+// by lifecycle lint through descriptors held from the real project. No
+// pathname rooted in the live project is reopened after the transaction begins.
+func materializeLifecycleProjectContext(project, stage *stagedSpecTree) error {
+	if err := lifecycleContextCopyFile(project, "specscore.yaml", stage, "specscore.yaml"); err != nil {
+		return fmt.Errorf("copying specscore.yaml: %w", err)
+	}
+	if err := lifecycleContextCopyDirectory(project, ".github", stage, ".github"); err != nil {
+		return fmt.Errorf("copying .github: %w", err)
+	}
+	gitSource, err := lifecycleContextOpenChild(project, ".git")
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return fmt.Errorf("opening .git: %w", err)
+	}
+	defer func() { _ = closeStagedSpecTree(gitSource) }()
+	if err := lifecycleContextMkdirAt(int(stage.root.Fd()), ".git", 0o700); err != nil {
+		return fmt.Errorf("creating staged .git: %w", err)
+	}
+	gitStage, err := lifecycleContextOpenChild(stage, ".git")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeStagedSpecTree(gitStage) }()
+	if err := lifecycleContextCopyFile(gitSource, "config", gitStage, "config"); err != nil {
+		return fmt.Errorf("copying .git/config: %w", err)
+	}
+	return nil
+}
+
+func copyOptionalLifecycleDirectory(sourceProject *stagedSpecTree, sourceName string, stageProject *stagedSpecTree, stageName string) error {
+	if sourceProject == nil || sourceProject.root == nil || stageProject == nil || stageProject.root == nil {
+		return fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	source, err := openLifecycleProjectChildNoFollow(sourceProject, sourceName)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return err
+	}
+	defer func() { _ = closeStagedSpecTree(source) }()
+	snapshot, err := snapshotStagedSpecTreeNoFollow(source)
+	if err != nil {
+		return err
+	}
+	stage, err := createLifecycleStageDirectoryNoFollow(stageProject, stageName, snapshot)
+	if err != nil {
+		return err
+	}
+	return closeStagedSpecTree(stage)
+}
+
+func copyOptionalLifecycleRegularFile(sourceDirectory *stagedSpecTree, sourceName string, destinationDirectory *stagedSpecTree, destinationName string) error {
+	if sourceDirectory == nil || sourceDirectory.root == nil || destinationDirectory == nil || destinationDirectory.root == nil {
+		return fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	fd, err := unix.Openat(int(sourceDirectory.root.Fd()), sourceName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return err
+	}
+	source := os.NewFile(uintptr(fd), sourceName)
+	defer func() { _ = source.Close() }()
+	before, err := lifecycleContextFileStat(source)
+	if err != nil {
+		return err
+	}
+	if !before.Mode().IsRegular() {
+		return fmt.Errorf("refusing non-regular project context %s", sourceName)
+	}
+	content, err := lifecycleContextReadAll(source)
+	if err != nil {
+		return err
+	}
+	after, err := lifecycleContextFileStat(source)
+	if err != nil {
+		return err
+	}
+	if before.Mode() != after.Mode() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return fmt.Errorf("project context changed while reading %s", sourceName)
+	}
+	destinationFD, err := unix.Openat(int(destinationDirectory.root.Fd()), destinationName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(before.Mode().Perm()))
+	if err != nil {
+		return err
+	}
+	if err := lifecycleContextWriteAll(destinationFD, content); err != nil {
+		_ = lifecycleContextClose(destinationFD)
+		return err
+	}
+	if err := lifecycleContextFchmod(destinationFD, uint32(before.Mode().Perm())); err != nil {
+		_ = lifecycleContextClose(destinationFD)
+		return err
+	}
+	return lifecycleContextClose(destinationFD)
+}
+
+func writeLifecycleReceiptNoFollow(project *stagedSpecTree, name string, data []byte) error {
+	if project == nil || project.root == nil {
+		return fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	id := strings.TrimSuffix(name, ".json")
+	if !strings.HasSuffix(name, ".json") || id+".json" != name || filepath.Base(name) != name || !validLifecycleTransactionID(id) {
+		return fmt.Errorf("invalid lifecycle recovery receipt name %q", name)
+	}
+	journalFD, err := openOrCreateLifecycleJournalDirectory(int(project.root.Fd()))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(journalFD) }()
+	fd, err := lifecycleReceiptOpenAt(journalFD, name, unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if errors.Is(err, unix.ENOENT) {
+		fd, err = lifecycleReceiptOpenAt(journalFD, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	}
+	if err != nil {
+		return err
+	}
+	var stat unix.Stat_t
+	if err := lifecycleReceiptFstat(fd, &stat); err != nil {
+		_ = lifecycleReceiptClose(fd)
+		return err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		_ = lifecycleReceiptClose(fd)
+		return fmt.Errorf("recovery receipt is not a regular file")
+	}
+	if err := lifecycleReceiptFtruncate(fd, 0); err != nil {
+		_ = lifecycleReceiptClose(fd)
+		return err
+	}
+	if _, err := lifecycleReceiptSeek(fd, 0, io.SeekStart); err != nil {
+		_ = lifecycleReceiptClose(fd)
+		return err
+	}
+	if err := lifecycleReceiptWriteAll(fd, data); err != nil {
+		_ = lifecycleReceiptClose(fd)
+		return err
+	}
+	if err := lifecycleReceiptFsync(fd); err != nil {
+		_ = lifecycleReceiptClose(fd)
+		return err
+	}
+	if err := lifecycleReceiptClose(fd); err != nil {
+		return err
+	}
+	return lifecycleReceiptFsync(journalFD)
+}
+
+func openOrCreateLifecycleJournalDirectory(projectFD int) (int, error) {
+	fd, err := lifecycleJournalOpenAt(projectFD, ".specscore-recovery", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err == nil {
+		return fd, nil
+	}
+	if !errors.Is(err, unix.ENOENT) {
+		return -1, err
+	}
+	if err := lifecycleJournalMkdirAt(projectFD, ".specscore-recovery", 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+		return -1, err
+	}
+	return lifecycleJournalOpenAt(projectFD, ".specscore-recovery", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+}

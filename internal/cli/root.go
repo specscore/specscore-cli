@@ -73,6 +73,7 @@ func newRootCommand() *cobra.Command {
 		eventCommand(),
 		publicationCommand(),
 		telemetryCommand(),
+		lifecycleRecoveryCommand(),
 		debugCommand(),
 		selfUpdateCommand(),
 	)

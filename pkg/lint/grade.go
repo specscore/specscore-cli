@@ -29,9 +29,15 @@ var metaLineRe = regexp.MustCompile(`^\*\*([^*]+):\*\*[ \t]?(.*)$`)
 // generic: it never gates on the artifact's Status or on any reviewer-gate
 // workflow (canonical-grade-metadata-field#req:grade-generic-definition,
 // #req:grade-no-status-coupling, #req:grade-artifact-scope).
-type gradeChecker struct{}
+type gradeChecker struct{ projectRoot string }
 
-func newGradeChecker() *gradeChecker { return &gradeChecker{} }
+func newGradeChecker(projectRoots ...string) *gradeChecker {
+	var projectRoot string
+	if len(projectRoots) > 0 {
+		projectRoot = projectRoots[0]
+	}
+	return &gradeChecker{projectRoot: projectRoot}
+}
 
 func (c *gradeChecker) name() string     { return "grade-value" }
 func (c *gradeChecker) severity() string { return "error" }
@@ -39,7 +45,7 @@ func (c *gradeChecker) severity() string { return "error" }
 // check reads the effective grade value set and validates every `**Grade:**`
 // line found in any markdown artifact under specRoot.
 func (c *gradeChecker) check(specRoot string) ([]Violation, error) {
-	projectRoot := filepath.Dir(specRoot)
+	projectRoot := lintProjectRoot(c.projectRoot, specRoot)
 	cfg, err := projectdef.ReadSpecConfig(projectRoot)
 	if err != nil {
 		// No / unreadable specscore.yaml: other rules surface that; the grade

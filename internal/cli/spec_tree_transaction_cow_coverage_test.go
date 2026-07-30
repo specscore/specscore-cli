@@ -16,6 +16,7 @@ func resetSpecTreeTransactionSeams(t *testing.T) {
 	read, openFile, closeFile, lstat := transactionReadFile, transactionOpenFile, transactionCloseFile, transactionLstat
 	mkdirTemp, removeAll := transactionMkdirTemp, transactionRemoveAll
 	snapshot, snapshotStaged := transactionSnapshot, transactionSnapshotStaged
+	lifecycleSnapshot := lifecycleTransactionSnapshot
 	stageMatches, stagePublished := transactionStageMatchesPath, transactionStagePublishedAt
 	closeStaged := transactionCloseStagedTree
 	publish, lockFile, alive := transactionPublishTree, transactionLockFile, transactionProcessAlive
@@ -24,6 +25,7 @@ func resetSpecTreeTransactionSeams(t *testing.T) {
 		transactionReadFile, transactionOpenFile, transactionCloseFile, transactionLstat = read, openFile, closeFile, lstat
 		transactionMkdirTemp, transactionRemoveAll = mkdirTemp, removeAll
 		transactionSnapshot, transactionSnapshotStaged = snapshot, snapshotStaged
+		lifecycleTransactionSnapshot = lifecycleSnapshot
 		transactionStageMatchesPath, transactionStagePublishedAt = stageMatches, stagePublished
 		transactionCloseStagedTree = closeStaged
 		transactionPublishTree, transactionLockFile, transactionProcessAlive = publish, lockFile, alive
@@ -41,6 +43,35 @@ func rootSnapshot(files map[string]string, dirs ...string) specTreeSnapshot {
 		result.files[name] = specTreeFile{content: []byte(content), mode: 0o644}
 	}
 	return result
+}
+
+func TestSpecTreeTransactionNoOpAndProofHelperBranches(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("unchanged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := beginSpecTreeTransaction(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = transaction.release() })
+	if err := transaction.postMutationHookWithLint(func(string) error { return nil })(); err != nil {
+		t.Fatalf("no-op staged lint hook: %v", err)
+	}
+	if err := (&specTreeTransaction{}).finish(nil); err != nil {
+		t.Fatalf("nil action finish: %v", err)
+	}
+	proof := rootSnapshot(map[string]string{"owned.md": "owned"}, "owned-dir")
+	transaction = &specTreeTransaction{
+		ownedLifecyclePaths:  map[string]bool{"owned.md": true, "owned-dir": true},
+		provenLifecycleState: &proof,
+	}
+	if !transaction.lifecyclePathMatchesProof(proof, "owned-dir", true) {
+		t.Fatal("directory lifecycle proof was not recognised")
+	}
+	if snapshotDirectoryHasExternalDescendant(rootSnapshot(nil, "nested"), rootSnapshot(nil, "nested"), "nested") {
+		t.Fatal("unchanged directory was treated as externally modified")
+	}
 }
 
 func TestSpecTreeTransaction_FailClosedCoverage(t *testing.T) {
@@ -370,7 +401,7 @@ func TestLifecycleVerbs_AbortWhenTransactionSnapshotFails(t *testing.T) {
 	forceSnapshotFailure := func(t *testing.T) {
 		t.Helper()
 		resetSpecTreeTransactionSeams(t)
-		transactionSnapshot = func(string) (specTreeSnapshot, error) {
+		lifecycleTransactionSnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
 			return specTreeSnapshot{}, errors.New("forced transaction snapshot failure")
 		}
 	}

@@ -2,7 +2,6 @@ package lint
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/specscore/specscore-cli/pkg/config"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
@@ -11,16 +10,21 @@ import (
 // configScopeChecker enforces that user-scoped config keys (per-user/per-machine
 // values such as recaps.repo or journal.repo) are not set in the committed
 // specscore.yaml. They belong in specscore.local.yaml or ~/.specscore.yaml.
-type configScopeChecker struct{}
+type configScopeChecker struct{ projectRoot string }
 
-func newConfigScopeChecker() *configScopeChecker { return &configScopeChecker{} }
+func newConfigScopeChecker(projectRoots ...string) *configScopeChecker {
+	var projectRoot string
+	if len(projectRoots) > 0 {
+		projectRoot = projectRoots[0]
+	}
+	return &configScopeChecker{projectRoot: projectRoot}
+}
 
 func (c *configScopeChecker) name() string     { return "config-user-scoped-key" }
 func (c *configScopeChecker) severity() string { return "error" }
 
 func (c *configScopeChecker) check(specRoot string) ([]Violation, error) {
-	projectRoot := filepath.Dir(specRoot)
-	scopeViolations, err := config.CheckCommittedScope(projectRoot)
+	scopeViolations, err := config.CheckCommittedScope(lintProjectRoot(c.projectRoot, specRoot))
 	if err != nil {
 		// A missing or malformed specscore.yaml is surfaced by other rules;
 		// this rule stays silent rather than double-reporting.

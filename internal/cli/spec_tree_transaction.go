@@ -43,6 +43,7 @@ type specTreeDirectory struct {
 // restores them by descriptor; unsupported metadata fails closed instead.
 type specTreeEntryMetadata struct {
 	extendedAttributes map[string][]byte
+	accessTime         time.Time
 	modificationTime   time.Time
 }
 
@@ -360,7 +361,9 @@ func releaseLifecycleLockFile(lockPath string, lockFile *os.File) error {
 // hook failure is rolled back by the lifecycle package, while a deferred
 // failure is rolled back conflict-safely by finish.
 func (transaction *specTreeTransaction) postMutationHook() func() error {
-	return transaction.postMutationHookWithLint(runLintPostMutation)
+	return transaction.postMutationHookWithLint(func(specRoot string) error {
+		return runLintPostMutation(specRoot)
+	})
 }
 
 // postMutationHookWithLint runs a known lint implementation against an exact
@@ -849,7 +852,15 @@ func applySpecSnapshotDiff(specRoot string, before, after specTreeSnapshot) erro
 func snapshotFileEqual(left, right specTreeSnapshot, rel string) bool {
 	leftFile, leftExists := left.files[rel]
 	rightFile, rightExists := right.files[rel]
-	return leftExists == rightExists && (!leftExists || (leftFile.mode == rightFile.mode && bytes.Equal(leftFile.content, rightFile.content) && reflect.DeepEqual(leftFile.metadata, rightFile.metadata)))
+	return leftExists == rightExists && (!leftExists || (leftFile.mode == rightFile.mode && bytes.Equal(leftFile.content, rightFile.content) && snapshotEntryMetadataEqual(leftFile.metadata, rightFile.metadata)))
+}
+
+func snapshotEntryMetadataEqual(left, right specTreeEntryMetadata) bool {
+	// atime is intentionally excluded from concurrent-writer detection:
+	// descriptor reads performed by the transaction itself are permitted to
+	// update it. The materialiser still restores the captured value exactly.
+	return left.modificationTime.Equal(right.modificationTime) &&
+		reflect.DeepEqual(left.extendedAttributes, right.extendedAttributes)
 }
 
 func snapshotDirectoryEqual(left, right specTreeSnapshot, rel string) bool {
