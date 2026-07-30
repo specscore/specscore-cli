@@ -928,6 +928,12 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 	if err := validateLifecyclePublishingIntent(project, legacy); err != nil {
 		t.Fatalf("legacy receipt without retained intent: %v", err)
 	}
+	if err := os.MkdirAll(journal, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLifecyclePublishingIntent(project, legacy); err != nil {
+		t.Fatalf("legacy receipt without a retained intent in an existing journal: %v", err)
+	}
 	writeIntent(intent)
 	if err := validateLifecyclePublishingIntent(project, receipt); err != nil {
 		t.Fatalf("valid retained publishing intent: %v", err)
@@ -974,11 +980,33 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 	mismatch := intent
 	mismatch.CreatedAt = "2026-07-30T00:00:01Z"
 	writeIntent(mismatch)
+	originalSnapshot := lifecycleRecoverySnapshot
+	snapshotCalls := 0
+	lifecycleRecoverySnapshot = func(tree *stagedSpecTree) (specTreeSnapshot, error) {
+		snapshotCalls++
+		return originalSnapshot(tree)
+	}
+	t.Cleanup(func() { lifecycleRecoverySnapshot = originalSnapshot })
 	if _, err := readLifecycleReceipt(project, receipt.ID); err == nil {
 		t.Fatal("mismatched publishing intent accepted")
 	}
+	if snapshotCalls != 0 {
+		t.Fatalf("mismatched publishing intent reached lifecycle tree traversal: %d snapshots", snapshotCalls)
+	}
+	lifecycleRecoverySnapshot = originalSnapshot
 	writeIntent(intent)
-	originalSnapshot := lifecycleRecoverySnapshot
+	originalValidate := lifecycleRecoveryValidate
+	lifecycleRecoveryValidate = func(candidate LifecycleTransactionReceipt, live, prior specTreeSnapshot) error {
+		if candidate.State == "publishing" {
+			return errors.New("publishing intent snapshot validation failed")
+		}
+		return originalValidate(candidate, live, prior)
+	}
+	t.Cleanup(func() { lifecycleRecoveryValidate = originalValidate })
+	if _, err := readLifecycleReceipt(project, receipt.ID); err == nil {
+		t.Fatal("publishing intent snapshot validation failure accepted")
+	}
+	lifecycleRecoveryValidate = originalValidate
 	lifecycleRecoverySnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
 		return specTreeSnapshot{}, errors.New("publishing intent snapshot failed")
 	}
@@ -1033,6 +1061,54 @@ func TestLifecycleRecoveryValidationHoldsStageDescriptorAcrossPathSwap(t *testin
 	info, err := os.Lstat(receipt.RecoveryRoot)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("stage swap fixture = %v, %v", info, err)
+	}
+}
+
+func TestLifecycleRecoveryDiffUsesOneValidatedSnapshotPair(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalValidationSnapshot := lifecycleRecoverySnapshot
+	lifecycleRecoverySnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
+		t.Fatal("recovery diff opened a separate validation snapshot pair")
+		return specTreeSnapshot{}, nil
+	}
+	t.Cleanup(func() { lifecycleRecoverySnapshot = originalValidationSnapshot })
+	originalDiffSnapshot := lifecycleRecoveryDiffSnapshot
+	movedStage := receipt.RecoveryRoot + ".moved"
+	diffSnapshotCalls := 0
+	lifecycleRecoveryDiffSnapshot = func(tree *stagedSpecTree) (specTreeSnapshot, error) {
+		diffSnapshotCalls++
+		if diffSnapshotCalls == 2 {
+			if renameErr := os.Rename(receipt.RecoveryRoot, movedStage); renameErr != nil {
+				return specTreeSnapshot{}, renameErr
+			}
+			if linkErr := os.Symlink(movedStage, receipt.RecoveryRoot); linkErr != nil {
+				return specTreeSnapshot{}, linkErr
+			}
+		}
+		return originalDiffSnapshot(tree)
+	}
+	t.Cleanup(func() { lifecycleRecoveryDiffSnapshot = originalDiffSnapshot })
+	command := lifecycleRecoveryCommand()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"diff", receipt.ID, "--project", project})
+	if err := command.Execute(); err != nil || output.String() != "published.md\n" {
+		t.Fatalf("descriptor-held recovery diff after stage replacement = %q, %v", output.String(), err)
+	}
+	if diffSnapshotCalls != 2 {
+		t.Fatalf("recovery diff snapshot calls = %d, want exactly 2", diffSnapshotCalls)
+	}
+	info, err := os.Lstat(receipt.RecoveryRoot)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("diff stage replacement fixture = %v, %v", info, err)
 	}
 }
 
@@ -1307,6 +1383,9 @@ func TestLifecycleRecoveryHandleAndSnapshotDefensiveBranches(t *testing.T) {
 	invalidReceipt.ID = "bad.id"
 	if _, _, err := lifecycleRecoveryReceiptSnapshots(project, nil, invalidReceipt, lifecycleRecoverySnapshot); err == nil {
 		t.Fatal("invalid receipt accepted for lifecycle recovery snapshot")
+	}
+	if err := validateLifecycleReceiptWithProject(project, nil, invalidReceipt); err == nil {
+		t.Fatal("invalid receipt accepted before descriptor-rooted lifecycle validation")
 	}
 	siblingRoot := filepath.Join(project, ".specscore-txn-other-transaction")
 	mustWriteLifecycleFile(t, filepath.Join(siblingRoot, "spec", "README.md"), "older live tree\n")

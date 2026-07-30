@@ -16,6 +16,7 @@ var (
 	lifecycleRecoveryAbs          = filepath.Abs
 	lifecycleRecoverySnapshot     = snapshotStagedSpecTreeNoFollow
 	lifecycleRecoveryDiffSnapshot = snapshotStagedSpecTreeNoFollow
+	lifecycleRecoveryValidate     = validateLifecycleReceiptSnapshots
 )
 
 type lifecycleRecoveryHandle struct {
@@ -73,16 +74,12 @@ func lifecycleRecoveryDiffCommand() *cobra.Command {
 				return exitcode.UnexpectedErrorf("opening lifecycle recovery journal without following links: %v", err)
 			}
 			defer func() { _ = closeLifecycleRecoveryHandle(handle) }()
-			receipt, err := readLifecycleReceiptWithHandle(root, handle, args[0])
+			receipt, live, prior, err := readAndValidateLifecycleReceiptWithHandle(root, handle, args[0], lifecycleRecoveryDiffSnapshot)
 			if err != nil {
 				return err
 			}
 			if receipt.State != "committed" {
 				return exitcode.ConflictErrorf("transaction %s is %s; no exchanged predecessor is available to diff", receipt.ID, receipt.State)
-			}
-			live, prior, err := lifecycleRecoveryReceiptSnapshots(root, handle.project, receipt, lifecycleRecoveryDiffSnapshot)
-			if err != nil {
-				return exitcode.UnexpectedErrorf("snapshotting descriptor-rooted lifecycle recovery trees: %v", err)
 			}
 			paths := unionSnapshotPaths(
 				changedSnapshotFiles(live, prior),
@@ -177,30 +174,55 @@ func readLifecycleReceipt(projectRoot, id string) (LifecycleTransactionReceipt, 
 }
 
 func readLifecycleReceiptWithHandle(projectRoot string, handle *lifecycleRecoveryHandle, id string) (LifecycleTransactionReceipt, error) {
+	receipt, _, _, err := readAndValidateLifecycleReceiptWithHandle(projectRoot, handle, id, lifecycleRecoverySnapshot)
+	return receipt, err
+}
+
+// readAndValidateLifecycleReceiptWithHandle reads the canonical receipt and
+// publishing intent from the held journal first. It then captures one
+// descriptor-rooted tree pair and validates both records against that same
+// immutable snapshot, so callers such as recovery diff never reopen a
+// different predecessor after validation.
+func readAndValidateLifecycleReceiptWithHandle(
+	projectRoot string,
+	handle *lifecycleRecoveryHandle,
+	id string,
+	snapshot func(*stagedSpecTree) (specTreeSnapshot, error),
+) (LifecycleTransactionReceipt, specTreeSnapshot, specTreeSnapshot, error) {
 	if !validLifecycleTransactionID(id) {
-		return LifecycleTransactionReceipt{}, exitcode.InvalidArgsErrorf("invalid lifecycle transaction id %q", id)
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, exitcode.InvalidArgsErrorf("invalid lifecycle transaction id %q", id)
 	}
 	data, err := readLifecycleRecoveryRegularFileNoFollow(handle, id+".json")
 	if os.IsNotExist(err) {
-		return LifecycleTransactionReceipt{}, exitcode.NotFoundErrorf("lifecycle transaction receipt not found: %s", id)
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, exitcode.NotFoundErrorf("lifecycle transaction receipt not found: %s", id)
 	}
 	if err != nil {
-		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("reading lifecycle transaction receipt: %v", err)
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, exitcode.UnexpectedErrorf("reading lifecycle transaction receipt: %v", err)
 	}
 	var receipt LifecycleTransactionReceipt
 	if err := json.Unmarshal(data, &receipt); err != nil {
-		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("parsing lifecycle transaction receipt: %v", err)
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, exitcode.UnexpectedErrorf("parsing lifecycle transaction receipt: %v", err)
 	}
 	if receipt.ID != id {
-		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("lifecycle transaction receipt identity mismatch for %s", id)
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, exitcode.UnexpectedErrorf("lifecycle transaction receipt identity mismatch for %s", id)
 	}
-	if err := validateLifecycleReceiptWithProject(projectRoot, handle.project, receipt); err != nil {
-		return LifecycleTransactionReceipt{}, err
+	intent, err := readLifecyclePublishingIntentIdentityWithHandle(handle, receipt)
+	if err != nil {
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, err
 	}
-	if err := validateLifecyclePublishingIntentWithHandle(projectRoot, handle, receipt); err != nil {
-		return LifecycleTransactionReceipt{}, err
+	live, prior, err := lifecycleRecoveryReceiptSnapshots(projectRoot, handle.project, receipt, snapshot)
+	if err != nil {
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, exitcode.UnexpectedErrorf("snapshotting descriptor-rooted lifecycle receipt trees: %v", err)
 	}
-	return receipt, nil
+	if err := lifecycleRecoveryValidate(receipt, live, prior); err != nil {
+		return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, err
+	}
+	if intent != nil {
+		if err := lifecycleRecoveryValidate(*intent, live, prior); err != nil {
+			return LifecycleTransactionReceipt{}, specTreeSnapshot{}, specTreeSnapshot{}, exitcode.UnexpectedErrorf("validating lifecycle publishing intent: %v", err)
+		}
+	}
+	return receipt, live, prior, nil
 }
 
 func validateLifecyclePublishingIntent(projectRoot string, receipt LifecycleTransactionReceipt) error {
@@ -219,19 +241,36 @@ func validateLifecyclePublishingIntent(projectRoot string, receipt LifecycleTran
 }
 
 func validateLifecyclePublishingIntentWithHandle(projectRoot string, handle *lifecycleRecoveryHandle, receipt LifecycleTransactionReceipt) error {
+	intent, err := readLifecyclePublishingIntentIdentityWithHandle(handle, receipt)
+	if err != nil {
+		return err
+	}
+	if intent == nil {
+		return nil
+	}
+	if err := validateLifecycleReceiptWithProject(projectRoot, handle.project, *intent); err != nil {
+		return exitcode.UnexpectedErrorf("validating lifecycle publishing intent: %v", err)
+	}
+	return nil
+}
+
+// readLifecyclePublishingIntentIdentityWithHandle validates the sidecar's
+// filename-derived identity and its immutable linkage to receipt before any
+// project, stage, or spec descriptor is traversed.
+func readLifecyclePublishingIntentIdentityWithHandle(handle *lifecycleRecoveryHandle, receipt LifecycleTransactionReceipt) (*LifecycleTransactionReceipt, error) {
 	data, err := readLifecycleRecoveryRegularFileNoFollow(handle, receipt.ID+".publishing.json")
 	if os.IsNotExist(err) {
 		if receipt.State == "committed" && receipt.PublishingIntentRequired {
-			return exitcode.UnexpectedErrorf("marked committed lifecycle receipt %s is missing its publishing intent", receipt.ID)
+			return nil, exitcode.UnexpectedErrorf("marked committed lifecycle receipt %s is missing its publishing intent", receipt.ID)
 		}
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return exitcode.UnexpectedErrorf("reading lifecycle publishing intent: %v", err)
+		return nil, exitcode.UnexpectedErrorf("reading lifecycle publishing intent: %v", err)
 	}
 	var intent LifecycleTransactionReceipt
 	if err := json.Unmarshal(data, &intent); err != nil {
-		return exitcode.UnexpectedErrorf("parsing lifecycle publishing intent: %v", err)
+		return nil, exitcode.UnexpectedErrorf("parsing lifecycle publishing intent: %v", err)
 	}
 	if (receipt.State != "publishing" && receipt.State != "committed") ||
 		intent.State != "publishing" ||
@@ -242,12 +281,9 @@ func validateLifecyclePublishingIntentWithHandle(projectRoot string, handle *lif
 		intent.StagedDigest != receipt.StagedDigest ||
 		intent.CreatedAt != receipt.CreatedAt ||
 		intent.PublishingIntentRequired != receipt.PublishingIntentRequired {
-		return exitcode.UnexpectedErrorf("lifecycle publishing intent does not match receipt %s", receipt.ID)
+		return nil, exitcode.UnexpectedErrorf("lifecycle publishing intent does not match receipt %s", receipt.ID)
 	}
-	if err := validateLifecycleReceiptWithProject(projectRoot, handle.project, intent); err != nil {
-		return exitcode.UnexpectedErrorf("validating lifecycle publishing intent: %v", err)
-	}
-	return nil
+	return &intent, nil
 }
 
 func validateLifecycleReceipt(projectRoot string, receipt LifecycleTransactionReceipt) error {
@@ -272,6 +308,14 @@ func validateLifecycleReceiptWithProject(projectRoot string, project *stagedSpec
 	if err != nil {
 		return exitcode.UnexpectedErrorf("snapshotting descriptor-rooted lifecycle receipt trees: %v", err)
 	}
+	return validateLifecycleReceiptSnapshots(receipt, live, prior)
+}
+
+// validateLifecycleReceiptSnapshots verifies a receipt against one already
+// captured live/predecessor pair. Keeping this separate from descriptor
+// traversal lets a receipt and its publishing intent share exactly the same
+// evidence and prevents diff from describing a later replacement.
+func validateLifecycleReceiptSnapshots(receipt LifecycleTransactionReceipt, live, prior specTreeSnapshot) error {
 	liveDigest := lifecycleSnapshotDigest(live)
 	if receipt.State == "prepared" {
 		if liveDigest != receipt.BaselineDigest {
