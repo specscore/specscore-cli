@@ -28,11 +28,11 @@ var (
 	lifecycleContextClose         = unix.Close
 	lifecycleReceiptOpenAt        = unix.Openat
 	lifecycleReceiptFstat         = unix.Fstat
-	lifecycleReceiptFtruncate     = unix.Ftruncate
-	lifecycleReceiptSeek          = unix.Seek
 	lifecycleReceiptWriteAll      = writeAllAtFD
 	lifecycleReceiptFsync         = unix.Fsync
 	lifecycleReceiptClose         = unix.Close
+	lifecycleReceiptRenameAt      = unix.Renameat
+	lifecycleReceiptTempName      = newLifecycleReceiptTempName
 	lifecycleJournalOpenAt        = unix.Openat
 	lifecycleJournalMkdirAt       = unix.Mkdirat
 )
@@ -230,10 +230,14 @@ func writeLifecycleReceiptNoFollow(project *stagedSpecTree, name string, data []
 		return err
 	}
 	defer func() { _ = unix.Close(journalFD) }()
-	fd, err := lifecycleReceiptOpenAt(journalFD, name, unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if errors.Is(err, unix.ENOENT) {
-		fd, err = lifecycleReceiptOpenAt(journalFD, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	temporaryName, err := lifecycleReceiptTempName(name)
+	if err != nil {
+		return err
 	}
+	if filepath.Base(temporaryName) != temporaryName || temporaryName == name {
+		return fmt.Errorf("invalid lifecycle recovery receipt temporary name %q", temporaryName)
+	}
+	fd, err := lifecycleReceiptOpenAt(journalFD, temporaryName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
@@ -246,14 +250,6 @@ func writeLifecycleReceiptNoFollow(project *stagedSpecTree, name string, data []
 		_ = lifecycleReceiptClose(fd)
 		return fmt.Errorf("recovery receipt is not a regular file")
 	}
-	if err := lifecycleReceiptFtruncate(fd, 0); err != nil {
-		_ = lifecycleReceiptClose(fd)
-		return err
-	}
-	if _, err := lifecycleReceiptSeek(fd, 0, io.SeekStart); err != nil {
-		_ = lifecycleReceiptClose(fd)
-		return err
-	}
 	if err := lifecycleReceiptWriteAll(fd, data); err != nil {
 		_ = lifecycleReceiptClose(fd)
 		return err
@@ -265,7 +261,18 @@ func writeLifecycleReceiptNoFollow(project *stagedSpecTree, name string, data []
 	if err := lifecycleReceiptClose(fd); err != nil {
 		return err
 	}
+	if err := lifecycleReceiptRenameAt(journalFD, temporaryName, journalFD, name); err != nil {
+		return err
+	}
 	return lifecycleReceiptFsync(journalFD)
+}
+
+func newLifecycleReceiptTempName(name string) (string, error) {
+	id, err := newLifecycleTransactionID()
+	if err != nil {
+		return "", err
+	}
+	return "." + name + "." + id + ".tmp", nil
 }
 
 func openOrCreateLifecycleJournalDirectory(projectFD int) (int, error) {

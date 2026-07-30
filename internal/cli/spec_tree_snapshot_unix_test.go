@@ -293,11 +293,11 @@ func TestSnapshotSpecTreeNoFollow_RejectsHardLinkedRegularFile(t *testing.T) {
 func resetSnapshotNoFollowSeams(t *testing.T) {
 	t.Helper()
 	openRoot, openAt := snapshotOpenRoot, snapshotOpenAt
-	stat, readNames, closeFile := snapshotFileStat, snapshotReadDirNames, snapshotClose
+	stat, readNames, seek, closeFile := snapshotFileStat, snapshotReadDirNames, snapshotSeek, snapshotClose
 	listXattr, getXattr, setXattr, entryTimes := snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr, snapshotMetadataEntryTimes
 	t.Cleanup(func() {
 		snapshotOpenRoot, snapshotOpenAt = openRoot, openAt
-		snapshotFileStat, snapshotReadDirNames, snapshotClose = stat, readNames, closeFile
+		snapshotFileStat, snapshotReadDirNames, snapshotSeek, snapshotClose = stat, readNames, seek, closeFile
 		snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr, snapshotMetadataEntryTimes = listXattr, getXattr, setXattr, entryTimes
 	})
 }
@@ -309,6 +309,13 @@ func TestSnapshotSpecTreeNoFollow_FailClosedDescriptorBranches(t *testing.T) {
 		snapshotFileStat = func(*os.File) (os.FileInfo, error) { return nil, errors.New("root stat failed") }
 		if _, err := snapshotSpecTreeForTransaction(root); err == nil || !contains(err, "root stat failed") {
 			t.Fatalf("snapshot error = %v", err)
+		}
+	})
+	t.Run("root descriptor rewind failure", func(t *testing.T) {
+		resetSnapshotNoFollowSeams(t)
+		snapshotSeek = func(*os.File, int64, int) (int64, error) { return 0, errors.New("rewind failed") }
+		if _, err := snapshotSpecTreeForTransaction(t.TempDir()); err == nil || !contains(err, "rewind failed") {
+			t.Fatalf("snapshot rewind error = %v", err)
 		}
 	})
 

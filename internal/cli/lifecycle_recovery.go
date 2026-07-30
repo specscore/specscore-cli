@@ -13,8 +13,10 @@ import (
 )
 
 var (
-	lifecycleRecoveryAbs   = filepath.Abs
-	lifecycleRecoveryLstat = os.Lstat
+	lifecycleRecoveryAbs          = filepath.Abs
+	lifecycleRecoveryLstat        = os.Lstat
+	lifecycleRecoverySnapshot     = snapshotSpecTreeNoFollow
+	lifecycleRecoveryDiffSnapshot = snapshotSpecTreeNoFollow
 )
 
 // lifecycleRecoveryCommand intentionally exposes inspection only. An exchanged
@@ -69,11 +71,11 @@ func lifecycleRecoveryDiffCommand() *cobra.Command {
 			if receipt.State != "committed" {
 				return exitcode.ConflictErrorf("transaction %s is %s; no exchanged predecessor is available to diff", receipt.ID, receipt.State)
 			}
-			live, err := snapshotSpecTreeNoFollow(filepath.Join(root, "spec"))
+			live, err := lifecycleRecoveryDiffSnapshot(filepath.Join(root, "spec"))
 			if err != nil {
 				return exitcode.UnexpectedErrorf("snapshotting live spec tree: %v", err)
 			}
-			prior, err := snapshotSpecTreeNoFollow(filepath.Join(receipt.RecoveryRoot, "spec"))
+			prior, err := lifecycleRecoveryDiffSnapshot(filepath.Join(receipt.RecoveryRoot, "spec"))
 			if err != nil {
 				return exitcode.UnexpectedErrorf("snapshotting retained predecessor: %v", err)
 			}
@@ -164,7 +166,7 @@ func validateLifecycleReceipt(projectRoot string, receipt LifecycleTransactionRe
 	if !validLifecycleTransactionID(receipt.ID) {
 		return exitcode.UnexpectedErrorf("invalid lifecycle transaction receipt id %q", receipt.ID)
 	}
-	if receipt.State != "prepared" && receipt.State != "committed" {
+	if receipt.State != "prepared" && receipt.State != "publishing" && receipt.State != "committed" {
 		return exitcode.UnexpectedErrorf("invalid lifecycle transaction state %q", receipt.State)
 	}
 	root, err := lifecycleRecoveryAbs(projectRoot)
@@ -179,8 +181,39 @@ func validateLifecycleReceipt(projectRoot string, receipt LifecycleTransactionRe
 	if err != nil || filepath.Dir(rel) != "." || !strings.HasPrefix(filepath.Base(rel), ".specscore-txn-") {
 		return exitcode.UnexpectedErrorf("lifecycle receipt recovery-root escapes its project")
 	}
-	if receipt.BaselineDigest == "" || (receipt.State == "committed" && receipt.StagedDigest == "") {
+	if receipt.BaselineDigest == "" || ((receipt.State == "publishing" || receipt.State == "committed") && receipt.StagedDigest == "") {
 		return exitcode.UnexpectedErrorf("lifecycle receipt is missing its integrity digest")
+	}
+	live, err := lifecycleRecoverySnapshot(filepath.Join(root, "spec"))
+	if err != nil {
+		return exitcode.UnexpectedErrorf("snapshotting live spec for lifecycle receipt validation: %v", err)
+	}
+	liveDigest := lifecycleSnapshotDigest(live)
+	if receipt.State == "prepared" {
+		if liveDigest != receipt.BaselineDigest {
+			return exitcode.UnexpectedErrorf("prepared lifecycle receipt digest does not match the live spec tree")
+		}
+		return nil
+	}
+	prior, snapshotErr := lifecycleRecoverySnapshot(filepath.Join(recoveryRoot, "spec"))
+	if snapshotErr != nil {
+		return exitcode.UnexpectedErrorf("snapshotting retained predecessor for lifecycle receipt validation: %v", snapshotErr)
+	}
+	priorDigest := lifecycleSnapshotDigest(prior)
+	if receipt.State == "publishing" {
+		if (liveDigest == receipt.BaselineDigest && priorDigest == receipt.StagedDigest) ||
+			(liveDigest == receipt.StagedDigest && priorDigest == receipt.BaselineDigest) {
+			return nil
+		}
+		return exitcode.UnexpectedErrorf("publishing lifecycle receipt digest does not match either atomic-exchange state")
+	}
+	if liveDigest != receipt.StagedDigest {
+		return exitcode.UnexpectedErrorf("lifecycle receipt digest does not match the live spec tree")
+	}
+	if receipt.State == "committed" {
+		if priorDigest != receipt.BaselineDigest {
+			return exitcode.UnexpectedErrorf("lifecycle receipt digest does not match its retained predecessor")
+		}
 	}
 	return nil
 }

@@ -19,7 +19,6 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "# Spec\n")
 	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
-	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
 	mustWriteLifecycleFile(t, filepath.Join(project, ".github", "workflows", "ci.yml"), "name: ci\n")
 	mustWriteLifecycleFile(t, filepath.Join(project, ".git", "config"), "[remote \"origin\"]\nurl = https://example.test/org/repo.git\n")
 
@@ -94,6 +93,58 @@ func TestRunLifecycleTransactionFailureRetainsPreparedReceipt(t *testing.T) {
 	}
 	if _, err := readLifecycleReceipt(project, receipt.ID); err != nil {
 		t.Fatalf("prepared receipt was not retained: %v", err)
+	}
+}
+
+func TestRunLifecycleTransactionRejectsStagedManifestTampering(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalBeforePublication := lifecycleTransactionBeforePublication
+	lifecycleTransactionBeforePublication = func(stageSpec *stagedSpecTree) error {
+		return os.WriteFile(filepath.Join(stageSpec.path, "injected.md"), []byte("injected\n"), 0o600)
+	}
+	t.Cleanup(func() { lifecycleTransactionBeforePublication = originalBeforePublication })
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "expected.md"), []byte("expected\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "staged lifecycle output changed") {
+		t.Fatalf("staged manifest tamper error = %v", err)
+	}
+	if receipt.State != "publishing" {
+		t.Fatalf("tamper receipt state = %q", receipt.State)
+	}
+	for _, name := range []string{"expected.md", "injected.md"} {
+		if _, statErr := os.Stat(filepath.Join(project, "spec", name)); !os.IsNotExist(statErr) {
+			t.Fatalf("tampered staged entry was published (%s): %v", name, statErr)
+		}
+	}
+	if _, readErr := readLifecycleReceipt(project, receipt.ID); readErr == nil {
+		t.Fatal("tampered publishing receipt was accepted as trustworthy")
+	}
+}
+
+func TestRunLifecycleTransactionDetectsPostExchangeManifestTampering(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	originalAfterExchange := lifecycleTransactionAfterExchange
+	lifecycleTransactionAfterExchange = func(liveSpec, _ *stagedSpecTree) error {
+		return os.WriteFile(filepath.Join(liveSpec.path, "injected.md"), []byte("injected\n"), 0o600)
+	}
+	t.Cleanup(func() { lifecycleTransactionAfterExchange = originalAfterExchange })
+	receipt, err := RunLifecycleTransaction(project, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "expected.md"), []byte("expected\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "published lifecycle output changed") {
+		t.Fatalf("post-exchange manifest tamper error = %v", err)
+	}
+	if receipt.State != "publishing" {
+		t.Fatalf("post-exchange receipt state = %q", receipt.State)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, "spec", "injected.md")); statErr != nil {
+		t.Fatalf("post-exchange tamper fixture missing: %v", statErr)
+	}
+	if _, readErr := readLifecycleReceipt(project, receipt.ID); readErr == nil {
+		t.Fatal("post-exchange tampered receipt was accepted as trustworthy")
 	}
 }
 
@@ -203,17 +254,48 @@ func TestLifecycleDescriptorHelpersRejectUnsafeStates(t *testing.T) {
 
 func TestLifecycleReceiptValidationRejectsForgedRootsAndJournalEntries(t *testing.T) {
 	project := t.TempDir()
+	recoveryRoot := filepath.Join(project, ".specscore-txn-receipt-1")
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "staged\n")
+	mustWriteLifecycleFile(t, filepath.Join(recoveryRoot, "spec", "README.md"), "baseline\n")
 	receipt := LifecycleTransactionReceipt{
 		ID:             "receipt-1",
 		State:          "committed",
 		ProjectRoot:    project,
-		RecoveryRoot:   filepath.Join(project, ".specscore-txn-receipt-1"),
-		BaselineDigest: "baseline",
-		StagedDigest:   "staged",
+		RecoveryRoot:   recoveryRoot,
+		BaselineDigest: lifecycleDigestAt(t, filepath.Join(recoveryRoot, "spec")),
+		StagedDigest:   lifecycleDigestAt(t, filepath.Join(project, "spec")),
 	}
 	if err := validateLifecycleReceipt(project, receipt); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(project, "spec", "README.md"), []byte("tampered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLifecycleReceipt(project, receipt); err == nil {
+		t.Fatal("tampered live spec accepted by receipt validation")
+	}
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "staged\n")
+	receipt.StagedDigest = lifecycleDigestAt(t, filepath.Join(project, "spec"))
+	if err := os.WriteFile(filepath.Join(recoveryRoot, "spec", "README.md"), []byte("tampered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLifecycleReceipt(project, receipt); err == nil {
+		t.Fatal("tampered predecessor accepted by receipt validation")
+	}
+	mustWriteLifecycleFile(t, filepath.Join(recoveryRoot, "spec", "README.md"), "baseline\n")
+	publishing := receipt
+	publishing.State = "publishing"
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+	mustWriteLifecycleFile(t, filepath.Join(recoveryRoot, "spec", "README.md"), "staged\n")
+	publishing.BaselineDigest = lifecycleDigestAt(t, filepath.Join(project, "spec"))
+	publishing.StagedDigest = lifecycleDigestAt(t, filepath.Join(recoveryRoot, "spec"))
+	if err := validateLifecycleReceipt(project, publishing); err != nil {
+		t.Fatalf("pre-exchange publishing receipt: %v", err)
+	}
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "staged\n")
+	mustWriteLifecycleFile(t, filepath.Join(recoveryRoot, "spec", "README.md"), "baseline\n")
+	receipt.BaselineDigest = lifecycleDigestAt(t, filepath.Join(recoveryRoot, "spec"))
+	receipt.StagedDigest = lifecycleDigestAt(t, filepath.Join(project, "spec"))
 	forged := receipt
 	forged.RecoveryRoot = t.TempDir()
 	if err := validateLifecycleReceipt(project, forged); err == nil {
@@ -241,10 +323,16 @@ func TestLifecycleReceiptValidationRejectsForgedRootsAndJournalEntries(t *testin
 	}
 	prepared := receipt
 	prepared.State = "prepared"
+	prepared.BaselineDigest = lifecycleDigestAt(t, filepath.Join(project, "spec"))
 	prepared.StagedDigest = ""
 	if err := validateLifecycleReceipt(project, prepared); err != nil {
 		t.Fatalf("prepared receipt without staged digest: %v", err)
 	}
+	prepared.BaselineDigest = "wrong"
+	if err := validateLifecycleReceipt(project, prepared); err == nil {
+		t.Fatal("prepared receipt with mismatched live digest accepted")
+	}
+	prepared.BaselineDigest = lifecycleDigestAt(t, filepath.Join(project, "spec"))
 	prepared.BaselineDigest = ""
 	if err := validateLifecycleReceipt(project, prepared); err == nil {
 		t.Fatal("receipt without baseline digest accepted")
@@ -463,12 +551,12 @@ func TestLifecycleRecoveryDiffFailureModes(t *testing.T) {
 	if err := runDiff("missing"); err == nil {
 		t.Fatal("missing receipt accepted for diff")
 	}
-	prepared := LifecycleTransactionReceipt{ID: "prepared", State: "prepared", ProjectRoot: project, RecoveryRoot: filepath.Join(project, ".specscore-txn-prepared"), BaselineDigest: "baseline"}
+	prepared := LifecycleTransactionReceipt{ID: "prepared", State: "prepared", ProjectRoot: project, RecoveryRoot: filepath.Join(project, ".specscore-txn-prepared"), BaselineDigest: lifecycleDigestAt(t, filepath.Join(project, "spec"))}
 	write(prepared)
 	if err := runDiff(prepared.ID); err == nil {
 		t.Fatal("prepared receipt accepted for predecessor diff")
 	}
-	missingPrior := LifecycleTransactionReceipt{ID: "missing-prior", State: "committed", ProjectRoot: project, RecoveryRoot: filepath.Join(project, ".specscore-txn-missing-prior"), BaselineDigest: "baseline", StagedDigest: "staged"}
+	missingPrior := LifecycleTransactionReceipt{ID: "missing-prior", State: "committed", ProjectRoot: project, RecoveryRoot: filepath.Join(project, ".specscore-txn-missing-prior"), BaselineDigest: "baseline", StagedDigest: lifecycleDigestAt(t, filepath.Join(project, "spec"))}
 	write(missingPrior)
 	if err := runDiff(missingPrior.ID); err == nil {
 		t.Fatal("missing predecessor spec accepted for diff")
@@ -482,7 +570,7 @@ func TestLifecycleRecoveryDiffFailureModes(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(noDiffRoot, "spec", "README.md"), liveFile.ModTime(), liveFile.ModTime()); err != nil {
 		t.Fatal(err)
 	}
-	noDiff := LifecycleTransactionReceipt{ID: "no-diff", State: "committed", ProjectRoot: project, RecoveryRoot: noDiffRoot, BaselineDigest: "baseline", StagedDigest: "staged"}
+	noDiff := LifecycleTransactionReceipt{ID: "no-diff", State: "committed", ProjectRoot: project, RecoveryRoot: noDiffRoot, BaselineDigest: lifecycleDigestAt(t, filepath.Join(noDiffRoot, "spec")), StagedDigest: lifecycleDigestAt(t, filepath.Join(project, "spec"))}
 	write(noDiff)
 	command := lifecycleRecoveryCommand()
 	var output bytes.Buffer
@@ -491,6 +579,26 @@ func TestLifecycleRecoveryDiffFailureModes(t *testing.T) {
 	if err := command.Execute(); err != nil || output.String() != "no differences\n" {
 		t.Fatalf("no-diff recovery output = %q, %v", output.String(), err)
 	}
+	originalDiffSnapshot := lifecycleRecoveryDiffSnapshot
+	lifecycleRecoveryDiffSnapshot = func(string) (specTreeSnapshot, error) {
+		return specTreeSnapshot{}, errors.New("live diff snapshot failed")
+	}
+	if err := runDiff(noDiff.ID); err == nil {
+		t.Fatal("live diff snapshot failure accepted")
+	}
+	lifecycleRecoveryDiffSnapshot = originalDiffSnapshot
+	diffSnapshots := 0
+	lifecycleRecoveryDiffSnapshot = func(path string) (specTreeSnapshot, error) {
+		diffSnapshots++
+		if diffSnapshots == 2 {
+			return specTreeSnapshot{}, errors.New("prior diff snapshot failed")
+		}
+		return originalDiffSnapshot(path)
+	}
+	if err := runDiff(noDiff.ID); err == nil {
+		t.Fatal("prior diff snapshot failure accepted")
+	}
+	lifecycleRecoveryDiffSnapshot = originalDiffSnapshot
 	if err := os.RemoveAll(filepath.Join(project, "spec")); err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +623,7 @@ func TestLifecycleRecoveryRemainingValidationBranches(t *testing.T) {
 		t.Helper()
 		recoveryRoot := filepath.Join(project, ".specscore-txn-"+id)
 		mustWriteLifecycleFile(t, filepath.Join(recoveryRoot, "spec", "README.md"), "# Spec\n")
-		receipt := LifecycleTransactionReceipt{ID: id, State: "committed", ProjectRoot: project, RecoveryRoot: recoveryRoot, BaselineDigest: "baseline", StagedDigest: "staged"}
+		receipt := LifecycleTransactionReceipt{ID: id, State: "committed", ProjectRoot: project, RecoveryRoot: recoveryRoot, BaselineDigest: lifecycleDigestAt(t, filepath.Join(recoveryRoot, "spec")), StagedDigest: lifecycleDigestAt(t, filepath.Join(project, "spec"))}
 		mustWriteLifecycleFile(t, filepath.Join(journal, id+".json"), mustMarshalReceipt(t, receipt))
 	}
 	writeReceipt("receipt-2")
@@ -550,12 +658,41 @@ func TestLifecycleDigestAndReceiptWriterErrorBranches(t *testing.T) {
 	if lifecycleSnapshotDigest(withoutFiles) == lifecycleSnapshotDigest(withFiles) || lifecycleSnapshotDigest(withFiles) == lifecycleSnapshotDigest(changedContent) {
 		t.Fatal("snapshot digest ignored file content")
 	}
+	ambiguousLeft := rootSnapshot(map[string]string{"a": "bc"})
+	ambiguousRight := rootSnapshot(map[string]string{"ab": "c"})
+	if lifecycleSnapshotDigest(ambiguousLeft) == lifecycleSnapshotDigest(ambiguousRight) {
+		t.Fatal("snapshot digest accepted ambiguous path/content framing")
+	}
+	modeChanged := rootSnapshot(map[string]string{"README.md": "content\n"})
+	modeChanged.files["README.md"] = specTreeFile{content: []byte("content\n"), mode: 0o600}
+	if lifecycleSnapshotDigest(withFiles) == lifecycleSnapshotDigest(modeChanged) {
+		t.Fatal("snapshot digest ignored file mode")
+	}
+	xattrChanged := rootSnapshot(map[string]string{"README.md": "content\n"})
+	xattrChanged.files["README.md"] = specTreeFile{content: []byte("content\n"), mode: 0o644, metadata: specTreeEntryMetadata{extendedAttributes: map[string][]byte{"user.test": []byte("x")}}}
+	if lifecycleSnapshotDigest(withFiles) == lifecycleSnapshotDigest(xattrChanged) {
+		t.Fatal("snapshot digest ignored extended attributes")
+	}
 	if err := writeLifecycleReceipt(&stagedSpecTree{}, LifecycleTransactionReceipt{ID: "bad.id"}); err == nil {
 		t.Fatal("unsafe receipt id accepted for write")
 	}
 	if err := writeLifecycleReceipt(&stagedSpecTree{}, LifecycleTransactionReceipt{ID: "receipt-1"}); err == nil {
 		t.Fatal("closed receipt project accepted for write")
 	}
+	originalSnapshot := lifecycleTransactionSnapshot
+	lifecycleTransactionSnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
+		return specTreeSnapshot{}, errors.New("manifest snapshot failed")
+	}
+	if err := verifyLifecycleSnapshot(&stagedSpecTree{}, rootSnapshot(nil)); err == nil {
+		t.Fatal("manifest snapshot failure accepted")
+	}
+	lifecycleTransactionSnapshot = originalSnapshot
+	originalRandomRead := lifecycleTransactionRandomRead
+	lifecycleTransactionRandomRead = func([]byte) (int, error) { return 0, errors.New("receipt temp entropy failed") }
+	if _, err := newLifecycleReceiptTempName("receipt-1.json"); err == nil {
+		t.Fatal("receipt temporary-name entropy failure accepted")
+	}
+	lifecycleTransactionRandomRead = originalRandomRead
 }
 
 func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
@@ -573,6 +710,9 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 	originalMatches := lifecycleTransactionChildMatches
 	originalExchange := lifecycleTransactionExchange
 	originalSnapshot := lifecycleTransactionSnapshot
+	originalVerify := lifecycleTransactionVerifySnapshot
+	originalBeforePublication := lifecycleTransactionBeforePublication
+	originalAfterExchange := lifecycleTransactionAfterExchange
 	originalNewID := lifecycleTransactionNewID
 	originalWrite := lifecycleTransactionWriteReceipt
 	reset := func() {
@@ -588,6 +728,9 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		lifecycleTransactionChildMatches = originalMatches
 		lifecycleTransactionExchange = originalExchange
 		lifecycleTransactionSnapshot = originalSnapshot
+		lifecycleTransactionVerifySnapshot = originalVerify
+		lifecycleTransactionBeforePublication = originalBeforePublication
+		lifecycleTransactionAfterExchange = originalAfterExchange
 		lifecycleTransactionNewID = originalNewID
 		lifecycleTransactionWriteReceipt = originalWrite
 	}
@@ -660,8 +803,24 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 			return originalWrite(project, receipt)
 		}
 	})
+	fails("before publication hook", func() {
+		lifecycleTransactionBeforePublication = func(*stagedSpecTree) error { return errors.New("before publication failed") }
+	})
 	fails("live identity", func() {
 		lifecycleTransactionChildMatches = func(*stagedSpecTree, string, *stagedSpecTree) error { return errors.New("live identity failed") }
+	})
+	fails("live manifest", func() {
+		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error { return errors.New("live manifest failed") }
+	})
+	fails("staged manifest", func() {
+		calls := 0
+		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error {
+			calls++
+			if calls == 2 {
+				return errors.New("staged manifest failed")
+			}
+			return nil
+		}
 	})
 	fails("staged identity", func() {
 		calls := 0
@@ -676,6 +835,9 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 	fails("atomic exchange", func() {
 		lifecycleTransactionExchange = func(*stagedSpecTree, *stagedSpecTree) error { return errors.New("exchange failed") }
 	})
+	fails("after exchange hook", func() {
+		lifecycleTransactionAfterExchange = func(*stagedSpecTree, *stagedSpecTree) error { return errors.New("after exchange failed") }
+	})
 	fails("published identity", func() {
 		calls := 0
 		lifecycleTransactionChildMatches = func(*stagedSpecTree, string, *stagedSpecTree) error {
@@ -686,6 +848,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 			return nil
 		}
 		lifecycleTransactionExchange = func(*stagedSpecTree, *stagedSpecTree) error { return nil }
+		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error { return nil }
 	})
 	fails("recovery identity", func() {
 		calls := 0
@@ -697,6 +860,27 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 			return nil
 		}
 		lifecycleTransactionExchange = func(*stagedSpecTree, *stagedSpecTree) error { return nil }
+		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error { return nil }
+	})
+	fails("published manifest", func() {
+		calls := 0
+		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error {
+			calls++
+			if calls == 3 {
+				return errors.New("published manifest failed")
+			}
+			return nil
+		}
+	})
+	fails("recovery manifest", func() {
+		calls := 0
+		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error {
+			calls++
+			if calls == 4 {
+				return errors.New("recovery manifest failed")
+			}
+			return nil
+		}
 	})
 	fails("committed receipt", func() {
 		calls := 0
@@ -709,6 +893,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		}
 		lifecycleTransactionChildMatches = func(*stagedSpecTree, string, *stagedSpecTree) error { return nil }
 		lifecycleTransactionExchange = func(*stagedSpecTree, *stagedSpecTree) error { return nil }
+		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error { return nil }
 	})
 }
 
@@ -918,11 +1103,11 @@ func TestLifecycleReceiptNativeFailureBranches(t *testing.T) {
 		{"receipt stat", func() {
 			lifecycleReceiptFstat = func(int, *unix.Stat_t) error { return errors.New("receipt stat failed") }
 		}},
-		{"receipt truncate", func() {
-			lifecycleReceiptFtruncate = func(int, int64) error { return errors.New("receipt truncate failed") }
+		{"receipt temporary name", func() {
+			lifecycleReceiptTempName = func(string) (string, error) { return "", errors.New("receipt temporary-name failed") }
 		}},
-		{"receipt seek", func() {
-			lifecycleReceiptSeek = func(int, int64, int) (int64, error) { return 0, errors.New("receipt seek failed") }
+		{"receipt invalid temporary name", func() {
+			lifecycleReceiptTempName = func(string) (string, error) { return "../receipt.json", nil }
 		}},
 		{"receipt write", func() {
 			lifecycleReceiptWriteAll = func(int, []byte) error { return errors.New("receipt write failed") }
@@ -933,6 +1118,9 @@ func TestLifecycleReceiptNativeFailureBranches(t *testing.T) {
 				_ = unix.Close(fd)
 				return errors.New("receipt close failed")
 			}
+		}},
+		{"receipt rename", func() {
+			lifecycleReceiptRenameAt = func(int, string, int, string) error { return errors.New("receipt rename failed") }
 		}},
 		{"journal fsync", func() {
 			calls := 0
@@ -958,6 +1146,18 @@ func TestLifecycleReceiptNativeFailureBranches(t *testing.T) {
 	}
 	if err := writeLifecycleReceiptNoFollow(project, "nonregular.json", []byte("receipt\n")); err == nil {
 		t.Fatal("non-regular receipt descriptor accepted")
+	}
+	resetLifecycleReceiptSeams(t)
+	if err := writeLifecycleReceiptNoFollow(project, "atomic.json", []byte("old\n")); err != nil {
+		t.Fatal(err)
+	}
+	lifecycleReceiptRenameAt = func(int, string, int, string) error { return errors.New("rename interrupted") }
+	if err := writeLifecycleReceiptNoFollow(project, "atomic.json", []byte("new\n")); err == nil {
+		t.Fatal("receipt rename interruption accepted")
+	}
+	contents, err := os.ReadFile(filepath.Join(project.path, ".specscore-recovery", "atomic.json"))
+	if err != nil || string(contents) != "old\n" {
+		t.Fatalf("non-atomic receipt update replaced prior record: %q, %v", contents, err)
 	}
 	resetLifecycleReceiptSeams(t)
 	lifecycleJournalOpenAt = func(int, string, int, uint32) (int, error) { return -1, unix.ENOENT }
@@ -1013,30 +1213,30 @@ func resetLifecycleReceiptSeams(t *testing.T) {
 	t.Helper()
 	originalReceiptOpenAt := lifecycleReceiptOpenAt
 	originalReceiptFstat := lifecycleReceiptFstat
-	originalReceiptFtruncate := lifecycleReceiptFtruncate
-	originalReceiptSeek := lifecycleReceiptSeek
 	originalReceiptWriteAll := lifecycleReceiptWriteAll
 	originalReceiptFsync := lifecycleReceiptFsync
 	originalReceiptClose := lifecycleReceiptClose
+	originalReceiptRenameAt := lifecycleReceiptRenameAt
+	originalReceiptTempName := lifecycleReceiptTempName
 	originalJournalOpenAt := lifecycleJournalOpenAt
 	originalJournalMkdirAt := lifecycleJournalMkdirAt
 	lifecycleReceiptOpenAt = unix.Openat
 	lifecycleReceiptFstat = unix.Fstat
-	lifecycleReceiptFtruncate = unix.Ftruncate
-	lifecycleReceiptSeek = unix.Seek
 	lifecycleReceiptWriteAll = writeAllAtFD
 	lifecycleReceiptFsync = unix.Fsync
 	lifecycleReceiptClose = unix.Close
+	lifecycleReceiptRenameAt = unix.Renameat
+	lifecycleReceiptTempName = newLifecycleReceiptTempName
 	lifecycleJournalOpenAt = unix.Openat
 	lifecycleJournalMkdirAt = unix.Mkdirat
 	t.Cleanup(func() {
 		lifecycleReceiptOpenAt = originalReceiptOpenAt
 		lifecycleReceiptFstat = originalReceiptFstat
-		lifecycleReceiptFtruncate = originalReceiptFtruncate
-		lifecycleReceiptSeek = originalReceiptSeek
 		lifecycleReceiptWriteAll = originalReceiptWriteAll
 		lifecycleReceiptFsync = originalReceiptFsync
 		lifecycleReceiptClose = originalReceiptClose
+		lifecycleReceiptRenameAt = originalReceiptRenameAt
+		lifecycleReceiptTempName = originalReceiptTempName
 		lifecycleJournalOpenAt = originalJournalOpenAt
 		lifecycleJournalMkdirAt = originalJournalMkdirAt
 	})
@@ -1049,6 +1249,15 @@ func mustMarshalReceipt(t *testing.T, receipt LifecycleTransactionReceipt) strin
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func lifecycleDigestAt(t *testing.T, specRoot string) string {
+	t.Helper()
+	snapshot, err := snapshotSpecTreeNoFollow(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lifecycleSnapshotDigest(snapshot)
 }
 
 func mustWriteLifecycleFile(t *testing.T, path, content string) {

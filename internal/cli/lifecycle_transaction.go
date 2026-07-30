@@ -3,13 +3,14 @@ package cli
 import (
 	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -42,6 +43,9 @@ var (
 	lifecycleTransactionChildMatches      = lifecycleProjectChildMatches
 	lifecycleTransactionExchange          = exchangeLifecycleProjectSpecs
 	lifecycleTransactionSnapshot          = snapshotStagedSpecTreeNoFollow
+	lifecycleTransactionVerifySnapshot    = verifyLifecycleSnapshot
+	lifecycleTransactionBeforePublication = func(*stagedSpecTree) error { return nil }
+	lifecycleTransactionAfterExchange     = func(*stagedSpecTree, *stagedSpecTree) error { return nil }
 	lifecycleTransactionNewID             = newLifecycleTransactionID
 	lifecycleTransactionRandomRead        = cryptorand.Read
 	lifecycleTransactionWriteReceipt      = writeLifecycleReceipt
@@ -131,7 +135,11 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 		return receipt, exitcode.UnexpectedErrorf("snapshotting staged lifecycle output: %v", err)
 	}
 	receipt.StagedDigest = lifecycleSnapshotDigest(staged)
+	receipt.State = "publishing"
 	if err := lifecycleTransactionWriteReceipt(project, receipt); err != nil {
+		return receipt, err
+	}
+	if err := lifecycleTransactionBeforePublication(stageSpec); err != nil {
 		return receipt, err
 	}
 	if err := lifecycleTransactionChildMatches(project, "spec", liveSpec); err != nil {
@@ -140,14 +148,29 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	if err := lifecycleTransactionChildMatches(stage, "spec", stageSpec); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("validating staged spec identity before publication: %v", err)
 	}
+	if err := lifecycleTransactionVerifySnapshot(liveSpec, baseline); err != nil {
+		return receipt, exitcode.UnexpectedErrorf("live spec changed before lifecycle publication: %v", err)
+	}
+	if err := lifecycleTransactionVerifySnapshot(stageSpec, staged); err != nil {
+		return receipt, exitcode.UnexpectedErrorf("staged lifecycle output changed before publication: %v", err)
+	}
 	if err := lifecycleTransactionExchange(project, stage); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("atomically publishing staged lifecycle project: %v", err)
+	}
+	if err := lifecycleTransactionAfterExchange(liveSpec, stageSpec); err != nil {
+		return receipt, err
 	}
 	if err := lifecycleTransactionChildMatches(project, "spec", stageSpec); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("published spec identity is uncertain; retained recovery tree at %s: %v", stagePath, err)
 	}
 	if err := lifecycleTransactionChildMatches(stage, "spec", liveSpec); err != nil {
 		return receipt, exitcode.UnexpectedErrorf("recovery predecessor identity is uncertain; retained recovery tree at %s: %v", stagePath, err)
+	}
+	if err := lifecycleTransactionVerifySnapshot(stageSpec, staged); err != nil {
+		return receipt, exitcode.UnexpectedErrorf("published lifecycle output changed during publication; retained recovery tree at %s: %v", stagePath, err)
+	}
+	if err := lifecycleTransactionVerifySnapshot(liveSpec, baseline); err != nil {
+		return receipt, exitcode.UnexpectedErrorf("recovery predecessor changed during lifecycle publication; retained recovery tree at %s: %v", stagePath, err)
 	}
 	receipt.State = "committed"
 	if err := lifecycleTransactionWriteReceipt(project, receipt); err != nil {
@@ -166,26 +189,78 @@ func newLifecycleTransactionID() (string, error) {
 
 func lifecycleSnapshotDigest(snapshot specTreeSnapshot) string {
 	h := sha256.New()
-	paths := snapshotPaths(snapshot)
-	for _, path := range paths {
-		_, _ = h.Write([]byte(path))
-		if file, ok := snapshot.files[strings.TrimPrefix(path, "f:")]; strings.HasPrefix(path, "f:") && ok {
-			_, _ = h.Write(file.content)
-		}
+	digestWriteString(h, "specscore.lifecycle.snapshot.v1")
+	directories := make([]string, 0, len(snapshot.directories))
+	for path := range snapshot.directories {
+		directories = append(directories, path)
+	}
+	sort.Strings(directories)
+	for _, path := range directories {
+		directory := snapshot.directories[path]
+		digestWriteString(h, "directory")
+		digestWriteString(h, path)
+		digestWriteUint64(h, uint64(directory.mode))
+		digestWriteMetadata(h, directory.metadata)
+	}
+	files := make([]string, 0, len(snapshot.files))
+	for path := range snapshot.files {
+		files = append(files, path)
+	}
+	sort.Strings(files)
+	for _, path := range files {
+		file := snapshot.files[path]
+		digestWriteString(h, "file")
+		digestWriteString(h, path)
+		digestWriteUint64(h, uint64(file.mode))
+		digestWriteBytes(h, file.content)
+		digestWriteMetadata(h, file.metadata)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func snapshotPaths(snapshot specTreeSnapshot) []string {
-	paths := make([]string, 0, len(snapshot.files)+len(snapshot.directories))
-	for path := range snapshot.directories {
-		paths = append(paths, "d:"+path)
+// digestWriteMetadata intentionally excludes atime. Descriptor reads made by
+// transaction and recovery verification can update atime, whereas the staged
+// materialiser still preserves the captured value. Every other observable
+// snapshot field that can affect lifecycle publication is length-delimited.
+func digestWriteMetadata(h io.Writer, metadata specTreeEntryMetadata) {
+	digestWriteInt64(h, metadata.modificationTime.Unix())
+	digestWriteUint64(h, uint64(metadata.modificationTime.Nanosecond()))
+	names := make([]string, 0, len(metadata.extendedAttributes))
+	for name := range metadata.extendedAttributes {
+		names = append(names, name)
 	}
-	for path := range snapshot.files {
-		paths = append(paths, "f:"+path)
+	sort.Strings(names)
+	digestWriteUint64(h, uint64(len(names)))
+	for _, name := range names {
+		digestWriteString(h, name)
+		digestWriteBytes(h, metadata.extendedAttributes[name])
 	}
-	sort.Strings(paths)
-	return paths
+}
+
+func digestWriteString(h io.Writer, value string) { digestWriteBytes(h, []byte(value)) }
+
+func digestWriteBytes(h io.Writer, value []byte) {
+	digestWriteUint64(h, uint64(len(value)))
+	_, _ = h.Write(value)
+}
+
+func digestWriteUint64(h io.Writer, value uint64) {
+	var encoded [8]byte
+	binary.BigEndian.PutUint64(encoded[:], value)
+	_, _ = h.Write(encoded[:])
+}
+
+func digestWriteInt64(h io.Writer, value int64) { digestWriteUint64(h, uint64(value)) }
+
+func verifyLifecycleSnapshot(tree *stagedSpecTree, expected specTreeSnapshot) error {
+	actual, err := lifecycleTransactionSnapshot(tree)
+	if err != nil {
+		return err
+	}
+	if lifecycleSnapshotDigest(actual) != lifecycleSnapshotDigest(expected) {
+		return fmt.Errorf("descriptor-rooted snapshot digest changed")
+	}
+	return nil
 }
 
 func writeLifecycleReceipt(project *stagedSpecTree, receipt LifecycleTransactionReceipt) error {

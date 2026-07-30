@@ -4,6 +4,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +24,7 @@ var (
 	snapshotOpenAt                  = unix.Openat
 	snapshotFileStat                = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
 	snapshotReadDirNames            = func(file *os.File) ([]string, error) { return file.Readdirnames(-1) }
+	snapshotSeek                    = func(file *os.File, offset int64, whence int) (int64, error) { return file.Seek(offset, whence) }
 	snapshotClose                   = func(file *os.File) error { return file.Close() }
 	snapshotFlistxattr              = unix.Flistxattr
 	snapshotFgetxattr               = unix.Fgetxattr
@@ -56,6 +58,9 @@ func snapshotStagedSpecTreeNoFollow(stage *stagedSpecTree) (specTreeSnapshot, er
 }
 
 func snapshotSpecTreeNoFollowDirectory(root *os.File) (specTreeSnapshot, error) {
+	if _, err := snapshotSeek(root, 0, io.SeekStart); err != nil {
+		return specTreeSnapshot{}, fmt.Errorf("rewinding spec tree descriptor: %w", err)
+	}
 	info, err := snapshotFileStat(root)
 	if err != nil {
 		return specTreeSnapshot{}, fmt.Errorf("statting spec tree descriptor: %w", err)
