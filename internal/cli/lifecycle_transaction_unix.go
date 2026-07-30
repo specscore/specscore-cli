@@ -35,6 +35,8 @@ var (
 	lifecycleReceiptTempName      = newLifecycleReceiptTempName
 	lifecycleJournalOpenAt        = unix.Openat
 	lifecycleJournalMkdirAt       = unix.Mkdirat
+	lifecyclePublicationExchange  = lifecycleExchangeSpecAt
+	lifecyclePublicationFsync     = unix.Fsync
 )
 
 func openLifecycleProjectNoFollow(path string) (*stagedSpecTree, error) {
@@ -109,7 +111,19 @@ func lifecycleProjectChildMatches(project *stagedSpecTree, name string, expected
 }
 
 func exchangeLifecycleProjectSpecs(realProject, stagedProject *stagedSpecTree) error {
-	return lifecycleExchangeSpecAt(int(stagedProject.root.Fd()), int(realProject.root.Fd()))
+	if err := lifecyclePublicationExchange(int(stagedProject.root.Fd()), int(realProject.root.Fd())); err != nil {
+		return err
+	}
+	// The exchange changes the spec entry in two distinct parent directories:
+	// the live project and its staged recovery project. Both must be durable
+	// before the committed receipt can be persisted.
+	if err := lifecyclePublicationFsync(int(realProject.root.Fd())); err != nil {
+		return fmt.Errorf("syncing live lifecycle publication parent: %w", err)
+	}
+	if err := lifecyclePublicationFsync(int(stagedProject.root.Fd())); err != nil {
+		return fmt.Errorf("syncing recovery lifecycle publication parent: %w", err)
+	}
+	return nil
 }
 
 func runLifecycleInStagedProject(stage *stagedSpecTree, op func(string) error) error {
@@ -264,7 +278,12 @@ func writeLifecycleReceiptNoFollow(project *stagedSpecTree, name string, data []
 	if err := lifecycleReceiptRenameAt(journalFD, temporaryName, journalFD, name); err != nil {
 		return err
 	}
-	return lifecycleReceiptFsync(journalFD)
+	if err := lifecycleReceiptFsync(journalFD); err != nil {
+		return err
+	}
+	// The journal directory itself is a child of the project. Syncing its
+	// parent makes a newly created journal durable as well as its receipt.
+	return lifecycleReceiptFsync(int(project.root.Fd()))
 }
 
 func newLifecycleReceiptTempName(name string) (string, error) {

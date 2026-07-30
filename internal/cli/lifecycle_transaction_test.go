@@ -148,6 +148,110 @@ func TestRunLifecycleTransactionDetectsPostExchangeManifestTampering(t *testing.
 	}
 }
 
+func TestRunLifecycleTransactionRetainsPublishingReceiptWhenPublicationSyncFails(t *testing.T) {
+	for _, failure := range []struct {
+		name string
+		call int
+	}{
+		{name: "live parent", call: 1},
+		{name: "recovery parent", call: 2},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			resetLifecyclePublicationSeams(t)
+			project := t.TempDir()
+			mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
+			calls := 0
+			lifecyclePublicationFsync = func(fd int) error {
+				calls++
+				if calls == failure.call {
+					return errors.New("publication parent sync interrupted")
+				}
+				return unix.Fsync(fd)
+			}
+			receipt, err := RunLifecycleTransaction(project, func(string) error {
+				return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
+			})
+			if err == nil || !strings.Contains(err.Error(), "publication parent") {
+				t.Fatalf("publication sync error = %v", err)
+			}
+			if receipt.State != "publishing" {
+				t.Fatalf("receipt state after interrupted publication sync = %q", receipt.State)
+			}
+			stored, readErr := readLifecycleReceipt(project, receipt.ID)
+			if readErr != nil {
+				t.Fatalf("publishing receipt was not retained for recovery inspection: %v", readErr)
+			}
+			if stored.State != "publishing" {
+				t.Fatalf("stored receipt state = %q, want publishing", stored.State)
+			}
+		})
+	}
+}
+
+func TestExchangeLifecycleProjectSpecsSyncFailureBranches(t *testing.T) {
+	projectRoot := t.TempDir()
+	project, err := openLifecycleProjectNoFollow(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+	stage, err := createLifecycleStageProjectNoFollow(project, "publication-sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+
+	for _, failure := range []struct {
+		name    string
+		arrange func()
+	}{
+		{name: "exchange", arrange: func() {
+			lifecyclePublicationExchange = func(int, int) error {
+				return errors.New("exchange interrupted")
+			}
+		}},
+		{name: "live parent sync", arrange: func() {
+			lifecyclePublicationExchange = func(int, int) error { return nil }
+			lifecyclePublicationFsync = func(int) error {
+				return errors.New("live parent sync interrupted")
+			}
+		}},
+		{name: "recovery parent sync", arrange: func() {
+			lifecyclePublicationExchange = func(int, int) error { return nil }
+			calls := 0
+			lifecyclePublicationFsync = func(int) error {
+				calls++
+				if calls == 2 {
+					return errors.New("recovery parent sync interrupted")
+				}
+				return nil
+			}
+		}},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			resetLifecyclePublicationSeams(t)
+			failure.arrange()
+			if err := exchangeLifecycleProjectSpecs(project, stage); err == nil {
+				t.Fatalf("%s failure accepted", failure.name)
+			}
+		})
+	}
+
+	resetLifecyclePublicationSeams(t)
+	lifecyclePublicationExchange = func(int, int) error { return nil }
+	var synced []int
+	lifecyclePublicationFsync = func(fd int) error {
+		synced = append(synced, fd)
+		return nil
+	}
+	if err := exchangeLifecycleProjectSpecs(project, stage); err != nil {
+		t.Fatalf("syncing both publication parents: %v", err)
+	}
+	if len(synced) != 2 || synced[0] != int(project.root.Fd()) || synced[1] != int(stage.root.Fd()) {
+		t.Fatalf("publication parent sync fds = %v", synced)
+	}
+}
+
 func TestLifecycleRecoveryAndContextRejectUnsafeInputs(t *testing.T) {
 	project := t.TempDir()
 	if _, err := readLifecycleReceipt(project, "../escape"); err == nil {
@@ -1132,6 +1236,16 @@ func TestLifecycleReceiptNativeFailureBranches(t *testing.T) {
 				return unix.Fsync(fd)
 			}
 		}},
+		{"journal parent fsync", func() {
+			calls := 0
+			lifecycleReceiptFsync = func(fd int) error {
+				calls++
+				if calls == 3 {
+					return errors.New("journal parent fsync failed")
+				}
+				return unix.Fsync(fd)
+			}
+		}},
 	} {
 		resetLifecycleReceiptSeams(t)
 		failure.arrange()
@@ -1239,6 +1353,18 @@ func resetLifecycleReceiptSeams(t *testing.T) {
 		lifecycleReceiptTempName = originalReceiptTempName
 		lifecycleJournalOpenAt = originalJournalOpenAt
 		lifecycleJournalMkdirAt = originalJournalMkdirAt
+	})
+}
+
+func resetLifecyclePublicationSeams(t *testing.T) {
+	t.Helper()
+	originalExchange := lifecyclePublicationExchange
+	originalFsync := lifecyclePublicationFsync
+	lifecyclePublicationExchange = lifecycleExchangeSpecAt
+	lifecyclePublicationFsync = unix.Fsync
+	t.Cleanup(func() {
+		lifecyclePublicationExchange = originalExchange
+		lifecyclePublicationFsync = originalFsync
 	})
 }
 
