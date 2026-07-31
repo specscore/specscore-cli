@@ -71,6 +71,12 @@ Implement `--amend-provenance` to overwrite (or clear) `implementation_commit` o
 
 Add optional `--note`/`--evidence` annotation flags to `task change-status`, valid on ANY transition (unlike the provenance flags, not restricted to `--to=complete`) — the founder-reported gap: no way to record "Task 1 of 7 is now complete" with a justification and supporting references while a plan is mid-execution (`plan reconcile --tasks=complete` is all-or-nothing; `plan change-status` only moves the Plan). `--note` is free text; `--evidence` is a comma-separated, unstructured reference list — deliberately distinct from the syntactically validated `implementation_commit`. Both write in the SAME atomic rewrite as the status transition (order: `**Implemented-by:**` → `**Note:**` → `**Evidence:**`, immediately after `**Status:**`), are rejected together with `--amend-provenance` (exit `2`, no silent drop), and reduce to a no-write when blank/empty after trimming. `pkg/plan.Task` gains `Note`/`Evidence` fields; neither participates in the transition matrix or the plan execution-band rollup.
 
+## Deferred AC Coverage
+
+- cli/task/change-status#ac:plan-inline-coordination-mismatch-rejected — added by the coordination-branch feature (spec/features/plan#coordination-branch, upstream), tracked by its own dedicated plan, not this one's original provenance-capture scope.
+- cli/task/change-status#ac:plan-inline-coordination-force-bypasses — same as above.
+- cli/task/change-status#ac:board-mode-unaffected-by-coordination — same as above.
+
 ## Open Questions
 
 None at this time.

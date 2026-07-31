@@ -104,6 +104,14 @@ A wrong or missing provenance reference on an already-`complete` task MUST be co
 - `--note`/`--evidence` MUST NOT be combined with `--amend-provenance` (exit `2`) — `--amend-provenance` is a provenance-only corrective re-stamp, not a transition, and silently dropping an annotation flag would be a footgun. A future amend-style corrective path for `**Note:**`/`**Evidence:**` is an [Open Question](#open-questions).
 - Neither field is part of the [KindTask](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#optional-task-id) transition matrix or the plan execution-band rollup: `**Note:**`/`**Evidence:**` are pure annotations that never influence [task-legal-transition-matrix](#req-task-legal-transition-matrix) or [plan#req:status-rollup](https://specscore.md/plan-specification#req-status-rollup). They are parsed by `pkg/plan` (`Task.Note`/`Task.Evidence`) but are NOT yet surfaced by `plan info`'s structured output — a human or tool reads them directly from the plan file today; surfacing them in `plan info` is a deferred [Open Question](#open-questions).
 
+#### REQ: plan-inline-coordination-branch-enforcement
+
+In plan-inline mode (`--plan`), when the resolved plan declares `**Coordination:** <owner>/<repo>@<branch>` (upstream [plan#coordination-branch](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#coordination-branch)), the verb MUST enforce the same check as [`plan change-status#req:coordination-branch-enforcement`](../../plan/change-status/README.md#req-coordination-branch-enforcement): resolve the CURRENT invocation's ambient git identity and compare it against the declared reference BEFORE any mutation (including a status transition or a corrective `--amend-provenance` re-stamp), exiting `1` (Conflict) on a mismatch, fail-closed on an unresolvable remote/branch. This is a DIFFERENT concept from the `single-actor-no-coordination` AC below: that AC is about the absence of a claim/release LOCK between multiple actors racing the same task; this REQ is about which repo/branch is authoritative for mutating the plan DOCUMENT itself. Board-mode tasks (no `--plan`) resolve to `tasks/<task>/README.md`, which carries no `**Coordination:**` field, so this REQ never applies to them.
+
+#### REQ: plan-inline-coordination-branch-override
+
+The verb MUST accept a `--force-coordination` boolean flag, honored only in plan-inline mode, with the same bypass-and-warn semantics as [`plan change-status#req:coordination-branch-override`](../../plan/change-status/README.md#req-coordination-branch-override). It has no effect in board mode.
+
 ## Parameters
 
 | Name | Required | Description |
@@ -123,12 +131,14 @@ A wrong or missing provenance reference on an already-`complete` task MUST be co
 | `--note` | No | Optional free-text annotation written as `**Note:**`. Valid on ANY transition. NOT supported with `--amend-provenance`. |
 | `--evidence` | No | Optional comma-separated supporting references written as `**Evidence:**`. Valid on ANY transition. NOT supported with `--amend-provenance`. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
+| `--force-coordination` | No | Plan-inline mode only. Bypasses the target plan's `**Coordination:**` repo/branch check for this invocation. Prints a `warning:` line to stderr; does not modify the plan's `**Coordination:**` field. No effect in board mode. |
 
 ## Exit codes
 
 | Code | Condition |
 |---|---|
 | `0` | Transition succeeded (status rewritten; provenance/note/evidence written if supplied; index synced) — OR — provenance amended via `--amend-provenance`. |
+| `1` | Plan-inline mode only: the target plan declares `**Coordination:** <owner>/<repo>@<branch>` and the current invocation's git repo/branch does not match (or the value is malformed) — refused BEFORE any mutation. Not reached when `--force-coordination` is set. |
 | `2` | Missing/unknown `--to`; a provenance flag with non-`complete` `--to`; a provenance flag set without `--commit`; `--amend-provenance` combined with `--to`; `--note`/`--evidence` combined with `--amend-provenance`. |
 | `3` | `<task>` resolves to no task in the requested store (plan-inline: no block with matching `**Id:**`). |
 | `4` | `(current_status, --to)` not a legal transition; or `--amend-provenance` on a task not in `complete`. |
@@ -141,12 +151,13 @@ A wrong or missing provenance reference on an already-`complete` task MUST be co
 | [implementation-commit-provenance](https://github.com/specscore/specscore/blob/main/spec/features/implementation-commit-provenance/README.md) (specscore) | The data-model contract this verb writes: reference format, optionality, actor-supplied/syntactic-only rules. This verb is its capture vehicle. |
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Cross-cutting contract this verb satisfies; its `scope-no-task-lifecycle` REQ is narrowed by [single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted). |
 | [cli/task](../README.md) | Parent group (`info`/`list`/`new`); its `no-lifecycle-in-mvp` REQ is narrowed to admit this verb. |
-| [cli/plan/change-status](../../plan/change-status/README.md) | Sibling. The plan execution band stays lint-derived; this verb sets **task** status, which is the rollup *input* (`lint --fix` then derives the plan's `Executing`/`Implemented`). |
-| [spec lint](../../spec/lint/README.md) | Invoked post-mutation for index/rollup sync; also owns syntactic validation of the provenance reference format. |
+| [cli/plan/change-status](../../plan/change-status/README.md) | Sibling. The plan execution band stays lint-derived; this verb sets **task** status, which is the rollup *input* (`lint --fix` then derives the plan's `Executing`/`Implemented`). It also shares this verb's `--force-coordination`-bypassable coordination-branch enforcement (REQ:plan-inline-coordination-branch-enforcement mirrors its REQ:coordination-branch-enforcement). |
+| [spec lint](../../spec/lint/README.md) | Invoked post-mutation for index/rollup sync; also owns syntactic validation of the provenance reference format, and (rule P-010) of the `**Coordination:**` field this verb enforces at runtime in plan-inline mode. |
+| [plan (upstream Feature)](https://specscore.md/plan-specification) | [plan#coordination-branch](https://specscore.md/plan-specification#coordination-branch) is the source of truth for the `**Coordination:**` field this verb enforces in plan-inline mode. |
 
 ## Not Doing / Out of Scope
 
-- Claim/release, locking, sync policy, conflict-aware exit codes, multi-agent coordination — remain orchestrator-owned ([single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)).
+- Claim/release, locking, sync policy, conflict-aware exit codes, multi-agent coordination — remain orchestrator-owned ([single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)). [plan-inline-coordination-branch-enforcement](#req-plan-inline-coordination-branch-enforcement) does NOT reopen this exclusion: it is a deterministic, single-invocation precondition check (ambient git identity vs. a static `**Coordination:**` field value already on disk), not a claim/release lock, not contention resolution between racing actors, and it introduces no distributed state. Exit `1` here means "this invocation is in the wrong place," not "another actor is mid-mutation."
 - Auto-deriving the commit from ambient `git HEAD`, and verifying the sha exists in the repo ([provenance-not-derived-not-verified](#req-provenance-not-derived-not-verified)).
 - Recording more than one commit per task (single reference — MVP).
 - Reachability detection / lost-commit recovery — the meta-spec feature's Not Doing carries.
@@ -287,6 +298,30 @@ CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path
 **Given** a board task `tasks/auth/README.md` already `**Status:** complete`
 **When** the user runs `specscore task change-status auth --amend-provenance --commit a1b2c3d --note "not allowed here"`
 **Then** the command exits `2` (InvalidArgs) naming `--amend-provenance` as incompatible with `--note`/`--evidence`, and the task file is byte-unchanged. The same holds for `--evidence` in place of `--note`.
+
+### AC: plan-inline-coordination-mismatch-rejected
+
+**Requirements:** [plan-inline-coordination-branch-enforcement](#req-plan-inline-coordination-branch-enforcement)
+
+**Given** `spec/plans/auth.md` declaring `**Coordination:** specscore/specscore-cli@main` with a task block `**Id:** setup` at `**Status:** in_progress`, invoked from a git checkout on a different branch
+**When** the user runs `specscore task change-status setup --plan auth --to=complete`
+**Then** the command exits `1` (Conflict) before any mutation, and the plan file is byte-unchanged.
+
+### AC: plan-inline-coordination-force-bypasses
+
+**Requirements:** [plan-inline-coordination-branch-override](#req-plan-inline-coordination-branch-override)
+
+**Given** the same mismatched checkout as `plan-inline-coordination-mismatch-rejected`
+**When** the user adds `--force-coordination`
+**Then** the command exits `0`, a `warning:`-prefixed line naming the plan and `--force-coordination` is printed to stderr, and the task's status is rewritten as usual.
+
+### AC: board-mode-unaffected-by-coordination
+
+**Requirements:** [plan-inline-coordination-branch-enforcement](#req-plan-inline-coordination-branch-enforcement)
+
+**Given** a board task `tasks/auth/README.md` in `**Status:** in_progress` (no `--plan`), invoked from a directory that is not a git repository at all
+**When** the user runs `specscore task change-status auth --to=complete`
+**Then** the command exits `0` exactly as before this feature — board mode never resolves a plan file, so no `**Coordination:**` check ever applies to it.
 
 ## Open Questions
 

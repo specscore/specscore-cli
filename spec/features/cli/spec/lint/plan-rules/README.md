@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-Adds nine lint rules (`P-001`–`P-009`) and the underlying single-file Plan parser to `specscore spec lint`. `P-001`–`P-004` validate task structure; `P-005` validates optional master/sub-plan composition through `**Parent:**`; `P-006` validates Plan document status; `P-007` derives the execution band from task rollup; `P-008` validates task implementation-provenance syntax; and `P-009` validates same-repository cross-plan prerequisites.
+Adds ten lint rules (`P-001`–`P-010`) and the underlying single-file Plan parser to `specscore spec lint`. `P-001`–`P-004` validate task structure; `P-005` validates optional master/sub-plan composition through `**Parent:**`; `P-006` validates Plan document status; `P-007` derives the execution band from task rollup; `P-008` validates task implementation-provenance syntax; `P-009` validates same-repository cross-plan prerequisites; and `P-010` validates the optional `**Coordination:**` plan-mutation-authority reference syntax.
 
 ## Problem
 
@@ -236,6 +236,26 @@ The parser MUST recognize an optional header line `**Prerequisite Plans:** <slug
 
 `P-009` MUST execute in the default lint suite at error severity. It MUST reject empty entries, malformed or duplicate slugs, self-references, and references that do not resolve to a single-file Plan at `spec/plans/<slug>.md`. It MUST reject dependency cycles and name a full cycle path. `P-009` is not autofixable because adding, removing, or ordering prerequisites requires author intent.
 
+### Lint rule P-010 — Coordination-branch reference format
+
+`P-010` validates the optional `**Coordination:**` body-metadata line that records which repo/branch a plan document's own mutations are authoritative on, per the upstream [plan#coordination-branch](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#coordination-branch) contract. Like `P-005`'s cross-repo `**Parent:**` and `P-008`'s `**Implemented-by:**`, the reference is validated **syntactically only** — `P-010` never resolves or scans the named repository, and never checks whether the branch exists. Resolving the reference against the CURRENT invocation's ambient git state — and refusing a mismatched mutation — is a separate, CLI-verb-level concern owned by `cli/plan/change-status`, `cli/plan/reconcile`, and `cli/task/change-status`, not by this lint rule.
+
+#### REQ: plan-coordination-field
+
+The parser MUST recognize an optional `**Coordination:** <owner>/<repo>@<branch>` body-metadata line on a single-file Plan (in the header block, conventionally after `**Supersedes:**`/`**Parent:**`). When the line is absent, the Plan carries no coordination-branch restriction and `P-010` MUST emit nothing for it.
+
+#### REQ: rule-p-010-registered
+
+`P-010` MUST be registered in the lint rule registry under the name `P-010` (uppercase, hyphenated), at severity `error`, and MUST execute as part of the default rule suite.
+
+#### REQ: rule-p-010-format
+
+`P-010` MUST report a violation when a present `**Coordination:**` value does not match the shape `<owner>/<repo>@<branch>`: `<owner>` and `<repo>` MUST each be non-empty GitHub-style identifiers with no `/` or `@` inside either, and `<branch>` MUST be a non-empty, whitespace-free git ref name (which MAY itself contain `/`, e.g. `feature/foo`). The violation MUST name the offending value and cite the Plan path and the `**Coordination:**` line.
+
+#### REQ: rule-p-010-not-autofixable
+
+`P-010` MUST NOT be autofixable in the MVP. Resolving a malformed `**Coordination:**` value requires user intent (fix the typo vs. remove the line entirely).
+
 ### Co-existence with existing plan checkers
 
 #### REQ: directory-plans-untouched
@@ -250,11 +270,11 @@ The parser MUST recognize an optional header line `**Prerequisite Plans:** <slug
 
 #### REQ: rules-in-default-suite
 
-`P-001` through `P-009` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
+`P-001` through `P-010` MUST be added to the canonical rule-name set returned by `lint.AllRuleNames()` so that `--rules` and `--ignore` accept them and `--rules P-001` runs only that rule. They MUST execute under the default rule suite (per `cli/spec/lint#req:default-runs-all-rules`).
 
 #### REQ: rules-emit-stable-violation-shape
 
-Violations from `P-001`–`P-009` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations, or the `**Prerequisite Plans:**` line for `P-009`).
+Violations from `P-001`–`P-010` MUST use the existing `lint.Violation` struct (`File`, `Line`, `Severity`, `Rule`, `Message`). No new severity, no new fields. `File` is the Plan path relative to the spec root; `Line` is the line in the Plan where the violation surfaces (e.g., the offending task's `### Task N:` heading line for task-scoped findings, the `## Acceptance Criteria` AC heading line in the source Feature for `P-001` coverage gaps, the `**Source Feature:**` line for `P-002` missing-Feature violations, the `**Prerequisite Plans:**` line for `P-009`, or the `**Coordination:**` line for `P-010`).
 
 ## Acceptance Criteria
 
@@ -359,6 +379,24 @@ Violations from `P-001`–`P-009` MUST use the existing `lint.Violation` struct 
 **Given** plans `alpha.md` declaring `**Prerequisite Plans:** beta` and `beta.md` declaring `**Prerequisite Plans:** alpha`
 **When** `specscore spec lint` runs
 **Then** a `P-009` violation is emitted whose message names the cycle `alpha → beta → alpha` (or a rotation), and `plan info alpha` exposes `prerequisite_plans` containing `beta`.
+
+### AC: coordination-ref-accepted (verifies REQ:rule-p-010-format, REQ:plan-coordination-field)
+
+**Given** a single-file Plan declaring `**Coordination:** specscore/specscore-cli@main` (and, separately, one declaring `**Coordination:** sneat-co/chess@feature/plan-coordination-branch`, exercising a branch value containing `/`),
+**When** `specscore spec lint` runs,
+**Then** `P-010` emits zero violations for either Plan — no repo/branch resolution or scan is performed.
+
+### AC: malformed-coordination-ref-flagged (verifies REQ:rule-p-010-format, REQ:rule-p-010-registered)
+
+**Given** a single-file Plan declaring `**Coordination:** not-a-coordination-ref`,
+**When** `specscore spec lint` runs,
+**Then** lint exits non-zero and a single `P-010` violation is emitted naming the malformed value, with `File` set to the Plan path and `Line` at the `**Coordination:**` line.
+
+### AC: absent-coordination-no-violation (verifies REQ:plan-coordination-field)
+
+**Given** a single-file Plan with no `**Coordination:**` line,
+**When** `specscore spec lint` runs,
+**Then** `P-010` emits zero violations for that Plan — the field is fully optional and backward compatible.
 
 ### AC: dangling-parent-flagged (verifies REQ:rule-p-005-same-repo-resolves)
 
@@ -465,6 +503,7 @@ Violations from `P-001`–`P-009` MUST use the existing `lint.Violation` struct 
 | [Status Vocabulary](https://github.com/specscore/specscore/blob/main/spec/features/status-vocabulary/README.md) | Owns the canonical Plan status set (`REQ:per-artifact-status-sets`, Plan row) that `P-006` enforces. Any change to the legal Plan statuses MUST land upstream first; `P-006` is the downstream enforcement. |
 | [SpecStudio `plan` Feature](https://github.com/specscore/specstudio-skills/blob/main/spec/features/skills/plan/README.md) | Locks the upstream contract for `P-001`–`P-004`, the `**Mode:**` / `**Status:**` / `**Depends-On:**` task fields, and the placeholder body token. Any change to that contract MUST land in the upstream Feature first; this CLI Feature is the downstream implementation. |
 | [SpecStudio `implement` Idea](https://github.com/specscore/specstudio-skills/blob/main/spec/ideas/specstudio-implement-skill.md) | Hard-blocks on these rules and parser extensions. `specstudio:implement` cannot ship until this Feature ships. |
+| [`cli/plan/change-status`](../../../plan/change-status/README.md), [`cli/plan/reconcile`](../../../plan/reconcile/README.md), [`cli/task/change-status`](../../../task/change-status/README.md) | Consume the `**Coordination:**` field `P-010` validates the syntax of: each verb resolves the CURRENT invocation's ambient git repo/branch and refuses a mismatched mutation, a concern deliberately out of scope for this (syntax-only) lint rule. |
 
 ## Open Questions
 

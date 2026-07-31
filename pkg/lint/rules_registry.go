@@ -136,6 +136,7 @@ var builtinRules = []Rule{
 	{ID: "P-007", Family: "plan", Severity: "error", Description: "Derives a single-file plan's execution-band **Status:** (Executing/Blocked/Implemented/Failed) from its task-status rollup when the body status is Approved or an execution band; --fix reconciles drift. Prep and disposition statuses are never overwritten."},
 	{ID: "P-008", Family: "plan", Severity: "error", Description: "Validates a task's optional **Implemented-by:** implementation-commit provenance value against the provenance-ref-format (<repo>@<sha> or bare <sha>, optional trailing branch; <sha> = 7-40 hex chars) — syntactic only, never scans the referenced repo."},
 	{ID: "P-009", Family: "plan", Severity: "error", Description: "Validates optional same-repository **Prerequisite Plans:** references: canonical slugs, existence, no duplicates or self-references, and an acyclic dependency graph."},
+	{ID: "P-010", Family: "plan", Severity: "error", Description: "Validates a plan's optional **Coordination:** reference against coordination-branch-format (<owner>/<repo>@<branch>) — syntactic only, never resolves or scans the named repo/branch."},
 
 	// Feature lint rules.
 	{ID: "feature-source-ideas-required", Family: "feature", Severity: "error", Description: "Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel."},

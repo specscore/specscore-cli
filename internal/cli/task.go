@@ -69,7 +69,15 @@ links). Both are written as their own field ("**Note:**" / "**Evidence:**")
 immediately after **Status:** (and after **Implemented-by:** when provenance
 is also written in the same call), in the same atomic rewrite. Neither is
 required, and — unlike ImplementationCommit — neither is syntactically
-validated. Not supported together with --amend-provenance.`,
+validated. Not supported together with --amend-provenance.
+
+With --plan, when the target plan declares **Coordination:**
+<owner>/<repo>@<branch>, this verb refuses (exit 1) unless the current git
+repo/branch matches — mutating a plan-inline task on a coordinated plan from
+anywhere else is a process violation, not a merge chore. --force-coordination
+bypasses the check for this invocation only, printing a warning naming what
+was bypassed. Board-mode tasks (no --plan) carry no Coordination field and
+are never subject to this check.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -89,6 +97,7 @@ validated. Not supported together with --amend-provenance.`,
 	// Annotation flags: optional on any transition, independent of --to value.
 	cmd.Flags().String("note", "", "optional free-text annotation written as **Note:** (any transition; not supported with --amend-provenance)")
 	cmd.Flags().String("evidence", "", "optional comma-separated supporting references written as **Evidence:** (any transition; not supported with --amend-provenance)")
+	cmd.Flags().Bool(coordinationForceFlagName, false, coordinationForceFlagUsage+" (only applies with --plan, when the target plan declares **Coordination:**)")
 	return cmd
 }
 
@@ -403,6 +412,15 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
 	}
 
+	// Coordination-branch enforcement: when the plan declares
+	// **Coordination:**, mutating one of its inline tasks is authoritative
+	// only on the declared repo/branch
+	// (spec/features/plan/README.md#coordination-branch, upstream).
+	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
+	if cerr := enforceCoordinationBranch(p, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
+		return cerr
+	}
+
 	// Resolve the task block by its stable **Id:** field.
 	var target *plan.Task
 	for i := range p.Tasks {
@@ -573,6 +591,12 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
 		}
 		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
+	}
+
+	// Coordination-branch enforcement: see runTaskChangeStatusPlanInline.
+	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
+	if cerr := enforceCoordinationBranch(p, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
+		return cerr
 	}
 
 	var target *plan.Task

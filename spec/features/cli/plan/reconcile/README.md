@@ -100,6 +100,14 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 
 [`plan change-status`](../change-status/README.md)'s execution-band-not-settable error (triggered by passing an execution-band value as `--to`) MUST name this verb as the corrective path when the underlying work was actually delivered outside the tracked flow, so a caller who hits the illegal-jump wall is pointed at the supported alternative rather than left to hand-edit the file.
 
+### REQ: coordination-branch-enforcement
+
+Reconcile MUST enforce the same coordination-branch check as [`plan change-status#req:coordination-branch-enforcement`](../change-status/README.md#req-coordination-branch-enforcement): when the resolved plan declares `**Coordination:** <owner>/<repo>@<branch>` (upstream [plan#coordination-branch](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#coordination-branch)), the verb MUST resolve the CURRENT invocation's ambient git identity and compare it against the declared reference BEFORE any mutation, exiting `1` (Conflict) on a mismatch (including a malformed value) with the same fail-closed rules (unresolvable remote, non-GitHub remote, or detached HEAD all count as a mismatch). A plan with no `**Coordination:**` field is unrestricted.
+
+### REQ: coordination-branch-override
+
+The verb MUST accept a `--force-coordination` boolean flag with the same bypass-and-warn semantics as [`plan change-status#req:coordination-branch-override`](../change-status/README.md#req-coordination-branch-override).
+
 ## Parameters
 
 | Name | Required | Description |
@@ -115,12 +123,14 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 | `--evidence` | No | Comma-separated commit SHAs / PR URLs / file paths backing the reconciliation; appended to the same paragraph as `--note`. |
 | `--force-tasks` | Conditional | Comma-separated task numbers explicitly acknowledging the override of a `failed`/`aborted` task to `complete`. Required only when such a task exists and is not named here (see [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement)); otherwise unused. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
+| `--force-coordination` | No | Bypasses the plan's `**Coordination:**` repo/branch check for this invocation. Prints a `warning:` line to stderr; does not modify the plan's `**Coordination:**` field. |
 
 ## Exit codes
 
 | Code | Condition |
 |---|---|
 | `0` | Reconciliation succeeded; plan and task Status lines rewritten; Resolution paragraph and (on first run) Reconciled marker written; plans index synced. |
+| `1` | The plan declares `**Coordination:** <owner>/<repo>@<branch>` and the current invocation's git repo/branch does not match (or the value is malformed) — refused BEFORE any mutation. Not reached when `--force-coordination` is set. |
 | `2` | Missing/malformed `<slug>`; missing or unrecognized `--tasks`; missing/blank `--note`; malformed `--force-tasks` value (not a comma-separated list of positive integers). |
 | `3` | No Plan file at `spec/plans/<slug>.md` (nor the directory form). |
 | `4` | Plan resolves only to the directory form; plan is in a terminal disposition status; plan has no embedded tasks; a task is missing an explicit `**Status:**` line; a task is `failed`/`aborted` and not acknowledged via `--force-tasks`; or the plan is already reconciled (re-run no-op). |
@@ -134,7 +144,7 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 | [`cli/task/change-status`](../../task/change-status/README.md) | Owns single-task, single-actor transitions (board or plan-inline `--id`); reconcile owns the coarser "every embedded task at once, out of band" correction and does not replace it for day-to-day task completion. |
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Reconcile reuses the shared `## Resolution` note mechanism and the index-sync-on-success contract, but does NOT use the shared state-machine validation (`Transition`/`Validate`) — see REQ:no-silent-history. |
 | [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rule P-007 (execution-band derivation) sees the post-reconcile plan already at its correct, self-consistent state, so it is a no-op on a freshly reconciled plan. |
-| [plan (upstream Feature)](https://specscore.md/plan-specification) | `status-rollup` and `execution-status-derived` are the canonical rules this verb's target-status derivation realizes (REQ:derived-not-asserted-target). |
+| [plan (upstream Feature)](https://specscore.md/plan-specification) | `status-rollup` and `execution-status-derived` are the canonical rules this verb's target-status derivation realizes (REQ:derived-not-asserted-target). [plan#coordination-branch](https://specscore.md/plan-specification#coordination-branch) is the source of truth this verb enforces (REQ:coordination-branch-enforcement). |
 
 ## Dependencies
 
@@ -262,6 +272,22 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 **Given** a plan in `**Status:** Approved`
 **When** the user runs `specscore plan change-status auth --to=implemented`
 **Then** the command exits `2`, and the stderr message names `specscore plan reconcile` as the path for recording work delivered outside the tracked flow.
+
+### AC: coordination-mismatch-rejected
+
+**Requirements:** [coordination-branch-enforcement](#req-coordination-branch-enforcement)
+
+**Given** a plan eligible for reconciliation that declares `**Coordination:** specscore/specscore-cli@main`, invoked from a checkout on a different branch
+**When** the user runs `specscore plan reconcile auth --tasks=complete --note "x"`
+**Then** the command exits `1` (Conflict) before any mutation, and the plan is unchanged.
+
+### AC: coordination-force-bypasses
+
+**Requirements:** [coordination-branch-override](#req-coordination-branch-override)
+
+**Given** the same mismatched checkout as `coordination-mismatch-rejected`
+**When** the user adds `--force-coordination`
+**Then** the command exits `0`, a `warning:`-prefixed line naming the plan and `--force-coordination` is printed to stderr, and reconciliation proceeds normally.
 
 ## Open Questions
 

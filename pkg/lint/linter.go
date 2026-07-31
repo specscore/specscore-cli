@@ -90,7 +90,7 @@ func newLinter(opts Options) *linter {
 	pc.fixP007 = opts.fixRequested("P-007")
 	pc.fixP006Legacy = opts.fixRequested("P-006")
 	pc.fixP004Legacy = opts.fixRequested("P-004")
-	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005", "P-006", "P-007", "P-008", "P-009"} {
+	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005", "P-006", "P-007", "P-008", "P-009", "P-010"} {
 		l.ruleSet[n] = pc
 	}
 

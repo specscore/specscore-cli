@@ -66,6 +66,8 @@ type Plan struct {
 	OwnerLine         int      // 1-based line of the field; 0 when absent
 	Parent            string   // value of `**Parent:**` (empty when missing) — master/sub-plan composition
 	ParentLine        int      // 1-based line of the field; 0 when absent
+	Coordination      string   // value of `**Coordination:**` (empty when missing) — <owner>/<repo>@<branch> mutation-authority reference
+	CoordinationLine  int      // 1-based line of the field; 0 when absent
 	PrerequisitePlans []string // same-repo predecessor plan slugs from `**Prerequisite Plans:**`
 	PrerequisiteLine  int      // 1-based line of the field; 0 when absent
 	PrerequisiteRaw   string   // raw field value, retained so lint can distinguish malformed input
@@ -243,6 +245,9 @@ func Parse(path string) (*Plan, error) {
 			case "Parent":
 				p.Parent = val
 				p.ParentLine = i + 1
+			case "Coordination":
+				p.Coordination = val
+				p.CoordinationLine = i + 1
 			case "Prerequisite Plans":
 				p.PrerequisiteRaw = val
 				p.PrerequisiteLine = i + 1

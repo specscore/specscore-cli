@@ -1117,3 +1117,109 @@ func TestValidImplementedByRef(t *testing.T) {
 		}
 	}
 }
+
+// ----- P-010 coordination-branch reference format -----
+
+// p010Plan writes a minimal, otherwise-clean single-file plan whose header
+// carries the given **Coordination:** value (omitted entirely when
+// coordination == "").
+func (e *planRulesEnv) p010Plan(t *testing.T, coordination string) {
+	t.Helper()
+	e.writeFeature(t, "sample", "alpha")
+	var b strings.Builder
+	b.WriteString("# Plan: Sample\n\n**Source Feature:** sample\n**Mode:** full\n")
+	if coordination != "" {
+		b.WriteString("**Coordination:** " + coordination + "\n")
+	}
+	b.WriteString("\n## Tasks\n\n### Task 1: First\n**Verifies:** sample#ac:alpha\n**Status:** complete\n")
+	e.writePlan(t, "sample", b.String())
+}
+
+// AC: P-010 is registered in the canonical rule-name set and is filterable.
+func TestP010_RegisteredAndFilterable(t *testing.T) {
+	if !AllRuleNames()["P-010"] {
+		t.Fatal("P-010 missing from AllRuleNames()")
+	}
+}
+
+func TestP010_WellFormedRefAccepted(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p010Plan(t, "specscore/specscore-cli@main")
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-010", ""); got != nil {
+		t.Fatalf("unexpected P-010 violation: %+v", got)
+	}
+}
+
+// AC: a branch containing '/' (e.g. feature/foo) is accepted.
+func TestP010_BranchWithSlashAccepted(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p010Plan(t, "specscore/specscore-cli@feature/plan-coordination-branch")
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-010", ""); got != nil {
+		t.Fatalf("unexpected P-010 violation: %+v", got)
+	}
+}
+
+func TestP010_MalformedRefRejected(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p010Plan(t, "not-a-coordination-ref")
+	v := runRules(t, e)
+	got := hasViolation(v, "P-010", "not-a-coordination-ref")
+	if got == nil {
+		t.Fatalf("expected P-010 violation naming the value, got %d violations: %+v", len(v), v)
+	}
+	if !strings.Contains(got.Message, "coordination-branch-format") {
+		t.Fatalf("violation should cite coordination-branch-format, got: %q", got.Message)
+	}
+}
+
+func TestP010_AbsentFieldNoViolation(t *testing.T) {
+	e := newPlanRulesEnv(t)
+	e.p010Plan(t, "") // no **Coordination:** line at all
+	v := runRules(t, e)
+	if got := hasViolation(v, "P-010", ""); got != nil {
+		t.Fatalf("absent coordination must not violate, got: %+v", got)
+	}
+}
+
+// TestParseCoordinationRef exercises the purely-syntactic parser over every
+// accepted and malformed shape. It touches no filesystem/git, which is the
+// structural guarantee that P-010 never scans the named repo/branch.
+func TestParseCoordinationRef(t *testing.T) {
+	accepted := []struct {
+		ref                             string
+		wantOwner, wantRepo, wantBranch string
+	}{
+		{"specscore/specscore-cli@main", "specscore", "specscore-cli", "main"},
+		{"sneat-co/chess@feature/plan-coordination-branch", "sneat-co", "chess", "feature/plan-coordination-branch"},
+		{"o/r@b", "o", "r", "b"},
+	}
+	for _, tt := range accepted {
+		owner, repo, branch, ok := ParseCoordinationRef(tt.ref)
+		if !ok {
+			t.Errorf("ParseCoordinationRef(%q): expected ok, got malformed", tt.ref)
+			continue
+		}
+		if owner != tt.wantOwner || repo != tt.wantRepo || branch != tt.wantBranch {
+			t.Errorf("ParseCoordinationRef(%q) = %q/%q@%q, want %q/%q@%q",
+				tt.ref, owner, repo, branch, tt.wantOwner, tt.wantRepo, tt.wantBranch)
+		}
+	}
+
+	malformed := []string{
+		"",    // empty
+		"   ", // whitespace only
+		"not a coordination ref with spaces",
+		"specscore-cli@main",       // missing owner/
+		"specscore/@main",          // empty repo
+		"/specscore-cli@main",      // empty owner
+		"specscore/specscore-cli",  // missing @branch
+		"specscore/specscore-cli@", // empty branch
+	}
+	for _, ref := range malformed {
+		if _, _, _, ok := ParseCoordinationRef(ref); ok {
+			t.Errorf("ParseCoordinationRef(%q): expected malformed, got ok", ref)
+		}
+	}
+}

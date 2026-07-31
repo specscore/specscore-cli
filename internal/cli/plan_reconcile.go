@@ -61,6 +61,12 @@ unsupported by this verb); or nothing would actually change — the plan is
 already reconciled, so re-running is a no-op refusal rather than a silent
 success.
 
+When the plan declares **Coordination:** <owner>/<repo>@<branch>, this verb
+refuses (exit 1) unless the current git repo/branch matches — reconciling a
+coordinated plan from anywhere else is a process violation, not a merge
+chore. --force-coordination bypasses the check for this invocation only,
+printing a warning naming what was bypassed.
+
 Examples:
 
   specscore plan reconcile auth --tasks=complete --note "implemented directly during the incident; tracked flow was skipped"
@@ -77,6 +83,7 @@ Examples:
 	cmd.Flags().String("evidence", "", "optional comma-separated commit SHAs / PR URLs / file paths backing the reconciliation")
 	cmd.Flags().String("force-tasks", "", "comma-separated task numbers to explicitly acknowledge overriding from failed/aborted to complete; required only when such tasks exist")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool(coordinationForceFlagName, false, coordinationForceFlagUsage)
 	return cmd
 }
 
@@ -137,6 +144,23 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 	specRoot, err := resolveSpecRoot(projectFlag)
 	if err != nil {
 		return err
+	}
+
+	// Coordination-branch enforcement: when the plan declares
+	// **Coordination:**, reconciliation is authoritative only on the declared
+	// repo/branch (spec/features/plan/README.md#coordination-branch,
+	// upstream; see cli/plan/reconcile for the enforcement contract).
+	planPath, perr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
+	if perr != nil {
+		return perr
+	}
+	parsedPlan, perr := plan.Parse(planPath)
+	if perr != nil {
+		return exitcode.UnexpectedErrorf("parsing plan %s: %v", slug, perr)
+	}
+	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
+	if cerr := enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
+		return cerr
 	}
 
 	result, err := plan.Reconcile(plan.ReconcileOptions{
