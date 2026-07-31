@@ -63,6 +63,57 @@ func TestHeadSHA_NoGitRepo(t *testing.T) {
 	}
 }
 
+// TestCurrentBranch initialises a real git repo on a named branch and
+// asserts CurrentBranch reports that name.
+func TestCurrentBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "feature/plan-coordination-branch")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "T")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "initial")
+
+	got, err := CurrentBranch(dir)
+	if err != nil {
+		t.Fatalf("CurrentBranch returned error: %v", err)
+	}
+	if got != "feature/plan-coordination-branch" {
+		t.Errorf("CurrentBranch = %q; want %q", got, "feature/plan-coordination-branch")
+	}
+}
+
+// TestCurrentBranch_DetachedHead asserts CurrentBranch errors rather than
+// guessing a name when HEAD is detached.
+func TestCurrentBranch_DetachedHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "T")
+	runGit(t, dir, "commit", "--allow-empty", "-q", "-m", "initial")
+	runGit(t, dir, "checkout", "-q", "--detach", "HEAD")
+
+	if _, err := CurrentBranch(dir); err == nil {
+		t.Fatal("CurrentBranch on detached HEAD returned nil error; want error")
+	}
+}
+
+// TestCurrentBranch_NoGitRepo asserts CurrentBranch errors against a
+// directory that is not a git repo.
+func TestCurrentBranch_NoGitRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	if _, err := CurrentBranch(dir); err == nil {
+		t.Fatal("CurrentBranch on non-git dir returned nil error; want error")
+	}
+}
+
 func TestParse(t *testing.T) {
 	tests := []struct {
 		in        string

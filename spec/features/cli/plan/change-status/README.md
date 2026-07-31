@@ -87,6 +87,14 @@ A `Superseded` plan MUST reference its successor plan (canonical [plan#req:valid
 
 The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success)) MUST sync the plans index (`spec/plans/README.md`) to the new status. The verb reuses the same post-mutation lint hook as `idea`/`feature change-status`; the lint pass IS the sync. The verb's exit `0` depends on the rewrite AND the lint pass both succeeding; a lint failure rolls back every mutation and exits `10`.
 
+#### REQ: coordination-branch-enforcement
+
+When the resolved plan declares `**Coordination:** <owner>/<repo>@<branch>` (upstream [plan#coordination-branch](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#coordination-branch)), the verb MUST resolve the CURRENT invocation's ambient git identity — the `origin` remote (owner/repo, parsed per `pkg/gitremote`) and the checked-out branch, both rooted at the resolved project root — and compare it against the declared reference BEFORE any mutation. Owner/repo comparison is case-insensitive; branch comparison is exact. An unresolvable git remote, a non-GitHub remote, a detached HEAD, or a directory that is not a git repository at all MUST be treated as a mismatch (fail closed), never silently accepted. A present-but-malformed `**Coordination:**` value (already a `P-010` lint violation) MUST also be treated as a mismatch rather than silently skipping the check. A mismatch MUST exit `1` (Conflict) with a message naming the plan, the declared reference, what was actually found, and the `--force-coordination` override, BEFORE any file mutation. A plan with no `**Coordination:**` field is unrestricted and this check is a no-op.
+
+#### REQ: coordination-branch-override
+
+The verb MUST accept a `--force-coordination` boolean flag. When set, a coordination-branch mismatch (including a malformed value) MUST NOT be refused: the verb prints a `warning:`-prefixed line to stderr naming the plan and what was bypassed, then proceeds with the mutation exactly as if the check had passed. `--force-coordination` has no effect when the plan declares no `**Coordination:**` field, or when the current invocation already matches.
+
 ## Parameters
 
 | Name | Required | Description |
@@ -101,12 +109,14 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 | `--note` | Conditional | Markdown appended as a `## Resolution` section. **Required** for `--to=withdrawn` and `--to=superseded`; optional otherwise. |
 | `--successor` | Conditional | Slug of the plan that replaces this one. **Required** for `--to=superseded` (must resolve to an existing plan), rejected for every other transition. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
+| `--force-coordination` | No | Bypasses the plan's `**Coordination:**` repo/branch check for this invocation. Prints a `warning:` line to stderr; does not modify the plan's `**Coordination:**` field. No effect when the plan declares no `**Coordination:**` field, or the check already passes. |
 
 ## Exit codes
 
 | Code | Condition |
 |---|---|
 | `0` | Transition succeeded; file rewritten; plans index synced. |
+| `1` | The plan declares `**Coordination:** <owner>/<repo>@<branch>` and the current invocation's git repo/branch does not match (or the value is malformed) — refused BEFORE any mutation. Not reached when `--force-coordination` is set. |
 | `2` | Missing/malformed `<slug>`; missing `--to`; unrecognized `--to`; an execution-band `--to`; missing required `--note` on `--to=superseded`/`--to=withdrawn`; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No Plan file at `spec/plans/<slug>.md` (nor the directory form). |
 | `4` | `(current_status, --to)` is not a legal transition per the matrix. |
@@ -119,10 +129,10 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies; this verb declares no relocation side effect and consumes the `reason-required-transitions` mechanism for `Withdrawn`/`Superseded`. |
 | [`cli/feature/change-status`](../../feature/change-status/README.md) | Closest sibling — also a flat, relocation-free `change-status`. Mirrors its structure and its index-sync coupling. |
 | [`cli/idea/change-status`](../../idea/change-status/README.md) | Sibling verb for the Idea kind (which DOES relocate on archive). |
-| [`cli/plan/reconcile`](../reconcile/README.md) | Deliberately separate verb for the out-of-band correction path: when work was delivered outside the tracked flow, this verb's execution-band-rejection error points there instead of letting a caller hand-edit the file. |
+| [`cli/plan/reconcile`](../reconcile/README.md) | Deliberately separate verb for the out-of-band correction path: when work was delivered outside the tracked flow, this verb's execution-band-rejection error points there instead of letting a caller hand-edit the file. Both verbs independently enforce the same coordination-branch check. |
 | [plan (CLI group)](../README.md) | Parent group (`info`/`list`/`new`); this adds the lifecycle verb. |
-| [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rule P-007 derives the execution band that this verb refuses to set. |
-| [plan (upstream Feature)](https://specscore.md/plan-specification) | The canonical lifecycle: `status-transitions`, `valid-statuses`, `execution-status-derived`, and `status-rollup` are the source of truth this verb realizes for the human band. |
+| [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rule P-007 derives the execution band that this verb refuses to set; rule P-010 validates the syntax of the `**Coordination:**` field this verb enforces at runtime. |
+| [plan (upstream Feature)](https://specscore.md/plan-specification) | The canonical lifecycle: `status-transitions`, `valid-statuses`, `execution-status-derived`, and `status-rollup` are the source of truth this verb realizes for the human band. [plan#coordination-branch](https://specscore.md/plan-specification#coordination-branch) is the source of truth for the `**Coordination:**` field's syntax and intended meaning; this verb is its enforcement. |
 
 ## Dependencies
 
@@ -281,6 +291,30 @@ The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:in
 **Given** `spec/plans/auth.md` in `**Status:** Draft`
 **When** `spec lint --fix` fails after a successful Status rewrite
 **Then** a full rollback restores the original `**Status:**` (and removes any `## Resolution` note or `**Superseded By:**` line), and the command exits `10` with stderr naming the lint violation(s).
+
+### AC: coordination-mismatch-rejected
+
+**Requirements:** [cli/plan/change-status#req:coordination-branch-enforcement](#req-coordination-branch-enforcement)
+
+**Given** `spec/plans/auth.md` in `**Status:** Draft` and declaring `**Coordination:** specscore/specscore-cli@main`, invoked from a git checkout whose origin remote is `specscore/specscore-cli` but whose checked-out branch is `some-other-branch`
+**When** the user runs `specscore plan change-status auth --to="in review"`
+**Then** the command exits `1` (Conflict) BEFORE any mutation, with a stderr message naming `auth`, the declared `specscore/specscore-cli@main` reference, the actual branch, and `--force-coordination`. The plan file is byte-for-byte unchanged.
+
+### AC: coordination-match-proceeds
+
+**Requirements:** [cli/plan/change-status#req:coordination-branch-enforcement](#req-coordination-branch-enforcement)
+
+**Given** the same plan as `coordination-mismatch-rejected`, invoked from a git checkout on branch `main` with origin remote `specscore/specscore-cli`
+**When** the user runs `specscore plan change-status auth --to="in review"`
+**Then** the command exits `0` exactly as it would with no `**Coordination:**` field, and no warning is printed.
+
+### AC: coordination-force-bypasses
+
+**Requirements:** [cli/plan/change-status#req:coordination-branch-override](#req-coordination-branch-override)
+
+**Given** the same mismatched checkout as `coordination-mismatch-rejected`
+**When** the user runs `specscore plan change-status auth --to="in review" --force-coordination`
+**Then** the command exits `0`, a `warning:`-prefixed line naming `auth` and `--force-coordination` is printed to stderr, and the status is rewritten exactly as in the matched case.
 
 ## Open Questions
 

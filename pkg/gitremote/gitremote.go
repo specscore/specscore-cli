@@ -68,3 +68,18 @@ func HeadSHA(dir string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// CurrentBranch returns the short name of the branch currently checked out
+// at dir (e.g. "main", "feature/foo"). It returns an error when dir is not a
+// git repository, or when HEAD is detached (not pointing at a branch) — a
+// detached HEAD has no branch name to report, and callers that need "is this
+// invocation on branch X" (e.g. coordination-branch enforcement) should treat
+// that error as "not on X" rather than guessing a name.
+func CurrentBranch(dir string) (string, error) {
+	cmd := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git symbolic-ref --short HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}

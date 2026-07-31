@@ -236,6 +236,9 @@ func lintPlan(p *plan.Plan, relPath, featuresDir string) []Violation {
 	// P-008 implementation-commit-provenance ref-format. Syntactic only.
 	v = append(v, lintP008(p, relPath)...)
 
+	// P-010 coordination-branch reference format. Syntactic only.
+	v = append(v, lintP010(p, relPath)...)
+
 	return v
 }
 
@@ -1248,4 +1251,51 @@ func findPrerequisiteCycle(edges map[string][]string) []string {
 		}
 	}
 	return nil
+}
+
+// ----- P-010 coordination-branch reference format -----
+
+// coordinationRe matches `<owner>/<repo>@<branch>`
+// (plan#req:coordination-branch-format): `<owner>` and `<repo>` are simple
+// GitHub-style identifiers (no '/' or '@' within either); `<branch>` is any
+// non-empty, whitespace-free git ref name run to the end of the value (it MAY
+// itself contain '/', e.g. `feature/foo`).
+var coordinationRe = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)@(\S+)$`)
+
+// ParseCoordinationRef parses a **Coordination:** value into its
+// owner/repo/branch components, validated SYNTACTICALLY ONLY — mirroring the
+// P-005/P-008 cross-repo precedent, it never resolves or scans the named
+// repository or checks whether the branch exists. ok is false for an empty or
+// malformed value. Exported so the CLI's coordination-branch enforcement
+// (`plan change-status`/`reconcile`, `task change-status --plan`) can parse
+// the same field this rule validates, without duplicating the grammar.
+func ParseCoordinationRef(val string) (owner, repo, branch string, ok bool) {
+	m := coordinationRe.FindStringSubmatch(strings.TrimSpace(val))
+	if m == nil {
+		return "", "", "", false
+	}
+	return m[1], m[2], m[3], true
+}
+
+// lintP010 validates a plan's optional **Coordination:** header field against
+// coordination-branch-format. An absent field is valid — the field is fully
+// optional, so `lintP010` reports nothing when `p.CoordinationLine == 0` (the
+// field never appeared at all). A present-but-malformed value is flagged.
+// Purely syntactic: the named repo/branch is never resolved.
+func lintP010(p *plan.Plan, relPath string) []Violation {
+	if p.CoordinationLine == 0 {
+		return nil
+	}
+	if _, _, _, ok := ParseCoordinationRef(p.Coordination); ok {
+		return nil
+	}
+	return []Violation{{
+		File:     relPath,
+		Line:     p.CoordinationLine,
+		Severity: "error",
+		Rule:     "P-010",
+		Message: fmt.Sprintf(
+			"malformed **Coordination:** value %q (expected coordination-branch-format <owner>/<repo>@<branch>)",
+			p.Coordination),
+	}}
 }

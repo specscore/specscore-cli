@@ -280,6 +280,56 @@ func TestParse_ParentField(t *testing.T) {
 	}
 }
 
+func TestParse_CoordinationField(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: Sub
+
+**Status:** Draft
+**Source Feature:** foo
+**Supersedes:** —
+**Coordination:** specscore/specscore-cli@main
+
+## Tasks
+
+### Task 1: One
+
+**Verifies:** foo#ac:x
+`
+	p, err := Parse(writePlan(t, dir, "sub", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Coordination != "specscore/specscore-cli@main" {
+		t.Fatalf("got coordination %q", p.Coordination)
+	}
+	if p.CoordinationLine != 6 {
+		t.Fatalf("got coordination line %d, want 6", p.CoordinationLine)
+	}
+}
+
+func TestParse_CoordinationField_Absent(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Plan: Sub
+
+**Status:** Draft
+**Source Feature:** foo
+**Supersedes:** —
+
+## Tasks
+
+### Task 1: One
+
+**Verifies:** foo#ac:x
+`
+	p, err := Parse(writePlan(t, dir, "sub", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Coordination != "" || p.CoordinationLine != 0 {
+		t.Fatalf("expected absent coordination, got %q at line %d", p.Coordination, p.CoordinationLine)
+	}
+}
+
 // TestParse_MissingStatusIsEmpty covers cli/plan#ac:missing-status-is-empty:
 // a Plan with no `**Status:**` line reports an empty status and Parse succeeds.
 func TestParse_MissingStatusIsEmpty(t *testing.T) {

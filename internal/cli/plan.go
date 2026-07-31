@@ -65,6 +65,12 @@ plan that replaces this one; it is written as a **Superseded By:** reference.
 If anything fails after the status rewrite (lint failure, I/O error), the
 on-disk state is restored to its pre-invocation form before the verb exits.
 
+When the plan declares **Coordination:** <owner>/<repo>@<branch>, this verb
+refuses (exit 1) unless the current git repo/branch matches — mutating a
+coordinated plan from anywhere else is a process violation, not a merge
+chore. --force-coordination bypasses the check for this invocation only,
+printing a warning naming what was bypassed.
+
 ` + plan.LegalTransitionMatrix() + `
 Examples:
 
@@ -83,6 +89,7 @@ Examples:
 	cmd.Flags().String("note", "", "markdown appended as a ## Resolution section; required for --to=withdrawn and --to=superseded")
 	cmd.Flags().String("successor", "", "slug of the plan that supersedes this one; required for --to=superseded, rejected otherwise")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool(coordinationForceFlagName, false, coordinationForceFlagUsage)
 	return cmd
 }
 
@@ -150,6 +157,23 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 	specRoot, err := resolveSpecRoot(projectFlag)
 	if err != nil {
 		return err
+	}
+
+	// Coordination-branch enforcement: when the plan declares
+	// **Coordination:**, this mutation is authoritative only on the declared
+	// repo/branch (spec/features/plan/README.md#coordination-branch,
+	// upstream; see cli/plan/change-status for the enforcement contract).
+	planPath, perr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
+	if perr != nil {
+		return perr
+	}
+	parsedPlan, perr := plan.Parse(planPath)
+	if perr != nil {
+		return exitcode.UnexpectedErrorf("parsing plan %s: %v", slug, perr)
+	}
+	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
+	if cerr := enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
+		return cerr
 	}
 
 	// A Superseded plan MUST reference an existing successor plan.
