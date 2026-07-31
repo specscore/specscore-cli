@@ -35,6 +35,184 @@ func gitInitWithRemoteAndBranch(t *testing.T, dir, remoteURL, branch string) {
 	}
 }
 
+// gitWorktreeCanonicalAndBranch creates a REAL canonical git repo (origin
+// remote = remoteURL, default branch = declaredBranch) containing the given
+// files, commits them, then `git worktree add`s a second, linked checkout on
+// worktreeBranch (a DIFFERENT branch from declaredBranch). Returns the
+// worktree directory — where `.git` is a FILE pointing back at the
+// canonical's `.git/worktrees/<name>`, not a directory, exactly like a real
+// `git worktree` layout (see gh:specscore/specscore-cli coordination-gate
+// verification report, 2026-07-31: reproduction used "a worktree of
+// sneat-co/chess on branch test/coord-check2"). Skips if `git` is missing.
+func gitWorktreeCanonicalAndBranch(t *testing.T, remoteURL, declaredBranch, worktreeBranch string, files map[string]string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	root := t.TempDir()
+	canonical := filepath.Join(root, "canonical")
+	if err := os.MkdirAll(canonical, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitIn := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s (in %s): %v\n%s", strings.Join(args, " "), dir, err, out)
+		}
+	}
+	runGitIn(canonical, "init", "-q", "-b", declaredBranch)
+	runGitIn(canonical, "config", "user.email", "t@example.com")
+	runGitIn(canonical, "config", "user.name", "T")
+	runGitIn(canonical, "remote", "add", "origin", remoteURL)
+	for rel, content := range files {
+		full := filepath.Join(canonical, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitIn(canonical, "add", "-A")
+	runGitIn(canonical, "commit", "-q", "-m", "initial")
+
+	worktree := filepath.Join(root, "worktree-"+worktreeBranch)
+	runGitIn(canonical, "worktree", "add", "-q", "-b", worktreeBranch, worktree)
+	return worktree
+}
+
+// realisticCoordinatedPlanBody mirrors the exact field order the founder's
+// worked reproduction used: frontmatter, title, then Status / Source Feature
+// / Date / Owner / Supersedes / Coordination (Coordination immediately after
+// Supersedes, not the first field) — as opposed to the earlier, structurally
+// simpler fixtures in this file that put Coordination right after Source
+// Feature.
+const realisticCoordinatedPlanBody = `---
+format: https://specscore.md/plan-specification
+status: Draft
+---
+
+# Plan: Full Settings Exposure
+
+**Status:** Draft
+**Source Feature:** settings
+**Date:** 2026-07-20
+**Owner:** alex
+**Supersedes:** —
+**Coordination:** sneat-co/chess@plans
+
+## Summary
+
+Test fixture.
+
+## Approach
+
+Test fixture.
+
+## Tasks
+
+### Task 4: Wire settings toggle
+
+**Id:** task-4
+**Verifies:** settings#ac:toggle
+**Status:** planning
+**Depends-On:** —
+
+Body.
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/plan-specification*
+`
+
+// AC (regression, 2026-07-31 coordination-gate verification report): a
+// mismatch is refused end-to-end in a REAL `git worktree` checkout (not a
+// plain repo — `.git` is a file, not a directory) with an SSH-form origin
+// remote (`git@host:owner/repo.git`), against a realistic full plan document
+// where **Coordination:** is the LAST header field rather than the first.
+// Neither of these two conditions (worktree layout, SSH remote) was covered
+// by any of the other tests in this file before this one — closing that gap.
+func TestTaskChangeStatus_PlanInline_CoordinationMismatch_RealWorktree_SSHRemote_CLI(t *testing.T) {
+	worktree := gitWorktreeCanonicalAndBranch(t,
+		"git@github.com:sneat-co/chess.git", "plans", "test/coord-check2",
+		map[string]string{
+			"specscore.yaml":                       "name: chess\n",
+			"spec/features/settings/README.md":     "# Feature: Settings\n",
+			"spec/plans/full-settings-exposure.md": realisticCoordinatedPlanBody,
+		})
+	withCwd(t, worktree)
+
+	before, err := os.ReadFile(filepath.Join(worktree, "spec", "plans", "full-settings-exposure.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := runTask(t, "change-status", "task-4", "--plan", "full-settings-exposure", "--to=queued")
+	if got := exitCodeOfErr(err); got != exitcode.Conflict {
+		t.Fatalf("exit = %d, want %d (Conflict); err=%v stderr=%s", got, exitcode.Conflict, err, stderr)
+	}
+	after, err := os.ReadFile(filepath.Join(worktree, "spec", "plans", "full-settings-exposure.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("plan file changed despite refusal:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+// AC: the same real-worktree + SSH-remote setup succeeds (task status
+// rewritten) when invoked from a worktree ON the declared branch.
+func TestTaskChangeStatus_PlanInline_CoordinationMatched_RealWorktree_SSHRemote_CLI(t *testing.T) {
+	worktree := gitWorktreeCanonicalAndBranch(t,
+		"git@github.com:sneat-co/chess.git", "plans", "plans-clone",
+		map[string]string{
+			"specscore.yaml":                       "name: chess\n",
+			"spec/features/settings/README.md":     "# Feature: Settings\n",
+			"spec/plans/full-settings-exposure.md": strings.Replace(realisticCoordinatedPlanBody, "sneat-co/chess@plans", "sneat-co/chess@plans-clone", 1),
+		})
+	withCwd(t, worktree)
+
+	_, stderr, err := runTask(t, "change-status", "task-4", "--plan", "full-settings-exposure", "--to=queued")
+	if err != nil {
+		t.Fatalf("task change-status: %v (stderr=%s)", err, stderr)
+	}
+	if got := planTaskStatus(t, filepath.Join(worktree, "spec", "plans", "full-settings-exposure.md"), "task-4"); got != "queued" {
+		t.Errorf("expected task queued, got %q", got)
+	}
+}
+
+// AC: enforceCoordinationBranch/coordinationCheck match correctly against an
+// SSH-form origin remote (git@host:owner/repo.git), not just the HTTPS form
+// every other unit test in this file uses.
+func TestEnforceCoordinationBranch_Matched_SSHRemote_Passes(t *testing.T) {
+	dir := t.TempDir()
+	gitInitWithRemoteAndBranch(t, dir, "git@github.com:specscore/specscore-cli.git", "main")
+
+	p := &plan.Plan{Slug: "auth", Coordination: "specscore/specscore-cli@main", CoordinationLine: 6}
+	var warn bytes.Buffer
+	if err := enforceCoordinationBranch(p, dir, false, &warn); err != nil {
+		t.Fatalf("expected nil error for matching SSH-remote repo/branch, got %v", err)
+	}
+}
+
+// AC: an SSH-form origin remote on a mismatched branch still refuses.
+func TestEnforceCoordinationBranch_Mismatch_SSHRemote_Refuses(t *testing.T) {
+	dir := t.TempDir()
+	gitInitWithRemoteAndBranch(t, dir, "git@github.com:specscore/specscore-cli.git", "some-other-branch")
+
+	p := &plan.Plan{Slug: "auth", Coordination: "specscore/specscore-cli@main", CoordinationLine: 6}
+	var warn bytes.Buffer
+	err := enforceCoordinationBranch(p, dir, false, &warn)
+	if got := exitCodeOfErr(err); got != exitcode.Conflict {
+		t.Fatalf("exit = %d, want %d (Conflict); err=%v", got, exitcode.Conflict, err)
+	}
+}
+
 // ----- enforceCoordinationBranch / coordinationCheck unit tests -----
 
 // AC: a plan with no **Coordination:** field is unrestricted — the check
