@@ -139,6 +139,10 @@ func TestResolveFeatureID(t *testing.T) {
 //   - stable-to-deprecated-happy-path
 //   - draft-to-deprecated-happy-path
 //   - implementing-to-deprecated-happy-path
+//   - approved-to-amending-happy-path
+//   - amending-to-approved-happy-path
+//   - approved-to-rejected-happy-path
+//   - approved-to-deprecated-happy-path
 //   - approved-to-implementing-happy-path (not numbered in AC list but
 //     part of the matrix — guarded so the matrix stays complete).
 func TestChangeStatus_HappyPaths(t *testing.T) {
@@ -153,9 +157,13 @@ func TestChangeStatus_HappyPaths(t *testing.T) {
 		{"in review → approved", "In Review", "approved", "Approved"},
 		{"in review → rejected", "In Review", "rejected", "Rejected"},
 		{"approved → implementing", "Approved", "implementing", "Implementing"},
+		{"approved → amending", "Approved", "amending", "Amending"},
+		{"approved → rejected", "Approved", "rejected", "Rejected"},
+		{"approved → deprecated", "Approved", "deprecated", "Deprecated"},
 		{"implementing → stable", "Implementing", "stable", "Stable"},
 		{"stable → amending", "Stable", "amending", "Amending"},
 		{"amending → stable", "Amending", "stable", "Stable"},
+		{"amending → approved", "Amending", "approved", "Approved"},
 		{"stable → deprecated", "Stable", "deprecated", "Deprecated"},
 		{"draft → deprecated", "Draft", "deprecated", "Deprecated"},
 		{"implementing → deprecated", "Implementing", "deprecated", "Deprecated"},

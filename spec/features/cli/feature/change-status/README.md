@@ -42,13 +42,19 @@ Only the transitions in the table below are accepted. Any other `(from, to)` pai
 | `In Review` | `Approved` | Status rewrite + features-index sync |
 | `In Review` | `Rejected` | Status rewrite + features-index sync |
 | `Approved` | `Implementing` | Status rewrite + features-index sync |
+| `Approved` | `Amending` | Status rewrite + features-index sync |
+| `Approved` | `Rejected` | Status rewrite + features-index sync |
+| `Approved` | `Deprecated` | Status rewrite + features-index sync |
 | `Implementing` | `Stable` | Status rewrite + features-index sync |
 | `Implementing` | `Deprecated` | Status rewrite + features-index sync |
 | `Stable` | `Amending` | Status rewrite + features-index sync |
 | `Amending` | `Stable` | Status rewrite + features-index sync |
+| `Amending` | `Approved` | Status rewrite + features-index sync |
 | `Stable` | `Deprecated` | Status rewrite + features-index sync |
 
-The `Draft → Approved` direct path is permitted: not every Feature requires a review phase. `Draft → Deprecated` and `Implementing → Deprecated` are also direct paths: a Feature abandoned before or during implementation MUST be honestly retirable without first detouring through `Stable` — the only prior route to `Deprecated`. Reverse transitions (e.g., `Approved → Draft`, `Deprecated → Stable`) are NOT in the matrix and exit `4`. They MAY land in a follow-on revision once concrete reuse patterns surface.
+The `Draft → Approved` direct path is permitted: not every Feature requires a review phase. `Draft → Deprecated` and `Implementing → Deprecated` are also direct paths: a Feature abandoned before or during implementation MUST be honestly retirable without first detouring through `Stable` — the only prior route to `Deprecated`.
+
+`Approved → Amending`, `Amending → Approved`, `Approved → Rejected`, and `Approved → Deprecated` close a gap where an agreed-but-unbuilt Feature (`Approved`, no code written from it yet) had exactly one legal exit (`→ Implementing`): a design that was approved and then needed to change, be cancelled, or be retired before any code existed had nowhere legal to go. `Approved → Amending` covers reworking that design in place; `Amending → Approved` returns it to the band it came from once the rework is resolved — `Amending` MUST NOT force a return through `Stable`, which would claim an implementation that was never built. (`Stable → Amending → Stable` remains the parallel arc for a design that already has a working implementation.) `Approved → Rejected` covers cancelling an agreed-but-unbuilt design outright; `Approved → Deprecated` covers retiring one. Reverse transitions into the pre-approval bands (e.g., `Approved → Draft`, `Deprecated → Stable`) are still NOT in the matrix and exit `4`. They MAY land in a follow-on revision once concrete reuse patterns surface.
 
 #### REQ: legal-transition-matrix
 
@@ -149,6 +155,30 @@ Given `spec/features/auth/README.md` containing `**Status:** Draft`, running `sp
 **Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
 
 Given `spec/features/auth/README.md` containing `**Status:** Implementing`, running `specscore feature change-status auth --to=deprecated` exits `0`, with stdout `auth: Implementing → Deprecated\n`. A Feature abandoned mid-implementation can be honestly retired without first reaching `Stable`.
+
+### AC: approved-to-amending-happy-path
+
+**Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/features/auth/README.md` containing `**Status:** Approved`, running `specscore feature change-status auth --to=amending` exits `0`, with stdout `auth: Approved → Amending\n`. An agreed-but-unbuilt design can be reworked in place without first detouring through `Implementing`.
+
+### AC: amending-to-approved-happy-path
+
+**Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/features/auth/README.md` containing `**Status:** Amending` (reached via `Approved → Amending`), running `specscore feature change-status auth --to=approved` exits `0`, with stdout `auth: Amending → Approved\n`. `Amending` returns to the band it was entered from; a Feature amended from `Approved` returns to `Approved`, not `Stable` — returning through `Stable` would claim an implementation that does not exist.
+
+### AC: approved-to-rejected-happy-path
+
+**Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/features/auth/README.md` containing `**Status:** Approved`, running `specscore feature change-status auth --to=rejected` exits `0`, with stdout `auth: Approved → Rejected\n`. An agreed-but-unbuilt design can be cancelled outright, not just driven forward into `Implementing`.
+
+### AC: approved-to-deprecated-happy-path
+
+**Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/features/auth/README.md` containing `**Status:** Approved`, running `specscore feature change-status auth --to=deprecated` exits `0`, with stdout `auth: Approved → Deprecated\n`. An agreed-but-unbuilt design can be retired without ever reaching `Implementing`.
 
 ### AC: nested-feature-id-resolves
 

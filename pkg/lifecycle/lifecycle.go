@@ -174,6 +174,11 @@ var transitionMatrix = map[Kind][]transitionRow{
 		{From: IdeaInReview, To: IdeaApproved},
 		{From: IdeaInReview, To: IdeaRejected},
 		{From: IdeaInReview, To: IdeaStale},
+		// IdeaApproved -> IdeaRejected: an agreed-but-not-yet-specified Idea
+		// can be actively turned down, not just left to decay to Stale. See
+		// spec/features/cli/idea/change-status/README.md's legal-transition
+		// matrix note.
+		{From: IdeaApproved, To: IdeaRejected},
 		{From: IdeaApproved, To: IdeaSpecifying},
 		{From: IdeaApproved, To: IdeaStale},
 		{From: IdeaSpecifying, To: IdeaSpecified},
@@ -189,10 +194,24 @@ var transitionMatrix = map[Kind][]transitionRow{
 		{From: FeatureInReview, To: FeatureApproved},
 		{From: FeatureInReview, To: FeatureRejected},
 		{From: FeatureApproved, To: FeatureImplementing},
+		// An Approved-but-unbuilt Feature previously had exactly one legal
+		// exit (-> Implementing), so a design that was approved and then
+		// needed to change, be cancelled, or be retired before any code
+		// existed had nowhere legal to go. These three rows close that gap;
+		// see spec/features/cli/feature/change-status/README.md's
+		// legal-transition matrix note and
+		// spec/features/status-vocabulary/README.md#req-feature-amending.
+		{From: FeatureApproved, To: FeatureAmending},
+		{From: FeatureApproved, To: FeatureRejected},
+		{From: FeatureApproved, To: FeatureDeprecated},
 		{From: FeatureImplementing, To: FeatureStable},
 		{From: FeatureImplementing, To: FeatureDeprecated},
 		{From: FeatureStable, To: FeatureAmending},
 		{From: FeatureAmending, To: FeatureStable},
+		// Amending returns to the band it was entered from: an Amending
+		// Feature that was entered from Approved (never built) returns to
+		// Approved, not Stable, which would falsely claim an implementation.
+		{From: FeatureAmending, To: FeatureApproved},
 		{From: FeatureStable, To: FeatureDeprecated},
 	},
 	// KindPlan carries ONLY the human-authored arcs: the prep band and the
