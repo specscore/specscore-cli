@@ -182,10 +182,23 @@ var transitionMatrix = map[Kind][]transitionRow{
 		{From: IdeaApproved, To: IdeaSpecifying},
 		{From: IdeaApproved, To: IdeaStale},
 		{From: IdeaSpecifying, To: IdeaSpecified},
+		// IdeaSpecifying/IdeaSpecified/IdeaImplementing -> IdeaRejected, and
+		// IdeaImplementing -> IdeaStale: complete the disposition vocabulary
+		// (active Rejected vs. passive Stale) across the rest of the
+		// pre-terminal Idea lifecycle, not just its early Approved stage.
+		// Implementing previously had no disposition exit at all (its only
+		// arc was -> Implemented), so a build that was cancelled or simply
+		// petered out had no legal terminal status to record that. See
+		// spec/features/cli/idea/change-status/README.md's legal-transition
+		// matrix note.
+		{From: IdeaSpecifying, To: IdeaRejected},
 		{From: IdeaSpecifying, To: IdeaStale},
 		{From: IdeaSpecified, To: IdeaImplementing},
+		{From: IdeaSpecified, To: IdeaRejected},
 		{From: IdeaSpecified, To: IdeaStale},
 		{From: IdeaImplementing, To: IdeaImplemented},
+		{From: IdeaImplementing, To: IdeaRejected},
+		{From: IdeaImplementing, To: IdeaStale},
 	},
 	KindFeature: {
 		{From: FeatureDraft, To: FeatureInReview},

@@ -19,6 +19,10 @@ import (
 //
 //   TestChangeStatus_DraftToApprovedHappyPath        -> draft-to-approved-happy-path
 //   TestChangeStatus_ApprovedToRejectedHappyPath     -> approved-to-rejected-happy-path
+//   TestChangeStatus_SpecifyingToRejectedHappyPath   -> specifying-to-rejected-happy-path
+//   TestChangeStatus_SpecifiedToRejectedHappyPath    -> specified-to-rejected-happy-path
+//   TestChangeStatus_ImplementingToRejectedHappyPath -> implementing-to-rejected-happy-path
+//   TestChangeStatus_ImplementingToStaleHappyPath    -> implementing-to-stale-happy-path
 //   TestChangeStatus_CaseInsensitiveToFlag           -> case-insensitive-to-flag
 //   TestChangeStatus_IllegalTargetRejected           -> illegal-target-rejected
 //   TestChangeStatus_AlreadyApprovedRejected         -> already-approved-rejected
@@ -180,6 +184,98 @@ func TestChangeStatus_ApprovedToRejectedHappyPath(t *testing.T) {
 	}
 	body := readIdea(t, root, "foo")
 	if !strings.Contains(body, "**Status:** Rejected") {
+		t.Errorf("status line not rewritten:\n%s", body)
+	}
+}
+
+// AC: specifying-to-rejected-happy-path — an Idea can be actively turned
+// down mid-specification, not only before specification starts.
+func TestChangeStatus_SpecifyingToRejectedHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "foo", "Specifying")
+
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "foo",
+		To:           lifecycle.IdeaRejected,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if result.From != lifecycle.IdeaSpecifying || result.To != lifecycle.IdeaRejected {
+		t.Errorf("result = %+v; want from=Specifying to=Rejected", result)
+	}
+	body := readIdea(t, root, "foo")
+	if !strings.Contains(body, "**Status:** Rejected") {
+		t.Errorf("status line not rewritten:\n%s", body)
+	}
+}
+
+// AC: specified-to-rejected-happy-path
+func TestChangeStatus_SpecifiedToRejectedHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "foo", "Specified")
+
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "foo",
+		To:           lifecycle.IdeaRejected,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if result.From != lifecycle.IdeaSpecified || result.To != lifecycle.IdeaRejected {
+		t.Errorf("result = %+v; want from=Specified to=Rejected", result)
+	}
+	body := readIdea(t, root, "foo")
+	if !strings.Contains(body, "**Status:** Rejected") {
+		t.Errorf("status line not rewritten:\n%s", body)
+	}
+}
+
+// AC: implementing-to-rejected-happy-path — a build that is actively
+// called off is Rejected.
+func TestChangeStatus_ImplementingToRejectedHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "foo", "Implementing")
+
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "foo",
+		To:           lifecycle.IdeaRejected,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if result.From != lifecycle.IdeaImplementing || result.To != lifecycle.IdeaRejected {
+		t.Errorf("result = %+v; want from=Implementing to=Rejected", result)
+	}
+	body := readIdea(t, root, "foo")
+	if !strings.Contains(body, "**Status:** Rejected") {
+		t.Errorf("status line not rewritten:\n%s", body)
+	}
+}
+
+// AC: implementing-to-stale-happy-path — before this arc, Implementing's
+// only exit was -> Implemented, so a build that simply petered out
+// (nobody decided against it) had no legal terminal status at all.
+func TestChangeStatus_ImplementingToStaleHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "foo", "Implementing")
+
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "foo",
+		To:           lifecycle.IdeaStale,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if result.From != lifecycle.IdeaImplementing || result.To != lifecycle.IdeaStale {
+		t.Errorf("result = %+v; want from=Implementing to=Stale", result)
+	}
+	body := readIdea(t, root, "foo")
+	if !strings.Contains(body, "**Status:** Stale") {
 		t.Errorf("status line not rewritten:\n%s", body)
 	}
 }
