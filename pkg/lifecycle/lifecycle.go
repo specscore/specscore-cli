@@ -170,6 +170,18 @@ var transitionMatrix = map[Kind][]transitionRow{
 	KindIdea: {
 		{From: IdeaDraft, To: IdeaInReview},
 		{From: IdeaDraft, To: IdeaApproved},
+		// IdeaDraft -> IdeaRejected: completes the disposition vocabulary.
+		// Draft is the state where an idea is most likely to be killed
+		// deliberately, and it was the LAST pre-terminal status still
+		// missing an active-turn-down exit (it already had the passive-decay
+		// one, -> Stale). Feature's Draft has the same active-abandonment
+		// door, spelled -> Deprecated because Feature's disposition set
+		// includes it; Idea has no Deprecated, so -> Rejected is Idea's
+		// equivalent. With this row every pre-terminal Idea status has both
+		// a Rejected and a Stale exit. See
+		// spec/features/cli/idea/change-status/README.md's legal-transition
+		// matrix note.
+		{From: IdeaDraft, To: IdeaRejected},
 		{From: IdeaDraft, To: IdeaStale},
 		{From: IdeaInReview, To: IdeaApproved},
 		{From: IdeaInReview, To: IdeaRejected},

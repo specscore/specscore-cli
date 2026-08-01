@@ -38,6 +38,7 @@ Only the transitions in the table below are accepted. Any other `(from, to)` pai
 |---|---|---|
 | `Draft` | `In Review` | Status rewrite + ideas-index sync |
 | `Draft` | `Approved` | Status rewrite + ideas-index sync |
+| `Draft` | `Rejected` | Status rewrite + ideas-index sync |
 | `Draft` | `Stale` | Status rewrite + ideas-index sync |
 | `In Review` | `Approved` | Status rewrite + ideas-index sync |
 | `In Review` | `Rejected` | Status rewrite + ideas-index sync |
@@ -55,9 +56,13 @@ Only the transitions in the table below are accepted. Any other `(from, to)` pai
 | `Implementing` | `Rejected` | Status rewrite + ideas-index sync |
 | `Implementing` | `Stale` | Status rewrite + ideas-index sync |
 
-The human-authored prep band (`Draft → In Review → Approved`) and the disposition transitions (`→ Rejected` from review or from any of `Approved`/`Specifying`/`Specified`/`Implementing`, `→ Stale` from any pre-terminal state including `Implementing`) are author-managed. For **feature-request** ideas, the forward specification band (`Approved → Specifying → Specified → Implementing → Implemented`) is derived from Feature status by the `idea-sync-lint-strict` lint rule; the `change-status` verb is the user-facing surface for manual override or when a transition is needed ahead of the derivation rule. For **change-request** ideas, all transitions are author-managed (not derived) — the lint derivation rules skip change-request ideas entirely.
+The human-authored prep band (`Draft → In Review → Approved`) and the disposition transitions (`→ Rejected` from `Draft`, review, or any of `Approved`/`Specifying`/`Specified`/`Implementing`; `→ Stale` from any pre-terminal state including `Implementing`) are author-managed. For **feature-request** ideas, the forward specification band (`Approved → Specifying → Specified → Implementing → Implemented`) is derived from Feature status by the `idea-sync-lint-strict` lint rule; the `change-status` verb is the user-facing surface for manual override or when a transition is needed ahead of the derivation rule. For **change-request** ideas, all transitions are author-managed (not derived) — the lint derivation rules skip change-request ideas entirely.
 
-`Approved → Rejected` closes a gap where an agreed-but-not-yet-specified Idea (`Approved`, no Feature created from it yet) could only decay to `Stale` — never be actively turned down. This completes the same principle across the rest of the pre-terminal lifecycle: `Specifying → Rejected`, `Specified → Rejected`, and `Implementing → Rejected` let an Idea be actively turned down mid-specification or mid-build, not only before specification starts; `Implementing → Stale` closes the matching passive-decay gap — before this row, `Implementing`'s only exit was `→ Implemented`, so a build that simply petered out (nobody decided against it, work just stopped) had no legal terminal status to record that at all. `Rejected` and `Stale` are not interchangeable at any of these stages: `Rejected` is an active decision against the Idea, `Stale` is passive decay that nobody decided against (see [idea#req:terminal-disposition-transitions](https://github.com/specscore/specscore/blob/main/spec/features/idea/README.md#req-terminal-disposition-transitions)). An Idea that is deliberately cancelled — whether before specification starts, mid-specification, or mid-build — is `Rejected`, not `Stale`.
+`Approved → Rejected` closes a gap where an agreed-but-not-yet-specified Idea (`Approved`, no Feature created from it yet) could only decay to `Stale` — never be actively turned down. `Specifying → Rejected`, `Specified → Rejected`, and `Implementing → Rejected` carried the same principle across the rest of the pre-terminal lifecycle; `Implementing → Stale` closed the matching passive-decay gap — before that row, `Implementing`'s only exit was `→ Implemented`, so a build that simply petered out (nobody decided against it, work just stopped) had no legal terminal status to record that at all.
+
+`Draft → Rejected` completes the disposition vocabulary: it is the last pre-terminal status to gain an active-turn-down exit, alongside the passive-decay exit (`Draft → Stale`) it already had. `Draft` is the state where an idea is most likely to be killed deliberately — before this row, that deliberate kill had to be recorded as `Stale`, which the standard defines as passive decay, the wrong word for a decision. `Feature`'s `Draft` already has an active-abandonment exit, spelled `Deprecated` because Feature's disposition set includes it; `Draft → Rejected` is Idea's equivalent of that same door, spelled with Idea's own disposition vocabulary (Idea has no `Deprecated`). With this row, every pre-terminal Idea status can record either an active turn-down or passive decay — the vocabulary is closed.
+
+`Rejected` and `Stale` are not interchangeable at any of these stages: `Rejected` is an active decision against the Idea, `Stale` is passive decay that nobody decided against (see [idea#req:terminal-disposition-transitions](https://github.com/specscore/specscore/blob/main/spec/features/idea/README.md#req-terminal-disposition-transitions)). An Idea that is deliberately cancelled — whether while still in `Draft`, before specification starts, mid-specification, or mid-build — is `Rejected`, not `Stale`.
 
 #### REQ: legal-transition-matrix
 
@@ -129,6 +134,12 @@ The post-mutation `specscore spec lint --fix` invocation (per [lifecycle-transit
 
 Given `spec/ideas/foo.md` containing `**Status:** Draft`, running `specscore idea change-status foo --to=approved` exits `0`, writes exactly `foo: Draft → Approved\n` to stdout, rewrites the Status line to `Approved`, and syncs the ideas-index row.
 
+### AC: draft-to-rejected-happy-path
+
+**Requirements:** [cli/idea/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/ideas/foo.md` containing `**Status:** Draft`, running `specscore idea change-status foo --to=rejected` exits `0`, writes `foo: Draft → Rejected\n` to stdout, and rewrites the Status line to `Rejected` in place. `Draft` is the state where an idea is most likely to be killed deliberately; this Idea can now record that as an active decision rather than being forced into `Stale`, completing the disposition vocabulary across every pre-terminal status.
+
 ### AC: terminal-status-written-in-place
 
 **Requirements:** [cli/idea/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [cli/idea/change-status#req:no-relocation](#req-no-relocation), [cli/idea/change-status#req:index-sync-by-target](#req-index-sync-by-target)
@@ -175,7 +186,7 @@ Given `spec/ideas/foo.md` containing `**Status:** Implementing`, running `specsc
 
 **Requirements:** [cli/idea/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [lifecycle-transitions#req:state-machine-strictness](../../lifecycle-transitions/README.md#req-state-machine-strictness)
 
-Given `spec/ideas/foo.md` containing `**Status:** Draft`, running `specscore idea change-status foo --to=implementing` exits `4` with a stderr message naming `Draft` as the current status and `Approved`, `In Review`, `Stale` as the legal targets from `Draft`. No file change.
+Given `spec/ideas/foo.md` containing `**Status:** Draft`, running `specscore idea change-status foo --to=implementing` exits `4` with a stderr message naming `Draft` as the current status and `Approved`, `In Review`, `Rejected`, `Stale` as the legal targets from `Draft`. No file change.
 
 ### AC: already-approved-rejected
 

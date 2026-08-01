@@ -18,6 +18,7 @@ import (
 // table-driven. Per-AC mapping:
 //
 //   TestChangeStatus_DraftToApprovedHappyPath        -> draft-to-approved-happy-path
+//   TestChangeStatus_DraftToRejectedHappyPath        -> draft-to-rejected-happy-path
 //   TestChangeStatus_ApprovedToRejectedHappyPath     -> approved-to-rejected-happy-path
 //   TestChangeStatus_SpecifyingToRejectedHappyPath   -> specifying-to-rejected-happy-path
 //   TestChangeStatus_SpecifiedToRejectedHappyPath    -> specified-to-rejected-happy-path
@@ -135,6 +136,32 @@ func TestChangeStatus_DraftToApprovedHappyPath(t *testing.T) {
 	}
 	if strings.Contains(body, "**Status:** Draft") {
 		t.Errorf("old status line still present:\n%s", body)
+	}
+}
+
+// AC: draft-to-rejected-happy-path — Draft is the state where an idea is
+// most likely to be killed deliberately; it can now record that as an
+// active decision instead of being forced into Stale. This completes the
+// disposition vocabulary: every pre-terminal Idea status now has both a
+// Rejected and a Stale exit.
+func TestChangeStatus_DraftToRejectedHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "foo", "Draft")
+
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "foo",
+		To:           lifecycle.IdeaRejected,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if result.From != lifecycle.IdeaDraft || result.To != lifecycle.IdeaRejected {
+		t.Errorf("result = %+v; want from=Draft to=Rejected", result)
+	}
+	body := readIdea(t, root, "foo")
+	if !strings.Contains(body, "**Status:** Rejected") {
+		t.Errorf("status line not rewritten:\n%s", body)
 	}
 }
 
@@ -340,12 +367,12 @@ func TestChangeStatus_IllegalTargetRejected(t *testing.T) {
 	assertExitCode(t, err, exitcode.InvalidState)
 
 	// Stderr message MUST name the current status (Draft) and the
-	// legal targets from Draft (Approved, In Review, Stale).
+	// legal targets from Draft (Approved, In Review, Rejected, Stale).
 	msg := err.Error()
 	if !strings.Contains(msg, "Draft") {
 		t.Errorf("error message missing current status %q: %s", "Draft", msg)
 	}
-	for _, want := range []string{"Approved", "In Review", "Stale"} {
+	for _, want := range []string{"Approved", "In Review", "Rejected", "Stale"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message missing legal target %q: %s", want, msg)
 		}

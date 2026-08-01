@@ -22,6 +22,7 @@ var expectedLegal = map[Kind][]transitionRow{
 	KindIdea: {
 		{From: IdeaDraft, To: IdeaInReview},
 		{From: IdeaDraft, To: IdeaApproved},
+		{From: IdeaDraft, To: IdeaRejected},
 		{From: IdeaDraft, To: IdeaStale},
 		{From: IdeaInReview, To: IdeaApproved},
 		{From: IdeaInReview, To: IdeaRejected},
