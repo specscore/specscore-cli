@@ -18,6 +18,7 @@ import (
 // table-driven. Per-AC mapping:
 //
 //   TestChangeStatus_DraftToApprovedHappyPath        -> draft-to-approved-happy-path
+//   TestChangeStatus_ApprovedToRejectedHappyPath     -> approved-to-rejected-happy-path
 //   TestChangeStatus_CaseInsensitiveToFlag           -> case-insensitive-to-flag
 //   TestChangeStatus_IllegalTargetRejected           -> illegal-target-rejected
 //   TestChangeStatus_AlreadyApprovedRejected         -> already-approved-rejected
@@ -157,6 +158,29 @@ func TestChangeStatus_InReviewToRejectedHappyPath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "spec", "ideas", "archived", "foo.md")); !os.IsNotExist(err) {
 		t.Errorf("change-status must not relocate the file: err=%v", err)
+	}
+}
+
+// AC: approved-to-rejected-happy-path — an agreed-but-not-yet-specified
+// Idea can be actively turned down, not just left to decay to Stale.
+func TestChangeStatus_ApprovedToRejectedHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "foo", "Approved")
+
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "foo",
+		To:           lifecycle.IdeaRejected,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if result.From != lifecycle.IdeaApproved || result.To != lifecycle.IdeaRejected {
+		t.Errorf("result = %+v; want from=Approved to=Rejected", result)
+	}
+	body := readIdea(t, root, "foo")
+	if !strings.Contains(body, "**Status:** Rejected") {
+		t.Errorf("status line not rewritten:\n%s", body)
 	}
 }
 
