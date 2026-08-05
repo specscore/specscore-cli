@@ -31,6 +31,7 @@ import (
 //   TestChangeStatus_MissingSlugRejected             -> missing-slug-rejected           (CLI-level, see internal/cli/idea_test.go)
 //   TestChangeStatus_MissingToFlagRejected           -> missing-to-flag-rejected        (CLI-level, see internal/cli/idea_test.go)
 //   TestChangeStatus_SlugNotFound                    -> slug-not-found
+//   TestChangeStatus_ProposalHappyPath               -> proposal-happy-path
 //   TestChangeStatus_LintFailureRollsBack            -> lint-failure-rolls-back
 //
 // Archival is no longer a change-status target — those ACs live with the
@@ -469,6 +470,69 @@ func TestChangeStatus_SlugNotFound(t *testing.T) {
 	wantPath := filepath.Join(root, "spec", "ideas", "nonexistent.md")
 	if !strings.Contains(err.Error(), wantPath) {
 		t.Errorf("error message missing expected path %q: %v", wantPath, err)
+	}
+}
+
+// AC: proposal-happy-path — change-request proposals use the Idea lifecycle
+// even though they live under their target Feature rather than spec/ideas/.
+func TestChangeStatus_ProposalHappyPath(t *testing.T) {
+	root := stageIdeaTree(t, "unrelated", "Draft")
+	proposalDir := filepath.Join(root, "spec", "features", "cli", "idea", "proposals")
+	if err := os.MkdirAll(proposalDir, 0o755); err != nil {
+		t.Fatalf("mkdir proposals: %v", err)
+	}
+	body, err := Scaffold(ScaffoldOptions{
+		Slug:    "add-mfa",
+		Status:  "Draft",
+		Type:    "change-request",
+		Targets: "cli/idea",
+	})
+	if err != nil {
+		t.Fatalf("scaffold proposal: %v", err)
+	}
+	proposalPath := filepath.Join(proposalDir, "add-mfa.md")
+	if err := os.WriteFile(proposalPath, body, 0o644); err != nil {
+		t.Fatalf("write proposal: %v", err)
+	}
+
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "add-mfa",
+		To:           lifecycle.IdeaApproved,
+		PostMutation: noopLint,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if result.From != lifecycle.IdeaDraft || result.To != lifecycle.IdeaApproved {
+		t.Errorf("result = %+v; want Draft to Approved", result)
+	}
+	updated, err := os.ReadFile(proposalPath)
+	if err != nil {
+		t.Fatalf("read proposal: %v", err)
+	}
+	if !strings.Contains(string(updated), "**Status:** Approved") {
+		t.Errorf("proposal status not rewritten:\n%s", updated)
+	}
+}
+
+func TestChangeStatus_ProposalDiscoveryFailure(t *testing.T) {
+	root := t.TempDir()
+	old := discoverIdeasFn
+	discoverIdeasFn = func(string) ([]Discovered, error) {
+		return nil, errors.New("discovery failed")
+	}
+	t.Cleanup(func() { discoverIdeasFn = old })
+
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         "add-mfa",
+		To:           lifecycle.IdeaApproved,
+		PostMutation: noopLint,
+	})
+	assertExitCode(t, err, exitcode.Unexpected)
+	if !strings.Contains(err.Error(), "discovering idea") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

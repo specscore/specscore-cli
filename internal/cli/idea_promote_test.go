@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/ideapromote"
 )
@@ -30,7 +31,7 @@ func stagePromoteRepo(t *testing.T, parent, name, repoSlug string) string {
 	}
 	specReadme := "# Spec\n\n## Contents\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
 	_ = os.WriteFile(filepath.Join(root, "spec", "README.md"), []byte(specReadme), 0o644)
-	featReadme := "# Features\n\n## Contents\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
+	featReadme := "# Features\n\n## Contents\n\n| Feature | Status | Kind | Description |\n|---|---|---|---|\n\n_No features yet._\n\n## Open Questions\n\nNone at this time.\n"
 	_ = os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(featReadme), 0o644)
 	yaml := "# SpecScore Repo Config Schema: https://specscore.md/repo-config\n" +
 		"project:\n" +
@@ -236,6 +237,12 @@ func TestIdeaPromoteCLI_SameRepoBackLinksReconciled(t *testing.T) {
 	featPath := filepath.Join(featDir, "README.md")
 	if err := os.WriteFile(featPath, []byte(featBody), 0o644); err != nil {
 		t.Fatalf("write feature: %v", err)
+	}
+	if _, err := feature.UpdateFeatureIndex(
+		filepath.Join(source, "spec", "features", "README.md"),
+		"x", "Approved", "Feature used to verify same-repository backlink reconciliation.",
+	); err != nil {
+		t.Fatalf("index feature: %v", err)
 	}
 	migrateTree(t, source)
 	initGitRepoForTest(t, source)

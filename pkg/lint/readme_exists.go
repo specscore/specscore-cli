@@ -25,7 +25,7 @@ func (c *readmeExistsChecker) check(specRoot string) ([]Violation, error) {
 	seedsRel := filepath.Join("ideas", "seeds")
 
 	err := walkSpecDirs(specRoot, func(dirPath, relPath string) error {
-		if relPath == seedsRel {
+		if relPath == seedsRel || isFeatureProposalsContainer(relPath) {
 			return nil
 		}
 		readmePath := filepath.Join(dirPath, "README.md")

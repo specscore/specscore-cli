@@ -10,7 +10,6 @@
 package lint
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"sort"
@@ -64,7 +63,7 @@ func (c *indexEntriesChecker) check(specRoot string) ([]Violation, error) {
 		for _, entry := range entries {
 			if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") &&
 				!strings.HasPrefix(entry.Name(), "_") &&
-				entry.Name() != reservedFeatureSubtree {
+				!isReservedFeatureChild(entry.Name()) {
 				actualChildren = append(actualChildren, entry.Name())
 			}
 		}
@@ -160,7 +159,7 @@ func (c *indexEntriesChecker) fix(specRoot string) error {
 		actualSet := make(map[string]bool)
 		for _, e := range entries {
 			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || strings.HasPrefix(e.Name(), "_") ||
-				e.Name() == reservedFeatureSubtree {
+				isReservedFeatureChild(e.Name()) {
 				continue
 			}
 			if _, err := os.Stat(filepath.Join(path, e.Name(), "README.md")); err != nil {
@@ -299,32 +298,66 @@ func phantomDirInTableRow(line string, actualSet map[string]bool) (string, bool)
 	return phantom, true
 }
 
-// extractChildRefsFromReadme scans a README for markdown links pointing to
-// child directories (e.g. `[name](dirname/README.md)`).
+// extractChildRefsFromReadme reads direct-child links from the first Markdown
+// table under ## Contents or ## Index. Legacy READMEs without either heading
+// fall back to their first Markdown table. Links in prose or loose rows outside
+// that table do not satisfy index completeness.
 func extractChildRefsFromReadme(readmePath string) ([]string, error) {
-	file, err := os.Open(readmePath)
+	data, err := os.ReadFile(readmePath)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = file.Close() }()
 
-	scanner := bufio.NewScanner(file)
-	var children []string
-	seen := make(map[string]bool)
+	lines := strings.Split(string(data), "\n")
+	sectionStart, sectionEnd := 0, len(lines)
 	inCodeBlock := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if !inCodeBlock && (trimmed == "## Contents" || trimmed == "## Index") {
+			sectionStart = i + 1
+			for j := sectionStart; j < len(lines); j++ {
+				if strings.HasPrefix(strings.TrimSpace(lines[j]), "## ") {
+					sectionEnd = j
+					break
+				}
+			}
+			break
+		}
+	}
 
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Skip fenced code blocks.
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+	headerLine := -1
+	inCodeBlock = false
+	for i := sectionStart; i+1 < sectionEnd; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "```") {
 			inCodeBlock = !inCodeBlock
 			continue
 		}
 		if inCodeBlock {
 			continue
 		}
+		next := strings.TrimSpace(lines[i+1])
+		if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") &&
+			isMarkdownTableSeparator(next) {
+			headerLine = i
+			break
+		}
+	}
+	if headerLine < 0 {
+		return nil, nil
+	}
 
+	var children []string
+	seen := make(map[string]bool)
+	for _, originalLine := range lines[headerLine+2 : sectionEnd] {
+		if !strings.HasPrefix(strings.TrimSpace(originalLine), "|") {
+			break
+		}
+		line := originalLine
 		// Look for links to child README.md: [text](dirname/README.md)
 		for {
 			idx := strings.Index(line, "](")
@@ -357,5 +390,19 @@ func extractChildRefsFromReadme(readmePath string) ([]string, error) {
 	if len(children) == 0 {
 		return nil, nil
 	}
-	return children, scanner.Err()
+	return children, nil
+}
+
+func isMarkdownTableSeparator(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "|") || !strings.HasSuffix(trimmed, "|") {
+		return false
+	}
+	for _, cell := range strings.Split(strings.Trim(trimmed, "|"), "|") {
+		cell = strings.TrimSpace(cell)
+		if !strings.Contains(cell, "-") || strings.Trim(cell, "-:") != "" {
+			return false
+		}
+	}
+	return true
 }

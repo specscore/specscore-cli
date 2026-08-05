@@ -196,19 +196,46 @@ func UpdateParentContents(parentReadmePath, childSlug, description string) (bool
 	}
 
 	if contentsIdx >= 0 {
-		insertIdx := contentsIdx + 1
-		for insertIdx < len(lines) {
-			trimmed := strings.TrimSpace(lines[insertIdx])
-			if strings.HasPrefix(trimmed, "## ") && trimmed != "## Contents" {
+		sectionEnd := len(lines)
+		for i := contentsIdx + 1; i < len(lines); i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(trimmed, "## ") {
+				sectionEnd = i
 				break
 			}
-			insertIdx++
 		}
-		for insertIdx > contentsIdx+1 && strings.TrimSpace(lines[insertIdx-1]) == "" {
-			insertIdx--
+
+		headerLine := -1
+		for i := contentsIdx + 1; i+1 < sectionEnd; i++ {
+			header := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(header, "|") && strings.HasSuffix(header, "|") &&
+				isTableSeparatorRow(strings.TrimSpace(lines[i+1])) {
+				headerLine = i
+				break
+			}
 		}
-		lines = append(lines[:insertIdx+1], lines[insertIdx:]...)
-		lines[insertIdx] = newRow
+
+		if headerLine >= 0 {
+			insertIdx := findLastTableRow(lines[:sectionEnd], headerLine) + 1
+			newLines := make([]string, 0, len(lines)+1)
+			newLines = append(newLines, lines[:insertIdx]...)
+			newLines = append(newLines, newRow)
+			newLines = append(newLines, lines[insertIdx:]...)
+			lines = newLines
+		} else {
+			contentsBlock := []string{
+				"",
+				"| Child | Description |",
+				"|---|---|",
+				newRow,
+			}
+			insertIdx := contentsIdx + 1
+			newLines := make([]string, 0, len(lines)+len(contentsBlock))
+			newLines = append(newLines, lines[:insertIdx]...)
+			newLines = append(newLines, contentsBlock...)
+			newLines = append(newLines, lines[insertIdx:]...)
+			lines = newLines
+		}
 	} else {
 		summaryIdx := -1
 		for i, line := range lines {
@@ -305,8 +332,11 @@ func UpdateFeatureIndex(indexPath, featureID, status, description string) (bool,
 
 	if tableEnd >= 0 {
 		insertIdx := tableEnd + 1
-		lines = append(lines[:insertIdx+1], lines[insertIdx:]...)
-		lines[insertIdx] = newRow
+		newLines := make([]string, 0, len(lines)+1)
+		newLines = append(newLines, lines[:insertIdx]...)
+		newLines = append(newLines, newRow)
+		newLines = append(newLines, lines[insertIdx:]...)
+		lines = newLines
 	} else {
 		lines = append(lines, "", newRow)
 	}

@@ -80,6 +80,39 @@ func TestIndexEntriesFix_ExcludesReservedBenchmarkSubtree(t *testing.T) {
 	}
 }
 
+func TestIndexEntries_ExcludesReservedProposalsSubtree(t *testing.T) {
+	root := t.TempDir()
+	parentDir := filepath.Join(root, "features", "parent")
+	if err := os.MkdirAll(filepath.Join(parentDir, proposalsFeatureSubtree), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parentReadme := filepath.Join(parentDir, "README.md")
+	if err := os.WriteFile(parentReadme, []byte("# Feature: Parent\n\n## Summary\n\nx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newIndexEntriesChecker()
+	if err := c.(fixer).fix(root); err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	got, err := os.ReadFile(parentReadme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), proposalsFeatureSubtree) {
+		t.Errorf("proposals container must not be inserted as a child Feature:\n%s", got)
+	}
+	violations, err := c.check(root)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	for _, violation := range violations {
+		if strings.Contains(violation.Message, proposalsFeatureSubtree) {
+			t.Errorf("proposals container must not be checked as a child Feature: %+v", violation)
+		}
+	}
+}
+
 // TestIndexEntriesFix_DropsStaleBenchmarkRow covers the companion case: an
 // index that ALREADY carries a phantom row pointing at the reserved
 // subtree (e.g. written before this fix, or by a build of the CLI that

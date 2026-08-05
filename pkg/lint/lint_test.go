@@ -677,6 +677,27 @@ func TestIndexEntries_ChildNotListed(t *testing.T) {
 	}
 }
 
+func TestIndexEntries_LooseChildLinkDoesNotSatisfyIndex(t *testing.T) {
+	root := setupSpecTree(t, map[string]string{
+		"features/README.md":               "# Features\n\n## Index\n\n| Feature | Status |\n|---|---|\n| [parent](parent/README.md) | Draft |\n",
+		"features/parent/README.md":        "# Parent\n\n## Contents\n\n| Child | Description |\n|---|---|\n| [listed](listed/README.md) | Listed child |\n\n### listed\n\nListed child summary.\n| [loose](loose/README.md) | Detached from the table |\n",
+		"features/parent/listed/README.md": "# Listed\n",
+		"features/parent/loose/README.md":  "# Loose\n",
+	})
+
+	c := newIndexEntriesChecker()
+	violations, err := c.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, violation := range violations {
+		if strings.Contains(violation.Message, "Child directory not listed in index: loose") {
+			return
+		}
+	}
+	t.Fatalf("expected loose child link to remain unlisted, got: %+v", violations)
+}
+
 // --- linter orchestration ---
 
 func TestLinter_RulesFilter(t *testing.T) {

@@ -283,6 +283,17 @@ func (l *linter) lint() ([]Violation, error) {
 // #req:exit-gate-fixture-and-sneat).
 const reservedFeatureSubtree = "benchmark"
 
+const proposalsFeatureSubtree = "proposals"
+
+func isReservedFeatureChild(name string) bool {
+	return name == reservedFeatureSubtree || name == proposalsFeatureSubtree
+}
+
+func isFeatureProposalsContainer(relPath string) bool {
+	parts := strings.Split(filepath.ToSlash(relPath), "/")
+	return len(parts) >= 3 && parts[0] == "features" && parts[len(parts)-1] == proposalsFeatureSubtree
+}
+
 // isReservedFixturePath reports whether a spec-root-relative path lives inside a
 // per-feature `benchmark/` subtree — the committed benchmark tooling and fixture
 // workspace (hand-authored miniature repo checkouts a benchmark runner indexes

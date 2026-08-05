@@ -40,6 +40,12 @@ var osStatFn = os.Stat
 // so tests can exercise the note-write failure rollback branch.
 var appendNoteFn = lifecycle.AppendResolutionNote
 
+// discoverIdeasFn is a testable indirection for Discover. Change-request
+// proposals use the Idea lifecycle but live beneath their target Feature,
+// so change-status falls back to discovery when the canonical active-Idea
+// path does not exist.
+var discoverIdeasFn = Discover
+
 // archivedIndexStub is the minimal lint-clean content the verb writes to
 // spec/ideas/archived/README.md when that file does not already exist on
 // the first archive transition. lint --fix will subsequently rewrite the
@@ -104,7 +110,8 @@ type PostMutationHook func() error
 type ChangeStatusOptions struct {
 	// SpecRoot is the project root that contains the `spec/` subtree
 	// (NOT the `spec/` directory itself). The Idea file is resolved at
-	// SpecRoot/spec/ideas/<Slug>.md.
+	// SpecRoot/spec/ideas/<Slug>.md or, for a change request, at its
+	// Feature-local proposals path.
 	SpecRoot string
 
 	// Slug is the Idea slug, e.g. "payment-fraud". Caller is expected
@@ -142,8 +149,9 @@ type ChangeStatusResult struct {
 //
 // Flow (matches the verb spec step-list):
 //
-//  1. Resolve <slug> to an active file at spec/ideas/<slug>.md. A missing
-//     active file (even if an archived copy exists) returns exit 3.
+//  1. Resolve <slug> to an active Idea at spec/ideas/<slug>.md or a
+//     change-request proposal under spec/features/*/proposals/. A missing
+//     active artifact (even if an archived copy exists) returns exit 3.
 //  2. lifecycle.Validate against the Idea matrix. Illegal transitions
 //     return exit 4.
 //  3. lifecycle.Rewrite the **Status:** line; capture original for
@@ -172,15 +180,32 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: PostMutation hook required")
 	}
 
-	activePath := filepath.Join(opts.SpecRoot, "spec", "ideas", opts.Slug+".md")
+	defaultActivePath := filepath.Join(opts.SpecRoot, "spec", "ideas", opts.Slug+".md")
+	activePath := defaultActivePath
 
-	// (1) Slug resolution — active path only. The archived path is NEVER
-	// a fallback per REQ:slug-resolves-to-active-idea.
+	// (1) Slug resolution. Prefer the canonical active-Idea path. If it is
+	// absent, discover Feature-local change-request proposals. Archived Ideas
+	// are never a fallback per REQ:slug-resolves-to-active-idea.
 	if _, err := os.Stat(activePath); err != nil {
 		if os.IsNotExist(err) {
-			return ChangeStatusResult{}, exitcode.NotFoundErrorf("idea not found at %s", activePath)
+			discovered, discoverErr := discoverIdeasFn(filepath.Join(opts.SpecRoot, "spec"))
+			if discoverErr != nil {
+				return ChangeStatusResult{}, exitcode.UnexpectedErrorf("discovering idea %q: %v", opts.Slug, discoverErr)
+			}
+			found := false
+			for _, candidate := range discovered {
+				if candidate.Slug == opts.Slug && candidate.IsProposal && !candidate.Archived {
+					activePath = candidate.Path
+					found = true
+					break
+				}
+			}
+			if !found {
+				return ChangeStatusResult{}, exitcode.NotFoundErrorf("idea not found at %s", defaultActivePath)
+			}
+		} else {
+			return ChangeStatusResult{}, exitcode.UnexpectedErrorf("stat %s: %v", activePath, err)
 		}
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("stat %s: %v", activePath, err)
 	}
 
 	// (2) State-machine validation.

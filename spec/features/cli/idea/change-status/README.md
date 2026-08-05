@@ -78,7 +78,7 @@ The verb MUST accept the target status via a required `--to=<status>` flag. The 
 
 #### REQ: slug-resolves-to-active-idea
 
-The `<slug>` positional argument MUST resolve to a file at `spec/ideas/<slug>.md` within the project root. Already-archived files at `spec/ideas/archived/<slug>.md` MUST NOT be matched per [lifecycle-transitions#req:slug-resolves-to-existing-artifact](../../lifecycle-transitions/README.md#req-slug-resolves-to-existing-artifact). A missing file at the active path MUST exit `3` (NotFound).
+The `<slug>` positional argument MUST resolve either to an active Idea at `spec/ideas/<slug>.md` or to a change-request Proposal at `spec/features/<target>/proposals/<slug>.md` within the project root. The canonical active-Idea path takes precedence. Already-archived files at `spec/ideas/archived/<slug>.md` MUST NOT be matched per [lifecycle-transitions#req:slug-resolves-to-existing-artifact](../../lifecycle-transitions/README.md#req-slug-resolves-to-existing-artifact). If neither an active Idea nor a Proposal exists, the verb MUST exit `3` (NotFound).
 
 #### REQ: no-relocation
 
@@ -94,7 +94,7 @@ The post-mutation `specscore spec lint --fix` invocation (per [lifecycle-transit
 
 | Name | Required | Description |
 |---|---|---|
-| `slug` | Yes | Idea slug — identifies the active file at `spec/ideas/<slug>.md`. |
+| `slug` | Yes | Idea or Proposal slug — identifies an active file at `spec/ideas/<slug>.md` or `spec/features/<target>/proposals/<slug>.md`. |
 
 ## Flags
 
@@ -109,7 +109,7 @@ The post-mutation `specscore spec lint --fix` invocation (per [lifecycle-transit
 |---|---|
 | `0` | Transition succeeded; `**Status:**` rewritten in place; index synced. |
 | `2` | Missing or malformed `<slug>`, missing `--to`, or unrecognized `--to` value. |
-| `3` | No Idea file at `spec/ideas/<slug>.md`. |
+| `3` | No active Idea or change-request Proposal exists for `<slug>`. |
 | `4` | `(current_status, --to)` is not a legal transition per the matrix above. |
 | `10` | I/O failure during rewrite or `spec lint --fix` (rollback applied). |
 
@@ -217,6 +217,12 @@ Running `specscore idea change-status foo` (no `--to`) exits `2` with stderr sta
 **Requirements:** [cli/idea/change-status#req:slug-resolves-to-active-idea](#req-slug-resolves-to-active-idea)
 
 Running `specscore idea change-status nonexistent --to=approved` where `spec/ideas/nonexistent.md` does not exist exits `3`. An already-archived file at `spec/ideas/archived/nonexistent.md` does NOT satisfy the lookup.
+
+### AC: proposal-happy-path
+
+**Requirements:** [cli/idea/change-status#req:slug-resolves-to-active-idea](#req-slug-resolves-to-active-idea), [cli/idea/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
+
+Given `spec/features/auth/proposals/add-mfa.md` is a change-request Proposal containing `**Status:** Draft`, running `specscore idea change-status add-mfa --to=approved` exits `0` and rewrites that Proposal in place to `**Status:** Approved`. The Proposal uses the same Idea lifecycle even though it is stored beside its target Feature.
 
 ### AC: lint-failure-rolls-back
 

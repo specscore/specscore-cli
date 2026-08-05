@@ -18,43 +18,20 @@ type Discovered struct {
 	FeatureDir string // non-empty for proposals: the feature directory slug
 }
 
-// Discover walks `<specRoot>/ideas` and returns every idea file found.
-// Returns ([], nil) if the directory does not exist.
+// Discover walks `<specRoot>/ideas` and every
+// `<specRoot>/features/**/proposals` directory, returning every Idea and
+// change-request Proposal found. Returns ([], nil) when neither tree exists.
 func Discover(specRoot string) ([]Discovered, error) {
 	ideasDir := ResolveIdeasDir(specRoot)
 	info, err := os.Stat(ideasDir)
-	if err != nil || !info.IsDir() {
-		return nil, nil
-	}
-
 	var out []Discovered
-	// Active: direct children *.md (exclude README.md).
-	entries, err := os.ReadDir(ideasDir)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
+	if err == nil && info.IsDir() {
+		// Active: direct children *.md (exclude README.md).
+		entries, readErr := os.ReadDir(ideasDir)
+		if readErr != nil {
+			return nil, readErr
 		}
-		name := e.Name()
-		if name == "README.md" || !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		out = append(out, Discovered{
-			Slug:     strings.TrimSuffix(name, ".md"),
-			Path:     filepath.Join(ideasDir, name),
-			Archived: false,
-		})
-	}
-
-	archivedDir := filepath.Join(ideasDir, "archived")
-	if ai, err := os.Stat(archivedDir); err == nil && ai.IsDir() {
-		aEntries, err := os.ReadDir(archivedDir)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range aEntries {
+		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
@@ -62,57 +39,86 @@ func Discover(specRoot string) ([]Discovered, error) {
 			if name == "README.md" || !strings.HasSuffix(name, ".md") {
 				continue
 			}
-			path := filepath.Join(archivedDir, name)
-			// Skip promoted sidekick-seeds parked in archived/: they declare
-			// `type: sidekick-seed` and are validated by the sidekick-seed
-			// rule, not discovered as Ideas. (Skipping them also avoids a
-			// slug collision with the active Idea they were promoted to.)
-			if isSidekickSeedFile(path) {
-				continue
-			}
 			out = append(out, Discovered{
 				Slug:     strings.TrimSuffix(name, ".md"),
-				Path:     path,
-				Archived: true,
+				Path:     filepath.Join(ideasDir, name),
+				Archived: false,
 			})
+		}
+
+		archivedDir := filepath.Join(ideasDir, "archived")
+		if ai, statErr := os.Stat(archivedDir); statErr == nil && ai.IsDir() {
+			aEntries, readErr := os.ReadDir(archivedDir)
+			if readErr != nil {
+				return nil, readErr
+			}
+			for _, e := range aEntries {
+				if e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				if name == "README.md" || !strings.HasSuffix(name, ".md") {
+					continue
+				}
+				path := filepath.Join(archivedDir, name)
+				// Skip promoted sidekick-seeds parked in archived/: they declare
+				// `type: sidekick-seed` and are validated by the sidekick-seed
+				// rule, not discovered as Ideas. (Skipping them also avoids a
+				// slug collision with the active Idea they were promoted to.)
+				if isSidekickSeedFile(path) {
+					continue
+				}
+				out = append(out, Discovered{
+					Slug:     strings.TrimSuffix(name, ".md"),
+					Path:     path,
+					Archived: true,
+				})
+			}
 		}
 	}
 
-	// Proposals: scan spec/features/*/proposals/*.md
+	// Proposals: recursively scan spec/features/**/proposals/*.md. The
+	// scaffolder accepts nested Feature IDs, so discovery must use the same
+	// path model rather than stopping after one Feature directory.
 	featuresDir := filepath.Join(specRoot, "features")
 	if fi, ferr := os.Stat(featuresDir); ferr == nil && fi.IsDir() {
-		featureEntries, ferr := os.ReadDir(featuresDir)
-		if ferr == nil {
-			for _, fe := range featureEntries {
-				if !fe.IsDir() {
-					continue
-				}
-				proposalsDir := filepath.Join(featuresDir, fe.Name(), "proposals")
-				pi, perr := os.Stat(proposalsDir)
-				if perr != nil || !pi.IsDir() {
-					continue
-				}
-				pEntries, perr := os.ReadDir(proposalsDir)
-				if perr != nil {
-					continue
-				}
-				for _, pe := range pEntries {
-					if pe.IsDir() {
+		var scanFeatureTree func(dir, featureID string)
+		scanFeatureTree = func(dir, featureID string) {
+			entries, readErr := os.ReadDir(dir)
+			if readErr == nil {
+				for _, entry := range entries {
+					name := entry.Name()
+					if !entry.IsDir() || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
 						continue
 					}
-					name := pe.Name()
-					if name == "README.md" || !strings.HasSuffix(name, ".md") {
+					childDir := filepath.Join(dir, name)
+					if name == "proposals" {
+						proposalEntries, proposalErr := os.ReadDir(childDir)
+						if proposalErr == nil {
+							for _, proposal := range proposalEntries {
+								proposalName := proposal.Name()
+								if proposal.IsDir() || proposalName == "README.md" || !strings.HasSuffix(proposalName, ".md") {
+									continue
+								}
+								out = append(out, Discovered{
+									Slug:       strings.TrimSuffix(proposalName, ".md"),
+									Path:       filepath.Join(childDir, proposalName),
+									IsProposal: true,
+									FeatureDir: filepath.ToSlash(featureID),
+								})
+							}
+						}
 						continue
 					}
-					out = append(out, Discovered{
-						Slug:       strings.TrimSuffix(name, ".md"),
-						Path:       filepath.Join(proposalsDir, name),
-						IsProposal: true,
-						FeatureDir: fe.Name(),
-					})
+					childFeatureID := name
+					if featureID != "" {
+						childFeatureID = filepath.Join(featureID, name)
+					}
+					scanFeatureTree(childDir, childFeatureID)
 				}
 			}
 		}
+		scanFeatureTree(featuresDir, "")
 	}
 
 	sort.Slice(out, func(i, j int) bool {

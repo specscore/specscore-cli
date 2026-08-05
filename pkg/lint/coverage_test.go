@@ -3500,7 +3500,7 @@ func TestDropPhantomIndexRows_NoTableRows(t *testing.T) {
 func TestExtractChildRefsFromReadme_CodeBlockSkipped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "README.md")
-	content := "# Index\n\n```\n[fake](fake/README.md)\n```\n\n[real](real/README.md)\n"
+	content := "# Index\n\n```\n| Child |\n|---|\n| [fake](fake/README.md) |\n```\n\n## Index\n\n| Child |\n|---|\n| [real](real/README.md) |\n"
 	writeFile(t, path, content)
 
 	refs, err := extractChildRefsFromReadme(path)
@@ -3515,7 +3515,7 @@ func TestExtractChildRefsFromReadme_CodeBlockSkipped(t *testing.T) {
 func TestExtractChildRefsFromReadme_DedupesRefs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "README.md")
-	content := "[a](a/README.md) [a](a/README.md)\n"
+	content := "## Contents\n\n| Child | Duplicate |\n|---|---|\n| [a](a/README.md) | [a](a/README.md) |\n"
 	writeFile(t, path, content)
 
 	refs, err := extractChildRefsFromReadme(path)
@@ -5428,7 +5428,7 @@ func TestExtractChildRefsFromReadme_CodeBlockSkipped_TableRow(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "README.md")
 	// Links inside a code block should be skipped
-	writeFile(t, path, "# Features\n\n```\n| [auth](auth/README.md) |\n```\n\n| [real](real/README.md) |\n")
+	writeFile(t, path, "# Features\n\n```\n| Child |\n|---|\n| [auth](auth/README.md) |\n```\n\n## Index\n\n| Child |\n|---|\n| [real](real/README.md) |\n")
 
 	children, err := extractChildRefsFromReadme(path)
 	if err != nil {
@@ -5436,6 +5436,25 @@ func TestExtractChildRefsFromReadme_CodeBlockSkipped_TableRow(t *testing.T) {
 	}
 	if len(children) != 1 || children[0] != "real" {
 		t.Errorf("expected only 'real' child, got %v", children)
+	}
+}
+
+func TestExtractChildRefsFromReadme_CodeBlockInsideContentsAndMalformedLink(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "README.md")
+	writeFile(t, path, "## Contents\n\n```md\n| Fake |\n|---|\n```\n\n| Child |\n|---|\n| [broken](broken/README.md |\n| [real](real/README.md) |\n")
+
+	children, err := extractChildRefsFromReadme(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || children[0] != "real" {
+		t.Errorf("expected only real child, got %v", children)
+	}
+	if isMarkdownTableSeparator("not a table") {
+		t.Error("plain text must not be a table separator")
+	}
+	if isMarkdownTableSeparator("| --- | not-valid |") {
+		t.Error("a separator cell containing letters must be rejected")
 	}
 }
 

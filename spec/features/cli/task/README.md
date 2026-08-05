@@ -27,6 +27,7 @@ Task boards live as Markdown (`tasks/README.md` plus `tasks/<slug>/README.md` pe
 | [info/](info/README.md) | Show detailed task metadata for one slug |
 | [list/](list/README.md) | List tasks from the board, optionally filtered by status |
 | [new/](new/README.md) | Create a new task in `planning` status |
+| [change-status](change-status/README.md) | Transition a Task's status and optionally record implementation-commit provenance. |
 
 ### info
 
@@ -39,8 +40,6 @@ Reads the `tasks/README.md` board. Returns all rows or those matching `--status`
 ### new
 
 Writes a new `tasks/<slug>/README.md` and appends the row to the board. New tasks are always created with status `planning`.
-| [change-status](change-status/README.md) | specscore task change-status transitions a Task's status (the human/agent-authored task lifecycle) and, on completion, optionally records implementation-commit provenance (--repo/--commit/--branch) onto the task. Single-actor file mutation; no claim/release/concurrency. Targets both the tasks/ board and plan-inline tasks. |
-
 ## Behavior
 
 ### Scope of this group

@@ -48,6 +48,10 @@ The command creates `spec/features/<parent>/<slug>/README.md` containing every s
 
 The generated README MUST pass `specscore spec lint` immediately — including the adherence footer, OQ section, view link (rendered from `viewer:` in `specscore.yaml`, with SpecStudio defaults when omitted; suppressed only when `viewer: null`), and all structural conventions.
 
+#### REQ: parent-contents-row-in-table
+
+When `--parent` is supplied, the command MUST add the child link as a row in the parent's contiguous Markdown table under `## Contents`. H3 child summaries or other prose later in the Contents section MUST remain after the table. If `## Contents` exists without a table, the command MUST create the table directly under that heading.
+
 #### REQ: status-default
 
 `--status` MUST accept one of `Draft`, `In Review`, `Approved`, `Implementing`, `Stable`, `Amending`, `Rejected`, `Deprecated`. Default is `Draft`. Any other value MUST exit `2`.
@@ -106,6 +110,12 @@ None. All inputs are flags.
 **Requirements:** cli/feature/new#req:lint-clean
 
 `specscore feature new --title "My Feature"` creates `spec/features/my-feature/README.md` containing every required section. `specscore spec lint` immediately afterwards reports no new violations.
+
+### AC: nested-feature-row-stays-in-contents-table
+
+**Requirements:** cli/feature/new#req:parent-contents-row-in-table, cli/feature/new#req:lint-clean
+
+Given a parent Feature whose `## Contents` section contains a child table followed by H3 summaries, `specscore feature new --title "New Child" --parent parent` inserts the `new-child` row immediately after the existing table rows and before the first H3 summary. A subsequent `specscore spec lint` reports no new violations.
 
 ### AC: missing-title-exits-2
 
