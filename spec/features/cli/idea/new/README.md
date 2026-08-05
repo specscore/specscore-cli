@@ -73,6 +73,10 @@ When `--type=change-request` is supplied with `--targets=<feature-slug>`, the ar
 
 When `--type=change-request --targets=<feature-slug>` is supplied, the file MUST be written to `spec/features/<feature-slug>/proposals/<slug>.md` (creating the `proposals/` directory if absent). The `--targets` flag MUST be required when `--type=change-request` and MUST be rejected when `--type=feature-request` (or absent).
 
+#### REQ: change-request-container-is-reserved
+
+The generated `proposals/` directory is a reserved change-request container, not a child Feature. It MUST NOT require its own `README.md` or a row in the parent Feature's Contents table. Proposal files inside it remain subject to every Idea and change-request lint rule. A newly scaffolded change request MUST leave the complete spec tree lint-clean except for violations that already existed before the command.
+
 ### Phase pre-population
 
 The optional `--phase` flag pre-populates a `**Phase:**` header field in the generated artifact. When omitted, no Phase field is emitted.
@@ -122,6 +126,12 @@ When `idea new` writes `spec/ideas/<slug>.md`, the command MUST also materialize
 **Requirements:** cli/idea/new#req:sensible-defaults
 
 `specscore idea new my-idea` with no other flags creates `spec/ideas/my-idea.md`. `specscore spec lint` immediately afterwards reports no new violations, even though several fields contain `<!-- TODO: ... -->` prompts.
+
+### AC: scaffolded-change-request-is-lint-clean
+
+**Requirements:** cli/idea/new#req:change-request-location, cli/idea/new#req:change-request-container-is-reserved, cli/idea/README#req:lint-clean-on-create
+
+Given a lint-clean project with an `auth` Feature and no existing `auth/proposals/` directory, `specscore idea new add-mfa --type change-request --targets auth` creates `spec/features/auth/proposals/add-mfa.md`. A subsequent full `specscore spec lint` reports no error for the `proposals/` container, while continuing to validate `add-mfa.md` as a change-request Idea.
 
 ### AC: existing-file-conflict
 

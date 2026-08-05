@@ -37,6 +37,17 @@ Commands that grew inside the codebase without written specs accrete inconsisten
 | [spec/](spec/README.md) | Specification-tree validation and search |
 | [task/](task/README.md) | Task board management |
 | [version/](version/README.md) | CLI version reporting |
+| [consilium](consilium/README.md) | The deterministic consilium engine: gate-rule arbitration, vote-schema and roster validation, gate configuration, and the parent command. |
+| [event](event/README.md) | TODO: Add description. |
+| [lesson](lesson/README.md) | Record and query process-gap lessons and advance them through their enforcement lifecycle. |
+| [plan](plan/README.md) | Query Plan artifacts, including plan metadata and task rollups. |
+| [publication-policy](publication-policy/README.md) | Mutate publication policy, resolve effective policy, validate branch guards, and support manifest-based publication. |
+| [rehearse](rehearse/README.md) | Rehearse acceptance-evidence command group. |
+| [rules](rules/README.md) | Discover lint rules, generate the lint-rule catalog, and check it for drift. |
+| [self-update](self-update/README.md) | Detect the install method and perform verified CLI updates or redirect package-managed installs. |
+| [sidekick](sidekick/README.md) | Scaffold sidekick-seed artifacts. |
+| [studio](studio/README.md) | SpecScore Studio commands for indexing, facts, asking questions, serving, and MCP. |
+| [telemetry](telemetry/README.md) | TODO: Add description. |
 
 ### agent
 
@@ -93,18 +104,6 @@ Manages the project task board at `tasks/README.md` and individual task files un
 ### version
 
 Reports the CLI's build identity. `specscore version` prints the full human-readable line; `specscore --version` (and `-v`) prints the bare semver for scripts. See [version/README.md](version/README.md) for the full contract.
-| [telemetry](telemetry/README.md) | TODO: Add description. |
-| [event](event/README.md) | TODO: Add description. |
-| [publication-policy](publication-policy/README.md) | Adds specscore CLI commands and helpers to mutate publication policy config, resolve effective policy, validate branch guards, and support manifest-based publication operations. |
-| [self-update](self-update/README.md) | specscore self-update detects the install method, redirects package-managed installs to their manager, and performs verified in-place binary replacement for manual installs. |
-| [rules](rules/README.md) | `specscore rules` — discover lint rules (id, family, description) from the code registry, generate the `docs/lint-rules.md` catalog, and drift-check it in CI. |
-| [consilium](consilium/README.md) | The deterministic consilium engine for the specscore CLI: the pkg/consilium package owning the gate-rule arbiter, vote-schema validation, roster resolution and validation, gate-knob config, the consilium: block in specscore.yaml, and the parent consilium cobra command. |
-| [plan](plan/README.md) | specscore plan commands query Plan artifacts in spec/plans/ — listing them and inspecting one plan's metadata and task rollup — so agents and humans can answer what plans exist and what status they hold without hand-grepping. |
-| [sidekick](sidekick/README.md) | Scaffold sidekick-seed artifacts |
-| [studio](studio/README.md) | Command group for SpecScore Studio: index, facts (Phase 0); ask, serve, mcp (later features). Design: specstudio-skills/spec/research/studio-design-2026-07/. |
-| [rehearse](rehearse/README.md) | Command group for the Rehearse acceptance-evidence layer (v0.3 fold-in per rehearse repo spec/ideas/rehearse-evidence-layer.md). |
-| [lesson](lesson/README.md) | Record and query process-gap lessons — what we learned but not yet enforced |
-
 ## Behavior
 
 ### Command-naming conventions

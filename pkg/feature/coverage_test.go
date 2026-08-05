@@ -361,6 +361,22 @@ None.
 	}
 }
 
+func TestParseContentsTable_StopsAtNextSectionBeforeTable(t *testing.T) {
+	content := "# Feature: Parent\n\n## Contents\n\n## Open Questions\n\n| Child | Description |\n|---|---|\n| [loose](loose/README.md) | Outside Contents |\n"
+	path := filepath.Join(t.TempDir(), "README.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ParseContentsTable(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected no Contents entries, got %v", entries)
+	}
+}
+
 // =============================================================================
 // info.go — FindLinkedPlans and planReferencesFeature
 // =============================================================================
@@ -1609,6 +1625,42 @@ None.
 	}
 }
 
+func TestParseContentsTable_IgnoresLooseRowAfterTable(t *testing.T) {
+	content := `# Feature: Parent
+
+## Contents
+
+| Child | Description |
+|---|---|
+| [listed](listed/README.md) | Listed child |
+
+### listed
+
+Listed child summary.
+| [loose](loose/README.md) | Not part of the Contents table |
+
+## Open Questions
+
+None.
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ParseContentsTable(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !entries["listed"] {
+		t.Error("expected listed child from Contents table")
+	}
+	if entries["loose"] {
+		t.Error("loose row after the Contents table must not count as indexed")
+	}
+}
+
 // =============================================================================
 // newfeature.go — indexRowCellFor
 // =============================================================================
@@ -1888,6 +1940,46 @@ func TestUpdateParentContents_ExistingContentsSection(t *testing.T) {
 	}
 }
 
+func TestUpdateParentContents_InsertsIntoTableBeforeChildSummaries(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	content := "# Feature: Parent\n\n## Contents\n\n| Child | Description |\n|---|---|\n| [old](old/README.md) | Old child |\n\n### old\n\nOld child summary.\n\n## Problem\n\nA problem.\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := UpdateParentContents(path, "new-child", "New child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changed=true")
+	}
+	got, _ := os.ReadFile(path)
+	wantPlacement := "| [old](old/README.md) | Old child |\n| [new-child](new-child/README.md) | New child |\n\n### old"
+	if !strings.Contains(string(got), wantPlacement) {
+		t.Errorf("new child row was not inserted into the Contents table:\n%s", got)
+	}
+}
+
+func TestUpdateParentContents_ExistingContentsWithoutTableCreatesTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	content := "# Feature: Parent\n\n## Contents\n\nExisting prose.\n\n## Problem\n\nA problem.\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := UpdateParentContents(path, "child", "Child description"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	wantTable := "## Contents\n\n| Child | Description |\n|---|---|\n| [child](child/README.md) | Child description |"
+	if !strings.Contains(string(got), wantTable) {
+		t.Errorf("Contents table was not created under its heading:\n%s", got)
+	}
+}
+
 func TestUpdateParentContents_EmptyDescription(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "README.md")
@@ -1943,6 +2035,28 @@ func TestUpdateFeatureIndex_WithExistingTable(t *testing.T) {
 	got, _ := os.ReadFile(indexPath)
 	if !strings.Contains(string(got), "new-feat") {
 		t.Error("expected new-feat row")
+	}
+}
+
+func TestUpdateFeatureIndex_TableEndsAtEOF(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, "README.md")
+	content := "# Features\n\n| Feature | Status | Description |\n|---|---|---|\n| [old](old/README.md) | Stable | Old feature |"
+	if err := os.WriteFile(indexPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := UpdateFeatureIndex(indexPath, "new-feat", "Draft", "New feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changed=true")
+	}
+	got, _ := os.ReadFile(indexPath)
+	want := "| [old](old/README.md) | Stable | Old feature |\n| [new-feat](new-feat/README.md) | Draft | New feature |"
+	if !strings.Contains(string(got), want) {
+		t.Errorf("EOF insertion did not append a safe row:\n%s", got)
 	}
 }
 

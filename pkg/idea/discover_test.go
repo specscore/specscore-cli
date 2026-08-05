@@ -194,6 +194,41 @@ func TestDiscover_Proposals(t *testing.T) {
 	}
 }
 
+func TestDiscover_NestedProposalWithoutIdeasTree(t *testing.T) {
+	root := t.TempDir()
+	specRoot := filepath.Join(root, "spec")
+	proposalsDir := filepath.Join(specRoot, "features", "cli", "idea", "proposals")
+	if err := os.MkdirAll(proposalsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	proposalPath := filepath.Join(proposalsDir, "nested-change.md")
+	if err := os.WriteFile(proposalPath, []byte("# Proposal: Nested Change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Hidden and underscore-prefixed Feature trees are conventions, not
+	// discoverable Feature IDs.
+	for _, hidden := range []string{".hidden", "_fixtures"} {
+		path := filepath.Join(specRoot, "features", hidden, "proposals")
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "ignored.md"), []byte("ignored"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := Discover(specRoot)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected one nested proposal, got %+v", got)
+	}
+	if got[0].Path != proposalPath || got[0].FeatureDir != "cli/idea" || !got[0].IsProposal {
+		t.Errorf("unexpected nested proposal: %+v", got[0])
+	}
+}
+
 // TestDiscover_NoProposalsDir verifies that a feature without a proposals/
 // subdirectory is silently skipped.
 func TestDiscover_NoProposalsDir(t *testing.T) {

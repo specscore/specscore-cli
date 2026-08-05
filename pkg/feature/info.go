@@ -186,6 +186,8 @@ func ParseContentsTable(readmePath string) (map[string]bool, error) {
 
 	entries := make(map[string]bool)
 	inContents := false
+	tableHeaderSeen := false
+	inTable := false
 	scanner := bufio.NewScanner(f)
 	linkRe := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 
@@ -199,7 +201,25 @@ func ParseContentsTable(readmePath string) (map[string]bool, error) {
 		if inContents && strings.HasPrefix(line, "## ") {
 			break
 		}
-		if inContents && strings.HasPrefix(line, "|") {
+		if !inContents {
+			continue
+		}
+		if !inTable {
+			if !tableHeaderSeen && strings.HasPrefix(line, "|") {
+				tableHeaderSeen = true
+				continue
+			}
+			if tableHeaderSeen && isTableSeparatorRow(line) {
+				inTable = true
+				continue
+			}
+			tableHeaderSeen = strings.HasPrefix(line, "|")
+			continue
+		}
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		if inTable {
 			matches := linkRe.FindAllStringSubmatch(line, -1)
 			for _, m := range matches {
 				linkPath := m[2]

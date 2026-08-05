@@ -662,6 +662,45 @@ func TestIdeaNew_ChangeRequestCreatesProposal(t *testing.T) {
 	}
 }
 
+func TestIdeaNew_ChangeRequestIsFullTreeLintClean(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+
+	if _, errOut, err := runInitCmd(t, nil,
+		"--project", root,
+		"--host", "github.com",
+		"--org", "acme",
+		"--repo", "widget",
+	); err != nil {
+		t.Fatalf("init failed: %v\nstderr=%s", err, errOut)
+	}
+	if _, errOut, err := runFeature(t, "new",
+		"--title", "Authentication",
+		"--slug", "auth",
+		"--description", "Authentication capability",
+	); err != nil {
+		t.Fatalf("feature new failed: %v\nstderr=%s", err, errOut)
+	}
+	if _, errOut, err := runIdea(t, "new", "add-mfa",
+		"--type", "change-request",
+		"--targets", "auth",
+		"--title", "Add MFA",
+	); err != nil {
+		t.Fatalf("change-request creation failed: %v\nstderr=%s", err, errOut)
+	}
+
+	violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
+	if err != nil {
+		t.Fatalf("full lint failed: %v", err)
+	}
+	for _, violation := range violations {
+		if violation.Severity == "error" {
+			t.Errorf("new change-request tree is not lint-clean: %s:%d [%s] %s",
+				violation.File, violation.Line, violation.Rule, violation.Message)
+		}
+	}
+}
+
 // Test that --type without --targets fails.
 func TestIdeaNew_ChangeRequestRequiresTargets(t *testing.T) {
 	root := setupSpecRoot(t)

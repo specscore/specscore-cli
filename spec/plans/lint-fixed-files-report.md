@@ -63,6 +63,7 @@ Register the `plan-index-sync` checker in the default lint suite. For the canoni
 - cli/spec/lint#ac:index-entries-fix-removes-phantom-row — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:index-entries-fix-inserts-orphan-row — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:index-entries-flags-orphan-child — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
+- cli/spec/lint#ac:index-entries-rejects-loose-child-link — Added by a later canonical-index increment; outside this plan's Fixed-files reporting scope.
 - cli/spec/lint#ac:oq-section-missing-flagged — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:oq-section-legacy-heading-flagged-and-fixed — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:dogfood-version-bump-flags-stale-pin — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.

@@ -481,6 +481,23 @@ func TestReadmeExists_SkipsSeedsDir(t *testing.T) {
 	}
 }
 
+func TestReadmeExists_SkipsFeatureProposalsContainer(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "README.md"), "# Root\n")
+	mkdir(t, filepath.Join(root, "features", "auth", proposalsFeatureSubtree))
+
+	c := newReadmeExistsChecker()
+	violations, err := c.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, violation := range violations {
+		if strings.HasSuffix(filepath.ToSlash(violation.File), "/proposals") {
+			t.Errorf("Feature proposals container must not require README.md: %v", violation)
+		}
+	}
+}
+
 // =============================================================================
 // feature_readme_walk.go — walkFeatureReadmes
 // =============================================================================

@@ -72,6 +72,12 @@ Every directory under `spec/features/` that contains a `README.md` is treated as
 
 Both directions apply at every level of the feature tree, including the root `spec/features/README.md`. Hidden directories (starting with `.`) and underscore-prefixed convention directories (e.g. `_args/`) are excluded.
 
+The reserved `spec/features/<feature-id>/proposals/` container is also excluded from Feature-child index completeness and the generic per-directory `README.md` requirement. Its proposal files remain in scope for the Idea/change-request rule family.
+
+#### REQ: index-entries-canonical-table-only
+
+Only direct-child links in the first contiguous Markdown table under `## Index` or `## Contents` satisfy index completeness. A child link in prose, an H3 summary, or a loose table-shaped row after that table MUST NOT count as an index entry. For legacy READMEs without either canonical heading, the first Markdown table is treated as the index.
+
 #### REQ: index-entries-fix-deletes-phantom-rows
 
 When `index-entries` reports `Index mentions non-existent directory: <name>` and `spec lint` runs with `--fix`, the fixer MUST remove from the parent README's index table the single row whose link target ends in `<name>/README.md`. Surrounding rows, table delimiters, and the rest of the document MUST be preserved.
@@ -389,6 +395,12 @@ Given a root features index that lists `auth` while a `billing/` directory with 
 **Requirements:** cli/spec/lint#req:index-entries-bidirectional
 
 Given a feature tree where `spec/features/orphan/README.md` exists on disk but `spec/features/README.md` does not link to `orphan/`, running `specscore spec lint` exits `1` with an `index-entries` violation on `features/README.md` whose message names the unlisted child directory.
+
+### AC: index-entries-rejects-loose-child-link
+
+**Requirements:** cli/spec/lint#req:index-entries-bidirectional, cli/spec/lint#req:index-entries-canonical-table-only
+
+Given a nested child Feature that is absent from its parent's `## Contents` table but linked by a loose table-shaped row after an H3 summary, running `specscore spec lint` reports `Child directory not listed in index` for that child. Moving the same row into the contiguous Contents table clears the violation.
 
 ### AC: plan-index-sync-detects-and-fixes-row-drift
 
