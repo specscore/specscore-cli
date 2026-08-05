@@ -8,9 +8,10 @@ import (
 	"github.com/dal-go/dalgo/dal"
 	"github.com/dal-go/dalgo/dbschema"
 	"github.com/dal-go/dalgo/ddl"
+	"github.com/dal-go/record"
 
-	"github.com/ingitdb/ingitdb-cli/pkg/dalgo2ingitdb"
-	"github.com/ingitdb/ingitdb-cli/pkg/ingitdb/validator"
+	"github.com/ingitdb/dalgo2ingitdb"
+	"github.com/ingitdb/ingitdb-go/ingitdb/validator"
 )
 
 // collectionID is the inGitDB collection that holds journal events.
@@ -64,8 +65,8 @@ func Open(journalPath string) (*Store, error) {
 // Write persists one event as a single date-sharded record. shortUUID
 // disambiguates same-instant writes from the same machine.
 func (s *Store) Write(ctx context.Context, e Event, shortUUID string) error {
-	key := dal.NewKeyWithID(collectionID, eventKey(e.Timestamp, e.MachineID, shortUUID))
+	key := record.NewKeyWithID(collectionID, eventKey(e.Timestamp, e.MachineID, shortUUID))
 	return s.db.RunReadwriteTransaction(ctx, func(ctx context.Context, tx dal.ReadwriteTransaction) error {
-		return tx.Insert(ctx, dal.NewRecordWithData(key, e.toMap()))
+		return tx.Insert(ctx, record.NewRecordWithData(key, e.toMap()))
 	})
 }
