@@ -841,7 +841,7 @@ func TestFeatureIndexChecker_SubFeatureRowIgnored(t *testing.T) {
 		"features/README.md": "# Features\n\n" +
 			"| Feature | Status | Kind | Description |\n" +
 			"|---------|--------|------|-------------|\n" +
-			"| [auth](auth/README.md) | Draft | Command | Auth feature |\n" +
+			"| [Auth](auth/README.md) | Draft | Command | Auth feature |\n" +
 			"| [auth/sub](auth/sub/README.md) | Draft | Sub | Sub feature |\n",
 		"features/auth/README.md":     "# Feature: Auth\n\n**Status:** Draft\n",
 		"features/auth/sub/README.md": "# Feature: Sub\n\n**Status:** Stable\n",
@@ -864,7 +864,7 @@ func TestFeatureIndexChecker_FixFailFallback(t *testing.T) {
 		"features/README.md": "# Features\n\n" +
 			"| Feature | Status | Kind | Description |\n" +
 			"|---------|--------|------|-------------|\n" +
-			"| [auth](auth/README.md) | Draft | Command | Auth feature |\n",
+			"| [Auth](auth/README.md) | Draft | Command | Auth feature |\n",
 		"features/auth/README.md": "# Feature: Auth\n\n**Status:** Stable\n",
 	})
 
@@ -888,7 +888,7 @@ func TestFeatureIndexChecker_NoDrift(t *testing.T) {
 		"features/README.md": "# Features\n\n" +
 			"| Feature | Status | Kind | Description |\n" +
 			"|---------|--------|------|-------------|\n" +
-			"| [auth](auth/README.md) | Draft | Command | Auth feature |\n",
+			"| [Auth](auth/README.md) | Draft | Command | Auth feature |\n",
 		"features/auth/README.md": "# Feature: Auth\n\n**Status:** Draft\n",
 	})
 

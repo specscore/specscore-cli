@@ -748,7 +748,7 @@ func TestActiveDecisionsIndex_CleanPasses(t *testing.T) {
 
 | # | Decision | Status | Date | Tags | Affected |
 |---|----------|--------|------|------|----------|
-| [0001](0001-test.md) | Test Decision | Approved | 2026-05-20 | — | — |
+| [0001](0001-test.md) | Accepted Decision | Approved | 2026-05-20 | tag1, tag2 | — |
 
 ## Open Questions
 

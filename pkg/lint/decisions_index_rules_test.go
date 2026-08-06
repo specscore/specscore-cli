@@ -284,6 +284,43 @@ None at this time.
 	})
 }
 
+func TestActiveDecisionsIndexFixSynchronisesRenamedDecisionRow(t *testing.T) {
+	decision := strings.Replace(validDecisionContent(), "# Decision: Test Decision", "# Decision: Competios Naming", 1)
+	decision = strings.Replace(decision, "**Date:** 2026-05-26", "**Date:** 2026-08-06", 1)
+	decision = strings.Replace(decision, "**Tags:** —", "**Tags:** naming, migration", 1)
+	decision = strings.Replace(decision, "None at this time.\n\n---", "- cli\n- website\n\n---", 1)
+	index := strings.Replace(validDecisionsIndex(), "Test Decision | Approved | 2026-05-20 | — | —", "Old MatchUps Name | Draft | 2020-01-01 | old | legacy", 1)
+	root := setupDecisionTestTree(t, map[string]string{"decisions/README.md": index, "decisions/0001-test.md": decision})
+	vs, err := checkDecisionsIndex(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDecisionViolation(vs, "DI-row-content-sync", "0001-test") {
+		t.Fatalf("expected stale decision row violation, got %+v", vs)
+	}
+	vs, err = checkDecisionsIndex(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasDecisionViolation(vs, "DI-row-content-sync", "") {
+		t.Fatalf("fix left row sync violation: %+v", vs)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "decisions", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Competios Naming | Draft | 2026-08-06 | naming, migration | cli, website") {
+		t.Fatalf("decision index row was not canonicalised:\n%s", data)
+	}
+	vs, err = checkDecisionsIndex(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasDecisionViolation(vs, "DI-row-content-sync", "") {
+		t.Fatalf("re-lint found stale row: %+v", vs)
+	}
+}
+
 func TestDecisionsIndexArchivedCompleteness(t *testing.T) {
 	// An archived decision file with no row in the archived index.
 	archivedIndex := "# Archived Decisions\n\n"

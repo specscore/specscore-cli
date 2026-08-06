@@ -26,7 +26,7 @@ func featuresIndex(rows ...[2]string) string {
 	for _, r := range rows {
 		slug, status := r[0], r[1]
 		b.WriteString("| [")
-		b.WriteString(slug)
+		b.WriteString(strings.Title(strings.ReplaceAll(slug, "-", " ")))
 		b.WriteString("](")
 		b.WriteString(slug)
 		b.WriteString("/README.md) | ")
@@ -45,7 +45,7 @@ func featuresIndex(rows ...[2]string) string {
 func featureReadme(name, status string) string {
 	return "# Feature: " + name + "\n\n" +
 		"**Status:** " + status + "\n\n" +
-		"## Summary\n\nPlaceholder.\n"
+		"## Summary\n\ndesc-" + strings.ToLower(strings.ReplaceAll(name, " ", "-")) + "\n"
 }
 
 // TestFeatureIndex_CleanCase asserts that an index whose Status cells
@@ -164,6 +164,28 @@ func TestFeatureIndex_FixRewritesRow(t *testing.T) {
 	vs2, _ := featureIndexRules(specRoot, false)
 	if len(vs2) != 0 {
 		t.Fatalf("expected 0 violations after --fix + re-lint, got %d: %+v", len(vs2), vs2)
+	}
+}
+
+func TestFeatureIndex_FixRepairsRenamedTitleAndSummary(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      featureIndexHeader + "| [Old Product Name](auth/README.md) | Draft | Command | Old summary |\n",
+		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
+	})
+	vs, _ := featureIndexRules(specRoot, false)
+	if !hasRule(vs, "feature-index-row-sync") {
+		t.Fatalf("expected stale rename violation, got %+v", vs)
+	}
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "[Competios Discovery](auth/README.md) | Approved | Command | Lists public competitions.") {
+		t.Fatalf("rename was not synchronised:\n%s", data)
 	}
 }
 

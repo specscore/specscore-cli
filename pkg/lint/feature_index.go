@@ -31,8 +31,8 @@ func (c *featureIndexChecker) check(specRoot string) ([]Violation, error) {
 	return vs, nil
 }
 
-// fix implements the fixer interface: rewrites drifted Status cells in
-// the features-index to match each feature's `**Status:**`. The check
+// fix implements the fixer interface: rewrites drifted derived cells in
+// the features-index to match each feature README. The check
 // pass that follows reports zero violations because the rewrite is
 // complete; idempotency is satisfied because the second pass finds no
 // drift to rewrite.
@@ -42,7 +42,8 @@ func (c *featureIndexChecker) fix(specRoot string) error {
 }
 
 // featureIndexRules enforces:
-//   - feature-index-row-sync: each top-level row's `Status` cell in
+//   - feature-index-row-sync: each top-level row's title, `Status`, and
+//     `Description` (when that column exists) in
 //     spec/features/README.md mirrors the corresponding feature's
 //     `**Status:**` value at spec/features/<feature_id>/README.md.
 //     Drift typically arises after a Status line is rewritten by hand
@@ -52,10 +53,8 @@ func (c *featureIndexChecker) fix(specRoot string) error {
 // Scope: top-level features only (entries whose slug contains a "/"
 // are sub-features and are NOT listed in the features-index).
 //
-// What --fix does: rewrites the drifted `Status` cell in the index row
-// to match the feature README. The `Feature` link and `Description`
-// cells are hand-maintained per the features-index meta-spec contract
-// and are NOT rewritten.
+// What --fix does: rewrites the derived cells in the index row to match the
+// feature README. Other schema-specific cells remain untouched.
 func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 	var vs []Violation
 	fixed := false
@@ -76,10 +75,9 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 	}
 
 	type drift struct {
-		slug    string
-		actual  string
-		want    string
-		lineNum int
+		slug         string
+		actual, want featureIndexValue
+		lineNum      int
 	}
 	var drifts []drift
 	for _, r := range rows {
@@ -97,13 +95,27 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 			// cover it.
 			continue
 		}
-		want, err := feature.ParseFeatureStatus(featureReadme)
+		status, err := feature.ParseFeatureStatus(featureReadme)
 		if err != nil {
 			continue
 		}
-		if r.status != want {
+		title, err := feature.ParseFeatureTitle(featureReadme)
+		if err != nil {
+			continue
+		}
+		summary, err := parseFeatureIndexSummary(featureReadme)
+		if err != nil {
+			continue
+		}
+		// Older feature files may not have a Summary section. Do not invent an
+		// empty description for them; once a summary exists it is canonical.
+		if summary == "" {
+			summary = r.summary
+		}
+		want := featureIndexValue{title: title, status: status, summary: summary}
+		if r.title != want.title || r.status != want.status || (r.hasDescription && r.summary != want.summary) {
 			drifts = append(drifts, drift{
-				slug: r.slug, actual: r.status, want: want, lineNum: r.lineNum,
+				slug: r.slug, actual: featureIndexValue{title: r.title, status: r.status, summary: r.summary}, want: want, lineNum: r.lineNum,
 			})
 		}
 	}
@@ -115,11 +127,11 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 	rel, _ := filepath.Rel(specRoot, indexPath)
 
 	if fix {
-		updates := make(map[string]string, len(drifts))
+		updates := make(map[string]featureIndexValue, len(drifts))
 		for _, d := range drifts {
 			updates[d.slug] = d.want
 		}
-		if err := rewriteFeatureIndexStatuses(indexPath, updates); err == nil {
+		if err := rewriteFeatureIndexRows(indexPath, updates); err == nil {
 			return nil, true
 		}
 		// Fall through to reporting if the rewrite failed.
@@ -131,7 +143,7 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 		vs = append(vs, Violation{
 			File: rel, Line: 0, Severity: "error",
 			Rule:    "feature-index-row-sync",
-			Message: fmt.Sprintf("features-index Status cells drifted from feature READMEs: %s (fix failed)", strings.Join(slugs, ", ")),
+			Message: fmt.Sprintf("features-index rows drifted from feature READMEs: %s (fix failed)", strings.Join(slugs, ", ")),
 		})
 		return vs, false
 	}
@@ -141,21 +153,20 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 		vs = append(vs, Violation{
 			File: rel, Line: d.lineNum, Severity: "error",
 			Rule:    "feature-index-row-sync",
-			Message: fmt.Sprintf("features-index row for %q shows Status %q but feature README declares %q (run `specscore spec lint --fix`)", d.slug, d.actual, d.want),
+			Message: fmt.Sprintf("features-index row for %q is stale (title/status/summary) (run `specscore spec lint --fix`)", d.slug),
 		})
 	}
 	return vs, fixed
 }
 
 // featureIndexRow captures one parsed top-level row of the features
-// index table. Only `slug` and `status` participate in the row-sync
-// check; the `Feature` link and `Description` cells are hand-maintained
-// and are not exposed here.
 type featureIndexRow struct {
-	slug    string
-	status  string
-	lineNum int
+	slug, title, status, summary string
+	hasDescription               bool
+	lineNum                      int
 }
+
+type featureIndexValue struct{ title, status, summary string }
 
 // featureIndexRowRe matches one row of the features-index table whose
 // first cell is a `[<slug>](<slug>/README.md)` link and whose second
@@ -190,22 +201,19 @@ func readFeatureIndexRows(path string) ([]featureIndexRow, error) {
 		if m == nil {
 			continue
 		}
-		rows = append(rows, featureIndexRow{
-			slug:    m[1],
-			status:  strings.TrimSpace(m[2]),
-			lineNum: lineNum,
-		})
+		parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(line, "|"), "|"), "|")
+		row := featureIndexRow{slug: m[1], title: strings.TrimSpace(strings.TrimPrefix(strings.Split(strings.TrimSpace(parts[0]), "](")[0], "[")), status: strings.TrimSpace(m[2]), lineNum: lineNum}
+		// The current canonical root index names this column Description. Keep
+		// legacy schemas without it status/title-only rather than guessing.
+		if len(parts) >= 4 {
+			row.hasDescription, row.summary = true, strings.TrimSpace(parts[len(parts)-1])
+		}
+		rows = append(rows, row)
 	}
 	return rows, scanner.Err()
 }
 
-// rewriteFeatureIndexStatuses rewrites the `Status` cell of each row in
-// the features-index whose slug appears in `updates`. Every other cell
-// is preserved byte-for-byte by splitting the row on `|` and substituting
-// only cell index 2 (cell 1 is the link, cell 2 is Status). This keeps
-// the function schema-agnostic — 3-cell, 4-cell, 7-cell rows all work
-// the same way.
-func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
+func rewriteFeatureIndexRows(path string, updates map[string]featureIndexValue) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -219,11 +227,8 @@ func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
 			continue
 		}
 		slug := m[1]
-		newStatus, ok := updates[slug]
+		update, ok := updates[slug]
 		if !ok {
-			continue
-		}
-		if strings.TrimSpace(m[2]) == newStatus {
 			continue
 		}
 		// Cells: trailing `|` then leading `|` produces empty first/last
@@ -236,7 +241,11 @@ func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
 		if len(parts) < 3 {
 			continue
 		}
-		parts[1] = " " + newStatus + " "
+		parts[0] = " [" + update.title + "](" + slug + "/README.md) "
+		parts[1] = " " + update.status + " "
+		if len(parts) >= 4 {
+			parts[len(parts)-1] = " " + update.summary + " "
+		}
 		lines[i] = "|" + strings.Join(parts, "|") + "|"
 		changed = true
 	}
@@ -244,4 +253,44 @@ func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
 		return nil
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// rewriteFeatureIndexStatuses remains as a narrow compatibility helper for
+// existing callers/tests. The row-sync fixer uses rewriteFeatureIndexRows so
+// title and Description stay canonical too.
+func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
+	rows, err := readFeatureIndexRows(path)
+	if err != nil {
+		return err
+	}
+	values := make(map[string]featureIndexValue, len(updates))
+	for _, row := range rows {
+		if status, ok := updates[row.slug]; ok {
+			values[row.slug] = featureIndexValue{title: row.title, status: status, summary: row.summary}
+		}
+	}
+	return rewriteFeatureIndexRows(path, values)
+}
+
+func parseFeatureIndexSummary(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(data), "\n")
+	in := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "## Summary" {
+			in = true
+			continue
+		}
+		if in && strings.HasPrefix(trimmed, "## ") {
+			break
+		}
+		if in && trimmed != "" {
+			return trimmed, nil
+		}
+	}
+	return "", nil
 }
