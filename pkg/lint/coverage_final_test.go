@@ -45,11 +45,11 @@ func TestDogfoodVersion_ParseSemverFnFailsAfterMatch(t *testing.T) {
 }
 
 // =============================================================================
-// feature_index.go: schema parser rejects a Feature/Status table with too few
-// columns without attempting a rewrite.
+// feature_index.go: minimal Feature/Status tables are a supported lifecycle
+// schema and must still receive status rewrites.
 // =============================================================================
 
-func TestRewriteFeatureIndexStatuses_TooFewColumns(t *testing.T) {
+func TestRewriteFeatureIndexStatuses_TwoColumnTable(t *testing.T) {
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "README.md")
 	content := "# Features\n\n| Feature | Status |\n|---|---|\n| [auth](auth/README.md) | Draft |\n"
@@ -63,8 +63,8 @@ func TestRewriteFeatureIndexStatuses_TooFewColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != content {
-		t.Error("two-column Feature/Status table should be left unchanged")
+	if string(got) == content || !strings.Contains(string(got), "| [auth](auth/README.md) | Stable |") {
+		t.Errorf("two-column Feature/Status table was not rewritten:\n%s", got)
 	}
 }
 

@@ -187,7 +187,7 @@ type featureIndexTableSchema struct {
 func featureIndexSchema(lines []string) (featureIndexTableSchema, bool) {
 	for i, line := range lines {
 		cells, ok := splitMarkdownTableCells(strings.TrimSpace(line))
-		if !ok || len(cells) < 3 || strings.TrimSpace(cells[0]) != "Feature" || strings.TrimSpace(cells[1]) != "Status" {
+		if !ok || len(cells) < 2 || strings.TrimSpace(cells[0]) != "Feature" || strings.TrimSpace(cells[1]) != "Status" {
 			continue
 		}
 		schema := featureIndexTableSchema{cellCount: len(cells), descriptionColumn: -1, dataStart: i + 1, dataEnd: len(lines)}
