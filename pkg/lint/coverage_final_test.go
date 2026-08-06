@@ -7,7 +7,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -46,27 +45,26 @@ func TestDogfoodVersion_ParseSemverFnFailsAfterMatch(t *testing.T) {
 }
 
 // =============================================================================
-// feature_index.go:236-237
-// rewriteFeatureIndexStatuses — inject a relaxed regex so len(parts) < 3
-// after TrimPrefix/TrimSuffix/Split, triggering the dead-code guard.
+// feature_index.go: schema parser rejects a Feature/Status table with too few
+// columns without attempting a rewrite.
 // =============================================================================
 
-func TestRewriteFeatureIndexStatuses_LessThanThreePartsViaInjection(t *testing.T) {
-	orig := featureIndexRowRe
-	// Relaxed regex: matches a 2-column row | [slug](slug/README.md) | status |
-	// (no trailing .+ requirement). After TrimPrefix/TrimSuffix("|") and Split("|"),
-	// this produces exactly 2 parts, hitting the len(parts) < 3 guard.
-	featureIndexRowRe = regexp.MustCompile(`^\|\s*\[[^\]]+\]\(([^)]+)/README\.md\)\s*\|\s*([^|]*?)\s*\|\s*$`)
-	defer func() { featureIndexRowRe = orig }()
-
+func TestRewriteFeatureIndexStatuses_TooFewColumns(t *testing.T) {
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "README.md")
-	content := "| [auth](auth/README.md) | Draft |\n"
+	content := "# Features\n\n| Feature | Status |\n|---|---|\n| [auth](auth/README.md) | Draft |\n"
 	if err := os.WriteFile(indexPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := rewriteFeatureIndexStatuses(indexPath, map[string]string{"auth": "Stable"}); err != nil {
 		t.Fatal(err)
+	}
+	got, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Error("two-column Feature/Status table should be left unchanged")
 	}
 }
 

@@ -189,6 +189,83 @@ func TestFeatureIndex_FixRepairsRenamedTitleAndSummary(t *testing.T) {
 	}
 }
 
+func TestFeatureIndex_FixPreservesTailCellsWithoutDescription(t *testing.T) {
+	const index = `# Features
+
+| Feature | Status | Kind | URL | Index |
+|---------|--------|------|-----|-------|
+| [Old Name](auth/README.md) | Draft | Command | https://example.com/a\|b | external-auth |
+`
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      index,
+		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
+	})
+
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "[Competios Discovery](auth/README.md) | Approved | Command | https://example.com/a\\|b | external-auth |") {
+		t.Fatalf("fix did not preserve non-Description URL and Index cells:\n%s", body)
+	}
+	if strings.Contains(body, "Lists public competitions.") {
+		t.Fatalf("summary must not overwrite a non-Description tail cell:\n%s", body)
+	}
+}
+
+func TestFeatureIndex_FixUsesNonfinalDescriptionColumn(t *testing.T) {
+	const index = `# Features
+
+| Feature | Status | Description | URL | Index |
+|---------|--------|-------------|-----|-------|
+| [Old Name](auth/README.md) | Draft | Old description | https://example.com/a\|b | external-auth |
+`
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      index,
+		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
+	})
+
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "[Competios Discovery](auth/README.md) | Approved | Lists public competitions. | https://example.com/a\\|b | external-auth |") {
+		t.Fatalf("fix did not target the explicit Description column:\n%s", data)
+	}
+}
+
+func TestFeatureIndex_FixEscapesPipesInDerivedCells(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      featureIndexHeader + "| [Old Name](auth/README.md) | Draft | Command | Old description |\n",
+		"features/auth/README.md": "# Feature: Creator | Competitor\n\n**Status:** Approved\n\n## Summary\n\nA creator | competitor event.\n",
+	})
+
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "[Creator \\| Competitor](auth/README.md) | Approved | Command | A creator \\| competitor event. |") {
+		t.Fatalf("derived pipe values were not escaped safely:\n%s", body)
+	}
+	if vs, _ := featureIndexRules(specRoot, false); len(vs) != 0 {
+		t.Fatalf("escaped row should be clean on re-lint, got %+v", vs)
+	}
+}
+
 // TestFeatureIndex_TopLevelOnly asserts the rule never fires for
 // sub-features. The features-index lists only top-level rows; rows
 // whose slug contains "/" point into nested directories and are not
