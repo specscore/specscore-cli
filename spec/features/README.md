@@ -10,7 +10,7 @@ Features of the `specscore` CLI.
 
 | Feature | Status | Kind | Description |
 |---------|--------|------|-------------|
-| [cli](cli/README.md) | Implementing | Command | `specscore` CLI — parent feature for command-level specifications |
+| [CLI](cli/README.md) | Implementing | Command | The `specscore` CLI is the tooling for working with SpecScore specification repositories. It validates specs, queries the feature tree, inspects source-to-spec links, manages tasks, scaffolds new artifacts, and reports its own identity. |
 
 ## Open Questions
 

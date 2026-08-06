@@ -26,7 +26,7 @@ func featuresIndex(rows ...[2]string) string {
 	for _, r := range rows {
 		slug, status := r[0], r[1]
 		b.WriteString("| [")
-		b.WriteString(strings.Title(strings.ReplaceAll(slug, "-", " ")))
+		b.WriteString(featureFixtureTitle(slug))
 		b.WriteString("](")
 		b.WriteString(slug)
 		b.WriteString("/README.md) | ")
@@ -37,6 +37,19 @@ func featuresIndex(rows ...[2]string) string {
 	}
 	b.WriteString("\n## Open Questions\n\nNone at this time.\n")
 	return b.String()
+}
+
+// featureFixtureTitle is deliberately limited to the lowercase ASCII slugs
+// used by these test fixtures. It keeps test data readable without depending
+// on the deprecated, locale-sensitive strings.Title.
+func featureFixtureTitle(slug string) string {
+	words := strings.Split(slug, "-")
+	for i, word := range words {
+		if word != "" {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // featureReadme builds a minimal feature README declaring the given
