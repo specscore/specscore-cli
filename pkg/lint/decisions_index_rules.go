@@ -54,10 +54,6 @@ type decisionsIndexRow struct {
 	rawLine  string
 }
 
-var decisionsIndexRowRe = regexp.MustCompile(
-	`^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|`,
-)
-
 var decisionsIndexHeaderRe = regexp.MustCompile(
 	`^\|\s*#\s*\|\s*Decision\s*\|\s*Status\s*\|\s*Date\s*\|\s*Tags\s*\|\s*Affected\s*\|`,
 )
@@ -170,27 +166,11 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 			if decisionsIndexSeparatorRe.MatchString(trimmed) {
 				continue
 			}
-			m := decisionsIndexRowRe.FindStringSubmatch(trimmed)
-			if m == nil {
+			row, ok := parseDecisionsIndexRow(trimmed)
+			if !ok {
 				continue
 			}
-			num := 0
-			_, _ = fmt.Sscanf(m[1], "%d", &num)
-			slug := strings.TrimSuffix(m[2], ".md")
-			if strings.HasSuffix(m[2], ".md") {
-				slug = strings.TrimSuffix(filepath.Base(m[2]), ".md")
-			}
-			rows = append(rows, decisionsIndexRow{
-				number:   num,
-				numStr:   m[1],
-				slug:     slug,
-				title:    strings.TrimSpace(m[3]),
-				status:   strings.TrimSpace(m[4]),
-				date:     strings.TrimSpace(m[5]),
-				tags:     strings.TrimSpace(m[6]),
-				affected: strings.TrimSpace(m[7]),
-				rawLine:  trimmed,
-			})
+			rows = append(rows, row)
 		}
 	}
 
@@ -351,9 +331,54 @@ func canonicalDecisionIndexRow(d *parsedDecision) decisionsIndexRow {
 		}
 	}
 	num := fmt.Sprintf("%04d", d.number)
-	row := decisionsIndexRow{number: d.number, numStr: num, slug: d.slug, title: d.title, status: value("Status", ""), date: value("Date", ""), tags: value("Tags", "—"), affected: affected}
+	row := decisionsIndexRow{
+		number:   d.number,
+		numStr:   num,
+		slug:     d.slug,
+		title:    escapeMarkdownTableCell(d.title),
+		status:   escapeMarkdownTableCell(value("Status", "")),
+		date:     escapeMarkdownTableCell(value("Date", "")),
+		tags:     escapeMarkdownTableCell(value("Tags", "—")),
+		affected: escapeMarkdownTableCell(affected),
+	}
 	row.rawLine = fmt.Sprintf("| [%s](%s.md) | %s | %s | %s | %s | %s |", row.numStr, row.slug, row.title, row.status, row.date, row.tags, row.affected)
 	return row
+}
+
+// parseDecisionsIndexRow accepts only the six cells prescribed by the active
+// decisions index. Escaped pipes stay inside their cells; an unescaped pipe
+// changes the column count and leaves the malformed row untouched.
+func parseDecisionsIndexRow(line string) (decisionsIndexRow, bool) {
+	cells, ok := splitMarkdownTableCells(line)
+	if !ok || len(cells) != 6 {
+		return decisionsIndexRow{}, false
+	}
+	reference := strings.TrimSpace(cells[0])
+	separator := strings.Index(reference, "](")
+	if !strings.HasPrefix(reference, "[") || separator != 5 || !strings.HasSuffix(reference, ")") {
+		return decisionsIndexRow{}, false
+	}
+	numStr := reference[1:separator]
+	path := reference[separator+2 : len(reference)-1]
+	num := 0
+	if _, err := fmt.Sscanf(numStr, "%d", &num); err != nil {
+		return decisionsIndexRow{}, false
+	}
+	slug := strings.TrimSuffix(filepath.Base(path), ".md")
+	if slug == "" || !strings.HasSuffix(path, ".md") {
+		return decisionsIndexRow{}, false
+	}
+	return decisionsIndexRow{
+		number:   num,
+		numStr:   numStr,
+		slug:     slug,
+		title:    strings.TrimSpace(cells[1]),
+		status:   strings.TrimSpace(cells[2]),
+		date:     strings.TrimSpace(cells[3]),
+		tags:     strings.TrimSpace(cells[4]),
+		affected: strings.TrimSpace(cells[5]),
+		rawLine:  line,
+	}, true
 }
 
 func checkArchivedDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violation, error) {

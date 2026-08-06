@@ -112,12 +112,12 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 			summary = r.summary
 		}
 		want := featureIndexValue{
-			title:   escapeFeatureIndexCell(title),
-			status:  escapeFeatureIndexCell(status),
+			title:   escapeMarkdownTableCell(title),
+			status:  escapeMarkdownTableCell(status),
 			summary: summary,
 		}
 		if summaryIsDerived {
-			want.summary = escapeFeatureIndexCell(summary)
+			want.summary = escapeMarkdownTableCell(summary)
 		}
 		if r.title != want.title || r.status != want.status || (r.hasDescription && r.summary != want.summary) {
 			drifts = append(drifts, drift{
@@ -247,7 +247,9 @@ func parseFeatureIndexLink(cell string) (title, slug string, ok bool) {
 	return title, slug, slug != ""
 }
 
-func escapeFeatureIndexCell(value string) string {
+// escapeMarkdownTableCell renders a derived Markdown-table value without
+// allowing a literal pipe to create an additional column.
+func escapeMarkdownTableCell(value string) string {
 	return strings.ReplaceAll(strings.TrimSpace(value), "|", "\\|")
 }
 
