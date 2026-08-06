@@ -1,11 +1,9 @@
 package lint
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -31,8 +29,8 @@ func (c *featureIndexChecker) check(specRoot string) ([]Violation, error) {
 	return vs, nil
 }
 
-// fix implements the fixer interface: rewrites drifted Status cells in
-// the features-index to match each feature's `**Status:**`. The check
+// fix implements the fixer interface: rewrites drifted derived cells in
+// the features-index to match each feature README. The check
 // pass that follows reports zero violations because the rewrite is
 // complete; idempotency is satisfied because the second pass finds no
 // drift to rewrite.
@@ -42,7 +40,8 @@ func (c *featureIndexChecker) fix(specRoot string) error {
 }
 
 // featureIndexRules enforces:
-//   - feature-index-row-sync: each top-level row's `Status` cell in
+//   - feature-index-row-sync: each top-level row's title, `Status`, and
+//     `Description` (when that column exists) in
 //     spec/features/README.md mirrors the corresponding feature's
 //     `**Status:**` value at spec/features/<feature_id>/README.md.
 //     Drift typically arises after a Status line is rewritten by hand
@@ -52,10 +51,8 @@ func (c *featureIndexChecker) fix(specRoot string) error {
 // Scope: top-level features only (entries whose slug contains a "/"
 // are sub-features and are NOT listed in the features-index).
 //
-// What --fix does: rewrites the drifted `Status` cell in the index row
-// to match the feature README. The `Feature` link and `Description`
-// cells are hand-maintained per the features-index meta-spec contract
-// and are NOT rewritten.
+// What --fix does: rewrites the derived cells in the index row to match the
+// feature README. Other schema-specific cells remain untouched.
 func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 	var vs []Violation
 	fixed := false
@@ -76,10 +73,9 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 	}
 
 	type drift struct {
-		slug    string
-		actual  string
-		want    string
-		lineNum int
+		slug         string
+		actual, want featureIndexValue
+		lineNum      int
 	}
 	var drifts []drift
 	for _, r := range rows {
@@ -97,13 +93,35 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 			// cover it.
 			continue
 		}
-		want, err := feature.ParseFeatureStatus(featureReadme)
+		status, err := feature.ParseFeatureStatus(featureReadme)
 		if err != nil {
 			continue
 		}
-		if r.status != want {
+		title, err := feature.ParseFeatureTitle(featureReadme)
+		if err != nil {
+			continue
+		}
+		summary, err := parseFeatureIndexSummaryFile(featureReadme)
+		if err != nil {
+			continue
+		}
+		// Older feature files may not have a Summary section. Do not invent an
+		// empty description for them; once a summary exists it is canonical.
+		summaryIsDerived := summary != ""
+		if !summaryIsDerived {
+			summary = r.summary
+		}
+		want := featureIndexValue{
+			title:   escapeMarkdownTableCell(title),
+			status:  escapeMarkdownTableCell(status),
+			summary: summary,
+		}
+		if summaryIsDerived {
+			want.summary = escapeMarkdownTableCell(summary)
+		}
+		if r.title != want.title || r.status != want.status || (r.hasDescription && r.summary != want.summary) {
 			drifts = append(drifts, drift{
-				slug: r.slug, actual: r.status, want: want, lineNum: r.lineNum,
+				slug: r.slug, actual: featureIndexValue{title: r.title, status: r.status, summary: r.summary}, want: want, lineNum: r.lineNum,
 			})
 		}
 	}
@@ -115,11 +133,11 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 	rel, _ := filepath.Rel(specRoot, indexPath)
 
 	if fix {
-		updates := make(map[string]string, len(drifts))
+		updates := make(map[string]featureIndexValue, len(drifts))
 		for _, d := range drifts {
 			updates[d.slug] = d.want
 		}
-		if err := rewriteFeatureIndexStatuses(indexPath, updates); err == nil {
+		if err := rewriteFeatureIndexRows(indexPath, updates); err == nil {
 			return nil, true
 		}
 		// Fall through to reporting if the rewrite failed.
@@ -131,7 +149,7 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 		vs = append(vs, Violation{
 			File: rel, Line: 0, Severity: "error",
 			Rule:    "feature-index-row-sync",
-			Message: fmt.Sprintf("features-index Status cells drifted from feature READMEs: %s (fix failed)", strings.Join(slugs, ", ")),
+			Message: fmt.Sprintf("features-index rows drifted from feature READMEs: %s (fix failed)", strings.Join(slugs, ", ")),
 		})
 		return vs, false
 	}
@@ -141,32 +159,103 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 		vs = append(vs, Violation{
 			File: rel, Line: d.lineNum, Severity: "error",
 			Rule:    "feature-index-row-sync",
-			Message: fmt.Sprintf("features-index row for %q shows Status %q but feature README declares %q (run `specscore spec lint --fix`)", d.slug, d.actual, d.want),
+			Message: fmt.Sprintf("features-index row for %q is stale (title/status/summary) (run `specscore spec lint --fix`)", d.slug),
 		})
 	}
 	return vs, fixed
 }
 
 // featureIndexRow captures one parsed top-level row of the features
-// index table. Only `slug` and `status` participate in the row-sync
-// check; the `Feature` link and `Description` cells are hand-maintained
-// and are not exposed here.
 type featureIndexRow struct {
-	slug    string
-	status  string
-	lineNum int
+	slug, title, status, summary string
+	hasDescription               bool
+	lineNum                      int
 }
 
-// featureIndexRowRe matches one row of the features-index table whose
-// first cell is a `[<slug>](<slug>/README.md)` link and whose second
-// cell is the row's Status. Trailing cells (Kind, URL, Consumer Path,
-// Index, Description, ... — schemas vary across repos) are matched but
-// not captured here; rewriteFeatureIndexStatuses preserves them verbatim
-// by splitting the row on `|` rather than re-emitting from captures.
-//
-// At least three cells (link, status, one more) are required so that
-// the match cannot accidentally fire on an isolated link line.
-var featureIndexRowRe = regexp.MustCompile(`^\|\s*\[[^\]]+\]\(([^)]+)/README\.md\)\s*\|\s*([^|]*?)\s*\|.+\|\s*$`)
+type featureIndexValue struct{ title, status, summary string }
+
+// parseFeatureIndexSummaryFile is a narrow seam for exercising the defensive
+// read-error path below. Production always uses parseFeatureIndexSummary.
+var parseFeatureIndexSummaryFile = parseFeatureIndexSummary
+
+type featureIndexTableSchema struct {
+	cellCount         int
+	descriptionColumn int // -1 when the table has no Description column
+	dataStart         int
+	dataEnd           int
+}
+
+// featureIndexSchema finds the Feature/Status table and its explicit
+// Description column. The column is never inferred from its position: indices
+// frequently end with URL, Index, or other hand-maintained fields.
+func featureIndexSchema(lines []string) (featureIndexTableSchema, bool) {
+	for i, line := range lines {
+		cells, ok := splitMarkdownTableCells(strings.TrimSpace(line))
+		if !ok || len(cells) < 2 || strings.TrimSpace(cells[0]) != "Feature" || strings.TrimSpace(cells[1]) != "Status" {
+			continue
+		}
+		schema := featureIndexTableSchema{cellCount: len(cells), descriptionColumn: -1, dataStart: i + 1, dataEnd: len(lines)}
+		for column, cell := range cells {
+			if strings.TrimSpace(cell) == "Description" {
+				schema.descriptionColumn = column
+				break
+			}
+		}
+		for j := schema.dataStart; j < len(lines); j++ {
+			trimmed := strings.TrimSpace(lines[j])
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, "|") {
+				schema.dataEnd = j
+				break
+			}
+		}
+		return schema, true
+	}
+	return featureIndexTableSchema{}, false
+}
+
+// splitMarkdownTableCells keeps escaped pipes inside their cell. Rows with an
+// unescaped pipe have a different number of cells than their header and are
+// ignored by callers rather than being rewritten incorrectly.
+func splitMarkdownTableCells(line string) ([]string, bool) {
+	if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+		return nil, false
+	}
+	var cells []string
+	start := 1
+	backslashes := 0
+	for i := 1; i < len(line); i++ {
+		if line[i] == '|' && backslashes%2 == 0 {
+			cells = append(cells, line[start:i])
+			start = i + 1
+		}
+		if line[i] == '\\' {
+			backslashes++
+		} else {
+			backslashes = 0
+		}
+	}
+	return cells, true
+}
+
+func parseFeatureIndexLink(cell string) (title, slug string, ok bool) {
+	cell = strings.TrimSpace(cell)
+	if !strings.HasPrefix(cell, "[") {
+		return "", "", false
+	}
+	separator := strings.Index(cell, "](")
+	if separator < 1 || !strings.HasSuffix(cell, "/README.md)") {
+		return "", "", false
+	}
+	title = cell[1:separator]
+	slug = strings.TrimSuffix(cell[separator+2:], "/README.md)")
+	return title, slug, slug != ""
+}
+
+// escapeMarkdownTableCell renders a derived Markdown-table value without
+// allowing a literal pipe to create an additional column.
+func escapeMarkdownTableCell(value string) string {
+	return strings.ReplaceAll(strings.TrimSpace(value), "|", "\\|")
+}
 
 // readFeatureIndexRows scans the features-index README and returns one
 // featureIndexRow per row of the top-level table. Header and separator
@@ -174,69 +263,66 @@ var featureIndexRowRe = regexp.MustCompile(`^\|\s*\[[^\]]+\]\(([^)]+)/README\.md
 // retained so the caller can filter; the caller is responsible for
 // excluding sub-features from the row-sync check.
 func readFeatureIndexRows(path string) ([]featureIndexRow, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	lines := strings.Split(string(data), "\n")
+	schema, ok := featureIndexSchema(lines)
+	if !ok {
+		return nil, nil
+	}
 	var rows []featureIndexRow
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := strings.TrimSpace(scanner.Text())
-		m := featureIndexRowRe.FindStringSubmatch(line)
-		if m == nil {
+	for i := schema.dataStart; i < schema.dataEnd; i++ {
+		cells, ok := splitMarkdownTableCells(strings.TrimSpace(lines[i]))
+		if !ok || len(cells) != schema.cellCount {
 			continue
 		}
-		rows = append(rows, featureIndexRow{
-			slug:    m[1],
-			status:  strings.TrimSpace(m[2]),
-			lineNum: lineNum,
-		})
+		title, slug, ok := parseFeatureIndexLink(cells[0])
+		if !ok {
+			continue
+		}
+		row := featureIndexRow{slug: slug, title: title, status: strings.TrimSpace(cells[1]), lineNum: i + 1}
+		if schema.descriptionColumn >= 0 {
+			row.hasDescription = true
+			row.summary = strings.TrimSpace(cells[schema.descriptionColumn])
+		}
+		rows = append(rows, row)
 	}
-	return rows, scanner.Err()
+	return rows, nil
 }
 
-// rewriteFeatureIndexStatuses rewrites the `Status` cell of each row in
-// the features-index whose slug appears in `updates`. Every other cell
-// is preserved byte-for-byte by splitting the row on `|` and substituting
-// only cell index 2 (cell 1 is the link, cell 2 is Status). This keeps
-// the function schema-agnostic — 3-cell, 4-cell, 7-cell rows all work
-// the same way.
-func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
+func rewriteFeatureIndexRows(path string, updates map[string]featureIndexValue) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	lines := strings.Split(string(data), "\n")
+	schema, ok := featureIndexSchema(lines)
+	if !ok {
+		return nil
+	}
 	changed := false
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		m := featureIndexRowRe.FindStringSubmatch(trimmed)
-		if m == nil {
+	for i := schema.dataStart; i < schema.dataEnd; i++ {
+		parts, ok := splitMarkdownTableCells(strings.TrimSpace(lines[i]))
+		if !ok || len(parts) != schema.cellCount {
 			continue
 		}
-		slug := m[1]
-		newStatus, ok := updates[slug]
+		_, slug, ok := parseFeatureIndexLink(parts[0])
 		if !ok {
 			continue
 		}
-		if strings.TrimSpace(m[2]) == newStatus {
+		update, ok := updates[slug]
+		if !ok {
 			continue
 		}
-		// Cells: trailing `|` then leading `|` produces empty first/last
-		// strings after Split — splice the Status cell (index 2) and
-		// rejoin without re-emitting the link cell, so any extra cells
-		// (kind/url/consumer-path/index/description) round-trip exactly.
-		// Preserve the original surrounding whitespace by re-padding the
-		// Status cell with a single space on each side.
-		parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(trimmed, "|"), "|"), "|")
-		if len(parts) < 3 {
-			continue
+		// Only derived Feature, Status, and explicit Description cells are
+		// rewritten. Every other schema-specific cell round-trips byte-for-byte.
+		parts[0] = " [" + update.title + "](" + slug + "/README.md) "
+		parts[1] = " " + update.status + " "
+		if schema.descriptionColumn >= 0 {
+			parts[schema.descriptionColumn] = " " + update.summary + " "
 		}
-		parts[1] = " " + newStatus + " "
 		lines[i] = "|" + strings.Join(parts, "|") + "|"
 		changed = true
 	}
@@ -244,4 +330,44 @@ func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
 		return nil
 	}
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// rewriteFeatureIndexStatuses remains as a narrow compatibility helper for
+// existing callers/tests. The row-sync fixer uses rewriteFeatureIndexRows so
+// title and Description stay canonical too.
+func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
+	rows, err := readFeatureIndexRows(path)
+	if err != nil {
+		return err
+	}
+	values := make(map[string]featureIndexValue, len(updates))
+	for _, row := range rows {
+		if status, ok := updates[row.slug]; ok {
+			values[row.slug] = featureIndexValue{title: row.title, status: status, summary: row.summary}
+		}
+	}
+	return rewriteFeatureIndexRows(path, values)
+}
+
+func parseFeatureIndexSummary(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(data), "\n")
+	in := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "## Summary" {
+			in = true
+			continue
+		}
+		if in && strings.HasPrefix(trimmed, "## ") {
+			break
+		}
+		if in && trimmed != "" {
+			return trimmed, nil
+		}
+	}
+	return "", nil
 }

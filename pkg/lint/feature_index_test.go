@@ -26,7 +26,7 @@ func featuresIndex(rows ...[2]string) string {
 	for _, r := range rows {
 		slug, status := r[0], r[1]
 		b.WriteString("| [")
-		b.WriteString(slug)
+		b.WriteString(featureFixtureTitle(slug))
 		b.WriteString("](")
 		b.WriteString(slug)
 		b.WriteString("/README.md) | ")
@@ -39,13 +39,26 @@ func featuresIndex(rows ...[2]string) string {
 	return b.String()
 }
 
+// featureFixtureTitle is deliberately limited to the lowercase ASCII slugs
+// used by these test fixtures. It keeps test data readable without depending
+// on the deprecated, locale-sensitive strings.Title.
+func featureFixtureTitle(slug string) string {
+	words := strings.Split(slug, "-")
+	for i, word := range words {
+		if word != "" {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
 // featureReadme builds a minimal feature README declaring the given
 // status. Only the `**Status:**` line matters for these tests; the rest
 // is a stable shell so the file is non-empty.
 func featureReadme(name, status string) string {
 	return "# Feature: " + name + "\n\n" +
 		"**Status:** " + status + "\n\n" +
-		"## Summary\n\nPlaceholder.\n"
+		"## Summary\n\ndesc-" + strings.ToLower(strings.ReplaceAll(name, " ", "-")) + "\n"
 }
 
 // TestFeatureIndex_CleanCase asserts that an index whose Status cells
@@ -164,6 +177,186 @@ func TestFeatureIndex_FixRewritesRow(t *testing.T) {
 	vs2, _ := featureIndexRules(specRoot, false)
 	if len(vs2) != 0 {
 		t.Fatalf("expected 0 violations after --fix + re-lint, got %d: %+v", len(vs2), vs2)
+	}
+}
+
+func TestFeatureIndex_FixRepairsRenamedTitleAndSummary(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      featureIndexHeader + "| [Old Product Name](auth/README.md) | Draft | Command | Old summary |\n",
+		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
+	})
+	vs, _ := featureIndexRules(specRoot, false)
+	if !hasRule(vs, "feature-index-row-sync") {
+		t.Fatalf("expected stale rename violation, got %+v", vs)
+	}
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "[Competios Discovery](auth/README.md) | Approved | Command | Lists public competitions.") {
+		t.Fatalf("rename was not synchronised:\n%s", data)
+	}
+}
+
+func TestFeatureIndex_FixPreservesTailCellsWithoutDescription(t *testing.T) {
+	const index = `# Features
+
+| Feature | Status | Kind | URL | Index |
+|---------|--------|------|-----|-------|
+| [Old Name](auth/README.md) | Draft | Command | https://example.com/a\|b | external-auth |
+`
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      index,
+		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
+	})
+
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "[Competios Discovery](auth/README.md) | Approved | Command | https://example.com/a\\|b | external-auth |") {
+		t.Fatalf("fix did not preserve non-Description URL and Index cells:\n%s", body)
+	}
+	if strings.Contains(body, "Lists public competitions.") {
+		t.Fatalf("summary must not overwrite a non-Description tail cell:\n%s", body)
+	}
+}
+
+func TestFeatureIndex_FixUsesNonfinalDescriptionColumn(t *testing.T) {
+	const index = `# Features
+
+| Feature | Status | Description | URL | Index |
+|---------|--------|-------------|-----|-------|
+| [Old Name](auth/README.md) | Draft | Old description | https://example.com/a\|b | external-auth |
+`
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      index,
+		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
+	})
+
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "[Competios Discovery](auth/README.md) | Approved | Lists public competitions. | https://example.com/a\\|b | external-auth |") {
+		t.Fatalf("fix did not target the explicit Description column:\n%s", data)
+	}
+}
+
+func TestFeatureIndex_FixEscapesPipesInDerivedCells(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      featureIndexHeader + "| [Old Name](auth/README.md) | Draft | Command | Old description |\n",
+		"features/auth/README.md": "# Feature: Creator | Competitor\n\n**Status:** Approved\n\n## Summary\n\nA creator | competitor event.\n",
+	})
+
+	vs, fixed := featureIndexRules(specRoot, true)
+	if !fixed || len(vs) != 0 {
+		t.Fatalf("fix = (%v, %+v)", fixed, vs)
+	}
+	data, err := os.ReadFile(filepath.Join(specRoot, "features", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "[Creator \\| Competitor](auth/README.md) | Approved | Command | A creator \\| competitor event. |") {
+		t.Fatalf("derived pipe values were not escaped safely:\n%s", body)
+	}
+	if vs, _ := featureIndexRules(specRoot, false); len(vs) != 0 {
+		t.Fatalf("escaped row should be clean on re-lint, got %+v", vs)
+	}
+}
+
+func TestFeatureIndexHelpers_RejectMalformedRowsAndLinks(t *testing.T) {
+	if _, _, ok := parseFeatureIndexLink("[Auth](auth/README.md"); ok {
+		t.Fatal("malformed feature link must not parse")
+	}
+
+	indexPath := filepath.Join(t.TempDir(), "README.md")
+	content := "| Feature | Status | Description |\n|---|---|---|\n| [Auth](auth/README.md) | Draft |\n"
+	if err := os.WriteFile(indexPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readFeatureIndexRows(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("malformed row must be ignored, got %+v", rows)
+	}
+	if err := rewriteFeatureIndexRows(indexPath, map[string]featureIndexValue{"auth": {title: "Auth", status: "Stable"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Fatalf("malformed row must round-trip untouched:\n%s", data)
+	}
+}
+
+func TestFeatureIndexHelpers_HandleMissingDerivedInput(t *testing.T) {
+	if _, err := parseFeatureIndexSummary(filepath.Join(t.TempDir(), "missing.md")); err == nil {
+		t.Fatal("missing feature README must return an error")
+	}
+
+	path := filepath.Join(t.TempDir(), "README.md")
+	if err := os.WriteFile(path, []byte("# Feature: Auth\n\n## Summary\n\n## Details\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if summary, err := parseFeatureIndexSummary(path); err != nil || summary != "" {
+		t.Fatalf("summary before next heading = (%q, %v), want empty, nil", summary, err)
+	}
+
+	if err := rewriteFeatureIndexRows(filepath.Join(t.TempDir(), "missing.md"), nil); err == nil {
+		t.Fatal("missing index must return an error")
+	}
+	plain := filepath.Join(t.TempDir(), "plain.md")
+	if err := os.WriteFile(plain, []byte("# No index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteFeatureIndexRows(plain, nil); err != nil {
+		t.Fatalf("index without a Feature/Status table must be a no-op: %v", err)
+	}
+}
+
+func TestFeatureIndexRules_SkipsFeatureWithoutParseableTitle(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md": featureIndexHeader + "| [Auth](auth/README.md) | Draft | Command | desc-auth |\n",
+		// Status is available before the oversized line; ParseFeatureTitle then
+		// reports the scanner error instead of silently deriving an empty title.
+		"features/auth/README.md": "**Status:** Draft\n" + strings.Repeat("x", 70*1024),
+	})
+	violations, fixed := featureIndexRules(specRoot, true)
+	if fixed || len(violations) != 0 {
+		t.Fatalf("unparseable feature title must be skipped, got fixed=%v violations=%+v", fixed, violations)
+	}
+}
+
+func TestFeatureIndexRules_SkipsFeatureWithUnreadableSummary(t *testing.T) {
+	original := parseFeatureIndexSummaryFile
+	parseFeatureIndexSummaryFile = func(string) (string, error) { return "", os.ErrPermission }
+	t.Cleanup(func() { parseFeatureIndexSummaryFile = original })
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      featureIndexHeader + "| [Auth](auth/README.md) | Draft | Command | desc-auth |\n",
+		"features/auth/README.md": "# Feature: Auth\n\n**Status:** Draft\n\n## Summary\n\nDescription.\n",
+	})
+	violations, fixed := featureIndexRules(specRoot, true)
+	if fixed || len(violations) != 0 {
+		t.Fatalf("unreadable summary must be skipped, got fixed=%v violations=%+v", fixed, violations)
 	}
 }
 

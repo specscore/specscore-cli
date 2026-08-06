@@ -18,6 +18,7 @@ var decisionsIndexRuleIDs = []string{
 	"DI-archived-index-chronological",
 	"DI-completeness",
 	"DI-archived-status-excludes-active",
+	"DI-row-content-sync",
 }
 
 type decisionsIndexChecker struct {
@@ -52,10 +53,6 @@ type decisionsIndexRow struct {
 	affected string
 	rawLine  string
 }
-
-var decisionsIndexRowRe = regexp.MustCompile(
-	`^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|`,
-)
 
 var decisionsIndexHeaderRe = regexp.MustCompile(
 	`^\|\s*#\s*\|\s*Decision\s*\|\s*Status\s*\|\s*Date\s*\|\s*Tags\s*\|\s*Affected\s*\|`,
@@ -169,27 +166,11 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 			if decisionsIndexSeparatorRe.MatchString(trimmed) {
 				continue
 			}
-			m := decisionsIndexRowRe.FindStringSubmatch(trimmed)
-			if m == nil {
+			row, ok := parseDecisionsIndexRow(trimmed)
+			if !ok {
 				continue
 			}
-			num := 0
-			_, _ = fmt.Sscanf(m[1], "%d", &num)
-			slug := strings.TrimSuffix(m[2], ".md")
-			if strings.HasSuffix(m[2], ".md") {
-				slug = strings.TrimSuffix(filepath.Base(m[2]), ".md")
-			}
-			rows = append(rows, decisionsIndexRow{
-				number:   num,
-				numStr:   m[1],
-				slug:     slug,
-				title:    strings.TrimSpace(m[3]),
-				status:   strings.TrimSpace(m[4]),
-				date:     strings.TrimSpace(m[5]),
-				tags:     strings.TrimSpace(m[6]),
-				affected: strings.TrimSpace(m[7]),
-				rawLine:  trimmed,
-			})
+			rows = append(rows, row)
 		}
 	}
 
@@ -244,6 +225,40 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 		listedSet[row.slug] = true
 	}
 
+	// The active index is a derived discovery surface. Once a decision exists,
+	// every visible cell must track its canonical artifact rather than retaining
+	// a stale title after a rename or stale header metadata after an edit.
+	bySlug := make(map[string]*parsedDecision, len(decisions))
+	for _, d := range decisions {
+		if !d.archived {
+			bySlug[d.slug] = d
+		}
+	}
+	var stale []string
+	for i := range rows {
+		d, ok := bySlug[rows[i].slug]
+		if !ok {
+			continue
+		}
+		want := canonicalDecisionIndexRow(d)
+		if rows[i].title != want.title || rows[i].status != want.status || rows[i].date != want.date || rows[i].tags != want.tags || rows[i].affected != want.affected {
+			stale = append(stale, rows[i].slug)
+			if fix {
+				rows[i] = want
+			}
+		}
+	}
+	if len(stale) > 0 && !fix {
+		sort.Strings(stale)
+		vs = append(vs, Violation{File: rel, Line: 0, Severity: "error", Rule: "DI-row-content-sync", Message: fmt.Sprintf("active decisions index rows drifted from decision artifacts: %s (run `specscore spec lint --fix`)", strings.Join(stale, ", "))})
+	}
+	if len(stale) > 0 && fix {
+		fresh, readErr := osReadFileDecisionIndex(indexPath)
+		if readErr != nil || rewriteDecisionsIndexTable(indexPath, strings.Split(string(fresh), "\n"), decisionsHeadingLine, rows) != nil {
+			vs = append(vs, Violation{File: rel, Line: 0, Severity: "error", Rule: "DI-row-content-sync", Message: "active decisions index rows drifted from decision artifacts (fix failed)"})
+		}
+	}
+
 	var missingDecisions []*parsedDecision
 	for _, d := range decisions {
 		if d.archived {
@@ -258,31 +273,7 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 		if fix {
 			// Add missing rows and rewrite
 			for _, d := range missingDecisions {
-				status := ""
-				if f, ok := d.fieldByName["Status"]; ok {
-					status = f.Value
-				}
-				date := ""
-				if f, ok := d.fieldByName["Date"]; ok {
-					date = f.Value
-				}
-				tags := "—"
-				if f, ok := d.fieldByName["Tags"]; ok && f.Value != "" && f.Value != "—" {
-					tags = f.Value
-				}
-				numStr := fmt.Sprintf("%04d", d.number)
-				row := decisionsIndexRow{
-					number:   d.number,
-					numStr:   numStr,
-					slug:     d.slug,
-					title:    d.title,
-					status:   status,
-					date:     date,
-					tags:     tags,
-					affected: "—",
-					rawLine:  fmt.Sprintf("| [%s](%s.md) | %s | %s | %s | %s | %s |", numStr, d.slug, d.title, status, date, tags, "—"),
-				}
-				rows = append(rows, row)
+				rows = append(rows, canonicalDecisionIndexRow(d))
 			}
 			sort.Slice(rows, func(i, j int) bool {
 				return rows[i].number < rows[j].number
@@ -318,6 +309,76 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 	}
 
 	return vs, nil
+}
+
+func canonicalDecisionIndexRow(d *parsedDecision) decisionsIndexRow {
+	value := func(name, fallback string) string {
+		if f, ok := d.fieldByName[name]; ok && strings.TrimSpace(f.Value) != "" {
+			return strings.TrimSpace(f.Value)
+		}
+		return fallback
+	}
+	affected := "—"
+	if section, ok := d.sectionByName["Affected Features"]; ok {
+		var entries []string
+		for _, line := range strings.Split(section.Body, "\n") {
+			if v := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- ")); strings.HasPrefix(strings.TrimSpace(line), "- ") && v != "" && v != "None at this time." {
+				entries = append(entries, v)
+			}
+		}
+		if len(entries) > 0 {
+			affected = strings.Join(entries, ", ")
+		}
+	}
+	num := fmt.Sprintf("%04d", d.number)
+	row := decisionsIndexRow{
+		number:   d.number,
+		numStr:   num,
+		slug:     d.slug,
+		title:    escapeMarkdownTableCell(d.title),
+		status:   escapeMarkdownTableCell(value("Status", "")),
+		date:     escapeMarkdownTableCell(value("Date", "")),
+		tags:     escapeMarkdownTableCell(value("Tags", "—")),
+		affected: escapeMarkdownTableCell(affected),
+	}
+	row.rawLine = fmt.Sprintf("| [%s](%s.md) | %s | %s | %s | %s | %s |", row.numStr, row.slug, row.title, row.status, row.date, row.tags, row.affected)
+	return row
+}
+
+// parseDecisionsIndexRow accepts only the six cells prescribed by the active
+// decisions index. Escaped pipes stay inside their cells; an unescaped pipe
+// changes the column count and leaves the malformed row untouched.
+func parseDecisionsIndexRow(line string) (decisionsIndexRow, bool) {
+	cells, ok := splitMarkdownTableCells(line)
+	if !ok || len(cells) != 6 {
+		return decisionsIndexRow{}, false
+	}
+	reference := strings.TrimSpace(cells[0])
+	separator := strings.Index(reference, "](")
+	if !strings.HasPrefix(reference, "[") || separator != 5 || !strings.HasSuffix(reference, ")") {
+		return decisionsIndexRow{}, false
+	}
+	numStr := reference[1:separator]
+	path := reference[separator+2 : len(reference)-1]
+	num := 0
+	if _, err := fmt.Sscanf(numStr, "%d", &num); err != nil {
+		return decisionsIndexRow{}, false
+	}
+	slug := strings.TrimSuffix(filepath.Base(path), ".md")
+	if slug == "" || !strings.HasSuffix(path, ".md") {
+		return decisionsIndexRow{}, false
+	}
+	return decisionsIndexRow{
+		number:   num,
+		numStr:   numStr,
+		slug:     slug,
+		title:    strings.TrimSpace(cells[1]),
+		status:   strings.TrimSpace(cells[2]),
+		date:     strings.TrimSpace(cells[3]),
+		tags:     strings.TrimSpace(cells[4]),
+		affected: strings.TrimSpace(cells[5]),
+		rawLine:  line,
+	}, true
 }
 
 func checkArchivedDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violation, error) {

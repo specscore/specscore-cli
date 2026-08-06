@@ -121,10 +121,7 @@ func matchGlobPattern(path string, pattern string) (bool, error) {
 	// Patterns containing "**" need a matcher that lets it span "/" separators,
 	// which filepath.Match cannot do. Translate them to an anchored regexp.
 	if strings.Contains(pattern, "**") {
-		re, err := doubleStarRegexp(pattern)
-		if err != nil {
-			return false, err
-		}
+		re := doubleStarRegexp(pattern)
 		return re.MatchString(path), nil
 	}
 
@@ -142,7 +139,7 @@ func matchGlobPattern(path string, pattern string) (bool, error) {
 //   - "*"    → matches any run of non-separator characters
 //   - "?"    → matches a single non-separator character
 //   - every other character is matched literally
-func doubleStarRegexp(pattern string) (*regexp.Regexp, error) {
+func doubleStarRegexp(pattern string) *regexp.Regexp {
 	var b strings.Builder
 	b.WriteString("^")
 	for i := 0; i < len(pattern); i++ {
@@ -167,7 +164,10 @@ func doubleStarRegexp(pattern string) (*regexp.Regexp, error) {
 		}
 	}
 	b.WriteString("$")
-	return regexp.Compile(b.String())
+	// The translation emits only fixed, quoted fragments and known-valid regexp
+	// tokens, so compilation cannot fail. MustCompile makes that invariant
+	// explicit instead of exposing an unreachable error path to callers.
+	return regexp.MustCompile(b.String())
 }
 
 // GetUniqueReferences extracts unique references from a ScanResult, optionally filtered by type.

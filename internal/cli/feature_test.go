@@ -118,7 +118,11 @@ func readIndexStatus(t *testing.T, repoRoot string) string {
 		t.Fatalf("read: %v", err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.Contains(line, "[auth](auth/README.md)") {
+		// The Feature cell is derived from the feature title, so find the
+		// row by its stable link destination rather than its presentation
+		// label. A status transition also canonicalizes an older slug label
+		// (`auth`) to the title (`Auth`).
+		if !strings.Contains(line, "](auth/README.md)") {
 			continue
 		}
 		// Row format: `| [auth](...) | Draft | Command | desc-auth |`

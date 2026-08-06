@@ -171,6 +171,7 @@ var builtinRules = []Rule{
 	{ID: "DI-archived-index-chronological", Family: "decisions-index", Severity: "error", Description: "Requires the archived decisions index to be in chronological order."},
 	{ID: "DI-completeness", Family: "decisions-index", Severity: "error", Description: "Requires the decisions index to list every decision."},
 	{ID: "DI-archived-status-excludes-active", Family: "decisions-index", Severity: "error", Description: "Requires the archived index to exclude active decisions."},
+	{ID: "DI-row-content-sync", Family: "decisions-index", Severity: "error", Description: "Requires active decision index rows to mirror artifact title, status, date, tags, and affected features; --fix reconciles drift."},
 
 	// Issue lint rules.
 	{ID: "I-001", Family: "issue", Severity: "error", Description: "Requires issue frontmatter to contain all mandatory fields and no unknown keys."},

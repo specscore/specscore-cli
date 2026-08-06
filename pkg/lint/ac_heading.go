@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -90,12 +89,8 @@ func (c *acHeadingChecker) check(specRoot string) ([]Violation, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].File != out[j].File {
-			return out[i].File < out[j].File
-		}
-		return out[i].Line < out[j].Line
-	})
+	// filepath.Walk visits paths in lexical order and each file is scanned in
+	// line order, so `out` is already deterministically ordered.
 	return out, nil
 }
 
@@ -151,9 +146,6 @@ func classifyACHeading(trimmed string) (message string, fixable bool, canonical 
 		trailing = strings.TrimSpace(rest[idx:])
 	}
 
-	if candidateID == "" {
-		return fmt.Sprintf("AC heading %q is missing an id; expected `### AC: <id>`", trimmed), false, ""
-	}
 	if !acKebabRe.MatchString(candidateID) {
 		return fmt.Sprintf("AC id %q is not kebab-case; expected lowercase letters, digits, and hyphens only, e.g. `### AC: %s`", candidateID, candidateID), false, ""
 	}

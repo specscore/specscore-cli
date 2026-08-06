@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 158
+Total rules: 159
 
 ## capability
 
@@ -64,6 +64,7 @@ Total rules: 158
 | DI-index-columns | error | Requires the decisions index table to have the canonical columns. |
 | DI-list-section-heading | error | Requires the decisions index to use the canonical list section heading. |
 | DI-numeric-ordering | error | Requires the decisions index rows to be in numeric order. |
+| DI-row-content-sync | error | Requires active decision index rows to mirror artifact title, status, date, tags, and affected features; --fix reconciles drift. |
 | DI-status-excludes-archived | error | Requires the active index to exclude archived decisions. |
 
 ## entity

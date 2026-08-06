@@ -50,6 +50,7 @@ func TestMatchGlobPattern(t *testing.T) {
 		{"other/main.go", "pkg/**/*.go", false, "double-star respects leading prefix"},
 		{"pkg/main.txt", "pkg/**/*.go", false, "double-star respects trailing pattern"},
 		{"pkg/handler.go", "pkg/**", true, "trailing double-star matches child"},
+		{"pkg/a.go", "pkg/?.go", true, "question mark matches one segment character"},
 	}
 
 	for _, tt := range tests {
