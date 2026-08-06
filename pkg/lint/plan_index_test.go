@@ -98,3 +98,14 @@ func TestPlanIndexChecker_AbsentAndMalformedIndexes(t *testing.T) {
 		t.Fatalf("malformed index must surface as one lint violation: %+v", vs)
 	}
 }
+
+func TestPlanIndexChecker_PropagatesUnreadableIndexError(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, "plans")
+	if err := os.MkdirAll(filepath.Join(plansDir, "README.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newPlanIndexChecker().check(root); err == nil {
+		t.Fatal("directory at plans README path must surface a read error")
+	}
+}

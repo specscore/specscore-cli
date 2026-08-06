@@ -113,6 +113,38 @@ func TestSyncIndex_MissingIndexReturnsReadError(t *testing.T) {
 	}
 }
 
+func TestIndexContent_MissingPlansDirReturnsDiscoverError(t *testing.T) {
+	plansPath := filepath.Join(t.TempDir(), "plans.md")
+	if err := os.WriteFile(plansPath, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := IndexContent(plansPath, []byte("# Plans\n")); err == nil {
+		t.Fatal("non-directory plans path must return its discovery error")
+	}
+}
+
+func TestSyncIndex_ReportsWriteError(t *testing.T) {
+	plansDir := filepath.Join(t.TempDir(), "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(plansDir, "README.md")
+	index := "# Plans\n\n" + plansIndexHeader + "\n|---|---|---|---|---|\n"
+	if err := os.WriteFile(indexPath, []byte(index), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	body, err := Scaffold(ScaffoldOptions{Slug: "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plansDir, "alpha.md"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := SyncIndex(plansDir); err == nil || changed {
+		t.Fatalf("read-only index changed=%v err=%v, want write error", changed, err)
+	}
+}
+
 func TestIsPlansIndexSeparator(t *testing.T) {
 	for _, tc := range []struct {
 		line string

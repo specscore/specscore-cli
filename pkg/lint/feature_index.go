@@ -101,7 +101,7 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 		if err != nil {
 			continue
 		}
-		summary, err := parseFeatureIndexSummary(featureReadme)
+		summary, err := parseFeatureIndexSummaryFile(featureReadme)
 		if err != nil {
 			continue
 		}
@@ -173,6 +173,10 @@ type featureIndexRow struct {
 }
 
 type featureIndexValue struct{ title, status, summary string }
+
+// parseFeatureIndexSummaryFile is a narrow seam for exercising the defensive
+// read-error path below. Production always uses parseFeatureIndexSummary.
+var parseFeatureIndexSummaryFile = parseFeatureIndexSummary
 
 type featureIndexTableSchema struct {
 	cellCount         int

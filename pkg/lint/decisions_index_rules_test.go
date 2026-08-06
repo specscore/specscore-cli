@@ -457,7 +457,7 @@ func TestParseDecisionsIndexRow_RejectsMalformedReferences(t *testing.T) {
 	tests := []string{
 		"| 0001](0001-test.md) | Title | Draft | 2026-08-06 | — | — |",
 		"| [0001](0001-test.txt) | Title | Draft | 2026-08-06 | — | — |",
-		"| [not-a-number](0001-test.md) | Title | Draft | 2026-08-06 | — | — |",
+		"| [abcd](0001-test.md) | Title | Draft | 2026-08-06 | — | — |",
 	}
 	for _, line := range tests {
 		if _, ok := parseDecisionsIndexRow(line); ok {

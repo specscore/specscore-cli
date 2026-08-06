@@ -346,6 +346,20 @@ func TestFeatureIndexRules_SkipsFeatureWithoutParseableTitle(t *testing.T) {
 	}
 }
 
+func TestFeatureIndexRules_SkipsFeatureWithUnreadableSummary(t *testing.T) {
+	original := parseFeatureIndexSummaryFile
+	parseFeatureIndexSummaryFile = func(string) (string, error) { return "", os.ErrPermission }
+	t.Cleanup(func() { parseFeatureIndexSummaryFile = original })
+	specRoot := writeSpec(t, map[string]string{
+		"features/README.md":      featureIndexHeader + "| [Auth](auth/README.md) | Draft | Command | desc-auth |\n",
+		"features/auth/README.md": "# Feature: Auth\n\n**Status:** Draft\n\n## Summary\n\nDescription.\n",
+	})
+	violations, fixed := featureIndexRules(specRoot, true)
+	if fixed || len(violations) != 0 {
+		t.Fatalf("unreadable summary must be skipped, got fixed=%v violations=%+v", fixed, violations)
+	}
+}
+
 // TestFeatureIndex_TopLevelOnly asserts the rule never fires for
 // sub-features. The features-index lists only top-level rows; rows
 // whose slug contains "/" point into nested directories and are not
