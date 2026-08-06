@@ -452,3 +452,16 @@ func TestDecisionsIndexNoDecisionsDir(t *testing.T) {
 		t.Errorf("expected no violations when no decisions dir, got %d", len(vs))
 	}
 }
+
+func TestParseDecisionsIndexRow_RejectsMalformedReferences(t *testing.T) {
+	tests := []string{
+		"| 0001](0001-test.md) | Title | Draft | 2026-08-06 | — | — |",
+		"| [0001](0001-test.txt) | Title | Draft | 2026-08-06 | — | — |",
+		"| [not-a-number](0001-test.md) | Title | Draft | 2026-08-06 | — | — |",
+	}
+	for _, line := range tests {
+		if _, ok := parseDecisionsIndexRow(line); ok {
+			t.Errorf("malformed decision reference parsed: %q", line)
+		}
+	}
+}
