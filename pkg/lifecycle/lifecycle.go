@@ -33,11 +33,12 @@ import (
 type Kind string
 
 const (
-	KindIdea    Kind = "idea"
-	KindFeature Kind = "feature"
-	KindPlan    Kind = "plan"
-	KindTask    Kind = "task"
-	KindLesson  Kind = "lesson"
+	KindIdea     Kind = "idea"
+	KindFeature  Kind = "feature"
+	KindPlan     Kind = "plan"
+	KindTask     Kind = "task"
+	KindLesson   Kind = "lesson"
+	KindDecision Kind = "decision"
 )
 
 // Status is a domain-scoped status value. The set of legal Status values is
@@ -117,6 +118,26 @@ const (
 	LessonEnforced   Status = "Enforced"
 	LessonWithdrawn  Status = "Withdrawn"
 	LessonSuperseded Status = "Superseded"
+)
+
+// Decision statuses. The vocabulary is closed by pkg/lint's D-status-values
+// rule (decisionValidStatuses in pkg/lint/decision_rules.go) — these six
+// values are the ONLY recognized **Status:** tokens for a Decision artifact;
+// this const block mirrors that closed set rather than inventing one.
+//
+// The three pre-terminal statuses (Draft, In Review, Approved) form the prep
+// band, mirroring Plan's shape. The three dispositions (Rejected, Superseded,
+// Deprecated) are terminal: D-archived-location requires every Decision
+// carrying one of them to live under spec/decisions/archived/, which
+// `decision change-status` enforces by relocating the file as part of the
+// same atomic transition (see pkg/decision.ChangeStatus).
+const (
+	DecisionDraft      Status = "Draft"
+	DecisionInReview   Status = "In Review"
+	DecisionApproved   Status = "Approved"
+	DecisionRejected   Status = "Rejected"
+	DecisionSuperseded Status = "Superseded"
+	DecisionDeprecated Status = "Deprecated"
 )
 
 // ErrInvalidTransition is returned by Transition (and Validate) when the
@@ -310,6 +331,28 @@ var transitionMatrix = map[Kind][]transitionRow{
 		{From: LessonRecorded, To: LessonSuperseded},
 		{From: LessonStated, To: LessonSuperseded},
 		{From: LessonEnforced, To: LessonSuperseded},
+	},
+	// KindDecision carries the prep band (Draft/In Review/Approved) plus the
+	// three dispositions (Rejected/Superseded/Deprecated). Rejected is reachable
+	// only pre-Approval (Draft/In Review) — an actively-turned-down decision
+	// that was never committed. Once Approved, D-immutability-once-accepted
+	// freezes the content sections, so the only legal exits are the two
+	// dispositions that retire an ALREADY-COMMITTED decision without
+	// disowning it: Superseded (replaced by a named successor) and Deprecated
+	// (retired with no specific successor). This mirrors Plan's prep-band /
+	// disposition-band split; Decision has no Withdrawn analogue because that
+	// word is not in the closed Decision status vocabulary.
+	KindDecision: {
+		{From: DecisionDraft, To: DecisionInReview},
+		{From: DecisionDraft, To: DecisionApproved}, // direct approve — skips review
+		{From: DecisionDraft, To: DecisionRejected},
+
+		{From: DecisionInReview, To: DecisionDraft}, // revisions requested
+		{From: DecisionInReview, To: DecisionApproved},
+		{From: DecisionInReview, To: DecisionRejected},
+
+		{From: DecisionApproved, To: DecisionSuperseded},
+		{From: DecisionApproved, To: DecisionDeprecated},
 	},
 }
 
