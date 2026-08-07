@@ -95,3 +95,75 @@ func findSupersedesLineIndex(lines []string) int {
 	}
 	return -1
 }
+
+// fullSupersedesLineRe matches a complete `**Supersedes:** <value>` header
+// line (as opposed to supersedesLineRe, which anchors only the prefix for use
+// as an insertion marker). Capture groups mirror supersededByLineRe: [1]
+// indent, [2] value, [3] trailing.
+var fullSupersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*[ \t]+([^\r\n]*?)([ \t]*\r?)$`)
+
+// SetSupersedes writes a `**Supersedes:** <target>` reference into the
+// artifact's header block — the other half of the bidirectional link
+// completed by SetSupersededBy on the target artifact. It is the Decision-kind
+// counterpart: `decision change-status --to=superseded` calls SetSupersededBy
+// on the OLD decision and SetSupersedes on the NEW (successor) decision in the
+// same atomic transition, per D-supersedes-bidirectional.
+//
+// Semantics mirror SetSupersededBy exactly:
+//
+//   - An empty or whitespace-only target is treated as absent: the file is
+//     left untouched, wrote is false, and original is nil.
+//   - If a `**Supersedes:**` line already exists, its value is rewritten in
+//     place (indentation and trailing whitespace preserved). This is the
+//     common case for a Decision, whose scaffold always emits the field
+//     (defaulted to `—`).
+//   - Otherwise the line is inserted immediately after the `**Status:**`
+//     header line. A file with no `**Status:**` line returns
+//     ErrStatusLineNotFound and is left untouched.
+//
+// On a write, original holds the exact pre-invocation file bytes so the
+// caller can roll back via RestoreBody as part of the surrounding atomic
+// transition.
+func SetSupersedes(artifactPath, target string) (original []byte, wrote bool, err error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, false, nil
+	}
+
+	orig, err := os.ReadFile(artifactPath)
+	if err != nil {
+		return nil, false, err
+	}
+	lines := splitKeepTerminators(orig)
+
+	// Rewrite an existing line in place.
+	for i, ln := range lines {
+		body, terminator := splitTerminator(ln)
+		if m := fullSupersedesLineRe.FindStringSubmatch(body); m != nil {
+			lines[i] = fmt.Sprintf("%s**Supersedes:** %s%s", m[1], target, m[3]) + terminator
+			if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
+				return nil, false, err
+			}
+			return orig, true, nil
+		}
+	}
+
+	// Insert after the Status line.
+	anchor := findStatusLineIndex(lines)
+	if anchor < 0 {
+		return nil, false, ErrStatusLineNotFound
+	}
+
+	anchorBody, terminator := splitTerminator(lines[anchor])
+	if terminator == "" {
+		terminator = "\n"
+		lines[anchor] = anchorBody + terminator
+	}
+	newLine := fmt.Sprintf("**Supersedes:** %s%s", target, terminator)
+	lines = insertAt(lines, anchor+1, []string{newLine})
+
+	if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
+		return nil, false, err
+	}
+	return orig, true, nil
+}

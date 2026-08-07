@@ -191,3 +191,157 @@ func TestFindSupersedesLineIndex(t *testing.T) {
 		t.Errorf("got %d, want -1", got)
 	}
 }
+
+// --- SetSupersedes ---
+//
+// Mirrors the SetSupersededBy suite above; SetSupersedes has a single anchor
+// (Status) rather than SetSupersededBy's dual anchor (Supersedes, else
+// Status), since a Decision's `**Supersedes:**` field is what's being
+// written here — there is no earlier field to prefer inserting after.
+
+// Empty/whitespace target is a no-op.
+func TestSetSupersedes_EmptyIsNoOp(t *testing.T) {
+	t.Parallel()
+	body := "# Decision: X\n\n**Status:** Approved\n**Supersedes:** —\n"
+	path := writeHeaderFixture(t, body)
+	orig, wrote, err := SetSupersedes(path, "   ")
+	if err != nil || wrote || orig != nil {
+		t.Fatalf("expected no-op, got orig=%v wrote=%v err=%v", orig, wrote, err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != body {
+		t.Errorf("file changed:\n%s", got)
+	}
+}
+
+// An existing **Supersedes:** line is rewritten in place, preserving
+// indentation and trailing whitespace — the common case, since a Decision's
+// scaffold always emits the field (defaulted to "—").
+func TestSetSupersedes_RewriteExisting(t *testing.T) {
+	t.Parallel()
+	body := "**Status:** Approved\n**Supersedes:** —  \n"
+	path := writeHeaderFixture(t, body)
+	orig, wrote, err := SetSupersedes(path, "0001-old")
+	if err != nil || !wrote {
+		t.Fatalf("SetSupersedes: wrote=%v err=%v", wrote, err)
+	}
+	if string(orig) != body {
+		t.Errorf("original bytes mismatch")
+	}
+	got, _ := os.ReadFile(path)
+	want := "**Status:** Approved\n**Supersedes:** 0001-old  \n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// No Supersedes line → insert after the Status line.
+func TestSetSupersedes_InsertAfterStatus(t *testing.T) {
+	t.Parallel()
+	body := "# Decision: X\n\n**Status:** Approved\n\n## Summary\n"
+	path := writeHeaderFixture(t, body)
+	if _, _, err := SetSupersedes(path, "0001-old"); err != nil {
+		t.Fatalf("SetSupersedes: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "# Decision: X\n\n**Status:** Approved\n**Supersedes:** 0001-old\n\n## Summary\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// CRLF line endings are preserved on insertion.
+func TestSetSupersedes_CRLFPreserved(t *testing.T) {
+	t.Parallel()
+	body := "**Status:** Approved\r\n"
+	path := writeHeaderFixture(t, body)
+	if _, _, err := SetSupersedes(path, "0001-old"); err != nil {
+		t.Fatalf("SetSupersedes: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "**Status:** Approved\r\n**Supersedes:** 0001-old\r\n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// A status line with no terminator (EOF) still gets a sane inserted line.
+func TestSetSupersedes_NoTerminatorAnchor(t *testing.T) {
+	t.Parallel()
+	body := "**Status:** Approved"
+	path := writeHeaderFixture(t, body)
+	if _, _, err := SetSupersedes(path, "0001-old"); err != nil {
+		t.Fatalf("SetSupersedes: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "**Status:** Approved\n**Supersedes:** 0001-old\n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// No Status anchor → ErrStatusLineNotFound, file untouched.
+func TestSetSupersedes_NoAnchor(t *testing.T) {
+	t.Parallel()
+	body := "# Decision: X\n\nNo header fields.\n"
+	path := writeHeaderFixture(t, body)
+	_, wrote, err := SetSupersedes(path, "0001-old")
+	if !errors.Is(err, ErrStatusLineNotFound) {
+		t.Fatalf("expected ErrStatusLineNotFound, got %v", err)
+	}
+	if wrote {
+		t.Error("wrote should be false")
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != body {
+		t.Errorf("file changed:\n%s", got)
+	}
+}
+
+// Read failure: a missing file surfaces the os error.
+func TestSetSupersedes_ReadError(t *testing.T) {
+	t.Parallel()
+	_, _, err := SetSupersedes(filepath.Join(t.TempDir(), "nope.md"), "0001-old")
+	if err == nil {
+		t.Fatal("expected read error, got nil")
+	}
+}
+
+// Write failure on the rewrite-in-place path: a read-only directory makes the
+// atomic write fail.
+func TestSetSupersedes_RewriteWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only directory is not enforced for root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "decision.md")
+	if err := os.WriteFile(path, []byte("**Status:** Approved\n**Supersedes:** —\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, _, err := SetSupersedes(path, "0001-old"); err == nil {
+		t.Fatal("expected write error, got nil")
+	}
+}
+
+// Write failure on the insertion path: read-only directory.
+func TestSetSupersedes_InsertWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only directory is not enforced for root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "decision.md")
+	if err := os.WriteFile(path, []byte("**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, _, err := SetSupersedes(path, "0001-old"); err == nil {
+		t.Fatal("expected write error, got nil")
+	}
+}
