@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -29,8 +30,22 @@ func planCommand() *cobra.Command {
 		planNewCommand(),
 		planChangeStatusCommand(),
 		planReconcileCommand(),
+		planTransitionsCommand(),
 	)
 	return cmd
+}
+
+// planTransitionsCommand registers `specscore plan transitions [<slug>]`,
+// the read-only counterpart to change-status.
+func planTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindPlan, "slug", "Show the Plan status matrix, or one plan's legal next statuses",
+		func(projectFlag, slug string) (string, error) {
+			specRoot, err := resolveSpecRoot(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			return resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
+		})
 }
 
 // planChangeStatusCommand transitions a Plan's **Status:** field via the
@@ -90,6 +105,7 @@ Examples:
 	cmd.Flags().String("successor", "", "slug of the plan that supersedes this one; required for --to=superseded, rejected otherwise")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().Bool(coordinationForceFlagName, false, coordinationForceFlagUsage)
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -185,14 +201,18 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	result, err := plan.ChangeStatus(plan.ChangeStatusOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		To:           to,
-		Note:         note,
-		Successor:    successor,
-		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
-	})
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (plan.ChangeStatusResult, error) {
+			return planChangeStatusMutate(sandboxRoot, slug, to, note, successor)
+		})
+		if err != nil {
+			return err
+		}
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, string(result.From), string(result.To), changes)
+		return nil
+	}
+
+	result, err := planChangeStatusMutate(specRoot, slug, to, note, successor)
 	if err != nil {
 		return err
 	}
@@ -200,6 +220,24 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
 	return nil
+}
+
+// planChangeStatusMutate performs the Plan Status transition rooted at root
+// (the project root containing spec/). It is the single mutation path both
+// the real command and its --dry-run sandbox invoke (see dryrun.Sandbox),
+// so it must derive every path from its root argument. Coordination-branch
+// enforcement and successor-existence validation happen BEFORE this is
+// called (against the real tree, using the real git repo) — this function
+// only performs the actual rewrite + index sync.
+func planChangeStatusMutate(root, slug string, to lifecycle.Status, note, successor string) (plan.ChangeStatusResult, error) {
+	return plan.ChangeStatus(plan.ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         slug,
+		To:           to,
+		Note:         note,
+		Successor:    successor,
+		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(root, "spec"))),
+	})
 }
 
 // resolvePlanFile mirrors plan.resolvePlanFile for the cobra layer's

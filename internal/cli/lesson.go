@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -29,8 +30,22 @@ func lessonCommand() *cobra.Command {
 		lessonNewCommand(),
 		lessonChangeStatusCommand(),
 		lessonRecurCommand(),
+		lessonTransitionsCommand(),
 	)
 	return cmd
+}
+
+// lessonTransitionsCommand registers `specscore lesson transitions
+// [<slug>]`, the read-only counterpart to change-status.
+func lessonTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindLesson, "slug", "Show the Lesson status matrix, or one lesson's legal next statuses",
+		func(projectFlag, slug string) (string, error) {
+			lessonsDir, err := resolveLessonsDir(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			return resolveLessonPath(lessonsDir, slug)
+		})
 }
 
 // lessonNewCommand scaffolds a lint-clean flat Lesson artifact at
@@ -173,6 +188,7 @@ Examples:
 	cmd.Flags().String("note", "", "markdown appended as a ## Resolution section; required for --to=withdrawn and --to=superseded")
 	cmd.Flags().String("successor", "", "slug of the lesson that supersedes this one; required for --to=superseded, rejected otherwise")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -236,14 +252,18 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	result, err := lesson.ChangeStatus(lesson.ChangeStatusOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		To:           to,
-		Note:         note,
-		Successor:    successor,
-		PostMutation: lesson.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
-	})
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (lesson.ChangeStatusResult, error) {
+			return lessonChangeStatusMutate(sandboxRoot, slug, to, note, successor)
+		})
+		if err != nil {
+			return err
+		}
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, string(result.From), string(result.To), changes)
+		return nil
+	}
+
+	result, err := lessonChangeStatusMutate(specRoot, slug, to, note, successor)
 	if err != nil {
 		return err
 	}
@@ -251,6 +271,20 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
 	return nil
+}
+
+// lessonChangeStatusMutate performs the Lesson Status transition rooted at
+// root (the project root containing spec/). It is the single mutation path
+// both the real command and its --dry-run sandbox invoke.
+func lessonChangeStatusMutate(root, slug string, to lifecycle.Status, note, successor string) (lesson.ChangeStatusResult, error) {
+	return lesson.ChangeStatus(lesson.ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         slug,
+		To:           to,
+		Note:         note,
+		Successor:    successor,
+		PostMutation: lesson.PostMutationHook(lintPostMutationHook(filepath.Join(root, "spec"))),
+	})
 }
 
 // ensureLessonAncestorIndexes materializes spec/README.md and

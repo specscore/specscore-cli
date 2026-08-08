@@ -88,7 +88,7 @@ The post-mutation `specscore spec lint --fix` MUST sync the lessons index (`spec
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. Also implements the Meta's [`--dry-run`](../../lifecycle-transitions/README.md#req-dry-run-mode) and [`transitions`](../../lifecycle-transitions/README.md#req-transitions-query-verb) verbs. |
 | [cli/plan/change-status](../../plan/change-status/README.md) | Closest sibling — also a flat, relocation-free `change-status` whose disposition-reason-required and successor-reference mechanics this verb reuses directly. |
 | [lesson (CLI group)](../README.md) | Parent group. |
 | [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rules L-002/L-004 validate what this verb writes. |

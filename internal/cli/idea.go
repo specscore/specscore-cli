@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/idea"
@@ -23,8 +24,37 @@ func ideaCommand() *cobra.Command {
 		Use:   "idea",
 		Short: "Idea management — list, scaffold, and transition Idea artifacts",
 	}
-	cmd.AddCommand(ideaListCommand(), ideaChangeStatusCommand(), ideaArchiveCommand(), ideaUnarchiveCommand(), ideaNewCommand(), ideaRelocateCommand(), ideaPromoteCommand())
+	cmd.AddCommand(ideaListCommand(), ideaChangeStatusCommand(), ideaArchiveCommand(), ideaUnarchiveCommand(), ideaNewCommand(), ideaRelocateCommand(), ideaPromoteCommand(), ideaTransitionsCommand())
 	return cmd
+}
+
+// ideaTransitionsCommand registers `specscore idea transitions [<slug>]`,
+// the read-only counterpart to change-status. Resolution mirrors
+// idea.ChangeStatus's step (1): prefer the canonical active-Idea path, else
+// fall back to a Feature-local change-request proposal. Archived Ideas are
+// never matched, same as change-status.
+func ideaTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindIdea, "slug", "Show the Idea status matrix, or one idea's legal next statuses",
+		func(projectFlag, slug string) (string, error) {
+			specRoot, err := resolveSpecRoot(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			activePath := filepath.Join(specRoot, "spec", "ideas", slug+".md")
+			if _, statErr := os.Stat(activePath); statErr == nil {
+				return activePath, nil
+			}
+			discovered, discoverErr := idea.Discover(filepath.Join(specRoot, "spec"))
+			if discoverErr != nil {
+				return "", exitcode.UnexpectedErrorf("discovering idea %q: %v", slug, discoverErr)
+			}
+			for _, candidate := range discovered {
+				if candidate.Slug == slug && candidate.IsProposal && !candidate.Archived {
+					return candidate.Path, nil
+				}
+			}
+			return "", exitcode.NotFoundErrorf("idea not found at %s", activePath)
+		})
 }
 
 // ideaChangeStatusCommand transitions an Idea's **Status:** field via the
@@ -62,6 +92,7 @@ Examples:
 		" (case-insensitive).")
 	_ = cmd.MarkFlagRequired("to")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -95,12 +126,18 @@ func runIdeaChangeStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := idea.ChangeStatus(idea.ChangeStatusOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		To:           to,
-		PostMutation: lintPostMutationHook(filepath.Join(specRoot, "spec")),
-	})
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (idea.ChangeStatusResult, error) {
+			return ideaChangeStatusMutate(sandboxRoot, slug, to)
+		})
+		if err != nil {
+			return err
+		}
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, string(result.From), string(result.To), changes)
+		return nil
+	}
+
+	result, err := ideaChangeStatusMutate(specRoot, slug, to)
 	if err != nil {
 		return err
 	}
@@ -108,6 +145,19 @@ func runIdeaChangeStatus(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
 	return nil
+}
+
+// ideaChangeStatusMutate performs the Idea Status transition rooted at root
+// (the project root containing spec/). It is the single mutation path both
+// the real command and its --dry-run sandbox invoke (see dryrun.Sandbox),
+// so it must derive every path from its root argument.
+func ideaChangeStatusMutate(root, slug string, to lifecycle.Status) (idea.ChangeStatusResult, error) {
+	return idea.ChangeStatus(idea.ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         slug,
+		To:           to,
+		PostMutation: lintPostMutationHook(filepath.Join(root, "spec")),
+	})
 }
 
 // ideaArchiveCommand files an Idea out of active view along the orthogonal

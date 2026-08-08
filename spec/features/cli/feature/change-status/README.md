@@ -105,7 +105,7 @@ The post-mutation `specscore spec lint --fix` invocation MUST rely on the `featu
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. Also implements the Meta's [`--dry-run`](../../lifecycle-transitions/README.md#req-dry-run-mode) and [`transitions`](../../lifecycle-transitions/README.md#req-transitions-query-verb) verbs. |
 | [feature (CLI group)](../README.md) | Parent group. Contents table includes this sub-feature. |
 | [cli/idea/change-status](../../idea/change-status/README.md) | Sibling verb for the Idea kind. Same shared contract; Feature has no file-relocation side effect. |
 | [spec lint](../../spec/lint/README.md) | Invoked internally. The `feature-index-row-sync` lint rule (to be added to `pkg/lint/`) is the specific rule that syncs this verb's effect. |
