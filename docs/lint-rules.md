@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 159
+Total rules: 161
 
 ## capability
 
@@ -209,6 +209,13 @@ Total rules: 159
 | L-002 | error | Requires a Lesson's body **Status:** value to be one of the canonical enforcement-ladder statuses (Recorded, Stated, Enforced, Withdrawn, Superseded). |
 | L-003 | error | Requires the lessons index to list every lesson; --fix inserts missing rows. |
 | L-004 | error | Requires each lessons index row's Status/Recurred/Date/Owner cells to mirror the corresponding Lesson file; --fix regenerates drifted rows. |
+
+## parked
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| parked-shape | error | Requires a **Parked:** true axis to carry a non-empty **Parked Reason:** and a well-formed **Parked Date:**. |
+| parked-stale | warning | Warns when an artifact has been parked longer than the configured (or default 90-day) review window. |
 
 ## plan
 

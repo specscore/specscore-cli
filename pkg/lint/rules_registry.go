@@ -119,6 +119,10 @@ var builtinRules = []Rule{
 	{ID: "grade-placement", Family: "grade", Severity: "error", Description: "Requires the grade field to appear in the correct position."},
 	{ID: "grade-value", Family: "grade", Severity: "error", Description: "Rejects grade values outside the allowed A-F set."},
 
+	// Parked body-metadata-field lint rules.
+	{ID: "parked-shape", Family: "parked", Severity: "error", Description: "Requires a **Parked:** true axis to carry a non-empty **Parked Reason:** and a well-formed **Parked Date:**."},
+	{ID: "parked-stale", Family: "parked", Severity: "warning", Description: "Warns when an artifact has been parked longer than the configured (or default 90-day) review window."},
+
 	// Artifact-frontmatter-convention lint rules. Graced at warning severity
 	// during the migration rollout (REQ:migration-sequencing); flips to error
 	// after target repos are migrated.
