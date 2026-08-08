@@ -49,6 +49,7 @@ type SpecConfig struct {
 	Modules      []ModuleConfig `yaml:"modules,omitempty"`
 	Grade        *GradeConfig   `yaml:"grade,omitempty"`
 	Promote      *PromoteConfig `yaml:"promote,omitempty"`
+	Parked       *ParkedConfig  `yaml:"parked,omitempty"`
 	Extras       map[string]any `yaml:",inline"`
 
 	// studioExplicitNull is set to true when YAML contains
@@ -149,6 +150,35 @@ type PromoteConfig struct {
 	// to its built-in default. A `--verdict` flag overrides this.
 	VerdictCarryForward string         `yaml:"verdict_carry_forward,omitempty"`
 	Extras              map[string]any `yaml:",inline"`
+}
+
+// DefaultParkedStaleDays is the built-in review window applied when no
+// `parked.stale_days` is configured (cli/parked#req:stale-threshold-configurable).
+// Ninety days (one quarter) is chosen as a cadence long enough that a
+// deliberately-deferred artifact isn't nagged the week after it's parked,
+// but short enough to force at least a quarterly look — matching the
+// typical roadmap-review cadence rather than an arbitrary round number.
+const DefaultParkedStaleDays = 90
+
+// ParkedConfig is the optional `parked:` block. It configures the
+// `parked-stale` lint rule's review-window threshold. See
+// spec/features/cli/parked/README.md#req:stale-threshold-configurable.
+type ParkedConfig struct {
+	// StaleDays overrides DefaultParkedStaleDays. Zero or absent falls back
+	// to the built-in default; a negative value is treated the same as
+	// absent (EffectiveParkedStaleDays never returns a non-positive window).
+	StaleDays int            `yaml:"stale_days,omitempty"`
+	Extras    map[string]any `yaml:",inline"`
+}
+
+// EffectiveParkedStaleDays returns the repository's parked-review window in
+// days: the configured `parked.stale_days` when present and positive,
+// otherwise DefaultParkedStaleDays.
+func (c SpecConfig) EffectiveParkedStaleDays() int {
+	if c.Parked != nil && c.Parked.StaleDays > 0 {
+		return c.Parked.StaleDays
+	}
+	return DefaultParkedStaleDays
 }
 
 // DefaultGradeValues is the built-in grade value set applied when no
