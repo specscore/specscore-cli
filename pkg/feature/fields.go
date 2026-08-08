@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
 // ValidFields lists all recognized metadata field names.
@@ -17,6 +19,7 @@ var ValidFields = map[string]bool{
 	"children":  true,
 	"plans":     true,
 	"proposals": true,
+	"parked":    true,
 }
 
 // ParseFieldNames validates and returns field names from a comma-separated
@@ -34,7 +37,7 @@ func ParseFieldNames(fieldsStr string) ([]string, error) {
 			continue
 		}
 		if !ValidFields[f] {
-			return nil, fmt.Errorf("unknown field %q (valid: status, oq, questions, title, deps, refs, children, plans, proposals)", f)
+			return nil, fmt.Errorf("unknown field %q (valid: status, oq, questions, title, deps, refs, children, plans, proposals, parked)", f)
 		}
 		if !seen[f] {
 			seen[f] = true
@@ -59,6 +62,7 @@ type EnrichedFeature struct {
 	Refs       []string           `yaml:"refs,omitempty" json:"refs,omitempty"`
 	Plans      []string           `yaml:"plans,omitempty" json:"plans,omitempty"`
 	Proposals  []string           `yaml:"proposals,omitempty" json:"proposals,omitempty"`
+	Parked     *bool              `yaml:"parked,omitempty" json:"parked,omitempty"`
 	ChildPaths []string           `yaml:"children,omitempty" json:"children,omitempty"`
 	ChildNodes []*EnrichedFeature `yaml:"child_nodes,omitempty" json:"child_nodes,omitempty"`
 }
@@ -135,6 +139,13 @@ func ResolveFields(featuresDir, featureID string, fields []string) (*EnrichedFea
 			}
 		case "proposals":
 			// Proposals not yet implemented in the spec repo structure.
+		case "parked":
+			info, err := lifecycle.ReadParked(readmePath)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("parked: %v", err))
+			} else {
+				ef.Parked = BoolPtr(info.Parked)
+			}
 		}
 	}
 	if len(errs) > 0 {

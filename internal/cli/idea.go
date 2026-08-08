@@ -24,7 +24,7 @@ func ideaCommand() *cobra.Command {
 		Use:   "idea",
 		Short: "Idea management — list, scaffold, and transition Idea artifacts",
 	}
-	cmd.AddCommand(ideaListCommand(), ideaChangeStatusCommand(), ideaArchiveCommand(), ideaUnarchiveCommand(), ideaNewCommand(), ideaRelocateCommand(), ideaPromoteCommand(), ideaTransitionsCommand())
+	cmd.AddCommand(ideaListCommand(), ideaChangeStatusCommand(), ideaArchiveCommand(), ideaUnarchiveCommand(), ideaNewCommand(), ideaRelocateCommand(), ideaPromoteCommand(), ideaTransitionsCommand(), ideaParkCommand(), ideaUnparkCommand())
 	return cmd
 }
 

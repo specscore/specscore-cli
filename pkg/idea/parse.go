@@ -153,6 +153,31 @@ func (i *Idea) ArchiveNote() string {
 	return strings.TrimSpace(i.FieldByName["Archive Note"].Value)
 }
 
+// Parked reports whether the Idea carries `**Parked:** true` in its header.
+// Parked is an axis orthogonal to lifecycle status (a scheduling question,
+// "when will we build it?", independent of Status's maturity question, "how
+// ready is it?"): a parked Idea keeps its real **Status:** unchanged. An
+// absent or non-`true` value means not parked. See pkg/lifecycle.SetParked,
+// which writes/clears this axis (and its Reason/Date companions) uniformly
+// across every kind that carries a **Status:** header line.
+func (i *Idea) Parked() bool {
+	return strings.EqualFold(strings.TrimSpace(i.FieldByName["Parked"].Value), "true")
+}
+
+// ParkedReason returns the **Parked Reason:** value or "" if absent.
+// Required by `idea park` (a bare park with no explanation is rejected), so
+// a non-empty Parked() with an empty ParkedReason() indicates hand-editing
+// bypassed the CLI — surfaced by the parked-shape lint rule.
+func (i *Idea) ParkedReason() string {
+	return strings.TrimSpace(i.FieldByName["Parked Reason"].Value)
+}
+
+// ParkedDate returns the **Parked Date:** value (YYYY-MM-DD) or "" if
+// absent.
+func (i *Idea) ParkedDate() string {
+	return strings.TrimSpace(i.FieldByName["Parked Date"].Value)
+}
+
 // IdeaType returns the Type field value or "" if absent.
 // An absent Type is treated as "feature-request" by convention.
 func (i *Idea) IdeaType() string {
