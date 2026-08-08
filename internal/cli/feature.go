@@ -32,6 +32,8 @@ func featureCommand() *cobra.Command {
 		featureRefsCommand(),
 		featureNewCommand(),
 		featureChangeStatusCommand(),
+		featureParkCommand(),
+		featureUnparkCommand(),
 	)
 	return cmd
 }
@@ -165,6 +167,10 @@ func writeEnrichedTextNode(w *bufio.Writer, ef *feature.EnrichedFeature, fields 
 		case "proposals":
 			if len(ef.Proposals) > 0 {
 				meta = append(meta, fmt.Sprintf("proposals=[%s]", strings.Join(ef.Proposals, ",")))
+			}
+		case "parked":
+			if ef.Parked != nil && *ef.Parked {
+				meta = append(meta, "parked=true")
 			}
 		}
 	}
@@ -317,19 +323,23 @@ func featureListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List all feature IDs, one per line",
 		Long: `Lists all features in a project as full feature IDs, one per line,
-sorted alphabetically. Use --fields to include metadata for each feature.`,
+sorted alphabetically. Use --fields to include metadata for each feature.
+Use --parked to show only features carrying the **Parked:** true axis
+(deliberately deferred, independent of their **Status:**).`,
 		Args: cobra.NoArgs,
 		RunE: runFeatureList,
 	}
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().String("fields", "", "comma-separated metadata fields to include (e.g., status,oq)")
 	cmd.Flags().String("format", "", "output format: yaml, json, text (auto-selects yaml when --fields is set)")
+	cmd.Flags().Bool("parked", false, "show only parked features (excludes unparked features)")
 	return cmd
 }
 
 func runFeatureList(cmd *cobra.Command, _ []string) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
 	fieldsFlag, _ := cmd.Flags().GetString("fields")
+	parkedOnly, _ := cmd.Flags().GetBool("parked")
 
 	fields, err := feature.ParseFieldNames(fieldsFlag)
 	if err != nil {
@@ -351,6 +361,17 @@ func runFeatureList(cmd *cobra.Command, _ []string) error {
 		return exitcode.UnexpectedErrorf("discovering features: %v", err)
 	}
 	featureIDs := feature.FeatureIDs(features)
+
+	if parkedOnly {
+		var filtered []string
+		for _, id := range featureIDs {
+			info, err := lifecycle.ReadParked(feature.ReadmePath(featuresDir, id))
+			if err == nil && info.Parked {
+				filtered = append(filtered, id)
+			}
+		}
+		featureIDs = filtered
+	}
 
 	w := cmd.OutOrStdout()
 
