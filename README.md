@@ -159,11 +159,14 @@ Bring an existing install to the latest release:
 
 ```bash
 specscore self-update            # or: specscore update
-specscore self-update --check    # report whether a newer release is available; change nothing
+specscore self-update --check    # report whether a newer release is available, and the next step; change nothing
 specscore self-update --yes      # skip the confirmation prompt (non-interactive / CI)
+specscore self-update --dry-run  # show what would happen (target version, download URL) without changing anything
 ```
 
 `self-update` detects how `specscore` was installed. **Package-managed installs** (Homebrew, Scoop, WinGet) are never overwritten — it prints the right manager command to run instead (e.g. `brew upgrade specscore`). **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified.
+
+The detection, download, verification, and replacement logic all live in the shared [`github.com/strongo/selfupdate`](https://github.com/strongo/selfupdate) module — specscore only supplies its own release identity (binary name, repository, managers) and exit-code contract. See [`spec/features/cli/self-update/`](spec/features/cli/self-update/) for what's specscore's own versus inherited from the library.
 
 Install a specific release instead of the latest:
 

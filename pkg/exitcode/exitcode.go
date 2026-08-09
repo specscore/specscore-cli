@@ -15,8 +15,24 @@ const (
 	TargetNotSpecScore = 6  // Target directory is not a SpecScore-managed repo.
 	DirtyTree          = 7  // Working tree has uncommitted changes in paths to be modified.
 	UnsupportedCommand = 8  // Subcommand not recognized — typically an outdated specscore that predates a required subcommand. Distinct from the shell's 127 (binary absent).
-	Unexpected         = 10 // Catch-all for unexpected runtime errors.
+	UpdateFailed       = 9  // A self-update could not be completed locally (extraction, staging, or the swap itself). See the note below on why this is not Unexpected.
+	Unexpected         = 10 // Catch-all for unexpected runtime errors, EXCEPT in `self-update --check`, where 10 means "an update is available" (see below).
 )
+
+// Why UpdateFailed exists.
+//
+// `self-update --check` reports an available (or undetermined) version by
+// exiting 10 — a documented part of that command's contract since it shipped,
+// and the number scripts already branch on. But 10 is also Unexpected, this
+// package's catch-all, so a local failure during an update (a bad archive, a
+// staging error) and "there is a newer release" were indistinguishable to a
+// caller: the exact collision `self-update`'s spec forbids.
+//
+// 9 was the one unassigned number in this vocabulary, so the rarer meaning
+// takes it. Moving "update available" off the catch-all instead would be the
+// tidier fix, and is the one to make if this contract is ever revised — it
+// would break every existing caller that checks for 10, which is why it was
+// not done here.
 
 // Error carries a machine-readable exit code alongside a human-readable
 // message. It satisfies both the error interface and the ExitCode()

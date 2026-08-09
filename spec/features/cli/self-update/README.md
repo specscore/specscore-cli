@@ -1,18 +1,26 @@
 ---
 format: https://specscore.md/feature-specification
-status: Approved
+status: Amending
 ---
 
 # Feature: Self-Update
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=request-change) |
 
-**Status:** Approved
+**Status:** Amending
 **Source Ideas:** cli-self-update
 
 ## Summary
 
-`specscore self-update` (alias `specscore update`) brings a running `specscore` binary to the latest released version. It first detects how the binary was installed: package-managed installs (Homebrew, Scoop, WinGet) are never overwritten — the command prints the exact manager upgrade command instead — while manual installs (release-archive downloads, `go install`) are updated in place by downloading the matching release asset, verifying its sha256 against the release `checksums.txt`, and atomically replacing the executable. A `--check` mode reports update availability for any install method without modifying anything, and a `--version <tag>` flag installs a specific pinned release instead of the latest.
+`specscore self-update` (alias `specscore update`) brings a running `specscore`
+binary to the latest released version. The behavior is not specified here:
+specscore binds the shared
+[strongo/selfupdate](https://specscore.studio/app/github.com/strongo/selfupdate/spec/features/self-update?op=explore)
+library, whose Feature owns install-method detection, release resolution,
+checksum verification, atomic replacement, the pinned-version rules, and every
+failure guarantee. This Feature specifies only what is specscore's own — the
+command surface, specscore's configuration of the library, and its exit-code
+contract.
 
 ## Synopsis
 
@@ -27,326 +35,144 @@ specscore update                              # alias for `self-update`
 
 ## Problem
 
-The CLI is distributed through several channels — a Homebrew tap, a Scoop bucket, WinGet, and direct GitHub release archives (plus `go install`). Users have no first-class way to move to the latest version, and the naive fix — "just overwrite the binary" — is only correct for manual installs. Overwriting a package-managed binary corrupts the manager's bookkeeping: the next `brew upgrade` sees an unexpected file, and the user ends up with two conflicting notions of "installed version." Conversely, telling a manual-install user to go re-download a tarball is exactly the friction a self-update command exists to remove.
+The CLI is distributed through several channels — a Homebrew tap, a Scoop
+bucket, WinGet, and direct GitHub release archives, plus `go install`. Users had
+no first-class way to move to the latest version, and the naive fix — overwrite
+the binary — is only correct for manual installs.
 
-The hard part is therefore not the file swap; it is **deciding whether a swap is even allowed**. Install-method detection is part of the product contract, not an implementation detail. When detection is uncertain, the safe outcome (do not self-replace; guide the user) must be the default.
+This Feature originally specified that whole contract itself. It no longer does.
+The same rules were needed verbatim by `wb` and are needed by every other Go CLI
+in the fleet, so the behavior moved to `github.com/strongo/selfupdate`, where it
+is specified and tested once. What remains here is the part that was never
+portable: which package managers publish specscore, what its version placeholder
+is, and the exit codes its callers branch on — which deliberately differ from
+other consumers of the same library.
 
 ## Behavior
 
 ### Command surface
 
-The capability is a single command with one canonical name, one alias, and two modifier flags.
-
 #### REQ: command-and-alias
 
-The CLI MUST expose the command as `specscore self-update`. `specscore update` MUST be accepted as an alias that resolves to identical behavior. The canonical name is `self-update` because, in a CLI dominated by artifact verbs (`idea new`, `feature new`, `spec lint`), a bare `update` is ambiguous about *what* is updated.
+The CLI MUST expose the command as `specscore self-update`. `specscore update`
+MUST be accepted as an alias that resolves to identical behavior. The canonical
+name is `self-update` because, in a CLI dominated by artifact verbs (`idea new`,
+`feature new`, `spec lint`), a bare `update` is ambiguous about *what* is
+updated.
 
-#### REQ: check-flag
+#### REQ: library-provided-behavior
 
-A `--check` boolean flag MUST be accepted. In check mode the command performs install-method detection and the version check, reports the result, and exits without downloading or modifying anything (see [REQ: check-no-mutation](#req-check-no-mutation)).
+The command MUST obtain its behavior from `github.com/strongo/selfupdate` rather
+than reimplementing it. Install-method detection, stable-release resolution,
+version comparison, pinned targets and the downgrade guard, asset download,
+sha256 verification before extraction, atomic replacement, the post-swap version
+check, the non-interactive refusal, and the guarantee that every failure leaves a
+working binary are inherited from that library's Feature and MUST NOT be
+restated or reinterpreted here. A behavior change belongs upstream in the
+library, not in a specscore-local fork.
 
-#### REQ: confirm-before-replace
+#### REQ: flag-surface
 
-For the self-replace path, the command MUST show the version transition (`<current> → <latest>`) and require interactive confirmation before replacing the executable. A `--yes` flag (short `-y`) MUST skip the prompt for non-interactive use. When the command is not attached to an interactive terminal and `--yes` was not given, it MUST refuse to replace and exit non-zero rather than block on input.
+The command MUST expose `--check`, `--yes` (short `-y`), `--version <tag>`, and
+`--allow-downgrade`, bound to the library's corresponding options. `--version`
+here is `self-update`-local and distinct from the root `specscore --version`,
+which prints build identity.
 
-### Install-method detection
+### specscore's configuration of the library
 
-Detection chooses between two mutually exclusive outcomes — *managed* (redirect) or *manual* (self-replace eligible) — preferring explicit signals over guesswork.
+#### REQ: specscore-release-identity
 
-#### REQ: detect-managed
+specscore MUST configure the library with its own release identity: the GitHub
+repository `specscore/specscore-cli`, the binary name `specscore`, and release
+assets named as this project's GoReleaser publishes them
+(`specscore_<version>_<os>_<arch>` archives with a
+`specscore_<version>_checksums.txt` checksums file).
 
-The command MUST classify the running binary as package-managed when its resolved executable path matches a known manager layout: a Homebrew Cellar/prefix path, a Scoop `apps`/`shims` path, or a WinGet `Packages`/`Links` path. A managed classification MUST route to the redirect path and MUST NOT self-replace.
+#### REQ: specscore-managers
 
-#### REQ: detect-manual
+specscore MUST configure the three package managers that publish it, each with
+its exact upgrade command: Homebrew (`brew upgrade specscore`), Scoop
+(`scoop update specscore`), and WinGet (`winget upgrade SpecScore.CLI`). An
+install detected under any of them MUST follow the library's managed-redirect
+path and MUST NOT be overwritten.
 
-The command MUST classify the running binary as manual when it is not recognized as managed and the path is a plausible user/Go install location (e.g., a release archive extracted to `~/bin` or `/usr/local/bin`, or a `go install` target under `GOBIN`/`GOPATH/bin`). A manual classification is eligible for the self-replace path.
+#### REQ: specscore-version-identity
 
-#### REQ: ambiguous-safe-default
+specscore MUST supply the build-time version pinned by the
+[Version](../version/README.md) feature, and MUST declare `dev` as the string
+meaning undetermined — the placeholder reported by a binary built without
+`-ldflags`. The post-swap version probe MUST use `--version`.
 
-When detection cannot confidently classify the install method, the command MUST default to the safe outcome: do not self-replace, surface the ambiguity, and print manual-update guidance. Ambiguity MUST NOT resolve to "manual."
+### Exit codes
 
-### Package-managed redirect
+#### REQ: exit-code-contract
 
-Managed installs are guided, never modified.
-
-#### REQ: managed-no-overwrite
-
-For a managed classification the command MUST NOT download, write, or replace the executable under any flag combination except `--check` (which never writes regardless).
-
-#### REQ: managed-redirect-command
-
-For a managed classification the command MUST print the detected manager and the exact upgrade command for it (`brew upgrade specscore`, `scoop update specscore`, or `winget upgrade SpecScore.CLI`) and exit `0`.
-
-### Version check
-
-Both the action and `--check` compare the running version against the latest release.
-
-#### REQ: latest-release-source
-
-The command MUST determine the latest version from the published GitHub releases of `specscore/specscore-cli`, considering only the latest stable release — excluding both prereleases and drafts. (This stable-only filter governs the *unpinned* "latest" path only; an explicit `--version` pin per [REQ: pinned-exact-tag](#req-pinned-exact-tag) bypasses it.)
-
-#### REQ: dev-build-undetermined
-
-When the running binary reports the `dev` version placeholder (a build without `-ldflags`, e.g. `go install` of an untagged tree), the command MUST treat the current version as undetermined: `--check` reports it as undetermined (not "up to date"), and the self-replace path MAY offer to install the latest stable release subject to the normal confirmation in [REQ: confirm-before-replace](#req-confirm-before-replace).
-
-### Pinned-version install
-
-By default the command targets the latest stable release; `--version` lets the user install an exact release instead. This is a manual-install capability that reuses the self-replace machinery with a different target.
-
-#### REQ: version-flag
-
-The command MUST accept a `--version <tag>` flag that selects an exact release to install instead of the latest stable. The leading `v` is optional: `--version v0.0.3` and `--version 0.0.3` MUST resolve to the same release (the value is normalized to match the project's `v`-prefixed git tags). A pinned install reuses the same confirmation (`--yes`), checksum-verification, and atomic-replace machinery as the unpinned self-replace path; only the target release differs. (`--version` here is a `self-update`-local flag, distinct from the root `specscore --version` that prints build identity.)
-
-#### REQ: pinned-exact-tag
-
-A `--version` pin MUST resolve to exactly the named release regardless of its prerelease or draft status. The stable-only selection in [REQ: latest-release-source](#req-latest-release-source) governs only the unpinned "latest" path; an explicit pin opts the user into precisely the requested tag.
-
-#### REQ: pinned-downgrade-guard
-
-When the pinned target version is strictly lower than the running version, the command MUST refuse unless `--allow-downgrade` is passed, printing a clear message that names both versions and the required flag, exiting non-zero without modifying the binary. With `--allow-downgrade` the command proceeds (still subject to confirmation / `--yes`), and the transition output indicates a downgrade. When the running version is undetermined (the `dev` placeholder), the downgrade guard does not trigger because direction cannot be determined.
-
-#### REQ: pinned-unknown-tag
-
-When the pinned tag does not correspond to a published release (or the release has no asset matching the host OS/architecture), the command MUST print a clear error, exit non-zero, and MUST NOT modify the existing binary.
-
-#### REQ: pinned-managed-still-redirects
-
-On a package-managed install, `--version` MUST NOT cause a self-replace; the command still follows the managed redirect path ([REQ: managed-no-overwrite](#req-managed-no-overwrite)). Pinning a version through `self-update` is a manual-install capability only.
-
-### Self-replace (manual installs)
-
-The manual path downloads, verifies, and atomically swaps the binary.
-
-#### REQ: download-matching-asset
-
-For an eligible self-replace the command MUST download the release asset matching the host OS and architecture from the latest stable release.
-
-#### REQ: checksum-verification
-
-Before replacing the executable the command MUST verify the downloaded asset's sha256 against the release `checksums.txt`. On mismatch (or a missing/unfetchable checksum entry) the command MUST abort with a non-zero exit and MUST NOT modify the existing binary.
-
-#### REQ: atomic-replace
-
-The executable MUST be replaced atomically: the verified new binary is staged and swapped into place such that an interrupted or failed operation leaves the original binary intact and runnable (no partial or truncated executable). This holds across macOS, Linux, and Windows (including replacing a running executable on Windows).
-
-#### REQ: no-op-when-current
-
-When the running version already equals the latest stable release, the command MUST report that it is up to date and exit `0` without downloading or replacing anything.
-
-### Check-only mode
-
-`--check` is read-only and scriptable.
-
-#### REQ: check-no-mutation
-
-With `--check` the command MUST NOT download an asset or modify the executable for any install method; it performs detection and the version check only.
-
-#### REQ: check-exit-codes
-
-`--check` MUST use exit code `0` when the binary is up to date, `10` when an update is available (or the current version is undetermined per [REQ: dev-build-undetermined](#req-dev-build-undetermined)), and a code distinct from `0` and `10` for operational errors (e.g., release lookup failure). The "update available" code MUST NOT collide with the error codes.
-
-### Failure modes
-
-Failures are explicit and never leave a broken binary.
-
-#### REQ: network-failure-clear
-
-When the release lookup or asset download fails (network error, rate limit, missing asset), the command MUST print a clear error, exit non-zero, and MUST NOT modify the existing binary.
-
-#### REQ: permission-failure-clear
-
-When the command lacks permission to replace the executable in its install location, it MUST report the failure with the path and a suggested remedy (e.g., re-run with elevated permissions or use the package manager), exit non-zero, and leave the original binary intact.
-
-## Exit codes
-
-| Exit code | Meaning |
-|---|---|
-| `0` | Success: self-replace completed, redirect printed, or already up to date |
-| `10` | `--check` only — an update is available, or the current version is undetermined |
-| non-zero (other) | Operational error: detection-ambiguous refusal, network/download failure, checksum mismatch, permission denied, non-interactive without `--yes`, unknown `--version` tag, or a refused downgrade (target older than current without `--allow-downgrade`) |
+The command MUST map the library's outcomes and typed failure kinds onto
+specscore's own exit codes, which the library does not decide. `0` means
+success: the self-replace completed, the redirect was printed, or the binary is
+already up to date. `10` is reserved for `--check` reporting that an update is
+available or that the current version is undetermined. Operational errors —
+ambiguous detection, network or download failure, checksum mismatch, permission
+denied, non-interactive without `--yes`, an unknown `--version` tag, or a
+refused downgrade — MUST use codes distinct from both `0` and `10`, so an
+available update can never be confused with a failure.
 
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
+| [strongo/selfupdate: Self-Update Library](https://specscore.studio/app/github.com/strongo/selfupdate/spec/features/self-update?op=explore) | Owns the behavior contract this Feature binds. specscore is a consumer; behavior changes belong there. |
 | [CLI](../README.md) | Parent feature. Inherits shared CLI conventions and the shared error path. |
-| [Version](../version/README.md) | The running version read by `self-update` is the build-time value pinned by `version`, including its `dev` placeholder behavior consumed by [REQ: dev-build-undetermined](#req-dev-build-undetermined). |
+| [Version](../version/README.md) | Supplies the running version and the `dev` placeholder this Feature declares as undetermined. |
 
-## Rehearse Integration
+## Amendment note
 
-Every acceptance criterion below is testable through the CLI surface or as a pure-function unit (install-method detection from a path string; checksum comparison; exit-code mapping). Rehearse scenario stubs are **deferred to the Plan phase** to match the current repo convention (no sibling Feature carries a `_tests/` tree yet). This is a recorded scope decision, not a claim of untestability; the user may override and scaffold stubs now.
+Before this amendment, this Feature carried the full behavior contract — 20
+acceptance criteria covering detection, download, verification, replacement, and
+every failure mode. Those moved to the shared library's Feature, which specifies
+and tests them once for all consumers. The `_verify` and `_recap` reports in this
+directory are point-in-time records against the earlier acceptance criteria and
+are retained as history, not as claims about the criteria below.
 
 ## Acceptance Criteria
 
 ### AC: canonical-and-alias
 
-**Requirements:** cli/self-update#req:command-and-alias
+**Requirements:** cli/self-update#req:command-and-alias, cli/self-update#req:flag-surface
 
 **Given** an installed `specscore` binary
 **When** the user runs `specscore self-update --check` and, separately, `specscore update --check`
-**Then** both invocations execute the same command and produce identical output and exit code.
+**Then** both invocations execute the same command and produce identical output and exit code, and the full flag surface (`--check`, `--yes`/`-y`, `--version`, `--allow-downgrade`) is accepted by both.
 
-### AC: check-is-readonly
+### AC: behavior-comes-from-the-library
 
-**Requirements:** cli/self-update#req:check-flag, cli/self-update#req:check-no-mutation
+**Requirements:** cli/self-update#req:library-provided-behavior, cli/self-update#req:specscore-release-identity, cli/self-update#req:specscore-version-identity
 
-**Given** any install method and an available newer release
-**When** the user runs `specscore self-update --check`
-**Then** the command prints availability and the appropriate next step, and the on-disk executable is byte-for-byte unchanged (no download, no replace).
-
-### AC: confirm-prompt-and-yes
-
-**Requirements:** cli/self-update#req:confirm-before-replace
-
-**Given** a manual install with a newer release available, attached to an interactive terminal
-**When** the user runs `specscore self-update` without `--yes`
-**Then** the command prints `<current> → <latest>` and waits for confirmation; running it with `--yes` performs the replacement without prompting.
-
-### AC: noninteractive-without-yes-refuses
-
-**Requirements:** cli/self-update#req:confirm-before-replace
-
-**Given** a manual install with a newer release, running without an interactive terminal
-**When** the user runs `specscore self-update` without `--yes`
-**Then** the command refuses to replace, prints that `--yes` is required for non-interactive use, and exits non-zero, leaving the binary unchanged.
+**Given** the specscore-cli source tree
+**When** the self-update command is built
+**Then** detection, release resolution, verification, and replacement come from `github.com/strongo/selfupdate`, specscore supplies only its release identity, version and `dev` placeholder, and no copy of that logic remains in specscore's own tree.
 
 ### AC: managed-is-redirected
 
-**Requirements:** cli/self-update#req:detect-managed, cli/self-update#req:managed-no-overwrite, cli/self-update#req:managed-redirect-command
+**Requirements:** cli/self-update#req:specscore-managers
 
-**Given** a `specscore` whose executable path is a Homebrew, Scoop, or WinGet managed location
-**When** the user runs `specscore self-update`
-**Then** the command prints the detected manager and its exact upgrade command, exits `0`, and the executable is unchanged.
-
-### AC: manual-is-eligible
-
-**Requirements:** cli/self-update#req:detect-manual
-
-**Given** a `specscore` extracted from a release archive into `/usr/local/bin` (or installed via `go install`)
-**When** the user runs `specscore self-update --check`
-**Then** the command classifies the install as manual and reports the self-update path as available.
-
-### AC: ambiguous-falls-back-safe
-
-**Requirements:** cli/self-update#req:ambiguous-safe-default
-
-**Given** a `specscore` whose install method cannot be confidently classified
-**When** the user runs `specscore self-update`
-**Then** the command does not replace the binary, states that the install method is ambiguous, prints manual-update guidance, and exits non-zero.
-
-### AC: latest-stable-only
-
-**Requirements:** cli/self-update#req:latest-release-source
-
-**Given** the project's GitHub releases where the newest tagged release is a prerelease or a draft and the newest stable release is older
-**When** the user runs `specscore self-update --check`
-**Then** the "latest" the command compares against is the newest stable release, ignoring both prereleases and drafts.
-
-### AC: dev-build-is-undetermined
-
-**Requirements:** cli/self-update#req:dev-build-undetermined
-
-**Given** a binary built without `-ldflags` (version reports `dev`)
-**When** the user runs `specscore self-update --check`
-**Then** the command reports the current version as undetermined (not "up to date") and exits `10`.
-
-### AC: checksum-mismatch-aborts
-
-**Requirements:** cli/self-update#req:download-matching-asset, cli/self-update#req:checksum-verification
-
-**Given** a manual install where the downloaded asset's sha256 does not match the release `checksums.txt`
-**When** `specscore self-update` runs the replacement
-**Then** the command aborts before touching the executable, reports the verification failure, exits non-zero, and the original binary remains in place and runnable.
-
-### AC: replace-is-atomic
-
-**Requirements:** cli/self-update#req:atomic-replace
-
-**Given** a manual install on macOS, Linux, or Windows
-**When** a verified asset is swapped in and the operation is interrupted or fails mid-way
-**Then** the install location still contains a complete, runnable `specscore` binary (either the original or the new version) — never a partial or truncated file.
-
-### AC: already-current-noop
-
-**Requirements:** cli/self-update#req:no-op-when-current
-
-**Given** a manual install already on the latest stable release
-**When** the user runs `specscore self-update`
-**Then** the command reports it is up to date and exits `0` without downloading or replacing anything.
+**Given** a `specscore` binary whose resolved path is inside a Homebrew, Scoop, or WinGet layout
+**When** the user runs `specscore self-update`, including with `--yes` and with `--version <tag>`
+**Then** specscore prints that manager's exact upgrade command, exits `0`, and performs no download, no write, and no replacement.
 
 ### AC: check-exit-code-contract
 
-**Requirements:** cli/self-update#req:check-exit-codes
+**Requirements:** cli/self-update#req:exit-code-contract
 
-**Given** three scenarios — up to date, update available, and a release-lookup error
-**When** the user runs `specscore self-update --check` in each
-**Then** the exit codes are `0`, `10`, and a third code distinct from both, respectively.
-
-### AC: network-failure-is-safe
-
-**Requirements:** cli/self-update#req:network-failure-clear
-
-**Given** a manual install and an unreachable release source
-**When** the user runs `specscore self-update`
-**Then** the command prints a clear error, exits non-zero, and does not modify the existing binary.
-
-### AC: permission-denied-is-safe
-
-**Requirements:** cli/self-update#req:permission-failure-clear
-
-**Given** a manual install where the executable's directory is not writable by the current user
-**When** the user runs `specscore self-update --yes`
-**Then** the command reports the permission failure with the path and a suggested remedy, exits non-zero, and leaves the original binary intact.
-
-### AC: version-flag-selects-tag
-
-**Requirements:** cli/self-update#req:version-flag
-
-**Given** a manual install and a published release tagged `v0.0.3`
-**When** the user runs `specscore self-update --version 0.0.3 --yes`
-**Then** the command installs exactly the `v0.0.3` release (accepting the tag with or without the leading `v`), using the same checksum-verify and atomic-replace path as an unpinned update.
-
-### AC: pinned-tag-allows-prerelease
-
-**Requirements:** cli/self-update#req:pinned-exact-tag
-
-**Given** a manual install and a published prerelease tagged `v0.1.0-rc.1`
-**When** the user runs `specscore self-update --version v0.1.0-rc.1 --yes`
-**Then** the command installs that prerelease exactly, even though the unpinned "latest" path would have skipped it.
-
-### AC: downgrade-requires-flag
-
-**Requirements:** cli/self-update#req:pinned-downgrade-guard
-
-**Given** a manual install currently on `v0.5.0` and a pinned target of `v0.3.0`
-**When** the user runs `specscore self-update --version v0.3.0` without `--allow-downgrade`
-**Then** the command refuses, names both versions and the `--allow-downgrade` flag, exits non-zero, and leaves the binary unchanged; re-running with `--allow-downgrade --yes` performs the downgrade.
-
-### AC: pinned-unknown-tag-errors
-
-**Requirements:** cli/self-update#req:pinned-unknown-tag
-
-**Given** a manual install and a `--version` tag that has no matching published release or asset
-**When** the user runs `specscore self-update --version v9.9.9 --yes`
-**Then** the command prints a clear error, exits non-zero, and does not modify the existing binary.
-
-### AC: pinned-managed-still-redirects
-
-**Requirements:** cli/self-update#req:pinned-managed-still-redirects
-
-**Given** a `specscore` whose executable path is a Homebrew, Scoop, or WinGet managed location
-**When** the user runs `specscore self-update --version v0.0.3`
-**Then** the command does not self-replace; it prints the detected manager and its upgrade command and exits `0` (the same redirect as an unpinned managed run).
+**Given** an up-to-date binary, a binary with a newer release available, and a release lookup that fails
+**When** the user runs `specscore self-update --check` in each case
+**Then** the exit codes are `0`, `10`, and a code distinct from both, so "an update is available" is never confused with an operational failure.
 
 ## Open Questions
 
-- Which release-aware updater library backs the atomic-replace path (e.g. `minio/selfupdate`, `creativeprojects/go-selfupdate`), and does it consume GoReleaser's archive + `checksums.txt` layout without custom glue? (Implementation choice; does not change this contract.)
-- Should install-method detection be extracted into a shared package for reuse by future commands, or stay internal to `self-update` until a second consumer appears? (Inherited from the source Idea.)
-- Should a later iteration add cryptographic signature verification (cosign/sigstore) on top of the sha256 check? (Idea marks this follow-on.)
-
-## Sidekick Seeds Generated
-
-- [deferred-ac-coverage-regex-truncates-hyphenated-ac-slugs](../../../ideas/seeds/deferred-ac-coverage-regex-truncates-hyphenated-ac-slugs.md) — captured 2026-06-01 by specstudio:specify
+- Should a cached availability check surface a stale binary during unrelated
+  commands? The question now belongs to the shared library, which carries it for
+  every consumer.
 
 ---
 *This document follows the https://specscore.md/feature-specification*
