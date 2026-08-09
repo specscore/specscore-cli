@@ -1,13 +1,13 @@
 ---
 format: https://specscore.md/feature-specification
-status: Amending
+status: Stable
 ---
 
 # Feature: Self-Update
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/self-update?op=request-change) |
 
-**Status:** Amending
+**Status:** Stable
 **Source Ideas:** cli-self-update
 
 ## Summary

@@ -1,11 +1,11 @@
 ---
 format: https://specscore.md/idea-specification
-status: Specified
+status: Implemented
 ---
 
 # Idea: CLI Self-Update
 
-**Status:** Specified
+**Status:** Implemented
 **Date:** 2026-06-01
 **Owner:** alex
 **Promotes To:** cli/self-update
