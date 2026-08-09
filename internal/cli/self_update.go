@@ -1,328 +1,163 @@
 package cli
 
 import (
-	"bufio"
-	"context"
 	"errors"
-	"fmt"
-	"io/fs"
-	"os"
-	"strings"
 
-	"github.com/specscore/specscore-cli/internal/selfupdate"
-	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/spf13/cobra"
+	"github.com/strongo/selfupdate"
+	"github.com/strongo/selfupdate/cobracmd"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
-// ambiguousGuidance is shown when the install method cannot be confidently
-// classified. It tells the user the situation is ambiguous and how to update
-// manually instead of letting self-update guess.
-const ambiguousGuidance = `specscore could not determine how this binary was installed, so the install method is ambiguous.
-To avoid replacing a binary that may be managed by a package manager, self-update will not modify it.
+// Exit codes reserved for self-update's own operational-failure family.
+// REQ: cli/self-update#req:exit-code-contract fixes 0 (success) and 10
+// (--check reporting a verdict that is not up to date) globally; every
+// operational error below MUST land on a code distinct from both.
+//
+// selfUpdateCheckPendingCode is returned by --check when the verdict is not
+// up to date (update available or undetermined). It is numerically
+// exitcode.Unexpected (10) — that was already this command's "update
+// pending" code before this migration — but is named separately here so a
+// reader doesn't mistake it for the *general* "unexpected runtime error"
+// meaning that constant carries for every other specscore command.
+const selfUpdateCheckPendingCode = exitcode.Unexpected
 
-To update manually, either:
-  - re-download the latest release from https://github.com/specscore/specscore-cli/releases, or
-  - upgrade via the package manager you used to install specscore.`
+// selfUpdateUnexpectedCode covers selfupdate.KindUnexpected — a local
+// staging/extraction/rename failure that isn't a permission error, or a
+// failure resolving the running executable's own path. It is deliberately
+// NOT selfUpdateCheckPendingCode (10): reusing that number for an unrelated
+// internal failure would make the two indistinguishable to a script
+// checking `$? == 10`. 9 is the one exitcode value no other specscore
+// command has claimed.
+const selfUpdateUnexpectedCode = 9
 
-// detectInstall resolves how the running binary was installed. It is a
-// package-level variable so tests can override it to force a specific
-// detection without touching the real os.Executable path.
-var detectInstall = selfupdate.DetectSelf
-
-// resolveLatest resolves the latest stable release tag. It is a package-level
-// variable so tests can stub the result (and an error case) without network
-// access, mirroring the detectInstall hook.
-var resolveLatest = func(ctx context.Context) (string, error) {
-	return selfupdate.Resolver{}.LatestStableTag(ctx)
+// selfUpdateConfig returns specscore's own selfupdate.Config: its release
+// identity, the package managers that publish it, and the version-probe
+// arguments used to confirm a swap succeeded
+// (cli/self-update#req:specscore-release-identity,
+// cli/self-update#req:specscore-managers,
+// cli/self-update#req:specscore-version-identity). Asset naming, the
+// checksums filename, and the download URL are all left at the library's
+// GoReleaser-shaped defaults — they already match .goreleaser.yml's own
+// name_template ("specscore_<version>_<os>_<arch>" archives,
+// "specscore_<version>_checksums.txt" checksums) exactly, so nothing here
+// overrides them.
+func selfUpdateConfig() selfupdate.Config {
+	return selfupdate.Config{
+		BinaryName:           "specscore",
+		Repository:           "specscore/specscore-cli",
+		CurrentVersion:       version,
+		UndeterminedVersions: []string{"dev"},
+		Managers: []selfupdate.Manager{
+			selfupdate.Homebrew("brew upgrade specscore"),
+			selfupdate.Scoop("scoop update specscore"),
+			selfupdate.WinGet("winget upgrade SpecScore.CLI"),
+		},
+		VersionProbeArgs: []string{"--version"},
+	}
 }
 
-// isInteractive reports whether the process is attached to an interactive
-// terminal. It is a package-level variable so tests can force a deterministic
-// answer without depending on the test runner's stdin. The default inspects
-// stdin's mode: a character device indicates a TTY rather than a pipe/file.
-var isInteractive = func() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
+// selfUpdateConfigFunc is a seam over selfUpdateConfig so tests can point a
+// full command execution at an httptest.Server instead of the real GitHub
+// API, mirroring the pattern the shared library's own reference CLI uses
+// (github.com/strongo/selfupdate/cmd/selfupdate's buildConfigFunc). Only
+// tests override this.
+var selfUpdateConfigFunc = selfUpdateConfig
+
+// selfUpdateErrors maps github.com/strongo/selfupdate's typed outcomes onto
+// specscore's own pre-existing exit-code contract
+// (cli/self-update#req:exit-code-contract), which this migration leaves
+// unchanged: 0 for success, 10 reserved for --check reporting a verdict
+// that is not up to date (update available or undetermined), and every
+// operational error a code distinct from both. See self_update_test.go for
+// the exhaustive kind → code table this type is required to hold.
+type selfUpdateErrors struct{}
+
+// Failure implements cobracmd.ErrorMapper. It classifies err via
+// selfupdate.KindOf and returns the matching *exitcode.Error, preserving
+// the exact codes specscore returned before this migration:
+//   - KindPermission: exitcode.InvalidState (4), with a remedy hint (sudo /
+//     package manager) and the executable path, exactly as
+//     classifySelfReplaceError reported it previously.
+//   - KindAmbiguous, KindDowngrade, KindNonInteractive, KindChecksum:
+//     exitcode.InvalidState (4) — refusals and state-guard failures.
+//   - KindReleaseLookup, KindDownload, KindUnknownTag,
+//     KindUnsupportedPlatform: exitcode.NotFound (3) — the release or asset
+//     could not be located.
+//   - Anything else (KindUnexpected): selfUpdateUnexpectedCode (9).
+func (selfUpdateErrors) Failure(err error) error {
+	switch selfupdate.KindOf(err) {
+	case selfupdate.KindPermission:
+		path := failurePath(err)
+		if path == "" {
+			path = "the specscore executable"
+		}
+		return exitcode.InvalidStateErrorf(
+			"self-update: permission denied writing %s: %v\n"+
+				"Re-run with elevated permissions (sudo), or update via your package manager.",
+			path, err)
+	case selfupdate.KindAmbiguous, selfupdate.KindDowngrade, selfupdate.KindNonInteractive, selfupdate.KindChecksum:
+		return exitcode.InvalidStateErrorf("self-update: %v", err)
+	case selfupdate.KindReleaseLookup, selfupdate.KindDownload, selfupdate.KindUnknownTag, selfupdate.KindUnsupportedPlatform:
+		return exitcode.NotFoundErrorf("self-update: %v", err)
+	default: // selfupdate.KindUnexpected, and any kind a future library version adds.
+		return exitcode.New(selfUpdateUnexpectedCode, "self-update: "+err.Error())
 	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// doSelfReplace performs the actual download → verify → swap for a manual
-// install, replacing the running executable with the release identified by
-// latestTag. It is a package-level variable so tests can substitute a spy and
-// never touch the network or filesystem. The default resolves the running
-// executable's path, downloads and sha256-verifies the matching release asset,
-// atomically swaps it in, then best-effort verifies the new binary's version.
-// The download/replace/verify steps of the default doSelfReplace are wrapped in
-// package-level function variables (matching the seam idiom used elsewhere in
-// this package, e.g. osGetwdFn) so tests can drive the post-download swap and
-// post-swap verify branches without touching the network or the running binary.
-var (
-	osExecutableFn       = os.Executable
-	selfupdateDownloadFn = func(ctx context.Context, version string) (string, error) {
-		return selfupdate.Downloader{}.DownloadAndVerify(ctx, version, "", "")
-	}
-	selfupdateReplaceFn   = selfupdate.ReplaceExecutable
-	selfupdateVerifyVerFn = selfupdate.VerifyBinaryVersion
-)
+// UpdateAvailable implements cobracmd.ErrorMapper: --check reporting
+// anything other than up to date (update available OR undetermined,
+// per cli/self-update#req:exit-code-contract) exits 10 with an EMPTY
+// message. The human-readable verdict line was already printed by
+// cobracmd's own --check output; an empty exitcode.Error message is
+// silentSignalErrorHandler's signal (see telemetry_wiring.go) to suppress
+// fang's own rendering of it, exactly as self-update's --check behaved
+// before this migration.
+func (selfUpdateErrors) UpdateAvailable(selfupdate.CheckResult) error {
+	return exitcode.New(selfUpdateCheckPendingCode, "")
+}
 
-var doSelfReplace = func(ctx context.Context, latestTag string) error {
-	target, err := osExecutableFn()
-	if err != nil {
-		return exitcode.InvalidStateErrorf("self-update: could not resolve the running executable: %v", err)
+// failurePath extracts the executable Path from err when it is (or wraps) a
+// *selfupdate.Failure, and "" otherwise.
+func failurePath(err error) string {
+	var f *selfupdate.Failure
+	if errors.As(err, &f) {
+		return f.Path
 	}
-	tmp, err := selfupdateDownloadFn(ctx, strings.TrimPrefix(latestTag, "v"))
-	if err != nil {
-		return err
-	}
-	if err := selfupdateReplaceFn(target, tmp); err != nil {
-		return err
-	}
-	// Best-effort post-swap sanity check; a mismatch is surfaced but the swap
-	// has already succeeded.
-	_ = selfupdateVerifyVerFn(target, strings.TrimPrefix(latestTag, "v"))
-	return nil
+	return ""
 }
 
 // selfUpdateCommand returns the "self-update" command (aliased "update"),
-// which updates the installed specscore binary in place.
+// which updates the installed specscore binary in place. All detection,
+// release-resolution, download, verification, and replacement behavior
+// comes from github.com/strongo/selfupdate
+// (cli/self-update#req:library-provided-behavior); this function supplies
+// only specscore's own identity (selfUpdateConfig) and exit-code contract
+// (selfUpdateErrors).
 //
 // The canonical name and the "update" alias resolve to the same command, so
-// `specscore self-update` and `specscore update` are interchangeable. The
-// --check flag reports whether a newer release is available without applying
-// it; --yes (-y) skips the interactive confirmation prompt.
-//
-// RunE dispatches on the detected install method. Package-managed installs are
-// redirected to the owning package manager's upgrade command and never touch
-// the filesystem. Manual and ambiguous paths are placeholders that land in
-// later tasks.
+// `specscore self-update` and `specscore update` are interchangeable
+// (cli/self-update#req:command-and-alias). --check reports availability
+// without applying it; --yes (-y) skips the interactive confirmation
+// prompt; --version pins a release tag; --allow-downgrade permits a pinned
+// target older than the running build
+// (cli/self-update#req:flag-surface).
 func selfUpdateCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:     "self-update",
-		Aliases: []string{"update"},
+	cmd := cobracmd.New(selfUpdateConfigFunc(), cobracmd.CommandOptions{
 		Short:   "Update the installed specscore binary in place",
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			detection, err := detectInstall()
-			if err != nil {
-				return err
-			}
-
-			if check, _ := cmd.Flags().GetBool("check"); check {
-				return runCheck(cmd, detection)
-			}
-
-			switch detection.Method {
-			case selfupdate.Managed:
-				// Redirect to the owning package manager. No filesystem
-				// writes/downloads happen on this path; we print and exit 0.
-				upgrade, ok := selfupdate.UpgradeCommand(detection.Manager)
-				if !ok {
-					return errors.New("self-update: managed install detected but no upgrade command is known")
-				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"specscore was installed via %s. Run the following to upgrade:\n\n    %s\n",
-					selfupdate.ManagerName(detection.Manager), upgrade)
-				return nil
-			case selfupdate.Manual:
-				if pinned, _ := cmd.Flags().GetString("version"); strings.TrimSpace(pinned) != "" {
-					// Pinned target: install exactly this tag. Bypass the
-					// stable-only resolveLatest/Compare path entirely so an
-					// explicitly requested prerelease/draft installs as-is. The
-					// tag is passed through (DownloadAndVerify strips a leading
-					// "v" via AssetName); we only trim surrounding whitespace.
-					pinnedTag := strings.TrimSpace(pinned)
-					out := cmd.OutOrStdout()
-
-					// Downgrade guard: when the running version is known (not the
-					// "dev" placeholder) and the pinned target is strictly lower,
-					// refuse unless --allow-downgrade is set. Direction can't be
-					// determined for a dev build, so the guard does not trigger there.
-					allowDowngrade, _ := cmd.Flags().GetBool("allow-downgrade")
-					isDowngrade := version != selfupdate.DevVersion &&
-						selfupdate.CompareVersions(pinnedTag, version) < 0
-					if isDowngrade && !allowDowngrade {
-						_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-							"self-update: refusing to downgrade from %s to %s; pass --allow-downgrade to proceed\n",
-							version, pinnedTag)
-						return exitcode.InvalidStateErrorf(
-							"self-update: refusing to downgrade from %s to %s; pass --allow-downgrade to proceed",
-							version, pinnedTag)
-					}
-
-					if isDowngrade {
-						_, _ = fmt.Fprintf(out, "downgrade: %s → %s\n", version, pinnedTag)
-					} else {
-						_, _ = fmt.Fprintf(out, "%s → %s\n", version, pinnedTag)
-					}
-
-					yes, _ := cmd.Flags().GetBool("yes")
-					if !yes {
-						if !isInteractive() {
-							_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
-								"self-update: --yes is required for non-interactive use; refusing to replace the binary")
-							return exitcode.InvalidStateError("self-update: --yes is required for non-interactive use")
-						}
-						_, _ = fmt.Fprint(out, "Proceed? [y/N] ")
-						reader := bufio.NewReader(cmd.InOrStdin())
-						line, _ := reader.ReadString('\n')
-						if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
-							_, _ = fmt.Fprintln(out, "self-update: aborted; binary left unchanged.")
-							return nil
-						}
-					}
-
-					if err := doSelfReplace(cmd.Context(), pinnedTag); err != nil {
-						// Annotate with the pinned tag so an unknown-tag failure
-						// (no matching published release or asset) names the tag
-						// the user requested. The download/verify step runs before
-						// any swap, so a failure here leaves the binary untouched.
-						return classifySelfReplaceError(cmd, fmt.Errorf("release %s not found: %w", pinnedTag, err))
-					}
-					_, _ = fmt.Fprintf(out, "specscore updated to %s.\n", pinnedTag)
-					return nil
-				}
-				latest, err := resolveLatest(cmd.Context())
-				if err != nil {
-					return exitcode.NotFoundErrorf("self-update: could not resolve the latest release: %v", err)
-				}
-				result := selfupdate.Compare(version, latest)
-				if result.Verdict == selfupdate.UpToDate {
-					// Already on the latest stable release. Report and exit 0
-					// without downloading or replacing anything.
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "specscore is already up to date (%s).\n", result.Current)
-					return nil
-				}
-				// Available/Undetermined: confirm (unless --yes), then swap.
-				out := cmd.OutOrStdout()
-				_, _ = fmt.Fprintf(out, "%s → %s\n", result.Current, result.Latest)
-
-				yes, _ := cmd.Flags().GetBool("yes")
-				if !yes {
-					if !isInteractive() {
-						// Refuse to block on input when there's no terminal and
-						// no explicit consent. Leave the binary unchanged.
-						_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
-							"self-update: --yes is required for non-interactive use; refusing to replace the binary")
-						return exitcode.InvalidStateError("self-update: --yes is required for non-interactive use")
-					}
-					_, _ = fmt.Fprint(out, "Proceed? [y/N] ")
-					reader := bufio.NewReader(cmd.InOrStdin())
-					line, _ := reader.ReadString('\n')
-					if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
-						_, _ = fmt.Fprintln(out, "self-update: aborted; binary left unchanged.")
-						return nil
-					}
-				}
-
-				if err := doSelfReplace(cmd.Context(), latest); err != nil {
-					return classifySelfReplaceError(cmd, err)
-				}
-				_, _ = fmt.Fprintf(out, "specscore updated to %s.\n", result.Latest)
-				return nil
-			default:
-				// Ambiguous: the install method cannot be confidently
-				// classified. Refuse to self-replace, print manual-update
-				// guidance, and exit non-zero. Ambiguity must never resolve
-				// to the self-replace path, so we return before any
-				// download/write.
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), ambiguousGuidance)
-				return exitcode.InvalidStateError("self-update: install method is ambiguous; refusing to self-replace")
-			}
-		},
-	}
-	cmd.Flags().Bool("check", false, "report whether a newer release is available without applying it")
-	cmd.Flags().BoolP("yes", "y", false, "skip the interactive confirmation prompt")
-	// --version here is self-update-local: it pins the release tag to install
-	// (leading "v" optional). It is distinct from the root `specscore --version`
-	// flag, which prints the CLI's own build version.
-	cmd.Flags().String("version", "", "install a specific release tag (leading \"v\" optional) instead of the latest")
-	cmd.Flags().Bool("allow-downgrade", false, "permit installing a --version older than the running build")
+		Aliases: []string{"update"},
+		Errors:  selfUpdateErrors{},
+		// JSONFormat left false: specscore's Feature spec exposes exactly
+		// --check/--yes/--version/--allow-downgrade, not --format.
+	})
+	// cobracmd.New always registers --dry-run; the library's
+	// CommandOptions has no field to omit it. specscore's own Feature spec
+	// (spec/features/cli/self-update/README.md#req:flag-surface) does not
+	// include --dry-run, so it is hidden from --help/completion here rather
+	// than advertised. The flag still parses if invoked explicitly — a
+	// library implementation detail this wrapper cannot fully suppress
+	// through cobracmd's public API at v0.1.1.
+	_ = cmd.Flags().MarkHidden("dry-run")
 	return cmd
-}
-
-// classifySelfReplaceError converts a non-nil error from doSelfReplace into a
-// clear, actionable message and a non-zero *exitcode.Error, distinguishing the
-// two write-path failure modes. The atomic swap is gated behind download +
-// verification, so on any of these errors the original binary is untouched.
-//
-// Permission-denied: the executable's directory is not writable. We report the
-// failure with the executable path (best-effort via os.Executable) and a
-// suggested remedy. Network/lookup/download: anything else (connection refused,
-// rate limit, missing asset, checksum mismatch). An *exitcode.Error is passed
-// through (its code/message are already meaningful); a bare error is wrapped.
-func classifySelfReplaceError(cmd *cobra.Command, err error) error {
-	errOut := cmd.ErrOrStderr()
-
-	if errors.Is(err, fs.ErrPermission) {
-		target, _ := osExecutableFn()
-		if target == "" {
-			target = "the specscore executable"
-		}
-		_, _ = fmt.Fprintf(errOut,
-			"self-update: permission denied writing %s: %v\n"+
-				"Re-run with elevated permissions (sudo), or update via your package manager.\n",
-			target, err)
-		return exitcode.InvalidStateErrorf(
-			"self-update: permission denied writing %s; re-run with elevated permissions (sudo) or update via your package manager",
-			target)
-	}
-
-	// Network / lookup / download failure (or any other non-permission error).
-	// Pass through a meaningful exitcode error; otherwise wrap as a release/
-	// download failure.
-	var ec *exitcode.Error
-	if errors.As(err, &ec) {
-		_, _ = fmt.Fprintf(errOut, "self-update: %v\n", err)
-		// Return the unwrapped *exitcode.Error so the top-level runner's
-		// ExitCode() convention sees a non-zero code even when err is a wrapper
-		// (e.g. the pinned branch annotates with the requested tag via %w).
-		return ec
-	}
-	_, _ = fmt.Fprintf(errOut, "self-update: failed to download the release: %v\n", err)
-	return exitcode.NotFoundErrorf("self-update: failed to download the release: %v", err)
-}
-
-// runCheck implements the read-only --check mode for any install method. It
-// resolves the latest stable release, reports availability and the appropriate
-// next step, and performs no download or filesystem write. Exit-code contract:
-// up-to-date returns nil (exit 0); available/undetermined returns an exit-10
-// error; a release-lookup failure returns a distinct exit-3 error so it never
-// collides with the exit-10 "update available" code.
-func runCheck(cmd *cobra.Command, detection selfupdate.Detection) error {
-	latest, err := resolveLatest(cmd.Context())
-	if err != nil {
-		return exitcode.NotFoundErrorf("self-update --check: could not resolve the latest release: %v", err)
-	}
-
-	result := selfupdate.Compare(version, latest)
-	out := cmd.OutOrStdout()
-
-	switch result.Verdict {
-	case selfupdate.UpToDate:
-		_, _ = fmt.Fprintf(out, "specscore is up to date (%s).\n", result.Current)
-		return nil
-	case selfupdate.Undetermined:
-		_, _ = fmt.Fprintf(out, "current specscore version is undetermined (%s); latest stable is %s.\n", result.Current, result.Latest)
-	default:
-		_, _ = fmt.Fprintf(out, "update available: %s → %s\n", result.Current, result.Latest)
-	}
-
-	// Print the appropriate next step for the detected install method. No
-	// download or write happens on any of these paths.
-	switch detection.Method {
-	case selfupdate.Managed:
-		if upgrade, ok := selfupdate.UpgradeCommand(detection.Manager); ok {
-			_, _ = fmt.Fprintf(out,
-				"specscore was installed via %s. Run the following to upgrade:\n\n    %s\n",
-				selfupdate.ManagerName(detection.Manager), upgrade)
-		}
-	case selfupdate.Manual:
-		_, _ = fmt.Fprintln(out, "To upgrade, run: specscore self-update")
-	default:
-		_, _ = fmt.Fprintln(out, ambiguousGuidance)
-	}
-
-	return exitcode.New(result.Verdict.ExitCode(), "")
 }

@@ -1,6 +1,6 @@
 # Plan: CLI Self-Update
 
-**Status:** Implemented
+**Status:** Deprecated
 **Mode:** full
 **Source Feature:** cli/self-update
 **Date:** 2026-06-01
