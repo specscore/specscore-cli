@@ -39,7 +39,12 @@ const selfUpdateCheckPendingCode = exitcode.Unexpected
 // of exit 10 for this command. cli/self-update#req:exit-code-contract now
 // states plainly that every operational error must avoid 10, so this closes
 // that gap instead of reproducing it.
-const selfUpdateUnexpectedCode = 9
+//
+// The number lives in pkg/exitcode with every other code rather than as a
+// literal here: exit codes are a CLI-wide contract, and a command that mints
+// its own is how a vocabulary silently grows two meanings for one number —
+// which is the very bug this constant exists to fix.
+const selfUpdateUnexpectedCode = exitcode.UpdateFailed
 
 // selfUpdateConfig returns specscore's own selfupdate.Config: its release
 // identity, the package managers that publish it, and the version-probe
