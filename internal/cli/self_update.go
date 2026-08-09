@@ -30,6 +30,15 @@ const selfUpdateCheckPendingCode = exitcode.Unexpected
 // internal failure would make the two indistinguishable to a script
 // checking `$? == 10`. 9 is the one exitcode value no other specscore
 // command has claimed.
+//
+// This is an intentional BEHAVIOR CHANGE, not a preserved one: the
+// pre-migration internal/selfupdate code sometimes returned exitcode.
+// Unexpected (10) here too (e.g. a tar/zip extraction failure), on the
+// non-check path only, so it never collided with an actual --check
+// invocation in practice — but it did collide with the documented meaning
+// of exit 10 for this command. cli/self-update#req:exit-code-contract now
+// states plainly that every operational error must avoid 10, so this closes
+// that gap instead of reproducing it.
 const selfUpdateUnexpectedCode = 9
 
 // selfUpdateConfig returns specscore's own selfupdate.Config: its release
@@ -139,25 +148,25 @@ func failurePath(err error) string {
 // The canonical name and the "update" alias resolve to the same command, so
 // `specscore self-update` and `specscore update` are interchangeable
 // (cli/self-update#req:command-and-alias). --check reports availability
-// without applying it; --yes (-y) skips the interactive confirmation
-// prompt; --version pins a release tag; --allow-downgrade permits a pinned
-// target older than the running build
-// (cli/self-update#req:flag-surface).
+// without applying it (and, since github.com/strongo/selfupdate v0.2.0,
+// states the next step — the manager's upgrade command for a managed
+// install, "specscore self-update" itself for a manual one, or the
+// ambiguous-install guidance); --yes (-y) skips the interactive
+// confirmation prompt; --version pins a release tag; --allow-downgrade
+// permits a pinned target older than the running build
+// (cli/self-update#req:flag-surface — this Feature's documented floor).
+// --dry-run (report what would happen without downloading or writing
+// anything) comes from the library for free and is left enabled.
 func selfUpdateCommand() *cobra.Command {
-	cmd := cobracmd.New(selfUpdateConfigFunc(), cobracmd.CommandOptions{
+	return cobracmd.New(selfUpdateConfigFunc(), cobracmd.CommandOptions{
 		Short:   "Update the installed specscore binary in place",
 		Aliases: []string{"update"},
 		Errors:  selfUpdateErrors{},
-		// JSONFormat left false: specscore's Feature spec exposes exactly
-		// --check/--yes/--version/--allow-downgrade, not --format.
+		// JSONFormat left false: specscore's Feature spec's flag surface
+		// (cli/self-update#req:flag-surface) does not include --format, so
+		// cobracmd never registers it. --dry-run IS registered — cobracmd.New
+		// always adds it, and specscore's flag surface is a floor, not a
+		// ceiling: "report what would happen without downloading or writing
+		// anything" is useful on its own and costs nothing to expose.
 	})
-	// cobracmd.New always registers --dry-run; the library's
-	// CommandOptions has no field to omit it. specscore's own Feature spec
-	// (spec/features/cli/self-update/README.md#req:flag-surface) does not
-	// include --dry-run, so it is hidden from --help/completion here rather
-	// than advertised. The flag still parses if invoked explicitly — a
-	// library implementation detail this wrapper cannot fully suppress
-	// through cobracmd's public API at v0.1.1.
-	_ = cmd.Flags().MarkHidden("dry-run")
-	return cmd
 }

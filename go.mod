@@ -15,7 +15,7 @@ require (
 	github.com/ingitdb/ingitdb-go/ingitdb v0.5.2
 	github.com/posthog/posthog-go v1.23.0
 	github.com/spf13/cobra v1.10.2
-	github.com/strongo/selfupdate v0.1.1
+	github.com/strongo/selfupdate v0.2.0
 	github.com/zclconf/go-cty v1.19.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/sys v0.47.0

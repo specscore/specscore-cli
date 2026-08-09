@@ -88,26 +88,32 @@ func TestSelfUpdate_FlagSurface(t *testing.T) {
 	}
 }
 
-// Do-not-add guard: specscore's Feature spec (req:flag-surface) does not
-// include --format (cobracmd.CommandOptions.JSONFormat is left false) or a
-// visible --dry-run — cobracmd.New always registers --dry-run with no
-// CommandOptions field to omit it, so selfUpdateCommand hides it instead.
-// The flag still exists (and still parses) because cobracmd's public API at
-// v0.1.1 has no way to un-register it; hiding it is what keeps --help and
-// completion showing exactly the four documented flags.
-func TestSelfUpdate_DoesNotAdvertiseLibraryOnlyFlags(t *testing.T) {
+// --format stays absent: specscore's Feature spec (req:flag-surface) does
+// not include it, so JSONFormat is left false and cobracmd never registers
+// a --format flag at all.
+func TestSelfUpdate_NoFormatFlag(t *testing.T) {
 	cmd := selfUpdateCommand()
-
 	if f := cmd.Flags().Lookup("format"); f != nil {
 		t.Errorf("--format flag registered; JSONFormat must stay false per the Feature spec")
 	}
+}
 
+// --dry-run is visible and documented, not hidden: cobracmd.New always
+// registers it, and specscore's Feature spec's flag surface is a floor
+// (--check/--yes/--version/--allow-downgrade), not an exhaustive list — a
+// flag the adapter provides for free and that costs nothing to expose stays
+// on rather than being suppressed.
+func TestSelfUpdate_DryRunFlagIsVisible(t *testing.T) {
+	cmd := selfUpdateCommand()
 	dryRun := cmd.Flags().Lookup("dry-run")
 	if dryRun == nil {
-		t.Fatal("--dry-run not registered at all; cobracmd.New's own behavior changed — update this test's assumptions")
+		t.Fatal("missing --dry-run flag")
 	}
-	if !dryRun.Hidden {
-		t.Error("--dry-run must be hidden: it is not part of specscore's documented flag surface")
+	if dryRun.Hidden {
+		t.Error("--dry-run must not be hidden: it is a documented, supported flag")
+	}
+	if dryRun.DefValue != "false" {
+		t.Errorf("--dry-run default = %q; want false", dryRun.DefValue)
 	}
 }
 
@@ -429,6 +435,49 @@ func TestSelfUpdate_CheckExitCodeContract(t *testing.T) {
 			t.Errorf("stdout %q does not report the undetermined verdict", out.String())
 		}
 	})
+}
+
+// Since github.com/strongo/selfupdate v0.2.0, --check states the next step,
+// not just that an update exists (cli/self-update#req:library-provided-
+// behavior — this is inherited, not specscore's own logic). Detection runs
+// against the real test binary's own path, which this package cannot mock
+// (DetectSelf's filesystem seams are internal to the library), so this
+// asserts that ONE of the three possible next-step shapes appears rather
+// than pinning a specific install method: "was installed via" (Managed),
+// the command path itself (Manual — cobracmd spells it via cmd.CommandPath,
+// which for a standalone selfUpdateCommand() is just "self-update"), or
+// "ambiguous" (Ambiguous, the expected classification for a `go test`
+// temp binary, and what cli/self-update#req:exit-code-contract's own
+// safe-default guarantees regardless of the test runner's layout).
+func TestSelfUpdate_CheckStatesNextStep(t *testing.T) {
+	withVersion(t, "1.0.0")
+	withFakeReleases(t, releaseServer(t, `[{"tag_name":"v1.1.0","prerelease":false,"draft":false}]`))
+
+	cmd := selfUpdateCommand()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--check"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("update-available --check returned nil (want exit 10)")
+	}
+
+	got := out.String()
+	nextStepShapes := []string{"was installed via", "self-update", "ambiguous"}
+	found := false
+	for _, shape := range nextStepShapes {
+		if strings.Contains(got, shape) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("stdout %q does not contain any recognized next-step guidance (%v)", got, nextStepShapes)
+	}
+	// Whichever shape fired, it must appear AFTER the verdict line, not
+	// instead of it.
+	if !strings.Contains(got, "1.0.0") || !strings.Contains(got, "1.1.0") {
+		t.Errorf("stdout %q lost the current -> latest verdict line", got)
+	}
 }
 
 // AC: cli/self-update#ac:canonical-and-alias — `update --check` (the alias)
