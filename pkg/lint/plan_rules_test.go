@@ -1223,3 +1223,64 @@ func TestParseCoordinationRef(t *testing.T) {
 		}
 	}
 }
+
+// AC: retired-plan-freezes-its-ac-references
+//
+// A Plan in a terminal disposition records what was once planned; the Feature
+// it referenced is free to move on. This is what makes a Feature amendable at
+// all: without the exemption, consolidating an AC strands every reference in
+// the finished Plan, and the disposition that would retire it cannot be
+// recorded either, because `plan change-status` runs `spec lint --fix` and
+// restores the file when the lint fails.
+func TestP001P002_RetiredPlanFreezesACReferences(t *testing.T) {
+	// The plan is doubly wrong against the amended Feature: it verifies an AC
+	// that no longer exists (P-002) and leaves the Feature's actual AC
+	// uncovered (P-001), so a status that is NOT exempt must report both.
+	planBody := func(status string) string {
+		return `# Plan: Sample
+
+**Status:** ` + status + `
+**Source Feature:** sample
+**Mode:** full
+
+## Tasks
+
+### Task 1: First
+**Status:** complete
+**Verifies:** sample#ac:consolidated-away
+`
+	}
+
+	for _, status := range []string{"Rejected", "Withdrawn", "Superseded", "Deprecated"} {
+		t.Run("exempt/"+status, func(t *testing.T) {
+			e := newPlanRulesEnv(t)
+			e.writeFeature(t, "sample", "alpha")
+			e.writePlan(t, "sample", planBody(status))
+			v := runRules(t, e)
+			if got := hasViolation(v, "P-002", ""); got != nil {
+				t.Errorf("%s plan still reports a stale AC reference: %+v", status, got)
+			}
+			if got := hasViolation(v, "P-001", ""); got != nil {
+				t.Errorf("%s plan still reports an AC coverage gap: %+v", status, got)
+			}
+		})
+	}
+
+	// Implemented is the successful end of execution, not a disposition: it is
+	// still the live account of what was built, so amending the Feature must
+	// retire it explicitly rather than have it silently stop being checked.
+	for _, status := range []string{"Implemented", "Approved", "Executing"} {
+		t.Run("checked/"+status, func(t *testing.T) {
+			e := newPlanRulesEnv(t)
+			e.writeFeature(t, "sample", "alpha")
+			e.writePlan(t, "sample", planBody(status))
+			v := runRules(t, e)
+			if got := hasViolation(v, "P-002", "sample#ac:consolidated-away"); got == nil {
+				t.Errorf("%s plan is not a disposition; its stale AC reference must still be reported. Got %d violations: %+v", status, len(v), v)
+			}
+			if got := hasViolation(v, "P-001", "sample#ac:alpha"); got == nil {
+				t.Errorf("%s plan is not a disposition; its AC coverage gap must still be reported", status)
+			}
+		})
+	}
+}

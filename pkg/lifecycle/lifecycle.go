@@ -92,6 +92,26 @@ const (
 	PlanDeprecated  Status = "Deprecated"
 )
 
+// IsPlanDisposition reports whether a Plan status is one of the four terminal
+// dispositions — the states a Plan is retired INTO, and from which no work
+// resumes.
+//
+// Implemented is deliberately absent: it is the successful end of execution and
+// still the live account of what was built, so a caller that treats a retired
+// Plan as frozen history must not treat Implemented that way. Both
+// `plan reconcile` (which refuses to resurrect a disposition) and the
+// P-001/P-002 lint rules (which stop validating a retired Plan against a
+// Feature that has since moved on) need exactly this set, so it is declared
+// once here instead of being spelled out at each call site.
+func IsPlanDisposition(s Status) bool {
+	switch s {
+	case PlanRejected, PlanWithdrawn, PlanSuperseded, PlanDeprecated:
+		return true
+	default:
+		return false
+	}
+}
+
 // Task statuses. A task moves through seven lifecycle states; the legal arcs
 // are declared in the KindTask matrix below. The terminal states (Complete,
 // Failed, Aborted) have no outgoing arcs. Values are lowercase to match the

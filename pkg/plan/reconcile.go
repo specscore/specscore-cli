@@ -196,8 +196,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 	}
 	from := lifecycle.Status(p.Status)
 
-	switch from {
-	case lifecycle.PlanRejected, lifecycle.PlanWithdrawn, lifecycle.PlanSuperseded, lifecycle.PlanDeprecated:
+	if lifecycle.IsPlanDisposition(from) {
 		return ReconcileResult{}, exitcode.InvalidStateErrorf(
 			"plan %q is in disposition status %q; reconcile does not resurrect terminal dispositions — author a new plan, or use `specscore plan change-status` if this disposition was itself recorded in error",
 			opts.Slug, p.Status)
