@@ -108,6 +108,14 @@ The parser MUST recognize an optional `## Deferred AC Coverage` H2 section whose
 
 `P-002` MUST NOT be autofixable in the MVP. Resolving a stale reference requires user intent (rename the reference vs. delete the task vs. add the AC to the source Feature).
 
+#### REQ: rule-p-001-p-002-skip-retired-plans
+
+`P-001` and `P-002` MUST NOT be evaluated for a Plan whose document `**Status:**` is one of the four terminal dispositions — `Rejected`, `Withdrawn`, `Superseded`, or `Deprecated`. Such a Plan records what was once planned; it is not a live claim about the current Feature, so its AC references freeze with it.
+
+`Implemented` MUST remain evaluated. It is the successful end of execution and still the live account of what was built, so amending a Feature has to retire its old Plan explicitly rather than have that account silently stop being checked.
+
+Without this exemption a Feature cannot be amended once a Plan has implemented it: consolidating or renaming an AC strands every reference in the finished Plan, and the disposition that would retire that Plan cannot be recorded either, because `plan change-status` runs `spec lint --fix` and restores the file when the lint fails.
+
 ### Lint rule P-003 — Depends-On graph
 
 `P-003` enforces that the task dependency graph is well-formed: acyclic, all references resolve to real tasks, no self-references, and task numbering is linear.
@@ -307,6 +315,12 @@ Violations from `P-001`–`P-010` MUST use the existing `lint.Violation` struct 
 **Given** a Plan declaring `**Source Feature:** does/not/exist` and three tasks each with `**Verifies:**` lines,
 **When** `specscore spec lint` runs,
 **Then** exactly one `P-002` violation is emitted citing the missing source Feature (not three violations — one per task `**Verifies:**` line).
+
+### AC: retired-plan-freezes-its-ac-references (verifies REQ:rule-p-001-p-002-skip-retired-plans)
+
+**Given** a Plan whose tasks reference AC IDs the source Feature no longer defines, and whose source Feature also declares an AC no task covers,
+**When** `specscore spec lint` runs with that Plan's `**Status:**` set to each of `Rejected`, `Withdrawn`, `Superseded` and `Deprecated`, and again with it set to `Implemented`,
+**Then** the four dispositions produce no `P-001` or `P-002` violation for that Plan, while `Implemented` still produces both — so a Feature can be amended by first retiring the Plan that implemented it, and never by silently dropping a live one.
 
 ### AC: cycle-detected-and-cited (verifies REQ:rule-p-003-cycle, REQ:rule-p-003-registered)
 

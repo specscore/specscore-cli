@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
@@ -570,6 +571,20 @@ func lintP001P002(p *plan.Plan, relPath, featuresDir string) []Violation {
 	// (`**Source:** none`) plans have no source Feature, so the AC-coverage
 	// (P-001) and AC-reference (P-002) rules do not apply.
 	if p.SourceIdea != "" || p.SourceNone {
+		return out
+	}
+
+	// A Plan in a terminal disposition is a record of what was planned, not a
+	// live claim about the current Feature, so its AC references freeze with it.
+	//
+	// Without this, a Feature can never be amended once a Plan has implemented
+	// it: consolidating or renaming an AC strands every reference in the
+	// finished Plan, and the transition that would retire that Plan cannot be
+	// applied either, because `plan change-status` runs `spec lint --fix` and
+	// restores the file when it fails. Implemented is NOT a disposition, so an
+	// amendment must still retire its old Plan explicitly rather than have the
+	// live account of what was built silently stop being checked.
+	if lifecycle.IsPlanDisposition(lifecycle.Status(p.Status)) {
 		return out
 	}
 
