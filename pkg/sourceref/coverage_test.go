@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+// Reused from independently validated coverage commit ca3e46c.
+func TestDoubleStarRegexp_QuestionAndQuotedLiteral(t *testing.T) {
+	re := doubleStarRegexp("spec/**/file?.[m]d")
+	for _, path := range []string{"spec/file1.[m]d", "spec/a/b/filex.[m]d"} {
+		if !re.MatchString(path) {
+			t.Errorf("pattern did not match %q", path)
+		}
+	}
+	for _, path := range []string{"spec/file12.[m]d", "spec/file1.md"} {
+		if re.MatchString(path) {
+			t.Errorf("pattern unexpectedly matched %q", path)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RegisterPrefix — duplicate is no-op
 // ---------------------------------------------------------------------------
