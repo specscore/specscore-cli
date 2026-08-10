@@ -24,7 +24,7 @@ func lessonRecurCommand() *cobra.Command {
 		Use:   "recur <slug>",
 		Short: "Record that a lesson's gap manifested again",
 		Long: `For a canonical Lesson, appends exactly one immutable typed JSON
-child under occurrences/ and leaves the README and index byte-identical;
+child under occurrences/, leaves the README byte-identical, and refreshes only its derived index row;
 recurrence metadata is derived from valid children. The compatibility path for
 a legacy flat Lesson increments **Recurred:** and appends its old prose entry.
 Neither path changes **Status:**. Run
@@ -93,6 +93,11 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 	}
 	warnIfLessonRetired(cmd.ErrOrStderr(), slug, before.Status)
 	if before.Canonical {
+		root := projectRootForOccurrence(projectFlag)
+		indexSnapshot, indexErr := snapshotOccurrenceIndex(root)
+		if indexErr != nil {
+			return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", indexErr)
+		}
 		id := uuid.NewString()
 		now := time.Now().UTC()
 		prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": id}, now)
@@ -107,9 +112,27 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 				return exitcode.UnexpectedErrorf("recording occurrence: %v", resolved)
 			}
 		}
+		if err := lessonIndexUpsertFn(filepath.Join(root, "spec"), before); err != nil {
+			failure := lesson.CompensatePublication(func() error {
+				if removeErr := lesson.RemoveOccurrence(o.Path); removeErr != nil {
+					return removeErr
+				}
+				return indexSnapshot.restore()
+			}, err)
+			if recovery, resolved := prepared.ResolveMutationFailure("upserting occurrence index row", failure); recovery {
+				return exitcode.UnexpectedErrorf("%v", resolved)
+			} else {
+				return exitcode.UnexpectedErrorf("upserting occurrence index row: %v", resolved)
+			}
+		}
 		items, err := lesson.DiscoverOccurrences(path)
 		if err != nil {
-			failure := lesson.CompensatePublication(func() error { return lesson.RemoveOccurrence(o.Path) }, err)
+			failure := lesson.CompensatePublication(func() error {
+				if removeErr := lesson.RemoveOccurrence(o.Path); removeErr != nil {
+					return removeErr
+				}
+				return indexSnapshot.restore()
+			}, err)
 			if recovery, resolved := prepared.ResolveMutationFailure("reading occurrences after publication", failure); recovery {
 				return exitcode.UnexpectedErrorf("%v", resolved)
 			} else {

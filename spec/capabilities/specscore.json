@@ -1531,7 +1531,7 @@
             {
               "command": "specscore lesson recur --help",
               "contains": [
-                "leaves the README and index byte-identical"
+                "leaves the README byte-identical, and refreshes only its derived index row"
               ]
             }
           ],

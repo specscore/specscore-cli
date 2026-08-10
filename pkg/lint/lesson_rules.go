@@ -660,6 +660,26 @@ func UpsertLessonIndexRow(specRoot string, l *lesson.Lesson) error {
 	if !l.Canonical {
 		return upsertLegacyLessonIndexRow(path, b, row)
 	}
+	// A repository can still have the flat five-column projection when its
+	// first canonical Lesson is created.  The creation command owns the lesson
+	// index, so migrate that one declared projection in place rather than
+	// rejecting an otherwise valid canonical scaffold or requiring a broad
+	// repository-wide --fix.  Discovering the complete Lesson set is necessary:
+	// a mixed six-column table must represent every pre-existing flat Lesson as
+	// well as the new directory-form one.
+	if strings.Contains(string(b), "| Lesson | Status | Recurred | Date | Owner |") {
+		lessons, err := lesson.Discover(filepath.Join(specRoot, "lessons"))
+		if err != nil {
+			return fmt.Errorf("discovering Lessons for canonical index migration: %w", err)
+		}
+		parsed := make(map[string]*lesson.Lesson, len(lessons))
+		slugs := make([]string, 0, len(lessons))
+		for _, found := range lessons {
+			parsed[found.Slug] = found
+			slugs = append(slugs, found.Slug)
+		}
+		return rewriteLessonIndex(path, slugs, parsed)
+	}
 	line := fmt.Sprintf("| [%s](%s) | %s | %s | %s | %s | %s |", row.slug, row.link, row.status, row.classifications, row.occurrences, row.lastOccurred, row.enforcement)
 	lines := strings.Split(string(b), "\n")
 	header := -1

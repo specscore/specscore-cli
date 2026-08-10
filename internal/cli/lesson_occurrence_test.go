@@ -54,6 +54,10 @@ func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testin
 	if ctx["git"].(map[string]any)["branch"] != "codex/test" {
 		t.Fatalf("context was not preserved: %#v", ctx)
 	}
+	index, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	if err != nil || !strings.Contains(string(index), "| [review-before-merge](review-before-merge/README.md) | Recorded |") || !strings.Contains(string(index), "| 1 |") {
+		t.Fatalf("occurrence add did not refresh its derived index row: err=%v\\n%s", err, index)
+	}
 	readmeBefore, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "review-before-merge", "README.md"))
 	out, _, err = runLesson(t, "recur", "review-before-merge", "--note", "seen again")
 	if err != nil || out != "review-before-merge: recurred 2\n" {
@@ -62,6 +66,10 @@ func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testin
 	readmeAfter, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "review-before-merge", "README.md"))
 	if string(readmeBefore) != string(readmeAfter) {
 		t.Fatal("recur rewrote canonical README")
+	}
+	index, err = os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	if err != nil || !strings.Contains(string(index), "| 2 |") {
+		t.Fatalf("canonical recur did not refresh its derived index row: err=%v\\n%s", err, index)
 	}
 	info, _, err := runLesson(t, "info", "review-before-merge", "--format", "json")
 	if err != nil {

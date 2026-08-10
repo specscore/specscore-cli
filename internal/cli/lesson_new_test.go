@@ -106,6 +106,55 @@ func TestLessonNew_EmbeddedEmitsFrontmatterSectionsAndIndex(t *testing.T) {
 	}
 }
 
+// A repository can adopt directory-form Lessons incrementally. Creating its
+// first canonical Lesson must upgrade only the declared lessons index, keeping
+// every pre-existing flat Lesson visible in the six-column projection.
+func TestLessonNew_UpgradesLegacyIndexForFirstCanonicalLesson(t *testing.T) {
+	root := setupSpecRoot(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "spec", "lessons"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(root, "spec", "lessons", "existing.md")
+	writeFileT(t, legacy, "---\nformat: https://specscore.md/lesson-specification\nstatus: Recorded\n---\n\n"+
+		"# Lesson: Existing\n\n**Status:** Recorded\n**Date:** 2026-08-10\n**Owner:** codex\n**Recurred:** 0\n\n"+
+		"## Incident\n\nExisting legacy Lesson.\n\n## Process gap\n\nLegacy projection.\n\n## Check\n\nMigrate the index when needed.\n\n## Enforcement\n\nRecorded.\n")
+	index := "# Lessons\n\n## Index\n\n" +
+		"| Lesson | Status | Recurred | Date | Owner |\n|---|---|---|---|---|\n" +
+		"| [existing](existing.md) | Recorded | 0 | 2026-08-10 | codex |\n\n" +
+		"## Open Questions\n\nNone at this time.\n"
+	writeFileT(t, filepath.Join(root, "spec", "lessons", "README.md"), index)
+	withCwd(t, root)
+
+	if _, stderr, err := runLesson(t, "new", "canonical", "--owner", "codex"); err != nil {
+		t.Fatalf("lesson new: %v (stderr=%s)", err, stderr)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |",
+		"| [existing](existing.md) | Recorded | Legacy | 0 |  | — |",
+		"| [canonical](canonical/README.md) | Recorded |",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("upgraded index missing %q:\n%s", want, got)
+		}
+	}
+	violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range violations {
+		if v.Severity == "error" && (v.Rule == "L-003" || v.Rule == "L-004") {
+			t.Errorf("unexpected index violation after canonical creation: %+v", v)
+		}
+	}
+}
+
 func TestLessonNew_InvalidSlug(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)

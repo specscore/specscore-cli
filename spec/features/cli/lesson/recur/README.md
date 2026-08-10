@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson recur <slug> [--note <text>]` records that a lesson's process gap manifested again. For a canonical Lesson it appends exactly one immutable typed child Occurrence and derives the count without rewriting the README. For a compatibility flat Lesson it retains the historical `**Recurred:**` plus `## Recurrences` rewrite until explicit migration. Neither path changes `**Status:**`. A recurrence against a retired Lesson still records the evidence and exits `0`, but warns on stderr.
+`specscore lesson recur <slug> [--note <text>]` records that a lesson's process gap manifested again. For a canonical Lesson it appends exactly one immutable typed child Occurrence, derives the count, and refreshes only the exact derived index row without rewriting the README. For a compatibility flat Lesson it retains the historical `**Recurred:**` plus `## Recurrences` rewrite until explicit migration. Neither path changes `**Status:**`. A recurrence against a retired Lesson still records the evidence and exits `0`, but warns on stderr.
 
 ## Synopsis
 
@@ -29,7 +29,7 @@ specscore lesson recur <slug> [--note <text>] [--project <path>]
 
 #### REQ: recur-increments-count
 
-For a canonical Lesson, `lesson recur <slug>` MUST append one schema-valid occurrence child with a fresh UUID and UTC `Z` time, then derive the recurrence count from valid children. It MUST leave the README byte-identical. For a flat Lesson it MUST increment `**Recurred:** N`, inserting `1` after `**Status:**` when absent.
+For a canonical Lesson, `lesson recur <slug>` MUST append one schema-valid occurrence child with a fresh UUID and UTC `Z` time, derive the recurrence count from valid children, and upsert only that Lesson's derived index row. It MUST leave the README byte-identical. For a flat Lesson it MUST increment `**Recurred:** N`, inserting `1` after `**Status:**` when absent.
 
 #### REQ: recur-appends-dated-entry
 
@@ -55,7 +55,7 @@ When the target lesson's `**Status:**` is a terminal disposition (`Withdrawn` or
 
 #### REQ: recur-index-sync
 
-Canonical index recurrence metadata is derived from child Occurrences and the README/index remain byte-identical. After a flat rewrite, the verb MUST upsert only that Lesson's compatibility index row; it MUST NOT run a repository-wide fixer.
+Canonical index recurrence metadata is derived from child Occurrences. A canonical recurrence MUST leave the README byte-identical and upsert only that Lesson's derived index row. After a flat rewrite, the verb MUST upsert only that Lesson's compatibility index row; it MUST NOT run a repository-wide fixer.
 
 ## Parameters / Flags
 
