@@ -277,6 +277,44 @@ func TestFlatMigration_PublicFailureEdgesRemainWriteFree(t *testing.T) {
 	}
 }
 
+func TestFinalizeFlatMigration_RejectsMismatchedOrIncompleteTransaction(t *testing.T) {
+	withFlatSourceIdentity(t)
+	lessons := filepath.Join(t.TempDir(), "spec", "lessons")
+	body := flatFixture("Recorded", 0, "")
+	writeFlatFixture(t, lessons, "finalize-boundary", body)
+	opts := FlatMigrationOptions{LessonsDir: lessons, Slug: "finalize-boundary", Classifications: []string{"process"}}
+	result, err := MigrateFlat(opts)
+	if err != nil || !result.PendingFinalize {
+		t.Fatalf("migration=%#v err=%v", result, err)
+	}
+	if err := FinalizeFlatMigration(opts, "01234567-89ab-4def-8123-456789abcdef"); err == nil {
+		t.Fatal("finalization accepted a different event UUID")
+	}
+	if err := FinalizeFlatMigration(FlatMigrationOptions{LessonsDir: lessons, Slug: opts.Slug, Classifications: []string{"validation"}}, FlatMigrationEventUUID(shaString([]byte(body)), opts.Slug)); err == nil {
+		t.Fatal("finalization accepted different classifications")
+	}
+	flat := filepath.Join(lessons, opts.Slug+".md")
+	if err := os.WriteFile(flat, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := FinalizeFlatMigration(opts, FlatMigrationEventUUID(shaString([]byte(body)), opts.Slug)); err == nil {
+		t.Fatal("finalization accepted a remaining flat source")
+	}
+	if err := os.Remove(flat); err != nil {
+		t.Fatal(err)
+	}
+	if err := FinalizeFlatMigration(opts, FlatMigrationEventUUID(shaString([]byte(body)), opts.Slug)); err == nil {
+		t.Fatal("finalization accepted an absent exact index row")
+	}
+	writeFlatMigrationIndex(t, lessons, result.CanonicalPath)
+	if err := FinalizeFlatMigration(opts, FlatMigrationEventUUID(shaString([]byte(body)), opts.Slug)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(lessons, ".flat-migration-"+opts.Slug+".json")); !os.IsNotExist(err) {
+		t.Fatalf("finalization retained marker: %v", err)
+	}
+}
+
 func TestMigrateFlat_SourceRemoveDirectorySyncFailureResumesSameTransaction(t *testing.T) {
 	withFlatSourceIdentity(t)
 	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
