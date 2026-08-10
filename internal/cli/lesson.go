@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
@@ -30,6 +31,8 @@ func lessonCommand() *cobra.Command {
 		lessonChangeStatusCommand(),
 		lessonRecurCommand(),
 		lessonOccurrenceCommand(),
+		lessonRelationCommand(),
+		lessonImportLegacyCommand(),
 		lessonCheckCommand(),
 	)
 	return cmd
@@ -41,7 +44,7 @@ func lessonNewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "new <slug>",
 		Short: "Scaffold a new Lesson artifact",
-		Long: `Creates a lint-clean Lesson at spec/lessons/<slug>.md, carrying the
+		Long: `Creates a lint-clean Lesson at spec/lessons/<slug>/README.md, carrying the
 artifact-frontmatter-convention frontmatter (format:/status:), the
 body-metadata header (Status: Recorded, Date, Owner, Recurred: 0), the four
 required sections with TODO prompts — Incident, Process gap, Check,
@@ -50,7 +53,9 @@ Enforcement — and the adherence footer.
 No flag beyond the slug is required: recording a lesson is meant to be as
 close to free as writing it in prose, so the CLI never blocks on missing
 detail. Lint checks only that the four sections exist, never their content —
-fill them in whenever you have time, not before the entry is saved.`,
+fill them in whenever you have time, not before the entry is saved.
+
+Docs: docs/agent-lessons.md#create-and-record`,
 		Args: cobra.ExactArgs(1),
 		RunE: runLessonNew,
 	}
@@ -80,12 +85,23 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	lessonsDir := filepath.Join(root, "spec", "lessons")
-	_, configErr := os.Stat(filepath.Join(root, projectdef.SpecConfigFile))
-	configured := configErr == nil
-	if configErr != nil && !os.IsNotExist(configErr) {
-		return exitcode.UnexpectedErrorf("reading %s: %v", projectdef.SpecConfigFile, configErr)
+	// Creation is deliberately config-gated.  A mutating scaffolder must not
+	// turn a legacy tree into a half-migrated tree merely because it happened
+	// to find spec/.  In particular, do this before materializing indexes or
+	// directories so a failed preflight has a declared empty write set.
+	cfg, configErr := projectdef.ReadSpecConfig(root)
+	if configErr != nil {
+		if os.IsNotExist(unwrapPathError(configErr)) {
+			return exitcode.InvalidStateError("lesson new requires specscore.yaml; run `specscore init`, configure non-empty lessons.classifications, then retry")
+		}
+		return exitcode.InvalidStateErrorf("lesson new requires a valid specscore.yaml: %v", configErr)
 	}
+	classifications := lessonClassificationsFromConfig(cfg)
+	if len(classifications) == 0 {
+		return exitcode.InvalidStateError("lesson new requires non-empty lessons.classifications in specscore.yaml; configure the repository vocabulary, then retry")
+	}
+
+	lessonsDir := filepath.Join(root, "spec", "lessons")
 	target := filepath.Join(lessonsDir, slug, "README.md")
 	legacy := filepath.Join(lessonsDir, slug+".md")
 	if _, err := os.Stat(legacy); err == nil {
@@ -104,7 +120,7 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 
 	// Writers always create the accepted canonical directory form. A missing
 	// config affects only whether the caller explicitly opted into linting.
-	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, lessonClassifications(root))
+	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, classifications)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("scaffolding lesson: %v", err)
 	}
@@ -118,14 +134,6 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("writing %s: %v", target, err)
 	}
 
-	// A scaffold must never use a hidden broad lint migration as a side effect.
-	// Only SpecScore-configured projects opt into their explicit lint contract;
-	// unconfigured legacy trees can be initialized then migrated deliberately.
-	if !configured {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: no specscore.yaml; created only the Lesson. Run `specscore init` then `specscore spec lint --fix` deliberately to migrate this repository.")
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)
-		return nil
-	}
 	specSub := filepath.Join(root, "spec")
 	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
 		_ = os.Remove(target)
@@ -152,16 +160,23 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 
 func lessonClassifications(root string) []string {
 	cfg, err := projectdef.ReadSpecConfig(root)
-	if err != nil || cfg.Extras == nil {
-		return []string{"process"}
+	if err != nil {
+		return nil
+	}
+	return lessonClassificationsFromConfig(cfg)
+}
+
+func lessonClassificationsFromConfig(cfg projectdef.SpecConfig) []string {
+	if cfg.Extras == nil {
+		return nil
 	}
 	raw, ok := cfg.Extras["lessons"].(map[string]any)
 	if !ok {
-		return []string{"process"}
+		return nil
 	}
 	values, ok := raw["classifications"].([]any)
 	if !ok {
-		return []string{"process"}
+		return nil
 	}
 	var out []string
 	for _, v := range values {
@@ -170,9 +185,22 @@ func lessonClassifications(root string) []string {
 		}
 	}
 	if len(out) == 0 {
-		return []string{"process"}
+		return nil
 	}
 	return out
+}
+
+// unwrapPathError makes missing-config detection work through the contextual
+// error added by projectdef.ReadSpecConfig without treating malformed YAML as
+// a missing configuration.
+func unwrapPathError(err error) error {
+	for {
+		if u, ok := err.(interface{ Unwrap() error }); ok && u.Unwrap() != nil {
+			err = u.Unwrap()
+			continue
+		}
+		return err
+	}
 }
 
 // lessonChangeStatusCommand transitions a Lesson's **Status:** field via the
@@ -287,6 +315,9 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		return err
+	}
+	if err := emitLessonEvent(cmd.Context(), specRoot, "lesson.lifecycle-changed", result.Slug, map[string]any{"from": string(result.From), "to": string(result.To)}, time.Time{}); err != nil {
+		return exitcode.UnexpectedErrorf("queueing lifecycle event: %v", err)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",

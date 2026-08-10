@@ -28,7 +28,7 @@ func readLesson(t *testing.T, root, slug string) string {
 // `spec lint --fix` pass — the near-zero-friction guarantee.
 func TestLessonNew_EmbeddedEmitsFrontmatterSectionsAndIndex(t *testing.T) {
 	root := setupSpecRoot(t)
-	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{}); err != nil {
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
 		t.Fatal(err)
 	}
 	withCwd(t, root)
@@ -142,6 +142,21 @@ func TestLessonNew_ResolveSpecRootError(t *testing.T) {
 	}
 }
 
+func TestLessonNew_ConfigPreflightWritesNothing(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	cmd := lessonCommand()
+	cmd.SetArgs([]string{"new", "must-not-write"})
+	if err := cmd.Execute(); exitCodeOf(err) != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want InvalidState; err=%v", exitCodeOf(err), err)
+	}
+	for _, rel := range []string{"specscore.yaml", "spec/README.md", "spec/lessons/must-not-write/README.md"} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
+			t.Errorf("preflight unexpectedly wrote %s", rel)
+		}
+	}
+}
+
 func TestLessonNew_AncestorIndexError(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -181,7 +196,7 @@ func TestLessonNew_WriteError(t *testing.T) {
 // file and exits 10.
 func TestLessonNew_LintFixFails(t *testing.T) {
 	root := setupSpecRoot(t)
-	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{}); err != nil {
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
 		t.Fatal(err)
 	}
 	withCwd(t, root)
@@ -207,7 +222,7 @@ func TestLessonNew_LintFixFails(t *testing.T) {
 // exits 10.
 func TestLessonNew_LintVerifyFails(t *testing.T) {
 	root := setupSpecRoot(t)
-	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{}); err != nil {
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
 		t.Fatal(err)
 	}
 	withCwd(t, root)
@@ -231,7 +246,7 @@ func TestLessonNew_LintVerifyFails(t *testing.T) {
 // pass surfaces as a failure rather than a silent success.
 func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 	root := setupSpecRoot(t)
-	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{}); err != nil {
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
 		t.Fatal(err)
 	}
 	withCwd(t, root)
@@ -259,6 +274,9 @@ func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 // introduces no error-severity violations anywhere in the tree.
 func TestLessonNew_LintCleanOutsideFile(t *testing.T) {
 	root := setupLintCleanProject(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := runLesson(t, "new", "clean-lesson", "--project", root); err != nil {
 		t.Fatalf("lesson new: %v", err)
 	}

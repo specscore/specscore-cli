@@ -95,7 +95,10 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
 		}
-		_, _ = o, items // occurrence identifier stays internal for historical output compatibility.
+		if err := emitLessonEvent(cmd.Context(), root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": o.ID}, o.OccurredAt); err != nil {
+			return exitcode.UnexpectedErrorf("queueing occurrence event: %v", err)
+		}
+		_ = items // occurrence identifier stays internal for historical output compatibility.
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: recurred %d\n", slug, len(items))
 		return nil
 	}

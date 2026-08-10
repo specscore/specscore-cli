@@ -27,7 +27,46 @@ func eventCommand() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(eventEmitCommand())
+	cmd.AddCommand(eventReplayCommand())
 	return cmd
+}
+
+func eventReplayCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "replay", Short: "Replay pending durable subscriber deliveries", Long: "Replays only the named subscriber's unacknowledged outbox entries. Docs: docs/agent-lessons.md#create-and-record", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true, RunE: runEventReplay}
+	cmd.Flags().String("subscriber", "", "stable subscriber name (required)")
+	cmd.Flags().Int("limit", 0, "maximum pending entries to attempt (0 is all)")
+	return cmd
+}
+func runEventReplay(cmd *cobra.Command, _ []string) error {
+	name, _ := cmd.Flags().GetString("subscriber")
+	if name == "" {
+		return exitcode.InvalidArgsError("--subscriber is required")
+	}
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit < 0 {
+		return exitcode.InvalidArgsError("--limit must be >= 0")
+	}
+	start, err := osGetwdFn()
+	if err != nil {
+		return exitcode.UnexpectedErrorf("getwd: %v", err)
+	}
+	root, err := findRepoConfigRoot(start)
+	if err != nil {
+		return err
+	}
+	subs, err := event.LoadSubscribers(root)
+	if err != nil {
+		return exitcode.InvalidArgsErrorf("%v", err)
+	}
+	r, err := event.NewOutbox(root).Replay(cmd.Context(), subs, name, limit)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("replaying outbox: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "delivered=%d failed=%d pending=%d\n", r.Delivered, len(r.Failed), r.Pending)
+	if len(r.Failed) > 0 {
+		return exitcode.UnexpectedErrorf("%d delivery attempt(s) remain pending", len(r.Failed))
+	}
+	return nil
 }
 
 // eventEmitCommand returns `specscore event emit` — the user-facing emission
