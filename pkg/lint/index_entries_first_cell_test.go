@@ -169,6 +169,60 @@ func TestIndexEntries_FixerUsesFeatureIdentityColumnAfterOrdinal(t *testing.T) {
 	}
 }
 
+func TestIndexEntries_DuplicateIdentityRowsAreReportedAndFixed(t *testing.T) {
+	const firstRow = "| 1 | [Real](real/README.md) | first row is authoritative |\n"
+	const duplicateRow = "| 2 | [Real](real/README.md) | stale duplicate |\n"
+	const index = "# Features\n\n## Index\n\n" +
+		"| # | Feature | Description |\n" +
+		"|---|---|---|\n" + firstRow + duplicateRow
+	root := setupSpecTree(t, map[string]string{
+		"features/README.md":      index,
+		"features/real/README.md": "# Feature: Real\n",
+	})
+
+	checker := newIndexEntriesChecker().(*indexEntriesChecker)
+	violations, err := checker.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 1 ||
+		!strings.Contains(violations[0].Message, "lists child directory more than once: real") {
+		t.Fatalf("duplicate identity row was not reported exactly once: %+v", violations)
+	}
+
+	if err := checker.fix(root); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(root, "features", "README.md")
+	got, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(got), "(real/README.md)") != 1 ||
+		!strings.Contains(string(got), firstRow) || strings.Contains(string(got), duplicateRow) {
+		t.Fatalf("fixer did not preserve only the first identity row:\n%s", got)
+	}
+	violations, err = checker.check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("duplicate-row fix left violations: %+v", violations)
+	}
+
+	before := string(got)
+	if err := checker.fix(root); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Fatalf("duplicate-row fix was not idempotent:\n%s", after)
+	}
+}
+
 func TestIndexEntries_UsesUnambiguousCustomArtifactColumn(t *testing.T) {
 	root := setupSpecTree(t, map[string]string{
 		"features/parent/README.md": "# Feature: Parent\n\n## Contents\n\n" +
