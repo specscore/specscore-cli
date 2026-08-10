@@ -412,10 +412,6 @@ func insertReconciledMarkerIfAbsent(lines []string, statusIdx int, date string) 
 // change-status transition), the caller's own justification, any
 // --force-tasks overrides (named individually — NEVER folded silently into
 // the aggregate count), and — when supplied — the evidence references.
-func reconcileNoteText(from, to lifecycle.Status, tasksReconciled int, note string, evidence []string, overrides []TaskOverride) string {
-	return reconcileNoteTextWithTarget(from, to, tasksReconciled, StatusComplete, note, evidence, overrides)
-}
-
 func reconcileNoteTextWithTarget(from, to lifecycle.Status, tasksReconciled int, target TaskStatus, note string, evidence []string, overrides []TaskOverride) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
