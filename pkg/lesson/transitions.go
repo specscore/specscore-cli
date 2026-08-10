@@ -32,10 +32,10 @@ var (
 	setSupersededByFn = lifecycle.SetSupersededBy
 )
 
-// PostMutationHook is the callback the cobra adapter wires to
-// `specscore spec lint --fix`. It MUST return nil on success; a non-nil
-// return triggers full rollback of every on-disk mutation and the error is
-// returned by ChangeStatus.
+// PostMutationHook is the callback the cobra adapter wires to its bounded
+// index synchronization and read-only validation. It MUST return nil on
+// success; a non-nil return triggers full rollback of every on-disk mutation
+// and the error is returned by ChangeStatus.
 type PostMutationHook func() error
 
 // ChangeStatusOptions packages the inputs to ChangeStatus.

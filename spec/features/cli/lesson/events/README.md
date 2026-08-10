@@ -21,11 +21,11 @@ The existing event dispatcher is best-effort fan-out: a failure may be ignored w
 
 ### Automatic Lesson events
 
-Successful mutations automatically create versioned events after artifact mutation and lint/index synchronization commit: `lesson.lifecycle-changed`, `lesson.occurrence-recorded`, `lesson.relation-recorded`, and `lesson.imported`. Payloads contain canonical Lesson identity/path/revision, event ID/time/actor, and minimal mutation facts; occurrence context remains opaque JSON. Failed/rolled-back mutations emit nothing. Callers never need a separate `event emit`.
+Mutating commands prepare the complete event and recipient set before artifact publication, then commit it only after artifact and bounded index validation: `lesson.created`, `lesson.lifecycle-changed`, `lesson.occurrence-recorded`, `lesson.relation-recorded`, `lesson.legacy-import-applied`, and `lesson.flat-migrated`. Payloads contain Lesson identity/path, event UUID/time/actor, and minimal mutation facts; occurrence context remains in the validated child rather than being copied into the envelope. Failed and rolled-back mutations abort the prepared record; a crash leaves it inspectable for explicit reconciliation. Callers never need a separate `event emit`.
 
 ### Durable per-subscriber outbox and replay
 
-For each named durable subscriber, the event layer appends an accepted envelope to an immutable project ledger and atomically records a pending delivery in that subscriber's independent outbox before attempting delivery. An acknowledgement advances only its own cursor. Failure leaves the item replayable and never suppresses another subscriber; `(subscriber, event UUID)` is the idempotency key.
+For each named durable subscriber, the event layer publishes an immutable prepared ledger record containing the complete canonical subscriber set. Committing makes every missing acknowledgement reconstructibly pending before delivery. An acknowledgement advances only its own state. Failure leaves the item replayable and never suppresses another subscriber; `(subscriber, event UUID)` is the idempotency key. An explicitly empty configured subscriber list opts out without creating an invalid recipientless ledger.
 
 ```
 specscore event replay --subscriber <name> [--from <event-id>] [--limit N]
@@ -49,7 +49,7 @@ Replay is ledger ordered and safe to repeat; it records durable acknowledgements
 
 ## Open Questions
 
-- Ledger/outbox storage and locking are owned with the event subsystem owner; the above durability and Synchestra-boundary requirements are fixed.
+None at this time.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

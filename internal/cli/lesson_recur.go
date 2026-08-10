@@ -3,13 +3,15 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
-	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/spf13/cobra"
 )
 
@@ -21,16 +23,20 @@ func lessonRecurCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "recur <slug>",
 		Short: "Record that a lesson's gap manifested again",
-		Long: `Increments a lesson's **Recurred:** count and appends a dated entry
-(with the optional --note) to its ## Recurrences section. It does NOT change
-**Status:** — a recurrence is a signal that a lesson needs to graduate, not a
-graduation itself. Run "specscore lesson change-status <slug> --to=<status>"
-separately to act on the signal. A missing lesson exits 3.
+		Long: `For a canonical Lesson, appends exactly one immutable typed JSON
+child under occurrences/ and leaves the README and index byte-identical;
+recurrence metadata is derived from valid children. The compatibility path for
+a legacy flat Lesson increments **Recurred:** and appends its old prose entry.
+Neither path changes **Status:**. Run
+"specscore lesson change-status <slug> --to=<status>" separately to act on the
+signal. A missing lesson exits 3.
 
 A recurrence against a lesson already retired (Withdrawn or Superseded) is
 evidence the retirement itself was wrong — it still exits 0 and records the
 occurrence (the evidence is worth keeping), but prints a warning to stderr
-rather than succeeding silently.`,
+rather than succeeding silently.
+
+Docs: docs/agent-lessons.md#create-and-record`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -87,32 +93,78 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 	}
 	warnIfLessonRetired(cmd.ErrOrStderr(), slug, before.Status)
 	if before.Canonical {
-		o, err := lesson.AddOccurrence(lesson.AddOccurrenceOptions{LessonPath: path, Summary: note, Context: captureOccurrenceContext(root, path), Evidence: lesson.Evidence{Kind: "none"}})
+		id := uuid.NewString()
+		now := time.Now().UTC()
+		prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": id}, now)
 		if err != nil {
+			return exitcode.UnexpectedErrorf("preparing occurrence event: %v", err)
+		}
+		o, err := lesson.AddOccurrence(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: note, Context: captureOccurrenceContext(root, path), Evidence: lesson.Evidence{Kind: "none"}, Now: now})
+		if err != nil {
+			_ = prepared.Abort()
 			return exitcode.UnexpectedErrorf("recording occurrence: %v", err)
 		}
 		items, err := lesson.DiscoverOccurrences(path)
 		if err != nil {
+			_ = os.Remove(o.Path)
+			_ = prepared.Abort()
 			return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
 		}
-		if err := emitLessonEvent(cmd.Context(), root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": o.ID}, o.OccurredAt); err != nil {
-			return exitcode.UnexpectedErrorf("queueing occurrence event: %v", err)
+		result, commitErr := prepared.Commit(cmd.Context())
+		if commitErr != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: occurrence recorded; durable event delivery is pending: %v\n", commitErr)
+		}
+		for _, failure := range result.Failed {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
 		}
 		_ = items // occurrence identifier stays internal for historical output compatibility.
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: recurred %d\n", slug, len(items))
 		return nil
 	}
 
+	if err := lesson.ValidateSafeContent("legacy recurrence note", note); err != nil {
+		return exitcode.InvalidArgsErrorf("unsafe recurrence note: %v", err)
+	}
+	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+	beforeBody, err := os.ReadFile(path)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("snapshotting legacy Lesson: %v", err)
+	}
+	beforeIndex, indexErr := os.ReadFile(indexPath)
+	if indexErr != nil && !os.IsNotExist(indexErr) {
+		return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", indexErr)
+	}
+	prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"kind": "legacy-recurrence"}, time.Now().UTC())
+	if err != nil {
+		return exitcode.UnexpectedErrorf("preparing recurrence event: %v", err)
+	}
 	count, err := lessonRecurFn(path, note)
 	if err != nil {
+		_ = prepared.Abort()
 		return exitcode.UnexpectedErrorf("recording recurrence: %v", err)
 	}
 
-	// Keep the lessons index (Recurred column, when present) in sync, mirroring
-	// every other lesson-mutating verb's post-write lint --fix pass.
 	specSub := filepath.Join(root, "spec")
-	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
-		return exitcode.UnexpectedErrorf("running lint --fix: %v", err)
+	updated, parseErr := lesson.Parse(path)
+	if parseErr != nil {
+		_ = os.WriteFile(path, beforeBody, 0o644)
+		_ = prepared.Abort()
+		return exitcode.UnexpectedErrorf("parsing updated legacy Lesson: %v", parseErr)
+	}
+	if err := lessonIndexUpsertFn(specSub, updated); err != nil {
+		_ = os.WriteFile(path, beforeBody, 0o644)
+		if indexErr == nil {
+			_ = os.WriteFile(indexPath, beforeIndex, 0o644)
+		}
+		_ = prepared.Abort()
+		return exitcode.UnexpectedErrorf("upserting legacy Lesson index row: %v", err)
+	}
+	result, commitErr := prepared.Commit(cmd.Context())
+	if commitErr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: recurrence recorded; durable event delivery is pending: %v\n", commitErr)
+	}
+	for _, failure := range result.Failed {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: recurred %d\n", slug, count)

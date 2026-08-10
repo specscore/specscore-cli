@@ -80,7 +80,7 @@ Flat and directory Lesson READMEs MUST join the generic status-bearing document 
 | Feature | Interaction |
 |---|---|
 | [spec lint](../../README.md) | Parent — registers `L-001`–`L-004` in the rule catalog. |
-| [cli/lesson](../../../lesson/README.md) | Consumes this family: `lesson new` runs an internal `spec lint --fix` pass so a freshly scaffolded lesson is immediately clean against all four rules. |
+| [cli/lesson](../../../lesson/README.md) | Consumes this family: focused writers preflight configuration, update only their declared Lesson/index paths, then run lint read-only. Only an explicit `spec lint --fix` invocation runs fixers. |
 | [cli/spec/lint/plan-rules](../plan-rules/README.md) | Closest structural sibling — `L-003`/`L-004` mirror `idea-index-completeness`/`idea-index-row-sync` rather than Plan's (Plan currently has no equivalent index-sync rule). |
 
 ## Acceptance Criteria

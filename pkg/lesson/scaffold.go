@@ -116,7 +116,7 @@ func ScaffoldCanonical(opts ScaffoldOptions, classifications []string) ([]byte, 
 	fmt.Fprintf(&b, "**Status:** Recorded\n**Date:** %s\n**Owner:** %s\n", date, owner)
 	fmt.Fprintf(&b, "**Classifications:** %s\n", strings.Join(classifications, ", "))
 	b.WriteString("**Legacy Provenance:** —\n**Duplicate Of:** —\n**Supersedes:** —\n**Superseded By:** —\n\n")
-	b.WriteString("## Lesson\n\n<!-- TODO: the durable rule. -->\n\n## Process Gap\n\n<!-- TODO: what should have caught this, and why it did not. -->\n\n## Tracking\n\n- **Occurrence store:** `occurrences/`\n- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n\n## Enforcement\n\n**Control:** —\n**Verification:** —\n**Evidence:** —\n\n## Open Questions\n\nNone at this time.\n\n")
+	b.WriteString("## Lesson\n\n<!-- TODO: the durable rule. -->\n\n## Process Gap\n\n<!-- TODO: what should have caught this, and why it did not. -->\n\n## Tracking\n\n- **Occurrence store:** `occurrences/`\n- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n- **Occurrence schema:** `https://specscore.md/new/lesson-occurrence.schema.json`\n\n## Enforcement\n\n**Control:** —\n**Verification:** —\n**Evidence:** —\n\n## Open Questions\n\nNone at this time.\n\n")
 	fmt.Fprintf(&b, "---\n*This document follows the %s*\n", FormatURL)
 	return []byte(b.String()), nil
 }

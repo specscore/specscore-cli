@@ -28,9 +28,10 @@ case-insensitive (recorded, stated, enforced, withdrawn, superseded); an
 unrecognized value exits 2 naming it rather than silently matching nothing.
 --status and --not-enforced are mutually exclusive.
 
---min-recurred N additionally restricts to lessons whose **Recurred:** count
-is at least N, so "which lessons have recurred and are still not enforced?"
-is one command: --not-enforced --min-recurred=1.
+--min-recurred N additionally restricts to lessons whose recurrence count is
+at least N. Canonical counts derive from validated child occurrences; legacy
+flat counts use **Recurred:**. Thus "which lessons have recurred and are still
+not enforced?" is one command: --not-enforced --min-recurred=1.
 
 Output is empty (exit 0) when no lessons match.`,
 		Args: cobra.NoArgs,

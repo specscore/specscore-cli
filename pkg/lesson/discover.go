@@ -43,7 +43,7 @@ func Discover(lessonsDir string) ([]*Lesson, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !l.HasLessonTitle {
+		if !l.HasLessonTitle && !l.Canonical {
 			continue
 		}
 		lessons = append(lessons, l)

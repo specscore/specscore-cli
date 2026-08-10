@@ -8,8 +8,10 @@ import (
 
 // Subscriber is the extension point for receiving dispatched events. Any type
 // implementing Subscriber may be registered via the events: config block in
-// specscore.yaml. Implementations MUST be safe to call repeatedly within a
-// single CLI invocation.
+// specscore.yaml. Delivery is at-least-once: a process can crash after the
+// subscriber succeeds but before its durable acknowledgement is written.
+// Implementations MUST therefore be idempotent by Event.UUID across processes
+// and invocations, not merely safe to call repeatedly within one invocation.
 type Subscriber interface {
 	// Deliver is invoked by the dispatcher with a validated envelope. It
 	// returns nil on successful delivery and a non-nil error on any failure

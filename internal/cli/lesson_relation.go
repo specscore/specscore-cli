@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ func lessonRelationCommand() *cobra.Command {
 }
 
 func lessonRelationAddCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "add <from> <to>", Short: "Add a confirmed related, duplicate, or supersession relation", Long: "Every relation requires a preview token; semantic duplication is never inferred. Docs: docs/agent-lessons.md#import-and-deduplicate-without-losing-history", Args: cobra.ExactArgs(2), SilenceUsage: true, SilenceErrors: true, RunE: runLessonRelationAdd}
+	cmd := &cobra.Command{Use: "add <from> <to>", Short: "Add a confirmed related, duplicate, or supersession relation", Long: "Every relation requires a preview token; semantic duplication is never inferred. A retained duplicate becomes Superseded with Duplicate Of and Superseded By pointing to the unchanged canonical Lesson. Enforced duplicates, cycles, conflicts, malformed state, and overwrites are refused before publication. Docs: docs/agent-lessons.md#import-and-deduplicate-without-losing-history", Args: cobra.ExactArgs(2), SilenceUsage: true, SilenceErrors: true, RunE: runLessonRelationAdd}
 	cmd.Flags().String("type", "", "relation type: related, duplicates, supersedes (required)")
 	cmd.Flags().String("confirm", "", "required confirmation token printed by the preview")
 	cmd.Flags().String("project", "", "project root")
@@ -37,17 +38,25 @@ func runLessonRelationAdd(cmd *cobra.Command, args []string) error {
 		return exitcode.InvalidArgsError("relation requires the exact --confirm token from this preview; --yes is intentionally unsupported")
 	}
 	project, _ := cmd.Flags().GetString("project")
-	dir, err := resolveLessonsDir(project)
+	root, err := resolveSpecRoot(project)
 	if err != nil {
 		return err
 	}
+	dir := filepath.Join(root, "spec", "lessons")
+	prepared, err := prepareLessonEvent(root, "lesson.relation-recorded", from, map[string]any{"type": typ, "to": to}, time.Time{})
+	if err != nil {
+		return exitcode.UnexpectedErrorf("preparing relation event: %v", err)
+	}
 	if err := lesson.AddRelation(dir, from, typ, to); err != nil {
+		_ = prepared.Abort()
 		return exitcode.InvalidStateErrorf("adding relation: %v", err)
 	}
-	if root, err := resolveSpecRoot(project); err == nil {
-		if err := emitLessonEvent(cmd.Context(), root, "lesson.relation-recorded", from, map[string]any{"type": typ, "to": to}, time.Time{}); err != nil {
-			return exitcode.UnexpectedErrorf("queueing relation event: %v", err)
-		}
+	delivery, commitErr := prepared.Commit(cmd.Context())
+	if commitErr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: relation recorded; durable event delivery is pending: %v\n", commitErr)
+	}
+	for _, failure := range delivery.Failed {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", from, typ, to)
 	return nil

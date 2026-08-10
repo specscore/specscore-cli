@@ -83,6 +83,31 @@ func TestLessonOccurrenceRejectsBadContextBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestCaptureOccurrenceContext_DetachedHeadOmitsEmptyBranch(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("tracked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.name", "SpecScore Test"},
+		{"config", "user.email", "test@example.invalid"},
+		{"add", "tracked.txt"},
+		{"commit", "-q", "-m", "fixture"},
+		{"checkout", "-q", "--detach", "HEAD"},
+	} {
+		runGitForFlatMigration(t, root, args...)
+	}
+	ctx := captureOccurrenceContext(root, "")
+	gitContext, ok := ctx["git"].(map[string]any)
+	if !ok || gitContext["commit"] == "" {
+		t.Fatalf("detached capture lost commit: %#v", ctx)
+	}
+	if _, exists := gitContext["branch"]; exists {
+		t.Fatalf("detached capture persisted an unavailable empty branch: %#v", gitContext)
+	}
+}
+
 func TestLessonCheckFailsOnlyOverBaseline(t *testing.T) {
 	canonicalLessonProject(t)
 	if _, _, err := runLesson(t, "recur", "review-before-merge"); err != nil {
