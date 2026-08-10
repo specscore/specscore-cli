@@ -196,21 +196,17 @@ func (c *indexEntriesChecker) fix(specRoot string) error {
 			return nil
 		}
 
-		// A README without a table retains the established scaffolding path.
-		// There is no Phase 1 mutation to fence in this case.
+		// A README without a table retains the established scaffolding shape,
+		// but all missing rows are composed and published once rather than
+		// delegating to one write per child.
 		if !hasTable {
 			sort.Strings(actualChildren)
-			for _, child := range actualChildren {
-				status := childFeatureStatus(filepath.Join(path, child, "README.md"))
-				if path == featureDir {
-					if _, err := feature.UpdateFeatureIndex(readmePath, child, status, ""); err != nil {
-						return err
-					}
-				} else {
-					if _, err := feature.UpdateParentContents(readmePath, child, ""); err != nil {
-						return err
-					}
-				}
+			if len(actualChildren) == 0 {
+				return nil
+			}
+			lines = scaffoldChildIndex(lines, path == featureDir, path, actualChildren)
+			if err := os.WriteFile(readmePath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+				return err
 			}
 			return nil
 		}
@@ -252,6 +248,40 @@ func childFeatureStatus(readmePath string) string {
 		return "Draft"
 	}
 	return status
+}
+
+func scaffoldChildIndex(lines []string, isRoot bool, parentDir string, children []string) []string {
+	rows := make([]string, 0, len(children))
+	for _, child := range children {
+		status := childFeatureStatus(filepath.Join(parentDir, child, "README.md"))
+		if isRoot {
+			rows = append(rows, fmt.Sprintf("| [%s](%s/README.md) | %s | — | TODO: Add description. |", child, child, status))
+		} else {
+			rows = append(rows, fmt.Sprintf("| [%s](%s/README.md) | TODO: Add description. |", child, child))
+		}
+	}
+	if isRoot {
+		return append(append(lines, ""), rows...)
+	}
+
+	insertAt := 0
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "## Summary" {
+			continue
+		}
+		insertAt = i + 1
+		for insertAt < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[insertAt]), "## ") {
+			insertAt++
+		}
+		break
+	}
+	block := []string{"## Contents", "", "| Child | Description |", "|---|---|"}
+	block = append(block, rows...)
+	block = append(block, "")
+	result := make([]string, 0, len(lines)+len(block))
+	result = append(result, lines[:insertAt]...)
+	result = append(result, block...)
+	return append(result, lines[insertAt:]...)
 }
 
 // dropPhantomIndexRows returns content with every canonical child-index row
@@ -379,10 +409,7 @@ func childIndexSchema(lines []string) (childIndexTableSchema, bool, error) {
 		return childIndexTableSchema{}, false, nil
 	}
 
-	headers, ok := splitMarkdownTableCells(strings.TrimSpace(lines[headerLine]))
-	if !ok {
-		return childIndexTableSchema{}, false, fmt.Errorf("cannot parse index table header")
-	}
+	headers, _ := splitMarkdownTableCells(strings.TrimSpace(lines[headerLine]))
 	identityColumn, err := childIdentityColumn(headers)
 	if err != nil {
 		return childIndexTableSchema{}, false, err
