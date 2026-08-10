@@ -94,7 +94,18 @@ func (c *indexEntriesChecker) check(specRoot string) ([]Violation, error) {
 		for _, a := range actualChildren {
 			actualSet[a] = true
 		}
+		mentionedCounts := make(map[string]int, len(mentioned))
 		for _, m := range mentioned {
+			mentionedCounts[m]++
+			if mentionedCounts[m] > 1 {
+				violations = append(violations, Violation{
+					File:     relPath,
+					Line:     0,
+					Severity: "error",
+					Rule:     "index-entries",
+					Message:  "Index lists child directory more than once: " + m,
+				})
+			}
 			if !actualSet[m] {
 				violations = append(violations, Violation{
 					File:     relPath,
@@ -211,7 +222,9 @@ func (c *indexEntriesChecker) fix(specRoot string) error {
 			return nil
 		}
 
-		// Phase 1: drop phantom rows from the already-validated identity column.
+		// Phase 1: drop phantom rows and repeated child identities from the
+		// already-validated identity column. The first row for a real child is
+		// preserved byte-for-byte.
 		lines, schema, changed := dropPhantomIndexRowsWithSchema(lines, schema, actualSet)
 
 		// Phase 2: append orphan rows in the existing table's exact schema.
@@ -285,9 +298,10 @@ func scaffoldChildIndex(lines []string, isRoot bool, parentDir string, children 
 }
 
 // dropPhantomIndexRows returns content with every canonical child-index row
-// removed whose identity-cell link targets a child absent from actualSet.
-// Links in later content cells cannot cause a deletion. A table with a missing
-// or ambiguous identity schema is left byte-for-byte untouched.
+// removed whose identity-cell link targets a child absent from actualSet, and
+// with every repeated real-child row after the first removed. Links in later
+// content cells cannot cause a deletion. A table with a missing or ambiguous
+// identity schema is left byte-for-byte untouched.
 func dropPhantomIndexRows(content string, actualSet map[string]bool) (string, bool) {
 	lines := strings.Split(content, "\n")
 	schema, ok, err := childIndexSchema(lines)
@@ -305,13 +319,16 @@ func dropPhantomIndexRowsWithSchema(lines []string, schema childIndexTableSchema
 	out := make([]string, 0, len(lines))
 	changed := false
 	dropped := 0
+	seen := make(map[string]bool)
 	for i, line := range lines {
 		if i >= schema.dataStart && i < schema.dataEnd {
-			if dirname, phantom := phantomDirInTableRowAtColumn(line, schema.identityColumn, actualSet); phantom {
-				changed = true
-				dropped++
-				_ = dirname // dropped line; no further bookkeeping needed
-				continue
+			if dirname, ok := directChildRefFromIndexRow(line, schema.identityColumn); ok {
+				if !actualSet[dirname] || seen[dirname] {
+					changed = true
+					dropped++
+					continue
+				}
+				seen[dirname] = true
 			}
 		}
 		out = append(out, line)
@@ -488,11 +505,9 @@ func isIndexMetadataHeader(header string) bool {
 
 func childRefsFromLines(lines []string, schema childIndexTableSchema) []string {
 	var children []string
-	seen := make(map[string]bool)
 	for _, line := range lines[schema.dataStart:schema.dataEnd] {
 		dirname, ok := directChildRefFromIndexRow(line, schema.identityColumn)
-		if ok && !seen[dirname] {
-			seen[dirname] = true
+		if ok {
 			children = append(children, dirname)
 		}
 	}

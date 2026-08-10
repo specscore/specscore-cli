@@ -72,7 +72,8 @@ custom artifact label MAY be used only when it is the one unambiguous
 non-metadata column. It MUST report a violation when:
 
 - the index contains a Markdown link to a child README (link target ending in `<dirname>/README.md`) but that directory does not exist on disk, OR
-- a child directory exists on disk (with its own `README.md`) but is not linked from the parent index.
+- a child directory exists on disk (with its own `README.md`) but is not linked from the parent index, OR
+- the artifact identity column links the same child directory more than once.
 
 Both directions apply at every level of the feature tree, including the root `spec/features/README.md`. Hidden directories (starting with `.`) and underscore-prefixed convention directories (e.g. `_args/`) are excluded.
 
@@ -86,6 +87,14 @@ Only direct-child identity links under the artifact identity header in the first
 
 When `index-entries` reports `Index mentions non-existent directory: <name>` and `spec lint` runs with `--fix`, the fixer MUST remove from the parent README's index table the single row whose artifact-identity-cell link target ends in `<name>/README.md`. A link in a Description/Summary or another non-identity cell MUST NOT cause its row to be removed. Surrounding rows, table delimiters, and the rest of the document MUST be preserved.
 
+#### REQ: index-entries-fix-removes-duplicate-rows
+
+When the artifact identity column links the same real child more than once,
+`index-entries` MUST report `Index lists child directory more than once:
+<name>`. Under `--fix`, the first such row is authoritative and MUST remain
+byte-for-byte unchanged; every later row for that child MUST be removed. Links
+to the child from non-identity cells do not participate in duplicate detection.
+
 #### REQ: index-entries-fix-inserts-orphan-rows
 
 When `index-entries` reports `Child directory not listed in index: <name>` and `spec lint` runs with `--fix`, the fixer MUST append a row that links the missing child. For an existing valid table, the row MUST preserve its exact column count and put the child link under the schema-selected artifact identity header; known derived cells (`Status`, `Kind`, `URL`, and Description aliases) use the same values/placeholders as feature scaffolding, while other cells use `—`. When no table exists, the row shape MUST match what `specscore feature new` already writes via `UpdateFeatureIndex` / `UpdateParentContents`:
@@ -93,7 +102,7 @@ When `index-entries` reports `Child directory not listed in index: <name>` and `
 - At the root features index (`spec/features/README.md`), a 4-cell row of the form `| \[<name>\]\(<name>/README.md\) | <status> | — | TODO: Add description. |`. `<status>` is parsed from the child's `**Status:**` header via `feature.ParseFeatureStatus`; `Kind` and `Description` use the same hand-maintained placeholder convention `feature new` codifies.
 - At a nested feature index, a 2-cell row in the `## Contents` table of the form `| \[<name>\]\(<name>/README.md\) | TODO: Add description. |`. The `## Contents` block is created if absent.
 
-The fixer MUST NOT mutate any cell beyond the inserted row; existing rows are preserved byte-for-byte. It MUST validate the identity schema before mutation, compose phantom deletion and orphan insertion in memory, and publish the valid-table result with one write so a later parse refusal cannot leave a partial Phase 1 mutation.
+The fixer MUST NOT mutate any cell beyond the inserted row; retained existing rows are preserved byte-for-byte. It MUST validate the identity schema before mutation, compose phantom deletion, duplicate removal, and orphan insertion in memory, and publish the valid-table result with one write so a later parse refusal cannot leave a partial Phase 1 mutation.
 
 This REQ does NOT violate `fix-is-safe-subset`. Status flows from a structurally-parsed field; Kind and Description use placeholders the project has already codified for `feature new`, so the autofix is byte-identical to user-driven scaffolding. The placeholders are visibly under-filled (`—`, `TODO: ...`), inviting the author to populate them rather than masking missing intent.
 
@@ -387,6 +396,16 @@ If a document ends with an adherence-footer block that uses the wrong `specscore
 **Requirements:** cli/spec/lint#req:index-entries-fix-deletes-phantom-rows
 
 Given a parent README whose index table contains a Markdown link whose target is `ghost/README.md` while no `ghost/` directory exists on disk, running `specscore spec lint --fix` removes that single row from the index table and leaves every other row intact. A second consecutive `spec lint --fix` produces no further changes (per `fix-is-idempotent`).
+
+### AC: index-entries-fix-removes-duplicate-row
+
+**Requirements:** cli/spec/lint#req:index-entries-bidirectional, cli/spec/lint#req:index-entries-fix-removes-duplicate-rows
+
+Given a valid child Feature and a parent index whose schema-selected identity
+column links that child twice, lint reports the duplicate. Running
+`specscore spec lint --fix` preserves the first row byte-for-byte, removes the
+later row, leaves links in other cells untouched, and makes both a second lint
+and a second fix pass clean and unchanged.
 
 ### AC: index-entries-fix-inserts-orphan-row
 

@@ -37,14 +37,16 @@ Restrict `index-entries` parsing to the first contiguous Markdown table beneath 
 
 **Status:** complete
 **Depends-On:** —
-**Verifies:** cli/spec/lint#ac:index-entries-rejects-loose-child-link, cli/spec/lint#ac:index-entries-ignores-nonidentity-cell-links
+**Verifies:** cli/spec/lint#ac:index-entries-rejects-loose-child-link, cli/spec/lint#ac:index-entries-ignores-nonidentity-cell-links, cli/spec/lint#ac:index-entries-fix-removes-duplicate-row
 
 Make `index-entries` parse the canonical table beneath `## Contents`, reject a loose link elsewhere, and retain the existing fixer behavior for the resulting missing-row violation. Cover the negative case in isolation and dogfood the rule against the repository's own indexes.
 
 The landed hardening also derives row membership from the table header's one
 unambiguous artifact identity column. This keeps row-sync-derived Summary links
 out of membership, supports legacy column order, and leaves missing or
-ambiguous identity schemas write-free.
+ambiguous identity schemas write-free. Each child identity is unique: lint
+reports repeated rows and the fixer retains only the first row in the same
+single-write composition used for phantom deletion and orphan insertion.
 
 ## Deferred AC Coverage
 
