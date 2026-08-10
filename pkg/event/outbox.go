@@ -32,6 +32,8 @@ type outboxFile interface {
 
 type outboxFS interface {
 	Stat(string) (os.FileInfo, error)
+	ReadDir(string) ([]os.DirEntry, error)
+	ReadFile(string) ([]byte, error)
 	Mkdir(string, os.FileMode) error
 	Open(string) (outboxFile, error)
 	OpenFile(string, int, os.FileMode) (outboxFile, error)
@@ -42,9 +44,11 @@ type outboxFS interface {
 
 type osOutboxFS struct{}
 
-func (osOutboxFS) Stat(path string) (os.FileInfo, error)     { return os.Stat(path) }
-func (osOutboxFS) Mkdir(path string, perm os.FileMode) error { return os.Mkdir(path, perm) }
-func (osOutboxFS) Open(path string) (outboxFile, error)      { return os.Open(path) }
+func (osOutboxFS) Stat(path string) (os.FileInfo, error)      { return os.Stat(path) }
+func (osOutboxFS) ReadDir(path string) ([]os.DirEntry, error) { return os.ReadDir(path) }
+func (osOutboxFS) ReadFile(path string) ([]byte, error)       { return os.ReadFile(path) }
+func (osOutboxFS) Mkdir(path string, perm os.FileMode) error  { return os.Mkdir(path, perm) }
+func (osOutboxFS) Open(path string) (outboxFile, error)       { return os.Open(path) }
 func (osOutboxFS) OpenFile(path string, flag int, perm os.FileMode) (outboxFile, error) {
 	return os.OpenFile(path, flag, perm)
 }
@@ -60,7 +64,8 @@ func (osOutboxFS) Remove(path string) error           { return os.Remove(path) }
 // the exported Outbox representation or another operation's behavior.
 type outboxOperations struct {
 	Outbox
-	fs outboxFS
+	fs    outboxFS
+	codec outboxLedgerCodec
 }
 
 func (o Outbox) operation() outboxOperations { return outboxOperations{Outbox: o, fs: osOutboxFS{}} }
@@ -70,6 +75,41 @@ func (o outboxOperations) operations() outboxFS {
 		return o.fs
 	}
 	return osOutboxFS{}
+}
+
+// outboxLedgerCodec keeps decoding strict while allowing deterministic tests
+// of malformed or unreadable durable ledgers without mutable package state.
+type outboxLedgerCodec interface {
+	Marshal(ledgerRecord) ([]byte, error)
+	Unmarshal([]byte, *ledgerRecord) error
+}
+
+type jsonOutboxLedgerCodec struct{}
+
+func (jsonOutboxLedgerCodec) Marshal(record ledgerRecord) ([]byte, error) {
+	return json.Marshal(record)
+}
+
+func (jsonOutboxLedgerCodec) Unmarshal(data []byte, record *ledgerRecord) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(record); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return fmt.Errorf("trailing JSON")
+	} else if err != io.EOF {
+		return err
+	}
+	return nil
+}
+
+func (o outboxOperations) ledgerCodec() outboxLedgerCodec {
+	if o.codec != nil {
+		return o.codec
+	}
+	return jsonOutboxLedgerCodec{}
 }
 
 func NewOutbox(projectRoot string) Outbox {
@@ -114,13 +154,13 @@ func (o outboxOperations) prepare(e Event, subscribers []Subscriber) error {
 		return err
 	}
 	record := ledgerRecord{Event: e, Subscribers: names, State: preparedState}
-	b, err := json.Marshal(record)
+	b, err := o.ledgerCodec().Marshal(record)
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
 	path := o.ledgerPath(e.UUID)
-	if existing, readErr := os.ReadFile(path); readErr == nil {
+	if existing, readErr := o.operations().ReadFile(path); readErr == nil {
 		if string(existing) != string(b) {
 			return fmt.Errorf("event UUID %s already has different ledger content", e.UUID)
 		}
@@ -132,7 +172,7 @@ func (o outboxOperations) prepare(e Event, subscribers []Subscriber) error {
 		if !errors.Is(err, fs.ErrExist) {
 			return err
 		}
-		existing, readErr := os.ReadFile(path)
+		existing, readErr := o.operations().ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
@@ -156,6 +196,10 @@ func (o outboxOperations) commit(id string) error {
 	if err != nil {
 		return err
 	}
+	return o.commitTransition(id, record, state)
+}
+
+func (o outboxOperations) commitTransition(id string, record ledgerRecord, state string) error {
 	switch state {
 	case abortedState:
 		return fmt.Errorf("cannot commit aborted event %s", id)
@@ -184,6 +228,10 @@ func (o outboxOperations) abort(id string) error {
 	if err != nil {
 		return err
 	}
+	return o.abortTransition(id, state)
+}
+
+func (o outboxOperations) abortTransition(id, state string) error {
 	switch state {
 	case abortedState:
 		return nil
@@ -213,19 +261,11 @@ func (o outboxOperations) readRecord(id string) (ledgerRecord, error) {
 	if !uuidRegex.MatchString(id) {
 		return r, fmt.Errorf("invalid event UUID")
 	}
-	b, err := os.ReadFile(o.ledgerPath(id))
+	b, err := o.operations().ReadFile(o.ledgerPath(id))
 	if err != nil {
 		return r, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(b))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&r); err != nil {
-		return r, fmt.Errorf("invalid event ledger %s: %w", id, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err == nil {
-		return r, fmt.Errorf("invalid event ledger %s: trailing JSON", id)
-	} else if err != io.EOF {
+	if err := o.ledgerCodec().Unmarshal(b, &r); err != nil {
 		return r, fmt.Errorf("invalid event ledger %s: %w", id, err)
 	}
 	if r.Event.UUID != id {
@@ -263,7 +303,7 @@ func validateLedgerSubscriberNames(names []string) error {
 func (o Outbox) readState(id string) (string, error) { return o.operation().readState(id) }
 
 func (o outboxOperations) readState(id string) (string, error) {
-	b, err := os.ReadFile(o.statePath(id))
+	b, err := o.operations().ReadFile(o.statePath(id))
 	if os.IsNotExist(err) {
 		return preparedState, nil
 	}
@@ -328,7 +368,7 @@ func subscriberNames(subscribers []Subscriber) ([]string, error) {
 func (o Outbox) Recover() error { return o.operation().recover() }
 
 func (o outboxOperations) recover() error {
-	entries, err := os.ReadDir(filepath.Join(o.Root, "ledger"))
+	entries, err := o.operations().ReadDir(filepath.Join(o.Root, "ledger"))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -359,7 +399,7 @@ func (o outboxOperations) recover() error {
 func (o outboxOperations) recoverRecord(record ledgerRecord) error {
 	for _, name := range record.Subscribers {
 		pending := o.pendingPath(name, record.Event.UUID)
-		if _, err := os.Stat(o.ackPath(name, record.Event.UUID)); err == nil {
+		if _, err := o.operations().Stat(o.ackPath(name, record.Event.UUID)); err == nil {
 			if err := o.removeOutboxFile(pending); err != nil {
 				return err
 			}
@@ -399,7 +439,7 @@ type PreparedRecord struct {
 func (o Outbox) Prepared() ([]PreparedRecord, error) { return o.operation().prepared() }
 
 func (o outboxOperations) prepared() ([]PreparedRecord, error) {
-	entries, err := os.ReadDir(filepath.Join(o.Root, "ledger"))
+	entries, err := o.operations().ReadDir(filepath.Join(o.Root, "ledger"))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -426,7 +466,7 @@ func (o outboxOperations) prepared() ([]PreparedRecord, error) {
 		}
 		item := PreparedRecord{EventUUID: id, EventName: record.Event.Name, ArtifactPath: record.Event.Artifact.Path, Timestamp: record.Event.Timestamp.UTC()}
 		if safeArtifactEvidencePath(record.Event.Artifact.Path) {
-			_, statErr := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(record.Event.Artifact.Path)))
+			_, statErr := o.operations().Stat(filepath.Join(projectRoot, filepath.FromSlash(record.Event.Artifact.Path)))
 			item.ArtifactExists = statErr == nil
 			if statErr != nil && !os.IsNotExist(statErr) {
 				return nil, statErr
@@ -486,7 +526,7 @@ func (o outboxOperations) replay(ctx context.Context, subscribers []Subscriber, 
 	sort.Strings(names)
 	result := ReplayResult{Prepared: prepared}
 	for _, n := range names {
-		entries, err := os.ReadDir(filepath.Dir(o.pendingPath(n, "x")))
+		entries, err := o.operations().ReadDir(filepath.Dir(o.pendingPath(n, "x")))
 		if os.IsNotExist(err) {
 			continue
 		}

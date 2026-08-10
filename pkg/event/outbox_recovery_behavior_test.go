@@ -23,6 +23,18 @@ func (f faultOutboxFS) Stat(path string) (os.FileInfo, error) {
 	}
 	return os.Stat(path)
 }
+func (f faultOutboxFS) ReadDir(path string) ([]os.DirEntry, error) {
+	if f.fail == "read-dir" {
+		return nil, errors.New("injected read-dir failure")
+	}
+	return os.ReadDir(path)
+}
+func (f faultOutboxFS) ReadFile(path string) ([]byte, error) {
+	if f.fail == "read-file" {
+		return nil, errors.New("injected read-file failure")
+	}
+	return os.ReadFile(path)
+}
 func (f faultOutboxFS) Mkdir(path string, perm os.FileMode) error {
 	if f.fail == "mkdir" {
 		return errors.New("injected mkdir failure")
@@ -79,6 +91,77 @@ type faultOutboxFile struct {
 type collisionLinkFS struct {
 	faultOutboxFS
 	data []byte
+}
+
+type absentCollisionLinkFS struct{ faultOutboxFS }
+
+func (absentCollisionLinkFS) Link(string, string) error { return fs.ErrExist }
+
+type faultLedgerCodec struct {
+	marshalErr   error
+	unmarshalErr error
+}
+
+func (c faultLedgerCodec) Marshal(record ledgerRecord) ([]byte, error) {
+	if c.marshalErr != nil {
+		return nil, c.marshalErr
+	}
+	return json.Marshal(record)
+}
+
+func (c faultLedgerCodec) Unmarshal(data []byte, record *ledgerRecord) error {
+	if c.unmarshalErr != nil {
+		return c.unmarshalErr
+	}
+	return jsonOutboxLedgerCodec{}.Unmarshal(data, record)
+}
+
+type pendingReadDirFaultFS struct{ faultOutboxFS }
+
+func (f pendingReadDirFaultFS) ReadDir(path string) ([]os.DirEntry, error) {
+	if strings.Contains(filepath.ToSlash(path), "/pending/") {
+		return nil, errors.New("injected pending read-dir failure")
+	}
+	return os.ReadDir(path)
+}
+
+type sequencedReadFileFS struct {
+	faultOutboxFS
+	failAt int
+	reads  int
+}
+
+func (f *sequencedReadFileFS) ReadFile(path string) ([]byte, error) {
+	f.reads++
+	if f.reads == f.failAt {
+		return nil, errors.New("injected sequenced read-file failure")
+	}
+	return os.ReadFile(path)
+}
+
+type ackOpenFileFaultFS struct{ faultOutboxFS }
+
+func (f ackOpenFileFaultFS) OpenFile(path string, flag int, perm os.FileMode) (outboxFile, error) {
+	if strings.Contains(filepath.ToSlash(path), "/ack/") {
+		return nil, errors.New("injected ack open-file failure")
+	}
+	return os.OpenFile(path, flag, perm)
+}
+
+type missingStatFS struct{ faultOutboxFS }
+
+func (missingStatFS) Stat(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+
+type childMissingParentFaultFS struct {
+	faultOutboxFS
+	child string
+}
+
+func (f childMissingParentFaultFS) Stat(path string) (os.FileInfo, error) {
+	if path == f.child {
+		return nil, os.ErrNotExist
+	}
+	return nil, errors.New("injected parent stat failure")
 }
 
 func (f collisionLinkFS) Link(_ string, destination string) error {
@@ -664,5 +747,128 @@ func TestOutbox_PrepareAndDecideResolveCompetingDurablePublications(t *testing.T
 	writeFailure := outboxOperations{Outbox: NewOutbox(t.TempDir()), fs: faultOutboxFS{fail: "link"}}
 	if err := writeFailure.prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err == nil {
 		t.Fatal("non-collision publication failure must surface")
+	}
+}
+
+func TestOutbox_PrivateOperationsFailClosedAtEveryDurabilityBoundary(t *testing.T) {
+	root := t.TempDir()
+	e := validEvent()
+	sink := &outboxSub{name: "sink"}
+
+	if _, ok := (outboxOperations{Outbox: Outbox{Root: root}}).operations().(osOutboxFS); !ok {
+		t.Fatal("nil private filesystem must normalize to the stateless OS implementation")
+	}
+	if _, ok := (outboxOperations{codec: faultLedgerCodec{}}).ledgerCodec().(faultLedgerCodec); !ok {
+		t.Fatal("injected private codec must remain operation scoped")
+	}
+
+	marshalFault := outboxOperations{Outbox: NewOutbox(root), codec: faultLedgerCodec{marshalErr: errors.New("injected marshal failure")}}
+	if err := marshalFault.prepare(e, []Subscriber{sink}); err == nil || !strings.Contains(err.Error(), "injected marshal") {
+		t.Fatalf("marshal failure = %v", err)
+	}
+
+	o := NewOutbox(root)
+	if err := o.Prepare(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	unmarshalFault := outboxOperations{Outbox: o, codec: faultLedgerCodec{unmarshalErr: errors.New("injected unmarshal failure")}}
+	if _, err := unmarshalFault.readRecord(e.UUID); err == nil || !strings.Contains(err.Error(), "injected unmarshal") {
+		t.Fatalf("unmarshal failure = %v", err)
+	}
+
+	missingAfterCollision := outboxOperations{Outbox: NewOutbox(t.TempDir()), fs: absentCollisionLinkFS{}}
+	if err := missingAfterCollision.prepare(e, []Subscriber{sink}); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("collision without a readable winner = %v", err)
+	}
+
+	transitionFault := outboxOperations{Outbox: NewOutbox(t.TempDir()), fs: faultOutboxFS{fail: "link"}}
+	record := ledgerRecord{Event: e, Subscribers: []string{sink.name}, State: preparedState}
+	if err := transitionFault.commitTransition(e.UUID, record, preparedState); err == nil || !strings.Contains(err.Error(), "injected link") {
+		t.Fatalf("commit decision durability failure = %v", err)
+	}
+	if err := transitionFault.commitTransition(e.UUID, record, "impossible"); err == nil || !strings.Contains(err.Error(), "invalid ledger state") {
+		t.Fatalf("invalid private commit state = %v", err)
+	}
+	if err := transitionFault.abortTransition(e.UUID, "impossible"); err == nil || !strings.Contains(err.Error(), "invalid ledger state") {
+		t.Fatalf("invalid private abort state = %v", err)
+	}
+	if err := transitionFault.decide(e.UUID, committedState); err == nil || !strings.Contains(err.Error(), "injected link") {
+		t.Fatalf("non-collision decision write failure = %v", err)
+	}
+}
+
+func TestOutbox_OperationScopedReadFailuresNeverBecomeDelivery(t *testing.T) {
+	root := t.TempDir()
+	o := NewOutbox(root)
+	e := validEvent()
+	e.Artifact.Path = "spec/exists.md"
+	sink := &outboxSub{name: "sink"}
+	if err := o.Prepare(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+
+	statFault := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "stat"}}
+	if err := statFault.recoverRecord(ledgerRecord{Event: e, Subscribers: []string{sink.name}}); err == nil || !strings.Contains(err.Error(), "injected stat") {
+		t.Fatalf("ack stat failure = %v", err)
+	}
+	if _, err := statFault.prepared(); err == nil || !strings.Contains(err.Error(), "injected stat") {
+		t.Fatalf("artifact evidence stat failure = %v", err)
+	}
+	if err := o.Commit(e.UUID); err != nil {
+		t.Fatal(err)
+	}
+
+	readDirFault := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "read-dir"}}
+	if err := readDirFault.recover(); err == nil || !strings.Contains(err.Error(), "injected read-dir") {
+		t.Fatalf("ledger read-dir failure = %v", err)
+	}
+	if _, err := readDirFault.prepared(); err == nil || !strings.Contains(err.Error(), "injected read-dir") {
+		t.Fatalf("prepared read-dir failure = %v", err)
+	}
+
+	pendingFault := outboxOperations{Outbox: o, fs: pendingReadDirFaultFS{}}
+	if _, err := pendingFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected pending read-dir") {
+		t.Fatalf("pending read-dir failure = %v", err)
+	}
+
+	readRecordFault := &sequencedReadFileFS{failAt: 4}
+	if _, err := (outboxOperations{Outbox: o, fs: readRecordFault}).replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
+		t.Fatalf("pending ledger read failure = %v", err)
+	}
+	readStateFault := &sequencedReadFileFS{failAt: 5}
+	if _, err := (outboxOperations{Outbox: o, fs: readStateFault}).replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
+		t.Fatalf("pending state read failure = %v", err)
+	}
+
+	preparedFault := &sequencedReadFileFS{failAt: 3}
+	if _, err := (outboxOperations{Outbox: o, fs: preparedFault}).replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
+		t.Fatalf("prepared reconciliation read failure = %v", err)
+	}
+
+	ackFault := outboxOperations{Outbox: o, fs: ackOpenFileFaultFS{}}
+	if _, err := ackFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected ack open-file") {
+		t.Fatalf("ack durability failure = %v", err)
+	}
+}
+
+func TestOutbox_DirectoryCreationSurfacesRecursionAndSyncFailures(t *testing.T) {
+	root := t.TempDir()
+	base := Outbox{Root: filepath.Join(root, "base")}
+	if err := os.MkdirAll(base.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := (outboxOperations{Outbox: base, fs: faultOutboxFS{fail: "stat"}}).writeNewAtomic(filepath.Join(base.Root, "ledger", "entry"), []byte("x")); err == nil || !strings.Contains(err.Error(), "injected stat") {
+		t.Fatalf("recursive stat failure = %v", err)
+	}
+	if err := (outboxOperations{Outbox: base, fs: faultOutboxFS{fail: "open"}}).ensureOutboxDirectory(filepath.Join(base.Root, "new-dir")); err == nil || !strings.Contains(err.Error(), "injected open") {
+		t.Fatalf("directory parent sync failure = %v", err)
+	}
+	if err := (outboxOperations{Outbox: base, fs: missingStatFS{}}).ensureOutboxDirectory("."); !os.IsNotExist(err) {
+		t.Fatalf("rootless directory recursion must return its original not-exist error, got %v", err)
+	}
+	child := filepath.Join(root, "child")
+	parentFault := outboxOperations{Outbox: base, fs: childMissingParentFaultFS{child: child}}
+	if err := parentFault.ensureOutboxDirectory(child); err == nil || !strings.Contains(err.Error(), "injected parent stat") {
+		t.Fatalf("parent directory recursion failure = %v", err)
 	}
 }
