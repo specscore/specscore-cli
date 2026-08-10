@@ -915,7 +915,11 @@ func legacyProvenance(inv LegacyInventory, e LegacyEntry) string {
 }
 
 func writeDurableStageFile(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	return writeDurableStageFileWithFS(path, data, osLessonFS{})
+}
+
+func writeDurableStageFileWithFS(path string, data []byte, fs lessonFS) error {
+	f, err := fs.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}

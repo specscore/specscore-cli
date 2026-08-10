@@ -21,6 +21,7 @@ type lessonFS interface {
 	Remove(string) error
 	CreateTemp(string, string) (lessonFile, error)
 	Open(string) (lessonFile, error)
+	OpenFile(string, int, os.FileMode) (lessonFile, error)
 	Link(string, string) error
 }
 
@@ -35,7 +36,10 @@ func (osLessonFS) CreateTemp(dir, pattern string) (lessonFile, error) {
 	return os.CreateTemp(dir, pattern)
 }
 func (osLessonFS) Open(path string) (lessonFile, error) { return os.Open(path) }
-func (osLessonFS) Link(oldname, newname string) error   { return os.Link(oldname, newname) }
+func (osLessonFS) OpenFile(path string, flag int, mode os.FileMode) (lessonFile, error) {
+	return os.OpenFile(path, flag, mode)
+}
+func (osLessonFS) Link(oldname, newname string) error { return os.Link(oldname, newname) }
 
 func syncDirectoryWithFS(path string, fs lessonFS) error {
 	f, err := fs.Open(path)
