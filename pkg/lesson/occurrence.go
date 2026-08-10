@@ -19,6 +19,26 @@ import (
 )
 
 var occurrenceUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+var gitCommit = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+var repositoryID = regexp.MustCompile(`^[^/\s]+/[^/\s]+/[^/\s]+$`)
+
+// occurrenceForbiddenNames match the published schema policy. Callers must
+// redact before write; validators reject unsafe shape instead of silently
+// discarding fields.
+var occurrenceForbiddenNames = map[string]struct{}{
+	"prompt": {}, "raw_prompt": {}, "raw_log": {}, "log": {}, "diff": {},
+	"transcript": {}, "authorization": {}, "token": {}, "password": {}, "secret": {},
+}
+
+var (
+	githubToken = regexp.MustCompile(`(?i)gh[pousr]_[a-z0-9_]{20,}`)
+	awsKey      = regexp.MustCompile(`AKIA[0-9A-Z]{16}`)
+)
+
+// ContentScanner is an integration seam for the repository-standard secret
+// scanner. It is invoked for every persisted string both before write and
+// while validating existing occurrences. It must return a value-free error.
+var ContentScanner = func(_ string) error { return nil }
 
 // Occurrence is the v1 on-disk JSON contract. Context intentionally remains a
 // typed generic map so the CLI can preserve the format's vendor-neutral shape.
@@ -85,10 +105,16 @@ func validateBounded(field, s string) error {
 		return fmt.Errorf("%s must contain 1..500 Unicode code points", field)
 	}
 	lower := strings.ToLower(s)
-	for _, banned := range []string{"-----begin", "authorization:", "api_key", "access_token", "bearer "} {
+	for _, banned := range []string{"-----begin", "authorization:", "authorization=", "api_key", "api-key", "access_token", "bearer ", "password:", "password=", "token:", "token="} {
 		if strings.Contains(lower, banned) {
 			return fmt.Errorf("%s contains a credential-bearing value", field)
 		}
+	}
+	if githubToken.MatchString(s) || awsKey.MatchString(s) {
+		return fmt.Errorf("%s contains a credential-bearing value", field)
+	}
+	if err := ContentScanner(s); err != nil {
+		return fmt.Errorf("%s rejected by content scanner", field)
 	}
 	return nil
 }
@@ -96,6 +122,9 @@ func validateBounded(field, s string) error {
 func validateContext(c map[string]any) error {
 	allowed := map[string]bool{"repository": true, "git": true, "worktree": true, "execution": true}
 	for k := range c {
+		if _, forbidden := occurrenceForbiddenNames[strings.ToLower(k)]; forbidden {
+			return fmt.Errorf("context contains forbidden content field %q", k)
+		}
 		if !allowed[k] {
 			return fmt.Errorf("context has unsupported field %q", k)
 		}
@@ -107,24 +136,66 @@ func validateContext(c map[string]any) error {
 		}
 		switch x := v.(type) {
 		case string:
+			if key != "repository" {
+				return fmt.Errorf("context.%s must be an object or null", key)
+			}
 			if err := validateBounded("context."+key, x); err != nil {
 				return err
 			}
+			if key == "repository" && !repositoryID.MatchString(x) {
+				return fmt.Errorf("context.repository must be host/org/repository")
+			}
 		case map[string]any:
-			for k, value := range x {
-				if key == "worktree" && k == "path_hint" {
-					if s, ok := value.(string); ok && (strings.HasPrefix(s, "/") || strings.Contains(s, "..")) {
-						return fmt.Errorf("context.worktree.path_hint must be relative or redacted")
-					}
-				}
-				if s, ok := value.(string); ok {
-					if err := validateBounded("context."+key+"."+k, s); err != nil {
-						return err
-					}
-				}
+			if err := validateContextObject(key, x); err != nil {
+				return err
 			}
 		default:
-			return fmt.Errorf("context.%s must be an object, string, or null", key)
+			return fmt.Errorf("context.%s must be an object or null", key)
+		}
+	}
+	return nil
+}
+
+func validateContextObject(kind string, values map[string]any) error {
+	allowed := map[string]bool{}
+	switch kind {
+	case "git":
+		allowed["commit"], allowed["branch"] = true, true
+	case "worktree":
+		allowed["path_hint"], allowed["id"] = true, true
+	case "execution":
+		allowed["kind"], allowed["id"] = true, true
+	}
+	for k, v := range values {
+		if _, forbidden := occurrenceForbiddenNames[strings.ToLower(k)]; forbidden {
+			return fmt.Errorf("context.%s contains forbidden content field %q", kind, k)
+		}
+		if !allowed[k] {
+			return fmt.Errorf("context.%s has unsupported field %q", kind, k)
+		}
+		if v == nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("context.%s.%s must be a string or null", kind, k)
+		}
+		if err := validateBounded("context."+kind+"."+k, s); err != nil {
+			return err
+		}
+		switch kind + "." + k {
+		case "git.commit":
+			if !gitCommit.MatchString(s) {
+				return fmt.Errorf("context.git.commit must be a lowercase Git SHA")
+			}
+		case "worktree.path_hint":
+			if strings.HasPrefix(s, "/") || strings.Contains(s, "..") {
+				return fmt.Errorf("context.worktree.path_hint must be relative or redacted")
+			}
+		case "execution.kind":
+			if s != "interactive" && s != "automation" && s != "ci" && s != "unknown" {
+				return fmt.Errorf("context.execution.kind must be interactive, automation, ci, or unknown")
+			}
 		}
 	}
 	return nil
@@ -179,7 +250,17 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	if err != nil {
 		return Occurrence{}, err
 	}
-	if err := os.WriteFile(o.Path, append(b, '\n'), 0o644); err != nil {
+	f, err := os.OpenFile(o.Path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return Occurrence{}, err
+	}
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		_ = f.Close()
+		_ = os.Remove(o.Path)
+		return Occurrence{}, err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(o.Path)
 		return Occurrence{}, err
 	}
 	return o, nil
@@ -213,9 +294,13 @@ func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
 			return nil, err
 		}
 		var o Occurrence
-		dec := json.Unmarshal(data, &o)
-		if dec != nil {
-			return nil, fmt.Errorf("invalid occurrence %s: %w", path, dec)
+		if err := validateOccurrenceRaw(data); err != nil {
+			return nil, fmt.Errorf("invalid occurrence %s: %w", path, err)
+		}
+		dec := json.NewDecoder(strings.NewReader(string(data)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&o); err != nil {
+			return nil, fmt.Errorf("invalid occurrence %s: %w", path, err)
 		}
 		o.Path = path
 		if strings.TrimSuffix(e.Name(), ".json") != o.ID {
@@ -233,6 +318,25 @@ func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
 		return out[i].OccurredAt.Before(out[j].OccurredAt)
 	})
 	return out, nil
+}
+
+func validateOccurrenceRaw(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	timestamp, ok := raw["occurred_at"]
+	if !ok {
+		return fmt.Errorf("occurred_at is required")
+	}
+	var text string
+	if err := json.Unmarshal(timestamp, &text); err != nil {
+		return fmt.Errorf("occurred_at must be a string")
+	}
+	if !strings.HasSuffix(text, "Z") {
+		return fmt.Errorf("occurred_at must use a UTC Z suffix")
+	}
+	return nil
 }
 
 func FindOccurrence(lessonPath, id string) (Occurrence, error) {
