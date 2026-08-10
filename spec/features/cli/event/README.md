@@ -21,6 +21,7 @@ The shared reliable event-delivery plumbing for the `specscore` CLI. It owns the
 | Child | Description |
 |---|---|
 | [emit](emit/README.md) | The `specscore event emit` verb — cobra wiring, envelope flags, payload input modes, dispatch invocation, exit-code mapping. |
+| [artifact-lifecycle-outbox](artifact-lifecycle-outbox/README.md) | Apply the durable event outbox consistently to artifact lifecycle commands through one prepared-artifact-event boundary and a deterministic command matrix. |
 
 ## Problem
 
