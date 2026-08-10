@@ -604,6 +604,77 @@ func TestEventEmit_NoopSubscriber_ExitCode0(t *testing.T) {
 	}
 }
 
+func TestEventEmit_ExplicitEmptySubscribersCreatesNoRecipientlessLedger(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+	writeSpecscoreYAML(t, root, "events:\n  subscribers: []\n")
+	if _, _, err := runEvent(t,
+		"emit",
+		"--name", "idea.drafted",
+		"--actor-kind", "skill",
+		"--actor-id", "skill:t",
+		"--artifact-type", "idea",
+		"--artifact-id", "x",
+		"--artifact-path", "spec/ideas/x.md",
+		"--payload-json", "{}",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".specscore", "event-outbox")); !os.IsNotExist(err) {
+		t.Fatalf("explicit event opt-out created a recipientless outbox: %v", err)
+	}
+}
+
+func TestEventReplaySurfacesPreparedArtifactEvidenceAndReconcileRequiresToken(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+	writeSpecscoreYAML(t, root, "events:\n  subscribers:\n    - type: noop\n")
+	artifact := filepath.Join(root, "spec", "ideas", "demo.md")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("# demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := event.Event{
+		Name:      "idea.drafted",
+		Version:   1,
+		UUID:      "11111111-1111-4111-8111-111111111111",
+		Timestamp: time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC),
+		Actor:     event.Actor{Kind: "external", ID: "specscore"},
+		Artifact:  event.Artifact{Type: "idea", ID: "demo", Path: "spec/ideas/demo.md", Revision: "uncommitted"},
+		Payload:   []byte(`{}`),
+	}
+	outbox := event.NewOutbox(root)
+	if err := outbox.Prepare(e, []event.Subscriber{event.NoOp{}}); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, err := runEvent(t, "replay", "--subscriber", "noop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "prepared=1") || !strings.Contains(stderr, e.UUID) || !strings.Contains(stderr, "artifact_exists=true") {
+		t.Fatalf("prepared replay output=%q stderr=%q", out, stderr)
+	}
+	preview, _, err := runEvent(t, "reconcile", e.UUID, "--decision", "commit")
+	if exitCodeOf(err) != 2 || !strings.Contains(preview, "confirmation-token:") {
+		t.Fatalf("reconcile preview=%q err=%v", preview, err)
+	}
+	prepared, err := outbox.Prepared()
+	if err != nil || len(prepared) != 1 {
+		t.Fatalf("prepared=%#v err=%v", prepared, err)
+	}
+	token := event.ReconciliationToken(prepared[0], "commit")
+	out, _, err = runEvent(t, "reconcile", e.UUID, "--decision", "commit", "--confirm", token)
+	if err != nil || !strings.Contains(out, ": commit") {
+		t.Fatalf("reconcile=%q err=%v", out, err)
+	}
+	prepared, err = outbox.Prepared()
+	if err != nil || len(prepared) != 0 {
+		t.Fatalf("reconciled event remains prepared: %#v err=%v", prepared, err)
+	}
+}
+
 // TestAutofillEnvelope_RevisionOverride (covers AC:
 // envelope-artifact-revision-override). When the override is non-empty
 // it MUST be used verbatim — the git path MUST NOT be invoked and MUST

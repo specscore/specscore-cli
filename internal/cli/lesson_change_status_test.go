@@ -35,6 +35,12 @@ func stageLesson(t *testing.T, slug, status string) string {
 	}
 	patched := strings.Replace(string(raw), "**Status:** Recorded", "**Status:** "+status, 1)
 	patched = strings.Replace(patched, "status: Recorded", "status: "+status, 1)
+	patched = strings.Replace(patched, "**Control:** —", "**Control:** CI blocks nonconforming Lessons", 1)
+	patched = strings.Replace(patched, "**Verification:** —", "**Verification:** go test ./pkg/lint", 1)
+	patched = strings.Replace(patched, "**Evidence:** —", "**Evidence:** spec/lessons/"+slug+"/control-evidence.txt", 1)
+	if err := os.WriteFile(filepath.Join(root, "spec", "lessons", slug, "control-evidence.txt"), []byte("verified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(patched), 0o644); err != nil {
 		t.Fatalf("write patched lesson: %v", err)
 	}
@@ -154,6 +160,11 @@ func TestLessonChangeStatus_SupersededUnresolvableSuccessor_CLI(t *testing.T) {
 // AC: lint-failure-rolls-back — inject a lint failure via the lintLintFn seam.
 func TestLessonChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Recorded")
+	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+	indexBefore, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	orig := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
 		if opts.Fix {
@@ -163,13 +174,32 @@ func TestLessonChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	}
 	t.Cleanup(func() { lintLintFn = orig })
 
-	_, _, err := runLesson(t, "change-status", "kinder-fake", "--to=stated")
+	_, _, err = runLesson(t, "change-status", "kinder-fake", "--to=stated")
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
 	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Recorded") {
 		t.Errorf("status not rolled back after lint failure:\n%s", body)
+	}
+	if indexAfter, readErr := os.ReadFile(indexPath); readErr != nil || string(indexAfter) != string(indexBefore) {
+		t.Fatalf("index not rolled back after lint failure: err=%v", readErr)
+	}
+}
+
+func TestLessonChangeStatus_DoesNotMigrateUnrelatedOutstandingQuestions(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Recorded")
+	unrelatedPath := filepath.Join(root, "spec", "legacy-notes.md")
+	unrelated := []byte("# Legacy notes\n\n## Outstanding Questions\n\n- Migrate only through explicit spec lint --fix.\n")
+	if err := os.WriteFile(unrelatedPath, unrelated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := runLesson(t, "change-status", "kinder-fake", "--to=stated"); err != nil {
+		t.Fatalf("change-status: %v", err)
+	}
+	if after, err := os.ReadFile(unrelatedPath); err != nil || string(after) != string(unrelated) {
+		t.Fatalf("change-status ran a hidden repository-wide fixer: err=%v\n%s", err, after)
 	}
 }
 

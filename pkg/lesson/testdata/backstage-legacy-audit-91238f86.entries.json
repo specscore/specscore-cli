@@ -1,0 +1,2102 @@
+[
+  {
+    "key": "L1#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 201,
+    "end_line": 237,
+    "start_byte": 10125,
+    "end_byte": 11964,
+    "bytes_sha256": "6725d060b766437bc4a2c72d6196fa956542d26f76e8cafd2b754712e40877b5"
+  },
+  {
+    "key": "L2#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 238,
+    "end_line": 275,
+    "start_byte": 11964,
+    "end_byte": 13890,
+    "bytes_sha256": "b652e4f180b6dba47554a408e87ec9d3550369294614f480adebed2e64e3ae24"
+  },
+  {
+    "key": "L2#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L2#1",
+    "start_line": 261,
+    "end_line": 272,
+    "start_byte": 13047,
+    "end_byte": 13884,
+    "bytes_sha256": "2f96b33f3411d215230483abce5a86f8c752c7819a58ec1261f488f6275adc77"
+  },
+  {
+    "key": "L34#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 276,
+    "end_line": 310,
+    "start_byte": 13890,
+    "end_byte": 15751,
+    "bytes_sha256": "f7fe301990289ea2c76ccd8e73ec2325a0604be09cea48809eabb030626a2961"
+  },
+  {
+    "key": "L35#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 311,
+    "end_line": 343,
+    "start_byte": 15751,
+    "end_byte": 17474,
+    "bytes_sha256": "7d666a692e6992eed171b9d65e01e07b47527514324c40963bbba6fb182e5a7c"
+  },
+  {
+    "key": "L37#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 344,
+    "end_line": 376,
+    "start_byte": 17474,
+    "end_byte": 19240,
+    "bytes_sha256": "ac6e77e0bcbd70f62de063f0414d0abf1e1e10c3aedb6ec2b0ad93972be322f6"
+  },
+  {
+    "key": "L34#2",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 377,
+    "end_line": 405,
+    "start_byte": 19240,
+    "end_byte": 20711,
+    "bytes_sha256": "4d5d71b33016fe9e22f40e5efaa0b53ec7c5fc78153dcf90fced37321c13bf4f"
+  },
+  {
+    "key": "L35#2",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 406,
+    "end_line": 430,
+    "start_byte": 20711,
+    "end_byte": 21984,
+    "bytes_sha256": "1b9db1a1fc4614cdd3cb029e7eb2192fb842aee914eb16cdef6292e59492dd42"
+  },
+  {
+    "key": "L36#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 431,
+    "end_line": 459,
+    "start_byte": 21984,
+    "end_byte": 23459,
+    "bytes_sha256": "08234236b25ad0e76a0ebb2db03541a9b21b8b51211fb0d0c54660f85649e87c"
+  },
+  {
+    "key": "L33#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 460,
+    "end_line": 494,
+    "start_byte": 23459,
+    "end_byte": 25273,
+    "bytes_sha256": "11c3c5ff4c9ca58d196e014356aab305a87fc60e043b0fb8e0f571a2a33b446b"
+  },
+  {
+    "key": "L33#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L33#1",
+    "start_line": 464,
+    "end_line": 467,
+    "start_byte": 23604,
+    "end_byte": 23908,
+    "bytes_sha256": "a694c524ac7537006d2806b3e2dc135a19389b83bd093cafb48bcb6a5b7ebb9d"
+  },
+  {
+    "key": "L3#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 495,
+    "end_line": 524,
+    "start_byte": 25273,
+    "end_byte": 26556,
+    "bytes_sha256": "bc9e3b9d8aa6e33873682b13b1f7f49311d4bd34072e53c2c683aa443a5d8908"
+  },
+  {
+    "key": "L4#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 525,
+    "end_line": 552,
+    "start_byte": 26556,
+    "end_byte": 27877,
+    "bytes_sha256": "4319e585c43e4e86d425e36fd684b443cabf8182171eb25b6a10a9e6756a8f0a"
+  },
+  {
+    "key": "L5#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 553,
+    "end_line": 588,
+    "start_byte": 27877,
+    "end_byte": 29478,
+    "bytes_sha256": "1d777c34e55f194c2454c16a73b18920e53a0380a3da2c095a90ca2e7ad61a8c"
+  },
+  {
+    "key": "L6#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 589,
+    "end_line": 615,
+    "start_byte": 29478,
+    "end_byte": 30748,
+    "bytes_sha256": "c55a03378cbb56cd9e35b6b59a45580789e59bd43c97ba127f3008965925bc9c"
+  },
+  {
+    "key": "L7#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 616,
+    "end_line": 644,
+    "start_byte": 30748,
+    "end_byte": 32222,
+    "bytes_sha256": "93e59f15edebabcb26a3b50dd168f163edb46152ff6699da39233cc225b19c54"
+  },
+  {
+    "key": "L8#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 645,
+    "end_line": 682,
+    "start_byte": 32222,
+    "end_byte": 34366,
+    "bytes_sha256": "68b2331df97d841b9d86bbab1ef541ec09c9b296315c1050552b7937538b4290"
+  },
+  {
+    "key": "L9#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 683,
+    "end_line": 726,
+    "start_byte": 34366,
+    "end_byte": 36648,
+    "bytes_sha256": "07dcaa182a52b9b51e656a0b447607a796bcba6438b715ec656e6bb489852541"
+  },
+  {
+    "key": "L10#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 727,
+    "end_line": 758,
+    "start_byte": 36648,
+    "end_byte": 38328,
+    "bytes_sha256": "7d1666b401ea7f59c0c6422c3b8cf1211babc871a522303593373c21565a82d6"
+  },
+  {
+    "key": "L11#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 759,
+    "end_line": 800,
+    "start_byte": 38328,
+    "end_byte": 40452,
+    "bytes_sha256": "4c898f14bbb54ba66c06ba1de553cd7022596b500fa12f39dda3737f7248170c"
+  },
+  {
+    "key": "L12#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 801,
+    "end_line": 861,
+    "start_byte": 40452,
+    "end_byte": 43525,
+    "bytes_sha256": "850cd9ff2998e8d7f57c661053876ef76e1d6299c41280de9e982e9c965e2bee"
+  },
+  {
+    "key": "L12#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L12#1",
+    "start_line": 804,
+    "end_line": 812,
+    "start_byte": 40577,
+    "end_byte": 41207,
+    "bytes_sha256": "abd798b6bed3f78d082d9fca78d67be3aa415224b16a12b76f10d8c5babf028e"
+  },
+  {
+    "key": "L13#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 862,
+    "end_line": 915,
+    "start_byte": 43525,
+    "end_byte": 46798,
+    "bytes_sha256": "f5d9a16c3653403e1c006217f379d6e509f5e3465fe4ed5eed18c45e93db1515"
+  },
+  {
+    "key": "L13#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L13#1",
+    "start_line": 865,
+    "end_line": 873,
+    "start_byte": 43709,
+    "end_byte": 44435,
+    "bytes_sha256": "6d5fd29974f357066152a4b061543de74059ef041c15f099a2469d4632039284"
+  },
+  {
+    "key": "L14#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 916,
+    "end_line": 959,
+    "start_byte": 46798,
+    "end_byte": 49309,
+    "bytes_sha256": "fbb5771e2ea16dd4df1affba1a93a77ffa84639f28feccf217fb480eb3e7e8b0"
+  },
+  {
+    "key": "L15#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 960,
+    "end_line": 1014,
+    "start_byte": 49309,
+    "end_byte": 52545,
+    "bytes_sha256": "95b8d2b10af75817327278973083a81ea2f9a288f58535bd12431bd81430188d"
+  },
+  {
+    "key": "L15#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L15#1",
+    "start_line": 1002,
+    "end_line": 1011,
+    "start_byte": 51814,
+    "end_byte": 52539,
+    "bytes_sha256": "16cd519ef19072b485c47d40df6a238467cccfb0118c90e53e0bd4a42c19c93d"
+  },
+  {
+    "key": "L16#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1015,
+    "end_line": 1055,
+    "start_byte": 52545,
+    "end_byte": 54867,
+    "bytes_sha256": "c98b96c35327a4bd519c247ca8a534167d09249dc947fe9064aafb354ea31488"
+  },
+  {
+    "key": "L16#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L16#1",
+    "start_line": 1019,
+    "end_line": 1023,
+    "start_byte": 52694,
+    "end_byte": 53054,
+    "bytes_sha256": "5e758480dff5ec4858c5486b6c5a7e05397c3f49a9ed2594dcd6ed52cb89515a"
+  },
+  {
+    "key": "L17#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1056,
+    "end_line": 1107,
+    "start_byte": 54867,
+    "end_byte": 58136,
+    "bytes_sha256": "92c9f3518a13fe46bee1e06242ce856e52a63822a26ce1056106c31a7831590b"
+  },
+  {
+    "key": "L17#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L17#1",
+    "start_line": 1059,
+    "end_line": 1068,
+    "start_byte": 54999,
+    "end_byte": 55706,
+    "bytes_sha256": "3f6eb2f263bc520b435ad778623b0a23d8da7d6487b8dbb1a6204adc7860448c"
+  },
+  {
+    "key": "L18#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1108,
+    "end_line": 1171,
+    "start_byte": 58136,
+    "end_byte": 61168,
+    "bytes_sha256": "3a8ae1a4400014610dad20115c449afb01858f2bb6d72b2156191d56b9ba6343"
+  },
+  {
+    "key": "L19#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1172,
+    "end_line": 1239,
+    "start_byte": 61168,
+    "end_byte": 65125,
+    "bytes_sha256": "4fbf57b71040974761e41d79747382905a3f2766bbc2a29623e05e245138aa91"
+  },
+  {
+    "key": "L20#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1240,
+    "end_line": 1288,
+    "start_byte": 65125,
+    "end_byte": 67897,
+    "bytes_sha256": "2b979d7276bb2c42ae3d0249fa5460b5525ea8a53df03362f2ba712d155c99b2"
+  },
+  {
+    "key": "L21#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1289,
+    "end_line": 1324,
+    "start_byte": 67897,
+    "end_byte": 69740,
+    "bytes_sha256": "17304749c5da9c75942d49c795ffb9e4bdd6379d48a36c5f42783c90c1627e37"
+  },
+  {
+    "key": "L22#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1325,
+    "end_line": 1390,
+    "start_byte": 69740,
+    "end_byte": 73168,
+    "bytes_sha256": "21ed659bb56df77e916fba4a5467af0698c564b568aa0dd38e7d89a8488efe73"
+  },
+  {
+    "key": "L22#2",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1391,
+    "end_line": 1426,
+    "start_byte": 73168,
+    "end_byte": 74843,
+    "bytes_sha256": "9764135a7104403d5ef421f407f27ccebb0f2ec9d1e0a4397a496e716e618323"
+  },
+  {
+    "key": "L25#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1427,
+    "end_line": 1460,
+    "start_byte": 74843,
+    "end_byte": 76649,
+    "bytes_sha256": "0674f806049e8dde32b43d50e0d081e952fb823b6da27e6be4612b28dad637dd"
+  },
+  {
+    "key": "L24#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1461,
+    "end_line": 1505,
+    "start_byte": 76649,
+    "end_byte": 79155,
+    "bytes_sha256": "e76868d94b5e6e0b4cb52f061dae4f60025636bfceba6dd9ba900638329eada7"
+  },
+  {
+    "key": "L24#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L24#1",
+    "start_line": 1497,
+    "end_line": 1502,
+    "start_byte": 78737,
+    "end_byte": 79149,
+    "bytes_sha256": "ba3eedf65ed9057e137d006e23e4c0ff8a456c3016c7d68a29f58114f0fdb908"
+  },
+  {
+    "key": "L23#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1506,
+    "end_line": 1541,
+    "start_byte": 79155,
+    "end_byte": 80806,
+    "bytes_sha256": "da6442a977f83302ca83f6d9ce6df6fd3f4a5e8dbcdf305d17dfe79ef874001e"
+  },
+  {
+    "key": "L26#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1542,
+    "end_line": 1574,
+    "start_byte": 80806,
+    "end_byte": 82130,
+    "bytes_sha256": "25d1b5d640f0d8fe7c04d2d4bd1f34e92a1c5666540626905e8ad6b323f833ab"
+  },
+  {
+    "key": "L27#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1575,
+    "end_line": 1610,
+    "start_byte": 82130,
+    "end_byte": 83939,
+    "bytes_sha256": "2795ed0239e0a367516c2fc669998b5a93a3ddabc5430585c3951f363c1040eb"
+  },
+  {
+    "key": "L27#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L27#1",
+    "start_line": 1579,
+    "end_line": 1583,
+    "start_byte": 82286,
+    "end_byte": 82628,
+    "bytes_sha256": "90463b9e1dd39e0c113eac5bc6d27f63d4c2b0fb2ed0e97978323f7584b5f5a4"
+  },
+  {
+    "key": "L28#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1611,
+    "end_line": 1646,
+    "start_byte": 83939,
+    "end_byte": 85851,
+    "bytes_sha256": "500040dbc3005cce8c154b5690795dd6b22da0713de30a9ab615f275ba5f7aed"
+  },
+  {
+    "key": "L29#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1647,
+    "end_line": 1682,
+    "start_byte": 85851,
+    "end_byte": 87888,
+    "bytes_sha256": "9e0ea2456863700c931ca94da951b93d0daae3ce6282c62adb1bdcff385a0873"
+  },
+  {
+    "key": "L30#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1683,
+    "end_line": 1719,
+    "start_byte": 87888,
+    "end_byte": 89904,
+    "bytes_sha256": "733e32a5cb4ea00692f330798df049837284b7bc2ed3e86c6c829c453c47987d"
+  },
+  {
+    "key": "L31#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1720,
+    "end_line": 1751,
+    "start_byte": 89904,
+    "end_byte": 91514,
+    "bytes_sha256": "7151a73da04e3e9ffe00be5b9082b1c17377059316b4ecba1e912f4248ef8b1e"
+  },
+  {
+    "key": "L32#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1752,
+    "end_line": 1783,
+    "start_byte": 91514,
+    "end_byte": 93125,
+    "bytes_sha256": "a1fd0e956c92687394c153d2de86a42b348486f22cb98575dbca24c84b73ed4d"
+  },
+  {
+    "key": "L38#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1784,
+    "end_line": 1817,
+    "start_byte": 93125,
+    "end_byte": 94868,
+    "bytes_sha256": "bd1a17663c115b1a3fc86345623d4bbd13c042f40cc1f582fb83279afe526085"
+  },
+  {
+    "key": "L42#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1818,
+    "end_line": 1845,
+    "start_byte": 94868,
+    "end_byte": 96250,
+    "bytes_sha256": "443d7261ef785c7d3ae7d3eac0e34767fa6501d053c69d7beb7af1f545d9b448"
+  },
+  {
+    "key": "L43#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1846,
+    "end_line": 1877,
+    "start_byte": 96250,
+    "end_byte": 97857,
+    "bytes_sha256": "b58be095af7c76b9eabe925b5b0e16c9e9d6d5c94ad0ea5c864287f714e965d4"
+  },
+  {
+    "key": "L43#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L43#1",
+    "start_line": 1850,
+    "end_line": 1856,
+    "start_byte": 96390,
+    "end_byte": 96927,
+    "bytes_sha256": "1e9db8f25a7ea5e6826ec2f81874104967ac7f36727ba586c67cd535630573a8"
+  },
+  {
+    "key": "L39#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1878,
+    "end_line": 1917,
+    "start_byte": 97857,
+    "end_byte": 100033,
+    "bytes_sha256": "28924387fa7acfc5eba5c83cad6e5f53be5cb59846880d24797adcf6803dc964"
+  },
+  {
+    "key": "L39#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L39#1",
+    "start_line": 1882,
+    "end_line": 1888,
+    "start_byte": 98006,
+    "end_byte": 98525,
+    "bytes_sha256": "999cab9ae73adfb75804de6b7fd580becb30760b6f3c0c391590212f9c020ebe"
+  },
+  {
+    "key": "L40#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1918,
+    "end_line": 1945,
+    "start_byte": 100033,
+    "end_byte": 101416,
+    "bytes_sha256": "5ab60a68b439b415aa6911b60dcd76d893851fe4bae67ac2d2caa3c4481e7b9a"
+  },
+  {
+    "key": "L41#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1946,
+    "end_line": 1981,
+    "start_byte": 101416,
+    "end_byte": 103262,
+    "bytes_sha256": "eed979ba2924b8d4c1d7bc27c8db0276030db9b7bf253ac483113ceb0e0af5df"
+  },
+  {
+    "key": "L41#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L41#1",
+    "start_line": 1950,
+    "end_line": 1955,
+    "start_byte": 101551,
+    "end_byte": 101997,
+    "bytes_sha256": "e07b0e2e45162500e7ec177d97f347c7b4d6fd2820f15e5c3e1855d2a9f285cd"
+  },
+  {
+    "key": "L44#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 1982,
+    "end_line": 2010,
+    "start_byte": 103262,
+    "end_byte": 104608,
+    "bytes_sha256": "4dcd2a75533724b33b4380d0b5094d8e72daad3310b0d8bfb44808b2947c7219"
+  },
+  {
+    "key": "L45#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2011,
+    "end_line": 2051,
+    "start_byte": 104608,
+    "end_byte": 106761,
+    "bytes_sha256": "894a5dc9b8b60613c9609506f97286394ee89c212098deeed6a8b763f13bce7f"
+  },
+  {
+    "key": "L45#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L45#1",
+    "start_line": 2043,
+    "end_line": 2048,
+    "start_byte": 106313,
+    "end_byte": 106755,
+    "bytes_sha256": "f5e7ff5daa8275dda85e71022bc93028e4545d8863f6676f102d3ffa1f2efa04"
+  },
+  {
+    "key": "L46#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2052,
+    "end_line": 2092,
+    "start_byte": 106761,
+    "end_byte": 109164,
+    "bytes_sha256": "e1838100bf00f5866f0d5ec7bb1a13954cc0a2886a8ddd21e304925324d93991"
+  },
+  {
+    "key": "L47#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2093,
+    "end_line": 2134,
+    "start_byte": 109164,
+    "end_byte": 111685,
+    "bytes_sha256": "b92a16f92b8203f80742a74b375ef3bf0e0b8ec84765907976857fea457a60d9"
+  },
+  {
+    "key": "L48#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2135,
+    "end_line": 2162,
+    "start_byte": 111685,
+    "end_byte": 112961,
+    "bytes_sha256": "cc313e2d038ef42d766a214867ad0666584384da5888bbcdd61bb9577c3f530e"
+  },
+  {
+    "key": "L49#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2163,
+    "end_line": 2187,
+    "start_byte": 112961,
+    "end_byte": 114138,
+    "bytes_sha256": "dad4f6ef3f4316cc8f14de298f6e0e607cefa57e6bb62be09ff84d4b15e0a1a1"
+  },
+  {
+    "key": "L50#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2188,
+    "end_line": 2216,
+    "start_byte": 114138,
+    "end_byte": 115402,
+    "bytes_sha256": "c13eb606ae3ef74861375cbcc69887b73b1ed379025e68ce8739160ebb9cb968"
+  },
+  {
+    "key": "L51#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2217,
+    "end_line": 2252,
+    "start_byte": 115402,
+    "end_byte": 117302,
+    "bytes_sha256": "86d8db7c1698d4d2824f3e9cb0834d817ad97030d1410b048625baf5e5cf2844"
+  },
+  {
+    "key": "L51#2",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2253,
+    "end_line": 2291,
+    "start_byte": 117302,
+    "end_byte": 119442,
+    "bytes_sha256": "b13d19dee631b2e31f39aa14e69f96f9318505c3210f22399780afe488e7e697"
+  },
+  {
+    "key": "L51#3",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2292,
+    "end_line": 2331,
+    "start_byte": 119442,
+    "end_byte": 121634,
+    "bytes_sha256": "a5c6a2cd2f20b6cba101b4eb0e68c3f5359db6a4d773ba232cd8d4c898c6609d"
+  },
+  {
+    "key": "L52#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2332,
+    "end_line": 2370,
+    "start_byte": 121634,
+    "end_byte": 123745,
+    "bytes_sha256": "dbcc23e2cf4b8f5e15bfc1fb93f16784a90b65e4c03d07d6db3e97373f04a413"
+  },
+  {
+    "key": "L53#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2371,
+    "end_line": 2419,
+    "start_byte": 123745,
+    "end_byte": 126670,
+    "bytes_sha256": "b13bf1a0c84be83584a3eff6ceb9db20a269dca11ec1b70287550ee8f552cbc7"
+  },
+  {
+    "key": "L54#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2420,
+    "end_line": 2453,
+    "start_byte": 126670,
+    "end_byte": 128778,
+    "bytes_sha256": "72144d67d4264015dfbf97c943a2136da2ee0a7b60c7d446bfb5daa2676495c7"
+  },
+  {
+    "key": "L55#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2454,
+    "end_line": 2486,
+    "start_byte": 128778,
+    "end_byte": 130776,
+    "bytes_sha256": "b98446773f3ec60c814e89443e850b61131f2996cf5ba488ce7a6445ec2fb85c"
+  },
+  {
+    "key": "L56#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2487,
+    "end_line": 2510,
+    "start_byte": 130776,
+    "end_byte": 132162,
+    "bytes_sha256": "88e90b1adaa097d4f1094aaf328d4e9f53b57177c1020359183b57e7f9cb4fcb"
+  },
+  {
+    "key": "L57#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2511,
+    "end_line": 2554,
+    "start_byte": 132162,
+    "end_byte": 134827,
+    "bytes_sha256": "2dc062da7b8ee9b1d8878b2ad90bd2bcae7460d763936465012a2d7c6455f897"
+  },
+  {
+    "key": "L57#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L57#1",
+    "start_line": 2539,
+    "end_line": 2551,
+    "start_byte": 133849,
+    "end_byte": 134762,
+    "bytes_sha256": "2bd54311f80fe2dbdb6b63602a2c1a1512dd2ed64fe747c0230e9ad820e133d6"
+  },
+  {
+    "key": "L58#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2555,
+    "end_line": 2572,
+    "start_byte": 134827,
+    "end_byte": 135742,
+    "bytes_sha256": "8b252d8fe4fd8467e6190ae036adf6e571b8a5dabf29a0c5e7cbcf524c0d41ea"
+  },
+  {
+    "key": "L59#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2573,
+    "end_line": 2591,
+    "start_byte": 135742,
+    "end_byte": 136767,
+    "bytes_sha256": "4d2b360767bd93cae1fe8045ee55144ddeef592b9b8d0912043fa46b60d66977"
+  },
+  {
+    "key": "L60#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2592,
+    "end_line": 2619,
+    "start_byte": 136767,
+    "end_byte": 138474,
+    "bytes_sha256": "fc44563c323c7c9cc3e849523f3dff2414d65f40c40ed2e17bd50653d34f99c2"
+  },
+  {
+    "key": "L61#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2620,
+    "end_line": 2639,
+    "start_byte": 138474,
+    "end_byte": 139487,
+    "bytes_sha256": "df40d41a98c9fe7b306875d1a225b3d6540531012bd4a8281d1909be2a44a218"
+  },
+  {
+    "key": "L62#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2640,
+    "end_line": 2671,
+    "start_byte": 139487,
+    "end_byte": 141406,
+    "bytes_sha256": "9c49040a5ea3ea5a9dece0a294cc053c0c1762bfc96536d6a636d201f143850f"
+  },
+  {
+    "key": "L63#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2672,
+    "end_line": 2701,
+    "start_byte": 141406,
+    "end_byte": 143033,
+    "bytes_sha256": "9a6510ef9264c19e965937a804bddc9542d7d71e80171eb05ddddcd02f30f149"
+  },
+  {
+    "key": "L64#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2702,
+    "end_line": 2730,
+    "start_byte": 143033,
+    "end_byte": 144633,
+    "bytes_sha256": "9cc5b58805366b5435b8125b7bd02b84197d3db54bb82f6fcbf33cb87df2b4c6"
+  },
+  {
+    "key": "L65#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2731,
+    "end_line": 2759,
+    "start_byte": 144633,
+    "end_byte": 146333,
+    "bytes_sha256": "24cb6c3d414ecf814b5a2f09c802588e0927b17cde9cf0033f036d98868a4791"
+  },
+  {
+    "key": "L66#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2760,
+    "end_line": 2802,
+    "start_byte": 146333,
+    "end_byte": 149000,
+    "bytes_sha256": "bbe41db9debb266c28be38dc643f2943ed78b35eef96105e613777862d52719c"
+  },
+  {
+    "key": "L67#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2803,
+    "end_line": 2850,
+    "start_byte": 149000,
+    "end_byte": 151945,
+    "bytes_sha256": "34dffc3d4a0e921fb0dc1c5c796b970548148829d4312cd82219d067403a3506"
+  },
+  {
+    "key": "L68#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2851,
+    "end_line": 2903,
+    "start_byte": 151945,
+    "end_byte": 155139,
+    "bytes_sha256": "27ec33b8ca70d43777d5fb7eea2b2598507893ec5c8bb1425ddcee1979b73324"
+  },
+  {
+    "key": "L69#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2904,
+    "end_line": 2966,
+    "start_byte": 155139,
+    "end_byte": 158821,
+    "bytes_sha256": "8a2ceee55861c2c5c62280b8b25151f09e404e8d2be6a1a69d85a5140561be75"
+  },
+  {
+    "key": "L70#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 2967,
+    "end_line": 3013,
+    "start_byte": 158821,
+    "end_byte": 161667,
+    "bytes_sha256": "ef53aac2a2e4f661e989a1f0832357553f58189fc00be606ed3da481e7eb27b8"
+  },
+  {
+    "key": "L71#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3014,
+    "end_line": 3094,
+    "start_byte": 161667,
+    "end_byte": 166597,
+    "bytes_sha256": "dfb45a091d7668894e68f0148d3abb48bb57b18a10d097d161077c81a3d46928"
+  },
+  {
+    "key": "L71#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L71#1",
+    "start_line": 3056,
+    "end_line": 3067,
+    "start_byte": 164040,
+    "end_byte": 164899,
+    "bytes_sha256": "564a7b2e8a18bf1a68b80d301a37442e6f59eaaae59173257b521d65553844c2"
+  },
+  {
+    "key": "L72#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3095,
+    "end_line": 3140,
+    "start_byte": 166597,
+    "end_byte": 169235,
+    "bytes_sha256": "df617986eae08c22a9b05e6b04b92a41f6e9cd423cc02a4a3f3adaf6f76a4569"
+  },
+  {
+    "key": "L73#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3141,
+    "end_line": 3197,
+    "start_byte": 169235,
+    "end_byte": 172371,
+    "bytes_sha256": "3128bb24885d9024d1a52e9f9eb7b6b692ca99800f58f1d2f7dbc082f36a02ce"
+  },
+  {
+    "key": "L73#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L73#1",
+    "start_line": 3143,
+    "end_line": 3150,
+    "start_byte": 169348,
+    "end_byte": 169851,
+    "bytes_sha256": "0e477691ebf292fd35d75fc14d7d0715fe6ca3e1b50b90d6caed93f6d2b1f3c2"
+  },
+  {
+    "key": "L74#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3198,
+    "end_line": 3326,
+    "start_byte": 172371,
+    "end_byte": 180156,
+    "bytes_sha256": "e14bf8a31f77c6aaa7c5e1d5da1793b0dec29fab0a0823d4228114caca25caee"
+  },
+  {
+    "key": "L75#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3327,
+    "end_line": 3351,
+    "start_byte": 180156,
+    "end_byte": 181540,
+    "bytes_sha256": "60a6ba09176a7f2b325d1eb348706b3a79d960d1e84f9388ead2ebedc81edd6f"
+  },
+  {
+    "key": "L76#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3352,
+    "end_line": 3384,
+    "start_byte": 181540,
+    "end_byte": 183565,
+    "bytes_sha256": "27d67a38da282ec11260c9532388e1c7f0cd2971598773d6da8d66d44a6f0152"
+  },
+  {
+    "key": "L77#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3385,
+    "end_line": 3426,
+    "start_byte": 183565,
+    "end_byte": 186237,
+    "bytes_sha256": "8ad3ac2de3067891e5d1edb792e36222e0e968769a98c3bf2b36f7d17f8184e7"
+  },
+  {
+    "key": "L78#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3427,
+    "end_line": 3485,
+    "start_byte": 186237,
+    "end_byte": 190131,
+    "bytes_sha256": "1b99225e3595b0f959cc6b3ccaa3217cc1831806669636a9d7bcfa24566e168f"
+  },
+  {
+    "key": "L79#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3486,
+    "end_line": 3529,
+    "start_byte": 190131,
+    "end_byte": 192954,
+    "bytes_sha256": "1ecc9e02363e48828edf63917a9b6f8f01e4eadad02868b840747041ee9dc07c"
+  },
+  {
+    "key": "L80a#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3530,
+    "end_line": 3602,
+    "start_byte": 192954,
+    "end_byte": 197269,
+    "bytes_sha256": "565dd6b9c6aeed47aa4c2ebc6bfabdc17c156df2df7f18961ccb782a795f7497"
+  },
+  {
+    "key": "L80b#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3603,
+    "end_line": 3675,
+    "start_byte": 197269,
+    "end_byte": 200474,
+    "bytes_sha256": "017f1de9b0f26b75a2f54476642b34c8088384f4f94e21f9c78b511b9ff613f0"
+  },
+  {
+    "key": "L80b#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L80b#1",
+    "start_line": 3618,
+    "end_line": 3625,
+    "start_byte": 198184,
+    "end_byte": 198757,
+    "bytes_sha256": "6f79bf647f9bd75184f1d3ec86c50c8961f7fa7603e230c97ed3d2b0f78555ba"
+  },
+  {
+    "key": "L81#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3676,
+    "end_line": 3706,
+    "start_byte": 200474,
+    "end_byte": 202210,
+    "bytes_sha256": "60338d858a22a9fceb4836a8b6f7bed7f9d74caa90e9039d65d9603bc4a3de6f"
+  },
+  {
+    "key": "L82#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3707,
+    "end_line": 3733,
+    "start_byte": 202210,
+    "end_byte": 203724,
+    "bytes_sha256": "5110301a2e6d37a338994c25be4c96a4e68c9219a6b355529e78ce7cb3547de8"
+  },
+  {
+    "key": "L83#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3734,
+    "end_line": 3762,
+    "start_byte": 203724,
+    "end_byte": 205376,
+    "bytes_sha256": "5f08cfd7584c1cdb13ce0f216373d5e14bf2aad31eaadded2ad3d19ba15b452d"
+  },
+  {
+    "key": "L84#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3763,
+    "end_line": 3826,
+    "start_byte": 205376,
+    "end_byte": 209527,
+    "bytes_sha256": "e022ee91d278df853383e8cc568e78ef16a33551c84b0d53140b0e5f93ed3584"
+  },
+  {
+    "key": "L85#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3827,
+    "end_line": 3882,
+    "start_byte": 209527,
+    "end_byte": 212997,
+    "bytes_sha256": "3a30e0db90877d97252c5692f357a0e1e60b2db6c08f324c974eca6556b8c6df"
+  },
+  {
+    "key": "L86#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3883,
+    "end_line": 3922,
+    "start_byte": 212997,
+    "end_byte": 215483,
+    "bytes_sha256": "e4f82cf36561bbd55892da9c88f88193d1adb72ed033c2921d884353b3518055"
+  },
+  {
+    "key": "L87#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3923,
+    "end_line": 3957,
+    "start_byte": 215483,
+    "end_byte": 217669,
+    "bytes_sha256": "357582bd524b9aca1145bf6af6d2d2e1d367494aa479f81132ea428bf19e0e5b"
+  },
+  {
+    "key": "L88#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 3958,
+    "end_line": 4119,
+    "start_byte": 217669,
+    "end_byte": 228761,
+    "bytes_sha256": "c1090daccdeda5b3af101165f289ce1d31008f2d4dfe86986234b0885b199c7f"
+  },
+  {
+    "key": "L89#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4120,
+    "end_line": 4156,
+    "start_byte": 228761,
+    "end_byte": 231125,
+    "bytes_sha256": "c147c06facac740bcaf9b12f5d5b67035d62106e2c2b1eadf803357b370a8d0e"
+  },
+  {
+    "key": "L90#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4157,
+    "end_line": 4189,
+    "start_byte": 231125,
+    "end_byte": 233074,
+    "bytes_sha256": "4da2b5b02e429a686a07f649dbd1234c3fa8f53516bf61ad9220092ad41ba1d2"
+  },
+  {
+    "key": "L91#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4190,
+    "end_line": 4267,
+    "start_byte": 233074,
+    "end_byte": 238138,
+    "bytes_sha256": "cf5343860edeb37676b10ecec9c2fdaa3a87d628e08c7e6b6b51711bcbbefb91"
+  },
+  {
+    "key": "L91#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L91#1",
+    "start_line": 4252,
+    "end_line": 4261,
+    "start_byte": 237080,
+    "end_byte": 237771,
+    "bytes_sha256": "737342a96fbbedce2a616d56af334b995bf9335339ea92376dc60a1894f9b76b"
+  },
+  {
+    "key": "L92#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4268,
+    "end_line": 4314,
+    "start_byte": 238138,
+    "end_byte": 241201,
+    "bytes_sha256": "daf0bf22200122d3e4884ba85292b11ce23039b21e94b0ab50f434f1c0913a6e"
+  },
+  {
+    "key": "L92#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L92#1",
+    "start_line": 4300,
+    "end_line": 4313,
+    "start_byte": 240151,
+    "end_byte": 241200,
+    "bytes_sha256": "b849922fd5459009a898a686df1c48482a4fd4e11062465048942628a458937a"
+  },
+  {
+    "key": "L93#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4315,
+    "end_line": 4344,
+    "start_byte": 241201,
+    "end_byte": 242925,
+    "bytes_sha256": "66c4a9b56ecb252cc26b6bb14f353510896aae0bde7e7c6b898f12e9e238b907"
+  },
+  {
+    "key": "L94#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4345,
+    "end_line": 4375,
+    "start_byte": 242925,
+    "end_byte": 244717,
+    "bytes_sha256": "341c32c221405f0efa0f92273385231fe79fd1748322e5149f7b172a1ed57ec9"
+  },
+  {
+    "key": "L95#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4376,
+    "end_line": 4405,
+    "start_byte": 244717,
+    "end_byte": 246538,
+    "bytes_sha256": "3629e45d217e052faf412d32a5b955c7f237fa1572c778155964f68bb69219d5"
+  },
+  {
+    "key": "L96#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4406,
+    "end_line": 4437,
+    "start_byte": 246538,
+    "end_byte": 248438,
+    "bytes_sha256": "bcd8646cc3e03c2a12dc6ecbcceb5db6ac1b7d6271e667056d61ca47c3f6090b"
+  },
+  {
+    "key": "L97#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4438,
+    "end_line": 4465,
+    "start_byte": 248438,
+    "end_byte": 250085,
+    "bytes_sha256": "f9d7eec7e820fa833db2fef748fe63efb88a2854ddff0e550e8608dd299b1045"
+  },
+  {
+    "key": "L98#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4466,
+    "end_line": 4493,
+    "start_byte": 250085,
+    "end_byte": 251785,
+    "bytes_sha256": "6788290be7822da0c19012be0bd61be48f942ac28ee9c5d572c57a4636188608"
+  },
+  {
+    "key": "L99#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4494,
+    "end_line": 4523,
+    "start_byte": 251785,
+    "end_byte": 253544,
+    "bytes_sha256": "bae7b8fb566652a5058b14ff2d5c39aa13af168bcb899b2d6cf6981156d981f5"
+  },
+  {
+    "key": "L100#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4524,
+    "end_line": 4552,
+    "start_byte": 253544,
+    "end_byte": 255357,
+    "bytes_sha256": "26424827a61bc1a044de0b240f05b6cebedad855849da592fed0a9de03d122ce"
+  },
+  {
+    "key": "L101#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4553,
+    "end_line": 4582,
+    "start_byte": 255357,
+    "end_byte": 257104,
+    "bytes_sha256": "4f032be0c569c1a51e94f3326fa155970edb96cadf464b7bede8069d4e852081"
+  },
+  {
+    "key": "L102#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4583,
+    "end_line": 4612,
+    "start_byte": 257104,
+    "end_byte": 258817,
+    "bytes_sha256": "7af5df33fb24a8f0f4f0dd74e3e859f562e6fe63ab8662be675d98e04359afe7"
+  },
+  {
+    "key": "L103#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4613,
+    "end_line": 4642,
+    "start_byte": 258817,
+    "end_byte": 260586,
+    "bytes_sha256": "bb45b8cca4dca4dfb92559481cb69e0a78b0006bc8cf7b6c0c3d71797941b279"
+  },
+  {
+    "key": "L104#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4643,
+    "end_line": 4671,
+    "start_byte": 260586,
+    "end_byte": 262257,
+    "bytes_sha256": "e7ee4ae16956dad6b7830f5c7f3ff4597e9e26e35fadde14e6f88184a481a31e"
+  },
+  {
+    "key": "L105#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4672,
+    "end_line": 4698,
+    "start_byte": 262257,
+    "end_byte": 263748,
+    "bytes_sha256": "d951027bcb83874f5fb20caf1a9e891336de92e65889885788fd0f13ddffd34e"
+  },
+  {
+    "key": "L106#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4699,
+    "end_line": 4764,
+    "start_byte": 263748,
+    "end_byte": 266404,
+    "bytes_sha256": "b0d1af4d97da607de01f2f196b11a4036f7dee07b60637d1483659571fba9a5f"
+  },
+  {
+    "key": "L106#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L106#1",
+    "start_line": 4713,
+    "end_line": 4719,
+    "start_byte": 264486,
+    "end_byte": 265028,
+    "bytes_sha256": "edd5d2ac65ca3db41d521b3ab5c09e4391af59f96c2269cb59cf98adf95ef210"
+  },
+  {
+    "key": "L107#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4765,
+    "end_line": 4796,
+    "start_byte": 266404,
+    "end_byte": 268250,
+    "bytes_sha256": "647664490022455db2c9ed1289f663c820b739fcf66f556661960607be4a1883"
+  },
+  {
+    "key": "L108#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4797,
+    "end_line": 4829,
+    "start_byte": 268250,
+    "end_byte": 270102,
+    "bytes_sha256": "48bd4d43dc6707220701fe383090fc748dd7c7983387b22a0e6653377e5f923d"
+  },
+  {
+    "key": "L109#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4830,
+    "end_line": 4856,
+    "start_byte": 270102,
+    "end_byte": 271536,
+    "bytes_sha256": "7cd81f8b25785aaeb609120f1cdb7ba5faae1558b34c159c9e5a2db5a5bee1d4"
+  },
+  {
+    "key": "L110#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4857,
+    "end_line": 4883,
+    "start_byte": 271536,
+    "end_byte": 273060,
+    "bytes_sha256": "a74828d935f5343941d01a5266d2c09b0786fdbef3d781fa75fdd5698e6cac98"
+  },
+  {
+    "key": "L111#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4884,
+    "end_line": 4911,
+    "start_byte": 273060,
+    "end_byte": 274639,
+    "bytes_sha256": "e923d64e52d2a305241a1ba163ee5ee57424ea1abc0babc337a1ff3659417c61"
+  },
+  {
+    "key": "L112#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4912,
+    "end_line": 4941,
+    "start_byte": 274639,
+    "end_byte": 276276,
+    "bytes_sha256": "46c1ce821c029fae2c9efcf68d46874461e70928b3fa72bf87cd06c38bb05324"
+  },
+  {
+    "key": "L113#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4942,
+    "end_line": 4968,
+    "start_byte": 276276,
+    "end_byte": 277809,
+    "bytes_sha256": "e98148e090763441241e42e929492cd59954c3ddd7c6ad5aa3f2e4c6c4eec13a"
+  },
+  {
+    "key": "L114#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 4969,
+    "end_line": 5038,
+    "start_byte": 277809,
+    "end_byte": 280980,
+    "bytes_sha256": "09cedd542f2c4e4d63cf1f916a9fed4c8c60dfda5378a48efe1ac5f549406ff1"
+  },
+  {
+    "key": "L114#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L114#1",
+    "start_line": 4998,
+    "end_line": 5007,
+    "start_byte": 279481,
+    "end_byte": 280224,
+    "bytes_sha256": "c4924bd1a513bd7dba012250d325c13191953032f516396518d2de1c2dc7ffbc"
+  },
+  {
+    "key": "L115#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5039,
+    "end_line": 5063,
+    "start_byte": 280980,
+    "end_byte": 282316,
+    "bytes_sha256": "c130deb2b27331aeafd5cf9588196668667213df3c8099b01b23eb763a0f9ad5"
+  },
+  {
+    "key": "L116#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5064,
+    "end_line": 5128,
+    "start_byte": 282316,
+    "end_byte": 286352,
+    "bytes_sha256": "e77a039bd333b4f624a26870fded8cbeb7eac041481468df576b818e2a818f44"
+  },
+  {
+    "key": "L116#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L116#1",
+    "start_line": 5120,
+    "end_line": 5123,
+    "start_byte": 285870,
+    "end_byte": 286160,
+    "bytes_sha256": "da3bb232f8e2ef02232a5b430874d0006c7dd4c425670f3497d982c177d848a2"
+  },
+  {
+    "key": "L117#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5129,
+    "end_line": 5199,
+    "start_byte": 286352,
+    "end_byte": 290788,
+    "bytes_sha256": "9c0b3ca51f4d6e4d3467f9190083f4daba49a57fac84808b4daba1f4299e9cc9"
+  },
+  {
+    "key": "L118a#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5200,
+    "end_line": 5267,
+    "start_byte": 290788,
+    "end_byte": 294872,
+    "bytes_sha256": "5b1e980e49a58fd01e3b5328a30d3482b341944d09175e2e3280f26f6cf153a5"
+  },
+  {
+    "key": "L119a#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5268,
+    "end_line": 5356,
+    "start_byte": 294872,
+    "end_byte": 300479,
+    "bytes_sha256": "f68708be95840dade71bc66cc42e510a9b300e5081e2732605a0482cb7a49286"
+  },
+  {
+    "key": "L118b#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5357,
+    "end_line": 5409,
+    "start_byte": 300479,
+    "end_byte": 303476,
+    "bytes_sha256": "65d7eb3c318c27635225a91f0ace95f22df0f85a7277095c4ea2678c9e8b3561"
+  },
+  {
+    "key": "L119b#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5410,
+    "end_line": 5464,
+    "start_byte": 303476,
+    "end_byte": 307016,
+    "bytes_sha256": "8a14f29488a769764b240aa0f6c4eca8bffeb1f112e775092fa26fa5655846d2"
+  },
+  {
+    "key": "L120#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5465,
+    "end_line": 5550,
+    "start_byte": 307016,
+    "end_byte": 312460,
+    "bytes_sha256": "6cddcac1e744c556c5d807412a02402f3c0610f28d3ad6bc3e91cc487540f8fc"
+  },
+  {
+    "key": "L120#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L120#1",
+    "start_line": 5514,
+    "end_line": 5520,
+    "start_byte": 310031,
+    "end_byte": 310543,
+    "bytes_sha256": "330c2382e6f3969977b76a0eb734d94baa23cd0cc475931483755f4c3804655c"
+  },
+  {
+    "key": "L120#1/recurrence#2",
+    "kind": "recurrence-marker",
+    "parent_key": "L120#1",
+    "start_line": 5522,
+    "end_line": 5534,
+    "start_byte": 310544,
+    "end_byte": 311491,
+    "bytes_sha256": "e93cf19a70576f2acec5ad6051d0691e56bdcaba99ab870aceabfeeb553c53d4"
+  },
+  {
+    "key": "L120#1/recurrence#3",
+    "kind": "recurrence-marker",
+    "parent_key": "L120#1",
+    "start_line": 5536,
+    "end_line": 5549,
+    "start_byte": 311492,
+    "end_byte": 312459,
+    "bytes_sha256": "d5eca3d85061efc0fffdf00710d1df67b2cb7ebf8c6a84ed31b75f964f2a90c2"
+  },
+  {
+    "key": "L121#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5551,
+    "end_line": 5592,
+    "start_byte": 312460,
+    "end_byte": 314939,
+    "bytes_sha256": "cd519c1fed205efb5232ed769912eeb5748b8708b310a39bd37633ef1b69fc56"
+  },
+  {
+    "key": "L122#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5593,
+    "end_line": 5644,
+    "start_byte": 314939,
+    "end_byte": 318003,
+    "bytes_sha256": "3af74894de6137c945aa6be1080dd05a12d4c6b7e03706326a49fc35fd397907"
+  },
+  {
+    "key": "L123#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5645,
+    "end_line": 5698,
+    "start_byte": 318003,
+    "end_byte": 321229,
+    "bytes_sha256": "cfa832e25e1b8550b03eb1cdd494cfcf811ad37294abdc6b4fc54770af70ca9a"
+  },
+  {
+    "key": "L124#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5699,
+    "end_line": 5749,
+    "start_byte": 321229,
+    "end_byte": 324189,
+    "bytes_sha256": "d5f6b0c6c633b1ef6111e66d3282e967a803b5b1dcc636707e8577d38ca2421d"
+  },
+  {
+    "key": "L125#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5750,
+    "end_line": 5815,
+    "start_byte": 324189,
+    "end_byte": 328147,
+    "bytes_sha256": "78d955925293af8611777044b79183093df54b27bed54de92f7d405d50efb8ae"
+  },
+  {
+    "key": "L126#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5816,
+    "end_line": 5856,
+    "start_byte": 328147,
+    "end_byte": 330756,
+    "bytes_sha256": "119b9449dc698e069d7ccda431fc14488bd65f8f3d3d8fc016820e5cdb8ca64a"
+  },
+  {
+    "key": "L127#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5857,
+    "end_line": 5916,
+    "start_byte": 330756,
+    "end_byte": 334608,
+    "bytes_sha256": "8e0581479e64d329aee1dd46d99e7ce842400fc4c6c1713c14e53f0fcfa4aea1"
+  },
+  {
+    "key": "L128#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5917,
+    "end_line": 5949,
+    "start_byte": 334608,
+    "end_byte": 336438,
+    "bytes_sha256": "9c2c9eeddee033c1acb1fecf347e6f10f8e0ae05f9da4d537abde6f16f7dc5fa"
+  },
+  {
+    "key": "L129#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 5950,
+    "end_line": 6011,
+    "start_byte": 336438,
+    "end_byte": 340466,
+    "bytes_sha256": "2918e8b4ca87619af4c756fe1f7362e34da47057209934c1c23bc2f8f388a923"
+  },
+  {
+    "key": "L130#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6012,
+    "end_line": 6054,
+    "start_byte": 340466,
+    "end_byte": 343080,
+    "bytes_sha256": "a2ad9274addba9ad3e65a9466a62b80961a0f589db7528ba55c77ad1af0455e3"
+  },
+  {
+    "key": "L131#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6055,
+    "end_line": 6110,
+    "start_byte": 343080,
+    "end_byte": 346599,
+    "bytes_sha256": "f533ef1b7fdb482bffdb938dc0e2bb0ef7b19bc4265879e50fe5447d4670407a"
+  },
+  {
+    "key": "L132#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6111,
+    "end_line": 6162,
+    "start_byte": 346599,
+    "end_byte": 349993,
+    "bytes_sha256": "72d15b5f1f6f9605b691a83427f5a4c70280fcd340e2b2bebd7748575345adb3"
+  },
+  {
+    "key": "L133#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6163,
+    "end_line": 6208,
+    "start_byte": 349993,
+    "end_byte": 352756,
+    "bytes_sha256": "fde19a47224adf57eb706f24ef3474eda8e85bc20dbcd2bc728892a1eb54d99f"
+  },
+  {
+    "key": "L134#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6209,
+    "end_line": 6253,
+    "start_byte": 352756,
+    "end_byte": 355454,
+    "bytes_sha256": "4e37067ede96b3bb3969a6c2db985f7b37d8735aa4f5e58288d83a4b960cb48a"
+  },
+  {
+    "key": "L135#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6254,
+    "end_line": 6347,
+    "start_byte": 355454,
+    "end_byte": 361498,
+    "bytes_sha256": "50e69b7e8acb6331e67cc4f2471300e7dedd134a11810b3fe6e81fadb85f47f2"
+  },
+  {
+    "key": "L136#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6348,
+    "end_line": 6367,
+    "start_byte": 361498,
+    "end_byte": 362490,
+    "bytes_sha256": "f9f18a6c3417d4a9a53cff1e8f25bdf9c07040219f5ab5a8fa6212ffc31b5747"
+  },
+  {
+    "key": "L137#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6368,
+    "end_line": 6391,
+    "start_byte": 362490,
+    "end_byte": 363567,
+    "bytes_sha256": "acf4be3874ba02ac9843b61c4343233fddf12fa4a41e365ff2b7e402d470b2d8"
+  },
+  {
+    "key": "L138#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6392,
+    "end_line": 6413,
+    "start_byte": 363567,
+    "end_byte": 364652,
+    "bytes_sha256": "e512213e59274f6b6f7f90a28f3be9155c5aa9c297dab0be21c70c1c9437158e"
+  },
+  {
+    "key": "L139#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6414,
+    "end_line": 6463,
+    "start_byte": 364652,
+    "end_byte": 367691,
+    "bytes_sha256": "1e094938c79f0583f9ff1f3126d19e6ad8b6a213471b7338432034367ca4bcb0"
+  },
+  {
+    "key": "L140#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6464,
+    "end_line": 6524,
+    "start_byte": 367691,
+    "end_byte": 371456,
+    "bytes_sha256": "62491e489ba1a3363b2d1b2a59c18c01188f927c5a954987fb8662801131d793"
+  },
+  {
+    "key": "L141#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6525,
+    "end_line": 6556,
+    "start_byte": 371456,
+    "end_byte": 373316,
+    "bytes_sha256": "082de0d2101bc7cb30eb9f9e73376a3a78216c22fac98d233969e52b33d7b4cb"
+  },
+  {
+    "key": "L142#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6557,
+    "end_line": 6604,
+    "start_byte": 373316,
+    "end_byte": 376224,
+    "bytes_sha256": "ea77df1bd6e8d233719f2f0c6b3ca3043db862c713ea996ca9958a2149a2a229"
+  },
+  {
+    "key": "L142#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L142#1",
+    "start_line": 6559,
+    "end_line": 6565,
+    "start_byte": 373408,
+    "end_byte": 373949,
+    "bytes_sha256": "71edea50fe91cc8144da53399e116f12267ceaa0f77735d0813e918b2676bb32"
+  },
+  {
+    "key": "L142#1/recurrence#2",
+    "kind": "recurrence-marker",
+    "parent_key": "L142#1",
+    "start_line": 6567,
+    "end_line": 6575,
+    "start_byte": 373950,
+    "end_byte": 374624,
+    "bytes_sha256": "e960f220cc6421cfbd0f297b939097c216e47d0be5c8e58d9e97946a695f685b"
+  },
+  {
+    "key": "L143#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6605,
+    "end_line": 6634,
+    "start_byte": 376224,
+    "end_byte": 378021,
+    "bytes_sha256": "bad15f2c80922f89ebb5d7b049a0325f6d9c643f604f270d2bdcfba8df925219"
+  },
+  {
+    "key": "L144#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6635,
+    "end_line": 6666,
+    "start_byte": 378021,
+    "end_byte": 379875,
+    "bytes_sha256": "f5541ef7f58f6417a9edff1bbdce067f149018b67d5b0dd3cd04f05c0e4812ff"
+  },
+  {
+    "key": "L145#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6667,
+    "end_line": 6705,
+    "start_byte": 379875,
+    "end_byte": 382231,
+    "bytes_sha256": "0e4281cc90212a1c7ba6541274bf836a2ed852ff8808f1b21db50b41b6a2890f"
+  },
+  {
+    "key": "L145#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L145#1",
+    "start_line": 6669,
+    "end_line": 6677,
+    "start_byte": 379954,
+    "end_byte": 380631,
+    "bytes_sha256": "b3159cc5e4b1add71ac24a53626e1750da4e92c5c33a3d6c536bab06cf009c52"
+  },
+  {
+    "key": "L146#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6706,
+    "end_line": 6790,
+    "start_byte": 382231,
+    "end_byte": 387939,
+    "bytes_sha256": "aefaafb28c68306371f8e9eb8746515bdea7da4ab471c0d9310ca356cd27efbd"
+  },
+  {
+    "key": "L146#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L146#1",
+    "start_line": 6739,
+    "end_line": 6753,
+    "start_byte": 384371,
+    "end_byte": 385517,
+    "bytes_sha256": "4ed9898dd5c11904bfa7d71afaa55f23d930c7a0e09ef3549acb3f9b32378d81"
+  },
+  {
+    "key": "L146#1/recurrence#2",
+    "kind": "recurrence-marker",
+    "parent_key": "L146#1",
+    "start_line": 6755,
+    "end_line": 6765,
+    "start_byte": 385518,
+    "end_byte": 386341,
+    "bytes_sha256": "7709c8e7d31205c336d82e3efb3ec43ae66fcf9533d32db5d6ca0fb1fb88e3cf"
+  },
+  {
+    "key": "L146#1/recurrence#3",
+    "kind": "recurrence-marker",
+    "parent_key": "L146#1",
+    "start_line": 6767,
+    "end_line": 6776,
+    "start_byte": 386342,
+    "end_byte": 387109,
+    "bytes_sha256": "affb905c10748bca341646b5d3c2fd52153ab51c2687787d8a21f77c542f4cc4"
+  },
+  {
+    "key": "L146#1/recurrence#4",
+    "kind": "recurrence-marker",
+    "parent_key": "L146#1",
+    "start_line": 6778,
+    "end_line": 6787,
+    "start_byte": 387110,
+    "end_byte": 387879,
+    "bytes_sha256": "3c4b54b893f526f5cbac64e9485efa47de1718b734a098f8bc4e99e32b3f5636"
+  },
+  {
+    "key": "L147#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6791,
+    "end_line": 6839,
+    "start_byte": 387939,
+    "end_byte": 391156,
+    "bytes_sha256": "c045da956e11975549ad67d9154f09ad9c577e1da41eaafc4f6358cbcef70735"
+  },
+  {
+    "key": "L148#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6840,
+    "end_line": 6873,
+    "start_byte": 391156,
+    "end_byte": 393180,
+    "bytes_sha256": "96b59c3541a8590c9e5bb97a775af0be7df8a64c7d46f7832901b64d56446f2e"
+  },
+  {
+    "key": "L149#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6874,
+    "end_line": 6907,
+    "start_byte": 393180,
+    "end_byte": 395250,
+    "bytes_sha256": "58bfba2f2c3d0df7e5ebdac9a9c1c4870d51a88a1be78b734a66a28572d32b4a"
+  },
+  {
+    "key": "L150#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6908,
+    "end_line": 6961,
+    "start_byte": 395250,
+    "end_byte": 398561,
+    "bytes_sha256": "e3f334f777734b593d39c70d13d329dff99e67882c76d46053330c13c429dbc8"
+  },
+  {
+    "key": "L151#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 6962,
+    "end_line": 7007,
+    "start_byte": 398561,
+    "end_byte": 401421,
+    "bytes_sha256": "02e4e447da6ed68c9d6c75f22c1ebd8698b3bacf5f79763fd06e10a26e6edeba"
+  },
+  {
+    "key": "L152#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7008,
+    "end_line": 7056,
+    "start_byte": 401421,
+    "end_byte": 404263,
+    "bytes_sha256": "ab496a79048183e0d955a0c006e4519ee7b6bdf5811203a0146f2073173a7f14"
+  },
+  {
+    "key": "L153#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7057,
+    "end_line": 7116,
+    "start_byte": 404263,
+    "end_byte": 407867,
+    "bytes_sha256": "fe130042ad80c7672ddceae57dd77242191edd6cfa2ea526f0398f3b21e9468d"
+  },
+  {
+    "key": "L154#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7117,
+    "end_line": 7186,
+    "start_byte": 407867,
+    "end_byte": 412120,
+    "bytes_sha256": "9c3289687c5c0d3de73ea502bef53cbb0bdf5fcd7947ade4fe5d2601a64142a9"
+  },
+  {
+    "key": "L155#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7187,
+    "end_line": 7242,
+    "start_byte": 412120,
+    "end_byte": 415566,
+    "bytes_sha256": "295c6ca774751f813d878583ae49d04c523595308447002c7ebb2bf0d0e51724"
+  },
+  {
+    "key": "L156#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7243,
+    "end_line": 7329,
+    "start_byte": 415566,
+    "end_byte": 421084,
+    "bytes_sha256": "25a88d52e39321158df243ad9add3619db5d0a982260a52bac4469b4bed85890"
+  },
+  {
+    "key": "L156#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L156#1",
+    "start_line": 7247,
+    "end_line": 7255,
+    "start_byte": 415753,
+    "end_byte": 416447,
+    "bytes_sha256": "72e0fd75d6d7945cd4c1597e81494a6283628f19dc2b1a8ac32d71fb120c44d6"
+  },
+  {
+    "key": "L157#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7330,
+    "end_line": 7387,
+    "start_byte": 421084,
+    "end_byte": 424683,
+    "bytes_sha256": "189b051b8b6ddfca044218a5cea208c0985c548844baebcf406b9aaf8164739e"
+  },
+  {
+    "key": "L157#2",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7388,
+    "end_line": 7466,
+    "start_byte": 424683,
+    "end_byte": 429494,
+    "bytes_sha256": "45874c2860daf70a87e33d5c77a83520952afe8f34fe1cb31bb6ec85ba9c1d53"
+  },
+  {
+    "key": "L159#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7467,
+    "end_line": 7656,
+    "start_byte": 429494,
+    "end_byte": 441130,
+    "bytes_sha256": "724c3c0cb6f330508645754a137898816bcad25be69e4973d6e641b13ca89281"
+  },
+  {
+    "key": "L159#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L159#1",
+    "start_line": 7511,
+    "end_line": 7519,
+    "start_byte": 432194,
+    "end_byte": 432851,
+    "bytes_sha256": "204347106ce527a6310fe20abe7c2f5ba8fff3e6d66e5caca8e4ab3fa7c19784"
+  },
+  {
+    "key": "L2026-08-09-2251#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7657,
+    "end_line": 7721,
+    "start_byte": 441130,
+    "end_byte": 444799,
+    "bytes_sha256": "3b06cdd5531f71671515c7f4c5e7545586f55d486e9ee4aa3a6c5ffd5292d7e2"
+  },
+  {
+    "key": "L2026-08-09-2318#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7722,
+    "end_line": 7779,
+    "start_byte": 444799,
+    "end_byte": 448307,
+    "bytes_sha256": "f7f277a91d7834375be4b89a89cf112a029b61885497cf41eee86ff4f776c7d3"
+  },
+  {
+    "key": "L2026-08-10-0838#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7780,
+    "end_line": 7895,
+    "start_byte": 448307,
+    "end_byte": 455850,
+    "bytes_sha256": "34de1d45ae31d7583dfa8d2ecb0616ad4266a2ad202eada15a43bef3b0a6d7e3"
+  },
+  {
+    "key": "L2026-08-10-0856#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 7896,
+    "end_line": 8040,
+    "start_byte": 455850,
+    "end_byte": 465238,
+    "bytes_sha256": "c2cb746eb96e910b14a8137caa4c2de8e3b789ba2751e7790c29a55369955a75"
+  },
+  {
+    "key": "L2026-08-10-0815#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 8041,
+    "end_line": 8103,
+    "start_byte": 465238,
+    "end_byte": 469123,
+    "bytes_sha256": "82938bf9bc0eb26da7478b6a5ef3e5d046571c94fbd9b231f9f773bd020157a9"
+  },
+  {
+    "key": "L2026-08-10-1004#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 8104,
+    "end_line": 8182,
+    "start_byte": 469123,
+    "end_byte": 472620,
+    "bytes_sha256": "9a1185d17f610479d83d9b3cf90187ee7e36c6fecaad8c59b14b2434440e9fbd"
+  },
+  {
+    "key": "L2026-08-10-1015#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 8183,
+    "end_line": 8255,
+    "start_byte": 472620,
+    "end_byte": 475741,
+    "bytes_sha256": "6b0a064e7d3d04434cffdeda5037a4acd37d27d6dfed41e95dcbcf612ccea7e3"
+  },
+  {
+    "key": "L2026-08-10-1015#1/recurrence#1",
+    "kind": "recurrence-marker",
+    "parent_key": "L2026-08-10-1015#1",
+    "start_line": 8188,
+    "end_line": 8193,
+    "start_byte": 472871,
+    "end_byte": 473305,
+    "bytes_sha256": "345cc35685755aa395d45bf60c3836d67eb758ca6ed55b3cee77d0f9c759defb"
+  },
+  {
+    "key": "L2026-08-10-1058#1",
+    "kind": "lesson",
+    "parent_key": null,
+    "start_line": 8256,
+    "end_line": 8326,
+    "start_byte": 475741,
+    "end_byte": 478835,
+    "bytes_sha256": "933976c3d3022d56f04f32d0c675fb1257ac6c9d2c02ab9a591a3df7757cc257"
+  }
+]

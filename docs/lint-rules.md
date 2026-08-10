@@ -205,10 +205,15 @@ Total rules: 159
 
 | Rule | Severity | Description |
 | --- | --- | --- |
-| L-001 | error | Requires every Lesson body to declare its four required sections (Incident, Process gap, Check, Enforcement); checks presence only, never content. |
+| L-001 | error | Requires every Lesson body to declare the required section set for its canonical-directory or compatibility-flat layout. |
 | L-002 | error | Requires a Lesson's body **Status:** value to be one of the canonical enforcement-ladder statuses (Recorded, Stated, Enforced, Withdrawn, Superseded). |
 | L-003 | error | Requires the lessons index to list every lesson; --fix inserts missing rows. |
-| L-004 | error | Requires each lessons index row's Status/Recurred/Date/Owner cells to mirror the corresponding Lesson file; --fix regenerates drifted rows. |
+| L-004 | error | Requires each lessons index row to match the layout-specific Lesson projection; --fix regenerates drifted rows. |
+| L-005 | error | Requires canonical directory Lessons to carry ordered metadata and repository-controlled classifications. |
+| L-006 | error | Requires canonical Tracking to declare the append-only occurrence store, derived recurrence, and published schema URL. |
+| L-007 | error | Requires Enforced Lessons to declare deterministic control, verification, and stable evidence. |
+| L-008 | error | Requires duplicate and supersession relations to resolve without conflicts or cycles. |
+| L-009 | error | Requires every canonical occurrence child to satisfy the published append-only JSON contract. |
 
 ## plan
 

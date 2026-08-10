@@ -122,6 +122,19 @@ var docTypeTargets = []docTypeTarget{
 		severity:    "warn",
 		walk:        walkEntityFiles,
 	},
+	{
+		description:   "Lesson README",
+		url:           "https://specscore.md/lesson-specification",
+		severity:      "error",
+		statusBearing: true,
+		walk:          walkLessonReadmes,
+	},
+	{
+		description: "lessons-index README",
+		url:         "https://specscore.md/lessons-index-specification",
+		severity:    "error",
+		walk:        walkLessonsIndex,
+	},
 }
 
 // adherenceFooterChecker verifies that every SpecScore document of a
@@ -278,6 +291,26 @@ func walkIdeasIndex(specRoot string, fn func(path string, content []byte)) error
 	}
 	fn(path, content)
 	return nil
+}
+
+func walkLessonsIndex(specRoot string, fn func(path string, content []byte)) error {
+	path := filepath.Join(specRoot, "lessons", "README.md")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	fn(path, content)
+	return nil
+}
+
+func walkLessonReadmes(specRoot string, fn func(path string, content []byte)) error {
+	root := filepath.Join(specRoot, "lessons")
+	return walkMatchingFiles(root, func(path string, depth int, name string) bool {
+		if name != "README.md" || depth != 2 {
+			return false
+		}
+		return path != filepath.Join(root, "README.md")
+	}, fn)
 }
 
 // walkFeaturesIndex invokes fn for specRoot/features/README.md if present.

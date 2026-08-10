@@ -7,6 +7,8 @@ package lesson
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,24 +23,17 @@ import (
 var occurrenceUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 var gitCommit = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 var repositoryID = regexp.MustCompile(`^[^/\s]+/[^/\s]+/[^/\s]+$`)
+var occurredAtLexical = regexp.MustCompile(`^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?Z$`)
+var occurrencePublishLink = os.Link
 
 // occurrenceForbiddenNames match the published schema policy. Callers must
 // redact before write; validators reject unsafe shape instead of silently
 // discarding fields.
 var occurrenceForbiddenNames = map[string]struct{}{
-	"prompt": {}, "raw_prompt": {}, "raw_log": {}, "log": {}, "diff": {},
+	"prompt": {}, "original_prompt": {}, "user_prompt": {}, "agent_prompt": {},
+	"raw_prompt": {}, "raw_log": {}, "log": {}, "diff": {},
 	"transcript": {}, "authorization": {}, "token": {}, "password": {}, "secret": {},
 }
-
-var (
-	githubToken = regexp.MustCompile(`(?i)gh[pousr]_[a-z0-9_]{20,}`)
-	awsKey      = regexp.MustCompile(`AKIA[0-9A-Z]{16}`)
-)
-
-// ContentScanner is an integration seam for the repository-standard secret
-// scanner. It is invoked for every persisted string both before write and
-// while validating existing occurrences. It must return a value-free error.
-var ContentScanner = func(_ string) error { return nil }
 
 // Occurrence is the v1 on-disk JSON contract. Context intentionally remains a
 // typed generic map so the CLI can preserve the format's vendor-neutral shape.
@@ -60,6 +55,9 @@ type Evidence struct {
 
 type AddOccurrenceOptions struct {
 	LessonPath string
+	// ID is optional for ordinary writes. Deterministic importers may supply a
+	// UUID v4-shaped content-derived identity to make replay idempotent.
+	ID         string
 	Summary    string
 	Context    map[string]any
 	Evidence   Evidence
@@ -77,8 +75,8 @@ func ValidateOccurrence(o Occurrence) error {
 	if o.OccurredAt.IsZero() || o.OccurredAt.Location() != time.UTC {
 		return fmt.Errorf("occurred_at must be RFC-3339 UTC")
 	}
-	if n := utf8.RuneCountInString(o.Summary); n == 0 || n > 500 {
-		return fmt.Errorf("summary must contain 1..500 Unicode code points")
+	if err := validateBounded("summary", o.Summary); err != nil {
+		return err
 	}
 	if o.Context == nil {
 		return fmt.Errorf("context is required")
@@ -92,10 +90,15 @@ func ValidateOccurrence(o Occurrence) error {
 	if len(o.Redactions) > 20 {
 		return fmt.Errorf("redactions has more than 20 entries")
 	}
+	seenRedactions := map[string]struct{}{}
 	for _, s := range o.Redactions {
 		if err := validateBounded("redactions", s); err != nil {
 			return err
 		}
+		if _, exists := seenRedactions[s]; exists {
+			return fmt.Errorf("redactions entries must be unique")
+		}
+		seenRedactions[s] = struct{}{}
 	}
 	return nil
 }
@@ -104,19 +107,16 @@ func validateBounded(field, s string) error {
 	if n := utf8.RuneCountInString(s); n == 0 || n > 500 {
 		return fmt.Errorf("%s must contain 1..500 Unicode code points", field)
 	}
+	if strings.ContainsAny(s, "\r\n") {
+		return fmt.Errorf("%s must be a single line", field)
+	}
 	lower := strings.ToLower(s)
 	for _, banned := range []string{"-----begin", "authorization:", "authorization=", "api_key", "api-key", "access_token", "bearer ", "password:", "password=", "token:", "token="} {
 		if strings.Contains(lower, banned) {
 			return fmt.Errorf("%s contains a credential-bearing value", field)
 		}
 	}
-	if githubToken.MatchString(s) || awsKey.MatchString(s) {
-		return fmt.Errorf("%s contains a credential-bearing value", field)
-	}
-	if err := ContentScanner(s); err != nil {
-		return fmt.Errorf("%s rejected by content scanner", field)
-	}
-	return nil
+	return ValidateSafeContent(field, s)
 }
 
 func validateContext(c map[string]any) error {
@@ -189,8 +189,8 @@ func validateContextObject(kind string, values map[string]any) error {
 				return fmt.Errorf("context.git.commit must be a lowercase Git SHA")
 			}
 		case "worktree.path_hint":
-			if strings.HasPrefix(s, "/") || strings.Contains(s, "..") {
-				return fmt.Errorf("context.worktree.path_hint must be relative or redacted")
+			if err := validateRepoRelativePath(s); err != nil {
+				return fmt.Errorf("context.worktree.path_hint must be a normalized repository-relative forward-slash path or redacted")
 			}
 		case "execution.kind":
 			if s != "interactive" && s != "automation" && s != "ci" && s != "unknown" {
@@ -214,7 +214,36 @@ func validateEvidence(e Evidence) error {
 	if e.Ref == nil {
 		return fmt.Errorf("evidence.ref is required when evidence.kind is %s", e.Kind)
 	}
-	return validateBounded("evidence.ref", *e.Ref)
+	if err := validateBounded("evidence.ref", *e.Ref); err != nil {
+		return err
+	}
+	switch e.Kind {
+	case "path":
+		if err := validateRepoRelativePath(*e.Ref); err != nil {
+			return fmt.Errorf("evidence.ref must be a normalized repository-relative forward-slash path")
+		}
+	case "url":
+		u, err := url.ParseRequestURI(*e.Ref)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("evidence.ref must be an http or https URL")
+		}
+	}
+	return nil
+}
+
+func validateRepoRelativePath(value string) error {
+	if value == "" || strings.Contains(value, "\\") || strings.HasPrefix(value, "/") {
+		return fmt.Errorf("invalid repository-relative path")
+	}
+	if len(value) >= 2 && value[1] == ':' {
+		return fmt.Errorf("invalid repository-relative path")
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return fmt.Errorf("invalid repository-relative path")
+		}
+	}
+	return nil
 }
 
 // AddOccurrence writes exactly one new immutable child JSON file.
@@ -235,14 +264,18 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	if opts.Evidence.Kind == "" {
 		opts.Evidence = Evidence{Kind: "none"}
 	}
-	o := Occurrence{SchemaVersion: 1, ID: uuid.NewString(), OccurredAt: opts.Now.UTC(), Summary: strings.TrimSpace(opts.Summary), Context: opts.Context, Evidence: opts.Evidence, Redactions: opts.Redactions}
+	id := opts.ID
+	if id == "" {
+		id = uuid.NewString()
+	}
+	o := Occurrence{SchemaVersion: 1, ID: id, OccurredAt: opts.Now.UTC(), Summary: strings.TrimSpace(opts.Summary), Context: opts.Context, Evidence: opts.Evidence, Redactions: opts.Redactions}
 	if o.Summary == "" {
 		o.Summary = "Lesson gap observed."
 	}
 	if err := ValidateOccurrence(o); err != nil {
 		return Occurrence{}, err
 	}
-	if err := os.MkdirAll(l.OccurrencesDir, 0o755); err != nil {
+	if err := ensureOccurrenceDirectory(l.OccurrencesDir); err != nil {
 		return Occurrence{}, err
 	}
 	o.Path = filepath.Join(l.OccurrencesDir, o.ID+".json")
@@ -250,20 +283,55 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	if err != nil {
 		return Occurrence{}, err
 	}
-	f, err := os.OpenFile(o.Path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.CreateTemp(l.OccurrencesDir, ".occurrence-")
 	if err != nil {
+		return Occurrence{}, err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
 		return Occurrence{}, err
 	}
 	if _, err := f.Write(append(b, '\n')); err != nil {
 		_ = f.Close()
-		_ = os.Remove(o.Path)
+		return Occurrence{}, err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
 		return Occurrence{}, err
 	}
 	if err := f.Close(); err != nil {
+		return Occurrence{}, err
+	}
+	if err := occurrencePublishLink(tmp, o.Path); err != nil {
+		return Occurrence{}, err
+	}
+	if err := syncDirectory(l.OccurrencesDir); err != nil {
 		_ = os.Remove(o.Path)
 		return Occurrence{}, err
 	}
 	return o, nil
+}
+
+func ensureOccurrenceDirectory(path string) error {
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("occurrence store is not a directory")
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		return err
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
+	return syncDirectory(path)
 }
 
 // DiscoverOccurrences validates every child file and returns deterministic
@@ -289,25 +357,9 @@ func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
 			continue
 		}
 		path := filepath.Join(l.OccurrencesDir, e.Name())
-		data, err := os.ReadFile(path)
+		o, err := ValidateOccurrenceFile(path)
 		if err != nil {
 			return nil, err
-		}
-		var o Occurrence
-		if err := validateOccurrenceRaw(data); err != nil {
-			return nil, fmt.Errorf("invalid occurrence %s: %w", path, err)
-		}
-		dec := json.NewDecoder(strings.NewReader(string(data)))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&o); err != nil {
-			return nil, fmt.Errorf("invalid occurrence %s: %w", path, err)
-		}
-		o.Path = path
-		if strings.TrimSuffix(e.Name(), ".json") != o.ID {
-			return nil, fmt.Errorf("occurrence filename and id differ: %s", path)
-		}
-		if err := ValidateOccurrence(o); err != nil {
-			return nil, fmt.Errorf("invalid occurrence %s: %w", path, err)
 		}
 		out = append(out, o)
 	}
@@ -320,7 +372,44 @@ func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
 	return out, nil
 }
 
+// ValidateOccurrenceFile validates one child independently so lint can report
+// every malformed child instead of aborting a directory scan at the first.
+func ValidateOccurrenceFile(path string) (Occurrence, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Occurrence{}, err
+	}
+	var o Occurrence
+	if err := validateOccurrenceRaw(data); err != nil {
+		return Occurrence{}, fmt.Errorf("invalid occurrence %s: %w", path, err)
+	}
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&o); err != nil {
+		return Occurrence{}, fmt.Errorf("invalid occurrence %s: %w", path, err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return Occurrence{}, fmt.Errorf("invalid occurrence %s: trailing JSON", path)
+	}
+	o.Path = path
+	if strings.TrimSuffix(filepath.Base(path), ".json") != o.ID {
+		return Occurrence{}, fmt.Errorf("occurrence filename and id differ: %s", path)
+	}
+	if err := ValidateOccurrence(o); err != nil {
+		return Occurrence{}, fmt.Errorf("invalid occurrence %s: %w", path, err)
+	}
+	return o, nil
+}
+
 func validateOccurrenceRaw(data []byte) error {
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	if err := scanOccurrenceJSON(document); err != nil {
+		return err
+	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -333,8 +422,37 @@ func validateOccurrenceRaw(data []byte) error {
 	if err := json.Unmarshal(timestamp, &text); err != nil {
 		return fmt.Errorf("occurred_at must be a string")
 	}
-	if !strings.HasSuffix(text, "Z") {
-		return fmt.Errorf("occurred_at must use a UTC Z suffix")
+	if len(text) > 40 {
+		return fmt.Errorf("occurred_at exceeds 40 bytes")
+	}
+	if !occurredAtLexical.MatchString(text) {
+		return fmt.Errorf("occurred_at must use the strict RFC-3339 UTC Z form")
+	}
+	return nil
+}
+
+func scanOccurrenceJSON(value any) error {
+	switch x := value.(type) {
+	case map[string]any:
+		for key, child := range x {
+			if _, forbidden := occurrenceForbiddenNames[strings.ToLower(key)]; forbidden {
+				return fmt.Errorf("occurrence contains a forbidden property name")
+			}
+			if err := ValidateSafeContent("occurrence property name", key); err != nil {
+				return err
+			}
+			if err := scanOccurrenceJSON(child); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if err := scanOccurrenceJSON(child); err != nil {
+				return err
+			}
+		}
+	case string:
+		return ValidateSafeContent("occurrence string", x)
 	}
 	return nil
 }

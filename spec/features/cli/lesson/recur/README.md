@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson recur <slug> [--note <text>]` records that a lesson's process gap manifested again: it increments the lesson's `**Recurred:** N` header count and appends a dated entry (with the optional note) to a `## Recurrences` section. It does NOT change `**Status:**` — a recurrence is a signal that a lesson needs to graduate, not a graduation itself. A recurrence against a lesson already retired (`Withdrawn` or `Superseded`) is evidence the retirement itself was wrong; the verb still records it and exits `0` — the evidence is worth keeping — but prints a warning to stderr rather than succeeding silently.
+`specscore lesson recur <slug> [--note <text>]` records that a lesson's process gap manifested again. For a canonical Lesson it appends exactly one immutable typed child Occurrence and derives the count without rewriting the README. For a compatibility flat Lesson it retains the historical `**Recurred:**` plus `## Recurrences` rewrite until explicit migration. Neither path changes `**Status:**`. A recurrence against a retired Lesson still records the evidence and exits `0`, but warns on stderr.
 
 ## Synopsis
 
@@ -29,11 +29,11 @@ specscore lesson recur <slug> [--note <text>] [--project <path>]
 
 #### REQ: recur-increments-count
 
-`lesson recur <slug>` MUST increment the lesson's `**Recurred:** N` header field by one. When the field is absent (a lesson predating it), the verb MUST insert `**Recurred:** 1` immediately after `**Status:**`.
+For a canonical Lesson, `lesson recur <slug>` MUST append one schema-valid occurrence child with a fresh UUID and UTC `Z` time, then derive the recurrence count from valid children. It MUST leave the README byte-identical. For a flat Lesson it MUST increment `**Recurred:** N`, inserting `1` after `**Status:**` when absent.
 
 #### REQ: recur-appends-dated-entry
 
-The verb MUST append a dated bullet — `- <YYYY-MM-DD>` plus the `--note` text when supplied — to a `## Recurrences` section, creating the section (immediately before the adherence footer, or at end-of-file absent one) when it does not already exist. An existing section's prior entries MUST be preserved; the new entry is appended, never inserted out of order.
+For a canonical Lesson the optional note becomes the bounded occurrence summary and no prose recurrence section is created. For a flat Lesson the verb MUST append a dated bullet — `- <YYYY-MM-DD>` plus the note when supplied — to `## Recurrences`, preserving all prior entries.
 
 #### REQ: recur-does-not-change-status
 
@@ -49,19 +49,19 @@ When the target lesson's `**Status:**` is a terminal disposition (`Withdrawn` or
 
 #### REQ: recur-slug-resolution
 
-`<slug>` MUST resolve to `spec/lessons/<slug>.md`. A slug that does not resolve MUST exit `3` (NotFound) naming the requested slug.
+`<slug>` MUST resolve canonical `spec/lessons/<slug>/README.md` first, then compatibility `spec/lessons/<slug>.md`, rejecting a duplicate layout. A slug that does not resolve MUST exit `3` (NotFound) naming the requested slug.
 
 ### Index sync
 
 #### REQ: recur-index-sync
 
-After the rewrite, the verb MUST run `specscore spec lint --fix` so the lessons index's `Recurred` column stays in sync.
+Canonical index recurrence metadata is derived from child Occurrences and the README/index remain byte-identical. After a flat rewrite, the verb MUST upsert only that Lesson's compatibility index row; it MUST NOT run a repository-wide fixer.
 
 ## Parameters / Flags
 
 | Name | Required | Description |
 |---|---|---|
-| `slug` | Yes | Lesson slug — resolves to `spec/lessons/<slug>.md`. |
+| `slug` | Yes | Lesson slug — resolves canonical directory or compatibility flat layout. |
 | `--note` | No | Free-form note describing this occurrence. |
 | `--project` | No | Project root (autodetected). |
 
@@ -71,8 +71,8 @@ After the rewrite, the verb MUST run `specscore spec lint --fix` so the lessons 
 |---|---|
 | `0` | Recurrence recorded; stdout `<slug>: recurred <N>\n`. |
 | `2` | Missing/malformed `<slug>`. |
-| `3` | No lesson at `spec/lessons/<slug>.md`. |
-| `10` | Unexpected I/O failure, or `spec lint --fix` failed after the rewrite. |
+| `3` | No canonical or compatibility Lesson for the slug. |
+| `10` | Unexpected occurrence, I/O, event, or narrow index-upsert failure. |
 
 ## Interaction with Other Features
 
@@ -86,13 +86,13 @@ After the rewrite, the verb MUST run `specscore spec lint --fix` so the lessons 
 
 ### AC: recur-increments-count (verifies REQ:recur-increments-count)
 
-**Given** `spec/lessons/kinder-fake.md` with `**Recurred:** 0`
+**Given** canonical `spec/lessons/kinder-fake/README.md` with no child Occurrences
 **When** the user runs `specscore lesson recur kinder-fake --note "happened again"`
-**Then** the command exits `0` with stdout `kinder-fake: recurred 1\n`, and the file's `**Recurred:**` value is `1`.
+**Then** the command exits `0` with stdout `kinder-fake: recurred 1\n`, appends one schema-valid child containing the bounded summary, and leaves the README byte-identical.
 
 ### AC: recur-appends-dated-entry (verifies REQ:recur-appends-dated-entry)
 
-**Given** a lesson with an existing `## Recurrences` section carrying one entry
+**Given** a compatibility flat Lesson with an existing `## Recurrences` section carrying one entry
 **When** the user runs `specscore lesson recur <slug> --note "second occurrence"`
 **Then** the existing entry is preserved and a new dated entry containing "second occurrence" is appended after it.
 

@@ -15,7 +15,7 @@ Require human-confirmed lesson relationships and duplicate disposition.
 
 ## Problem
 
-Two lessons can overlap, but text similarity is neither reliable nor authority to retire somebody else's process record. The existing supersession field is one-directional and only checked while a command runs.
+Two lessons can overlap, but text similarity is neither reliable nor authority to retire somebody else's process record. A reviewed duplicate disposition must preserve the retained Lesson's history while naming one unchanged canonical Lesson, and malformed or conflicting relation state must block publication.
 
 ## Behavior
 
@@ -24,15 +24,21 @@ specscore lesson relation add <from> --type supersedes|related|duplicates <to> -
 specscore lesson relation list <lesson> [--format text|yaml|json]
 ```
 
-Relations are durable artifact facts. `related` is symmetric; `supersedes` and `duplicates` are directed and name distinct existing Lessons. A command previews the exact change and requires its confirmation token; `--yes` is not accepted. `duplicates` never auto-merges or retires either side. A human may then use the existing Superseded transition with a named successor/reason. Lint verifies identity, inverse symmetry, acyclic supersession, and no duplicate edge; it never attempts semantic duplicate detection.
+Relations are durable artifact facts. `related` is symmetric; `supersedes` and `duplicates` are directed and name distinct existing Lessons. A command previews the exact change and requires its confirmation token; `--yes` is not accepted. A confirmed `duplicates` relation treats `<from>` as the retained duplicate: it becomes `Superseded`, and its `Duplicate Of` and `Superseded By` fields both name the unchanged canonical `<to>` Lesson. The canonical Lesson's inverse visibility is derived by scanning retained Lessons, so the command does not rewrite it. An Enforced retained duplicate, a cycle, a conflicting existing target, malformed state, or an overwrite race MUST fail without mutation. Lint verifies identity, duplicate disposition, acyclic supersession, and no conflicting edge; it never attempts semantic duplicate detection.
 
 ## Acceptance Criteria
 
-### AC: duplicate-is-human-confirmed-not-auto-retired
+### AC: duplicate-is-human-confirmed-and-history-preserving
 
 **Given** two Lessons with similar titles
 **When** a caller tries to add `duplicates` without the displayed confirmation token
-**Then** it exits `2` and neither changes; after explicit confirmation both expose the relation and retain status.
+**Then** it exits `2` and neither changes; after explicit confirmation the retained `<from>` Lesson is `Superseded` with both pointers naming the unchanged canonical `<to>` Lesson, and listing either endpoint exposes the relation.
+
+### AC: malformed-or-conflicting-state-is-write-free
+
+**Given** an Enforced retained Lesson, malformed relation data, or a relation field already naming a different target
+**When** a caller confirms a duplicate relation
+**Then** validation exits nonzero and every Lesson and relation artifact remains byte-identical.
 
 ### AC: supersession-cycle-is-refused
 

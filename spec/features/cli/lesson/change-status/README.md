@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a Lesson artifact from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`, including a direct `Recorded` → `Enforced` skip-ahead for a lesson that reaches a machine gate without ever passing through an advisory stage) or into one of two dispositions — `Withdrawn` or `Superseded` — reachable from every rung. It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract for the Lesson kind. Lessons are flat single files that never relocate, so — like `plan change-status` — this verb has no file-relocation side effect: every transition is a pure status rewrite plus index sync, plus the optional `## Resolution` note and `**Superseded By:**` reference.
+`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`) or into `Withdrawn`/`Superseded`. It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
 
 ## Synopsis
 
@@ -25,7 +25,7 @@ A hand-maintained markdown log has no notion of a status transition at all — `
 
 ## Behavior
 
-This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md) — strict state machine (exit `4`), `--to` parse + slug resolution, atomic rewrite + `spec lint --fix` index sync, rollback (exit `10`), `<slug>: <from> → <to>` success line, the shared exit-code mapping, and the optional `--note` → `## Resolution` mechanism. The REQs below are the Lesson-specific declarations.
+This verb inherits the strict state machine (exit `4`), `--to` parsing, slug resolution, atomic rewrite, rollback (exit `10`), success line, shared exit-code mapping, and optional `--note` → `## Resolution` mechanism from [lifecycle-transitions](../../lifecycle-transitions/README.md). Lesson index synchronization is deliberately narrower than the generic repository-wide fixer.
 
 ### Legal-transition matrix
 
@@ -51,7 +51,7 @@ The verb MUST accept the target status via a required `--to=<status>` flag: `Sta
 
 #### REQ: lesson-slug-resolution
 
-The `<slug>` positional MUST resolve to an existing Lesson file at `spec/lessons/<slug>.md` within the project root (autodetected, or `--project`). A slug that does not resolve exits `3` (NotFound) naming the expected path.
+The `<slug>` positional MUST resolve canonical `spec/lessons/<slug>/README.md` first, then compatibility `spec/lessons/<slug>.md`, and MUST reject a duplicate layout. A slug that does not resolve exits `3` (NotFound) naming the slug.
 
 #### REQ: disposition-reason-required
 
@@ -63,7 +63,7 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: lessons-index-sync
 
-The post-mutation `specscore spec lint --fix` MUST sync the lessons index (`spec/lessons/README.md`) to the new status (rule L-004). The verb's exit `0` depends on the rewrite AND the lint pass both succeeding; a lint failure rolls back every mutation and exits `10`.
+After the rewrite, the verb MUST upsert only the resolved Lesson's exact row in `spec/lessons/README.md`, then run lint read-only. It MUST NOT invoke a repository-wide fixer or migrate an unrelated `## Outstanding Questions` heading. Exit `0` depends on the rewrite, index upsert, and read-only lint all succeeding; failure restores the Lesson and index bytes and exits `10`.
 
 ## Flags
 
@@ -80,18 +80,18 @@ The post-mutation `specscore spec lint --fix` MUST sync the lessons index (`spec
 |---|---|
 | `0` | Transition succeeded; file rewritten; lessons index synced. |
 | `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
-| `3` | No Lesson file at `spec/lessons/<slug>.md`. |
+| `3` | No canonical or compatibility Lesson for the slug. |
 | `4` | `(current_status, --to)` is not a legal transition. |
-| `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
+| `10` | I/O, narrow index-upsert, or read-only lint failure after a successful rewrite (Lesson and index rollback applied). |
 
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. |
-| [cli/plan/change-status](../../plan/change-status/README.md) | Closest sibling — also a flat, relocation-free `change-status` whose disposition-reason-required and successor-reference mechanics this verb reuses directly. |
+| [cli/plan/change-status](../../plan/change-status/README.md) | Lifecycle sibling whose disposition-reason and successor-reference mechanics this verb reuses. |
 | [lesson (CLI group)](../README.md) | Parent group. |
-| [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rules L-002/L-004 validate what this verb writes. |
+| [spec lint](../../spec/lint/README.md) | Invoked read-only after the exact L-004 index row upsert; only an explicit CLI `--fix` runs repository-wide fixers. |
 
 ## Dependencies
 
@@ -137,15 +137,21 @@ The post-mutation `specscore spec lint --fix` MUST sync the lessons index (`spec
 
 ### AC: not-found-exits-3 (verifies REQ:lesson-slug-resolution)
 
-**Given** no lesson named `nonexistent`
+**Given** no canonical or compatibility Lesson named `nonexistent`
 **When** the user runs `specscore lesson change-status nonexistent --to=stated`
-**Then** the command exits `3` naming the expected `spec/lessons/nonexistent.md` path.
+**Then** the command exits `3` naming `nonexistent`.
 
 ### AC: lint-failure-rolls-back (verifies REQ:lessons-index-sync)
 
 **Given** `spec/lessons/kinder-fake.md` in `**Status:** Recorded`
-**When** `spec lint --fix` fails after a successful Status rewrite
-**Then** a full rollback restores the original `**Status:**`, and the command exits `10`.
+**When** read-only lint fails after a successful Status rewrite and exact index-row upsert
+**Then** a full rollback restores the original Lesson and index bytes, and the command exits `10`.
+
+### AC: unrelated-files-remain-byte-identical
+
+**Given** an unrelated Markdown file containing `## Outstanding Questions`
+**When** a valid Lesson status transition succeeds
+**Then** the unrelated bytes remain identical; only explicit `specscore spec lint --fix` performs that migration.
 
 ## Open Questions
 
