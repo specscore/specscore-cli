@@ -29,7 +29,7 @@ specscore lesson recur verify-before-merge --note "The bounded gap manifested ag
 specscore lesson check --not-enforced --min-recurred 1 --format json
 ```
 
-`recur` appends a canonical child occurrence without editing the README. It only edits the old recurrence prose while a flat Lesson remains in compatibility mode. `info`, `list`, and `check` reject invalid children rather than hiding them.
+`recur` appends a canonical child occurrence without editing the README and refreshes only that Lesson's derived index row. It only edits the old recurrence prose while a flat Lesson remains in compatibility mode. `info`, `list`, and `check` reject invalid children rather than hiding them.
 
 ## Durable agent context
 

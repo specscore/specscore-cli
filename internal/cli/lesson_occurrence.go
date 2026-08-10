@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,6 +57,11 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	if !l.Canonical {
 		return exitcode.InvalidStateErrorf("lesson %q is legacy flat form; `lesson recur` remains available until explicit migration", slug)
 	}
+	root := projectRootForOccurrence(project)
+	indexSnapshot, err := snapshotOccurrenceIndex(root)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
+	}
 	context, explicit, err := occurrenceContextInput(cmd)
 	if err != nil {
 		return err
@@ -74,7 +80,6 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	}
 	id := uuid.NewString()
 	now := time.Now().UTC()
-	root := projectRootForOccurrence(project)
 	prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": id}, now)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing occurrence event: %v", err)
@@ -87,6 +92,19 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 			return exitcode.InvalidArgsErrorf("invalid occurrence: %v", resolved)
 		}
 	}
+	if err := lessonIndexUpsertFn(filepath.Join(root, "spec"), l); err != nil {
+		failure := lesson.CompensatePublication(func() error {
+			if removeErr := lesson.RemoveOccurrence(o.Path); removeErr != nil {
+				return removeErr
+			}
+			return indexSnapshot.restore()
+		}, err)
+		if recovery, resolved := prepared.ResolveMutationFailure("upserting occurrence index row", failure); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.UnexpectedErrorf("upserting occurrence index row: %v", resolved)
+		}
+	}
 	result, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
 		return exitcode.UnexpectedErrorf("occurrence recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
@@ -96,6 +114,33 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: occurrence %s\n", slug, o.ID)
 	return nil
+}
+
+// occurrenceIndexSnapshot lets occurrence publication compensate both the
+// immutable child and the derived index row if the narrow index upsert fails.
+// It is deliberately scoped to spec/lessons/README.md: occurrence add never
+// runs a repository-wide fixer.
+type occurrenceIndexSnapshot struct {
+	path string
+	data []byte
+	mode os.FileMode
+}
+
+func snapshotOccurrenceIndex(root string) (occurrenceIndexSnapshot, error) {
+	path := filepath.Join(root, "spec", "lessons", "README.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return occurrenceIndexSnapshot{}, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return occurrenceIndexSnapshot{}, err
+	}
+	return occurrenceIndexSnapshot{path: path, data: b, mode: info.Mode().Perm()}, nil
+}
+
+func (s occurrenceIndexSnapshot) restore() error {
+	return durableRestoreFile(s.path, s.data, s.mode)
 }
 
 func occurrenceContextInput(cmd *cobra.Command) (map[string]any, bool, error) {

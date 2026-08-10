@@ -8,7 +8,7 @@ Use canonical directory Lessons. The compact durable rule lives at `spec/lessons
 
 Use `specscore lesson occurrence add <slug> --summary "bounded factual statement" --context-json '<safe object>'`. Context is limited to repository, git, worktree, and execution objects. JSON is strict; timestamps use UTC `Z`; path hints and path evidence are normalized repository-relative forward-slash paths or `redacted`. Recursive validation rejects unknown fields, newlines, duplicate redactions, credential/contact patterns, and raw prompt/log/diff properties without echoing unsafe values.
 
-Inspect with `occurrence list` and `occurrence info`. `lesson recur` appends one child for a canonical Lesson and leaves its README/index byte-identical; it retains the flat-file compatibility writer only until migration. `lesson check --not-enforced --min-recurred N` is the opt-in process gate.
+Inspect with `occurrence list` and `occurrence info`. `lesson recur` appends one child for a canonical Lesson, leaves its README byte-identical, and refreshes only its derived index row; it retains the flat-file compatibility writer only until migration. `lesson check --not-enforced --min-recurred N` is the opt-in process gate.
 
 ## Import and deduplicate without losing history
 
