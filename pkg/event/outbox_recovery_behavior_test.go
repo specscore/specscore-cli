@@ -1,0 +1,668 @@
+package event
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+type faultOutboxFS struct {
+	fail string
+	file outboxFile
+}
+
+func (f faultOutboxFS) Stat(path string) (os.FileInfo, error) {
+	if f.fail == "stat" {
+		return nil, errors.New("injected stat failure")
+	}
+	return os.Stat(path)
+}
+func (f faultOutboxFS) Mkdir(path string, perm os.FileMode) error {
+	if f.fail == "mkdir" {
+		return errors.New("injected mkdir failure")
+	}
+	return os.Mkdir(path, perm)
+}
+func (f faultOutboxFS) Open(path string) (outboxFile, error) {
+	if f.fail == "open" {
+		return nil, errors.New("injected open failure")
+	}
+	if f.file != nil {
+		return f.file, nil
+	}
+	return os.Open(path)
+}
+func (f faultOutboxFS) OpenFile(path string, flag int, perm os.FileMode) (outboxFile, error) {
+	if f.fail == "open-file" {
+		return nil, errors.New("injected open-file failure")
+	}
+	if f.file != nil {
+		return f.file, nil
+	}
+	return os.OpenFile(path, flag, perm)
+}
+func (f faultOutboxFS) CreateTemp(dir, pattern string) (outboxFile, error) {
+	if f.fail == "create-temp" {
+		return nil, errors.New("injected create-temp failure")
+	}
+	if f.file != nil {
+		return f.file, nil
+	}
+	return os.CreateTemp(dir, pattern)
+}
+func (f faultOutboxFS) Link(oldname, newname string) error {
+	if f.fail == "link" {
+		return errors.New("injected link failure")
+	}
+	return os.Link(oldname, newname)
+}
+func (f faultOutboxFS) Remove(path string) error {
+	if f.fail == "remove" {
+		return errors.New("injected remove failure")
+	}
+	return os.Remove(path)
+}
+
+type faultOutboxFile struct {
+	name       string
+	writeError error
+	syncError  error
+	closeError error
+}
+
+type collisionLinkFS struct {
+	faultOutboxFS
+	data []byte
+}
+
+func (f collisionLinkFS) Link(_ string, destination string) error {
+	if err := os.WriteFile(destination, f.data, 0o644); err != nil {
+		return err
+	}
+	return fs.ErrExist
+}
+
+func (f faultOutboxFile) Write([]byte) (int, error) { return 0, f.writeError }
+func (f faultOutboxFile) Sync() error               { return f.syncError }
+func (f faultOutboxFile) Close() error              { return f.closeError }
+func (f faultOutboxFile) Name() string              { return f.name }
+
+func TestOutbox_RecoverPrunesStalePendingMarkerAfterAck(t *testing.T) {
+	sink := &outboxSub{name: "sink"}
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	if err := o.Enqueue(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := o.Replay(context.Background(), []Subscriber{sink}, "", 0); err != nil || result.Delivered != 1 {
+		t.Fatalf("initial replay = %#v, %v", result, err)
+	}
+
+	// Model a crash after writing the durable ack but before an interrupted
+	// cleanup re-created the pending marker. Recovery must treat the ack as the
+	// cursor and must not redeliver the event.
+	if err := os.WriteFile(o.pendingPath("sink", e.UUID), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(o.pendingPath("sink", e.UUID)); !os.IsNotExist(err) {
+		t.Fatalf("stale pending marker remains after recovery: %v", err)
+	}
+	if result, err := o.Replay(context.Background(), []Subscriber{sink}, "", 0); err != nil || result.Delivered != 0 || len(sink.seen) != 1 {
+		t.Fatalf("replay after acknowledged recovery = %#v, %v; seen=%v", result, err, sink.seen)
+	}
+}
+
+func TestReconciliationToken_BindsDecisionAndReviewedEvidence(t *testing.T) {
+	record := PreparedRecord{EventUUID: "00000000-0000-4000-8000-000000000000", ArtifactExists: true}
+	commitWithArtifact := ReconciliationToken(record, committedState)
+	if commitWithArtifact != ReconciliationToken(record, committedState) {
+		t.Fatal("same reviewed decision must produce a stable reconciliation token")
+	}
+	if commitWithArtifact == ReconciliationToken(record, abortedState) {
+		t.Fatal("different decision must not reuse reconciliation token")
+	}
+	record.ArtifactExists = false
+	if commitWithArtifact == ReconciliationToken(record, committedState) {
+		t.Fatal("changed reviewed evidence must not reuse reconciliation token")
+	}
+}
+
+func TestOutbox_RejectsConflictingLedgerAndInvalidDurableMarkers(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	sink := &outboxSub{name: "sink"}
+	if err := o.Prepare(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	changed := e
+	changed.Payload = []byte(`{"changed":true}`)
+	if err := o.Prepare(changed, []Subscriber{sink}); err == nil || !strings.Contains(err.Error(), "different ledger") {
+		t.Fatalf("conflicting retry must preserve immutable ledger, got %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(o.statePath(e.UUID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.statePath(e.UUID), []byte("unknown\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Commit(e.UUID); err == nil || !strings.Contains(err.Error(), "invalid decision marker") {
+		t.Fatalf("invalid durable marker must fail closed, got %v", err)
+	}
+}
+
+func TestOutbox_PrepareAndDecisionRejectUnsafeRecipientsAndStateTransitions(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	if err := o.Prepare(e, nil); err == nil {
+		t.Fatal("recipientless ledger must be refused")
+	}
+	if err := o.Prepare(e, []Subscriber{&outboxSub{name: "same"}, &outboxSub{name: "same"}}); err == nil {
+		t.Fatal("duplicate subscriber names must be refused")
+	}
+	if err := o.Abort(e.UUID); err != nil {
+		t.Fatalf("aborting an absent ledger must be idempotent: %v", err)
+	}
+	if err := o.Prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.decide(e.UUID, "not-a-decision"); err == nil {
+		t.Fatal("unknown explicit decision must be refused")
+	}
+	if err := o.Abort(e.UUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Commit(e.UUID); err == nil || !strings.Contains(err.Error(), "cannot commit aborted") {
+		t.Fatalf("terminal abort must prevent commit, got %v", err)
+	}
+}
+
+func TestOutbox_PreparedFiltersUnsafeEvidenceAndSortsUnresolvedRecords(t *testing.T) {
+	root := t.TempDir()
+	o := NewOutbox(root)
+	first := validEvent()
+	first.UUID = "00000000-0000-4000-8000-000000000001"
+	first.Artifact.Path = "spec/ideas/absent.md"
+	second := validEvent()
+	second.UUID = "00000000-0000-4000-8000-000000000002"
+	second.Artifact.Path = "spec/ideas/present.md"
+	artifact := filepath.Join(root, "spec", "ideas", "present.md")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("present\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []Event{second, first} {
+		if err := o.Prepare(e, []Subscriber{&outboxSub{name: "audit"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prepared, err := o.Prepared()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared) != 2 || prepared[0].EventUUID != first.UUID || prepared[0].ArtifactExists || !prepared[1].ArtifactExists {
+		t.Fatalf("prepared evidence must be sorted and containment-safe: %#v", prepared)
+	}
+	for _, path := range []string{"", "/absolute", "../escape", "a/../b", `a\\b`, ".", ".."} {
+		if safeArtifactEvidencePath(path) {
+			t.Fatalf("unsafe artifact path accepted: %q", path)
+		}
+	}
+	if !safeArtifactEvidencePath("spec/ideas/present.md") {
+		t.Fatal("normalized repository-relative evidence should be accepted")
+	}
+}
+
+func TestOutbox_ReplayRejectsUnknownSubscriberAndNonCommittedPendingMarker(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	sink := &outboxSub{name: "sink"}
+	if err := o.Prepare(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Replay(context.Background(), []Subscriber{sink}, "missing", 0); err == nil || !strings.Contains(err.Error(), "unknown subscriber") {
+		t.Fatalf("targeting an unconfigured subscriber must fail: %v", err)
+	}
+	if _, err := o.Replay(context.Background(), []Subscriber{sink, sink}, "", 0); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate runtime subscriber must fail: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(o.pendingPath("sink", e.UUID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.pendingPath("sink", e.UUID), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "non-committed") {
+		t.Fatalf("pending prepared event must not be delivered: %v", err)
+	}
+}
+
+func TestOutbox_InstanceScopedFilesystemFailuresAreDeterministic(t *testing.T) {
+	root := t.TempDir()
+	base := Outbox{Root: filepath.Join(root, "base")}
+	if err := os.MkdirAll(base.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		run  func(outboxOperations) error
+	}{
+		{"stat", func(o outboxOperations) error { return o.ensureOutboxDirectory(filepath.Join(root, "missing")) }},
+		{"mkdir", func(o outboxOperations) error { return o.ensureOutboxDirectory(filepath.Join(root, "new-dir")) }},
+		{"open", func(o outboxOperations) error { return o.syncOutboxDirectory(base.Root) }},
+		{"open-file", func(o outboxOperations) error { return o.touchExclusive(filepath.Join(base.Root, "entry")) }},
+		{"create-temp", func(o outboxOperations) error {
+			return o.writeNewAtomic(filepath.Join(base.Root, "ledger"), []byte("x"))
+		}},
+		{"link", func(o outboxOperations) error {
+			return o.writeNewAtomic(filepath.Join(base.Root, "linked"), []byte("x"))
+		}},
+		{"remove", func(o outboxOperations) error { return o.removeOutboxFile(filepath.Join(base.Root, "absent")) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := outboxOperations{Outbox: base, fs: faultOutboxFS{fail: tc.name}}
+			if err := tc.run(o); err == nil || !strings.Contains(err.Error(), "injected") {
+				t.Fatalf("%s failure = %v", tc.name, err)
+			}
+		})
+	}
+}
+
+func TestOutbox_OperationsAreInstanceScopedUnderConcurrentFaultInjection(t *testing.T) {
+	root := t.TempDir()
+	failing := outboxOperations{Outbox: Outbox{Root: filepath.Join(root, "failing")}, fs: faultOutboxFS{fail: "link"}}
+	working := NewOutbox(filepath.Join(root, "working"))
+	e := validEvent()
+	e.UUID = "00000000-0000-4000-8000-000000000009"
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var failErr, workErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		failErr = failing.prepare(e, []Subscriber{&outboxSub{name: "sink"}})
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		workErr = working.Enqueue(e, []Subscriber{&outboxSub{name: "sink"}})
+	}()
+	close(start)
+	wg.Wait()
+	if failErr == nil || !strings.Contains(failErr.Error(), "injected link") {
+		t.Fatalf("injected instance did not fail independently: %v", failErr)
+	}
+	if workErr != nil {
+		t.Fatalf("default instance inherited injected failure: %v", workErr)
+	}
+	if _, err := os.Stat(working.ledgerPath(e.UUID)); err != nil {
+		t.Fatalf("default outbox did not durably prepare its own ledger: %v", err)
+	}
+}
+
+func TestOutbox_DurabilityFileFailuresStopPublicationBeforeStateChange(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name string
+		run  func(outboxOperations) error
+	}{
+		{"touch-sync", func(o outboxOperations) error { return o.touchExclusive(filepath.Join(root, "touch-sync")) }},
+		{"touch-close", func(o outboxOperations) error { return o.touchExclusive(filepath.Join(root, "touch-close")) }},
+		{"write-write", func(o outboxOperations) error {
+			return o.writeNewAtomic(filepath.Join(root, "write-write"), []byte("x"))
+		}},
+		{"write-sync", func(o outboxOperations) error {
+			return o.writeNewAtomic(filepath.Join(root, "write-sync"), []byte("x"))
+		}},
+		{"write-close", func(o outboxOperations) error {
+			return o.writeNewAtomic(filepath.Join(root, "write-close"), []byte("x"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := faultOutboxFile{name: filepath.Join(root, "temporary")}
+			switch tc.name {
+			case "touch-sync", "write-sync":
+				file.syncError = errors.New("injected sync failure")
+			case "touch-close", "write-close":
+				file.closeError = errors.New("injected close failure")
+			case "write-write":
+				file.writeError = errors.New("injected write failure")
+			}
+			o := outboxOperations{Outbox: Outbox{Root: root}, fs: faultOutboxFS{file: file}}
+			if err := tc.run(o); err == nil || !strings.Contains(err.Error(), "injected") {
+				t.Fatalf("%s = %v", tc.name, err)
+			}
+		})
+	}
+}
+
+func TestOutbox_ReadRecordRejectsEveryUnsafeDurableLedgerShape(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	id := validEvent().UUID
+	valid := ledgerRecord{Event: validEvent(), Subscribers: []string{"sink"}, State: preparedState}
+	encode := func(t *testing.T, record ledgerRecord) []byte {
+		t.Helper()
+		b, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	write := func(t *testing.T, b []byte) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(o.ledgerPath(id)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(o.ledgerPath(id), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := o.readRecord("not-a-uuid"); err == nil {
+		t.Fatal("invalid event UUID must be rejected before a filesystem read")
+	}
+	for _, tc := range []struct {
+		name string
+		body []byte
+	}{
+		{"invalid-json", []byte("{")},
+		{"trailing-json", append(append(encode(t, valid), '\n'), []byte("{}")...)},
+		{"filename-mismatch", encode(t, ledgerRecord{Event: func() Event { e := valid.Event; e.UUID = "00000000-0000-4000-8000-000000000001"; return e }(), Subscribers: valid.Subscribers, State: preparedState})},
+		{"non-prepared-record", encode(t, ledgerRecord{Event: valid.Event, Subscribers: valid.Subscribers, State: committedState})},
+		{"invalid-envelope", encode(t, ledgerRecord{Event: Event{UUID: id}, Subscribers: valid.Subscribers, State: preparedState})},
+		{"unsorted-subscribers", encode(t, ledgerRecord{Event: valid.Event, Subscribers: []string{"z", "a"}, State: preparedState})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			write(t, tc.body)
+			if _, err := o.readRecord(id); err == nil {
+				t.Fatal("unsafe ledger must be rejected")
+			}
+		})
+	}
+}
+
+func TestOutbox_DecisionRetriesReadExistingCASWinnerWithoutOverwritingIt(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	if err := o.Prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.decide(e.UUID, committedState); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.decide(e.UUID, committedState); err != nil {
+		t.Fatalf("same durable decision must be idempotent: %v", err)
+	}
+	if err := o.decide(e.UUID, abortedState); err == nil || !strings.Contains(err.Error(), "already committed") {
+		t.Fatalf("conflicting durable decision must be refused: %v", err)
+	}
+}
+
+func TestOutbox_RecoverAndReplayHandleInterruptedLedgerDirectorySafely(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	if err := o.Recover(); err != nil {
+		t.Fatalf("empty outbox recovery must be harmless: %v", err)
+	}
+	e := validEvent()
+	sink := &outboxSub{name: "sink"}
+	if err := o.Enqueue(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(o.Root, "ledger", "notes.txt"), []byte("not a ledger"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(o.Root, "ledger", "ignored.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Recover(); err != nil {
+		t.Fatalf("non-ledger entries must not block recovery: %v", err)
+	}
+	if result, err := o.Replay(context.Background(), []Subscriber{sink}, "", 1); err != nil || result.Delivered != 1 || result.Pending != 1 {
+		t.Fatalf("limit should deliver exactly one pending recipient: %#v, %v", result, err)
+	}
+	if err := os.Mkdir(filepath.Dir(o.pendingPath(sink.name, "x")), 0o755); err != nil && !os.IsExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(filepath.Dir(o.pendingPath(sink.name, "x")), "directory-marker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := o.Replay(context.Background(), []Subscriber{sink}, "", 0); err != nil || result.Delivered != 0 {
+		t.Fatalf("directory marker must be ignored, got %#v, %v", result, err)
+	}
+}
+
+func TestOutbox_TerminalStatesAndLedgerCollisionsFailClosedWithoutDelivery(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	sink := &outboxSub{name: "sink"}
+	if err := o.Commit(e.UUID); err == nil {
+		t.Fatal("committing a missing immutable ledger must fail")
+	}
+	if err := o.Prepare(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Commit(e.UUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Abort(e.UUID); err == nil || !strings.Contains(err.Error(), "cannot abort committed") {
+		t.Fatalf("committed ledger cannot be retroactively aborted: %v", err)
+	}
+	if err := o.Commit(e.UUID); err != nil {
+		t.Fatalf("repeating committed decision must reconstruct pending safely: %v", err)
+	}
+	if err := o.Prepare(e, []Subscriber{sink}); err != nil {
+		t.Fatalf("byte-identical ledger retry must be accepted: %v", err)
+	}
+	if err := os.Remove(o.ledgerPath(e.UUID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(o.ledgerPath(e.UUID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Prepare(e, []Subscriber{sink}); err == nil {
+		t.Fatal("a non-file ledger collision must not be overwritten")
+	}
+}
+
+func TestOutbox_InvalidInputsAndBrokenDirectoryTopologyFailClosed(t *testing.T) {
+	t.Run("invalid event and unnamed subscriber", func(t *testing.T) {
+		o := NewOutbox(t.TempDir())
+		invalid := validEvent()
+		invalid.Name = "Invalid.Name"
+		if err := o.Enqueue(invalid, []Subscriber{&outboxSub{name: "sink"}}); err == nil {
+			t.Fatal("invalid envelope must fail before writing a ledger")
+		}
+		if err := o.Prepare(validEvent(), []Subscriber{&outboxSub{name: ""}}); err == nil {
+			t.Fatal("unnamed subscriber must fail before writing a ledger")
+		}
+	})
+	t.Run("existing ledger path is a directory", func(t *testing.T) {
+		o := NewOutbox(t.TempDir())
+		e := validEvent()
+		if err := os.MkdirAll(o.ledgerPath(e.UUID), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := o.Prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err == nil {
+			t.Fatal("directory cannot masquerade as immutable ledger")
+		}
+	})
+	t.Run("ledger directory unreadable shape", func(t *testing.T) {
+		o := NewOutbox(t.TempDir())
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(o.Root, "ledger")), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(o.Root, "ledger"), []byte("file"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := o.Recover(); err == nil {
+			t.Fatal("ledger file must not be treated as recoverable directory")
+		}
+		if _, err := o.Prepared(); err == nil {
+			t.Fatal("ledger file must not be treated as prepared-record directory")
+		}
+	})
+	t.Run("pending subscriber directory is a file", func(t *testing.T) {
+		o := NewOutbox(t.TempDir())
+		sink := &outboxSub{name: "sink"}
+		if err := o.Enqueue(validEvent(), []Subscriber{sink}); err != nil {
+			t.Fatal(err)
+		}
+		pendingDir := filepath.Dir(o.pendingPath(sink.name, "x"))
+		if err := os.RemoveAll(pendingDir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(pendingDir, []byte("file"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := o.Replay(context.Background(), []Subscriber{sink}, "", 0); err == nil {
+			t.Fatal("file in place of pending directory must fail replay")
+		}
+	})
+}
+
+func TestOutbox_InterruptedDecisionsAndCorruptRecordsNeverBecomeDeliverable(t *testing.T) {
+	root := t.TempDir()
+	o := NewOutbox(root)
+	e := validEvent()
+	sink := &outboxSub{name: "sink"}
+	if err := o.Prepare(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Abort(e.UUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Abort(e.UUID); err != nil {
+		t.Fatalf("repeating abort must preserve terminal decision: %v", err)
+	}
+
+	second := validEvent()
+	second.UUID = "00000000-0000-4000-8000-000000000010"
+	if err := o.Prepare(second, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(o.statePath(second.UUID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Commit(second.UUID); err == nil {
+		t.Fatal("state marker directory must prevent commit")
+	}
+	if err := o.Abort(second.UUID); err == nil {
+		t.Fatal("state marker directory must prevent abort")
+	}
+
+	third := validEvent()
+	third.UUID = "00000000-0000-4000-8000-000000000011"
+	if err := os.MkdirAll(filepath.Dir(o.ledgerPath(third.UUID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.ledgerPath(third.UUID), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Recover(); err == nil {
+		t.Fatal("corrupt ledger must stop recovery before delivery")
+	}
+	if _, err := o.Prepared(); err == nil {
+		t.Fatal("corrupt ledger must stop prepared reconciliation view")
+	}
+}
+
+func TestOutbox_RecoveryAndReplaySurfaceDurabilityCleanupFailures(t *testing.T) {
+	root := t.TempDir()
+	o := NewOutbox(root)
+	e := validEvent()
+	sink := &outboxSub{name: "sink"}
+	if err := o.Enqueue(e, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(o.ackPath(sink.name, e.UUID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.ackPath(sink.name, e.UUID), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	removeFault := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "remove"}}
+	if err := removeFault.recover(); err == nil || !strings.Contains(err.Error(), "injected remove") {
+		t.Fatalf("ack cleanup failure must surface for operator recovery: %v", err)
+	}
+	if err := os.Remove(o.ackPath(sink.name, e.UUID)); err != nil {
+		t.Fatal(err)
+	}
+	openFault := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "open-file"}}
+	if _, err := openFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected open-file") {
+		t.Fatalf("ack publication failure must leave event pending and surface: %v", err)
+	}
+	removeFault = outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "remove"}}
+	if _, err := removeFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected remove") {
+		t.Fatalf("post-ack pending cleanup failure must surface: %v", err)
+	}
+}
+
+func TestOutbox_ReconciliationViewsExposeCorruptionAndReplayLimits(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	if prepared, err := o.Prepared(); err != nil || prepared != nil {
+		t.Fatalf("empty outbox prepared view = %#v, %v", prepared, err)
+	}
+	bad := validEvent()
+	bad.UUID = "00000000-0000-4000-8000-000000000020"
+	if err := os.MkdirAll(filepath.Dir(o.ledgerPath(bad.UUID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.ledgerPath(bad.UUID), []byte("{}\n{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Abort(bad.UUID); err == nil {
+		t.Fatal("corrupt record must prevent abort")
+	}
+	if _, err := o.Prepared(); err == nil {
+		t.Fatal("corrupt record must prevent prepared reconciliation")
+	}
+
+	root := t.TempDir()
+	replay := NewOutbox(root)
+	a := validEvent()
+	a.UUID = "00000000-0000-4000-8000-000000000021"
+	b := validEvent()
+	b.UUID = "00000000-0000-4000-8000-000000000022"
+	sink := &outboxSub{name: "sink"}
+	for _, e := range []Event{a, b} {
+		if err := replay.Enqueue(e, []Subscriber{sink}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := replay.Replay(context.Background(), []Subscriber{sink}, "", 1)
+	if err != nil || result.Delivered != 1 || result.Pending != 1 {
+		t.Fatalf("replay limit must stop after one recipient: %#v, %v", result, err)
+	}
+}
+
+func TestOutbox_PrepareAndDecideResolveCompetingDurablePublications(t *testing.T) {
+	root := t.TempDir()
+	e := validEvent()
+	record := ledgerRecord{Event: e, Subscribers: []string{"sink"}, State: preparedState}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	collision := outboxOperations{Outbox: NewOutbox(root), fs: collisionLinkFS{data: data}}
+	if err := collision.prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+		t.Fatalf("matching competing ledger publication must converge: %v", err)
+	}
+	if err := collision.decide(e.UUID, committedState); err == nil {
+		t.Fatal("competing state publication with a ledger payload must not masquerade as a decision")
+	}
+	writeFailure := outboxOperations{Outbox: NewOutbox(t.TempDir()), fs: faultOutboxFS{fail: "link"}}
+	if err := writeFailure.prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err == nil {
+		t.Fatal("non-collision publication failure must surface")
+	}
+}

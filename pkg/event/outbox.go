@@ -23,6 +23,55 @@ import (
 
 type Outbox struct{ Root string }
 
+type outboxFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+	Name() string
+}
+
+type outboxFS interface {
+	Stat(string) (os.FileInfo, error)
+	Mkdir(string, os.FileMode) error
+	Open(string) (outboxFile, error)
+	OpenFile(string, int, os.FileMode) (outboxFile, error)
+	CreateTemp(string, string) (outboxFile, error)
+	Link(string, string) error
+	Remove(string) error
+}
+
+type osOutboxFS struct{}
+
+func (osOutboxFS) Stat(path string) (os.FileInfo, error)     { return os.Stat(path) }
+func (osOutboxFS) Mkdir(path string, perm os.FileMode) error { return os.Mkdir(path, perm) }
+func (osOutboxFS) Open(path string) (outboxFile, error)      { return os.Open(path) }
+func (osOutboxFS) OpenFile(path string, flag int, perm os.FileMode) (outboxFile, error) {
+	return os.OpenFile(path, flag, perm)
+}
+func (osOutboxFS) CreateTemp(dir, pattern string) (outboxFile, error) {
+	return os.CreateTemp(dir, pattern)
+}
+func (osOutboxFS) Link(oldname, newname string) error { return os.Link(oldname, newname) }
+func (osOutboxFS) Remove(path string) error           { return os.Remove(path) }
+
+// outboxOperations carries an instance-local filesystem implementation for
+// one operation. Public Outbox methods always construct it with osOutboxFS{};
+// package tests may construct it with a deterministic fake without changing
+// the exported Outbox representation or another operation's behavior.
+type outboxOperations struct {
+	Outbox
+	fs outboxFS
+}
+
+func (o Outbox) operation() outboxOperations { return outboxOperations{Outbox: o, fs: osOutboxFS{}} }
+
+func (o outboxOperations) operations() outboxFS {
+	if o.fs != nil {
+		return o.fs
+	}
+	return osOutboxFS{}
+}
+
 func NewOutbox(projectRoot string) Outbox {
 	return Outbox{Root: filepath.Join(projectRoot, ".specscore", "event-outbox")}
 }
@@ -49,12 +98,14 @@ const preparedState = "prepared"
 const committedState = "committed"
 const abortedState = "aborted"
 
-var outboxLink = os.Link
-
 // Prepare durably records the envelope and its complete recipient set before
 // an artifact mutation. Prepared records are visible/recoverable but not
 // delivered until Commit.
 func (o Outbox) Prepare(e Event, subscribers []Subscriber) error {
+	return o.operation().prepare(e, subscribers)
+}
+
+func (o outboxOperations) prepare(e Event, subscribers []Subscriber) error {
 	if err := Validate(e); err != nil {
 		return err
 	}
@@ -77,7 +128,7 @@ func (o Outbox) Prepare(e Event, subscribers []Subscriber) error {
 	} else if !os.IsNotExist(readErr) {
 		return readErr
 	}
-	if err := writeNewAtomic(path, b); err != nil {
+	if err := o.writeNewAtomic(path, b); err != nil {
 		if !errors.Is(err, fs.ErrExist) {
 			return err
 		}
@@ -94,7 +145,9 @@ func (o Outbox) Prepare(e Event, subscribers []Subscriber) error {
 
 // Commit makes a prepared event deliverable and reconstructs every pending
 // marker from the ledger recipient set. Repeating Commit is safe.
-func (o Outbox) Commit(id string) error {
+func (o Outbox) Commit(id string) error { return o.operation().commit(id) }
+
+func (o outboxOperations) commit(id string) error {
 	record, err := o.readRecord(id)
 	if err != nil {
 		return err
@@ -117,7 +170,9 @@ func (o Outbox) Commit(id string) error {
 	return o.recoverRecord(record)
 }
 
-func (o Outbox) Abort(id string) error {
+func (o Outbox) Abort(id string) error { return o.operation().abort(id) }
+
+func (o outboxOperations) abort(id string) error {
 	_, err := o.readRecord(id)
 	if os.IsNotExist(err) {
 		return nil
@@ -141,13 +196,19 @@ func (o Outbox) Abort(id string) error {
 	}
 }
 func (o Outbox) Enqueue(e Event, subscribers []Subscriber) error {
-	if err := o.Prepare(e, subscribers); err != nil {
-		return err
-	}
-	return o.Commit(e.UUID)
+	return o.operation().enqueue(e, subscribers)
 }
 
-func (o Outbox) readRecord(id string) (ledgerRecord, error) {
+func (o outboxOperations) enqueue(e Event, subscribers []Subscriber) error {
+	if err := o.prepare(e, subscribers); err != nil {
+		return err
+	}
+	return o.commit(e.UUID)
+}
+
+func (o Outbox) readRecord(id string) (ledgerRecord, error) { return o.operation().readRecord(id) }
+
+func (o outboxOperations) readRecord(id string) (ledgerRecord, error) {
 	var r ledgerRecord
 	if !uuidRegex.MatchString(id) {
 		return r, fmt.Errorf("invalid event UUID")
@@ -199,7 +260,9 @@ func validateLedgerSubscriberNames(names []string) error {
 	return nil
 }
 
-func (o Outbox) readState(id string) (string, error) {
+func (o Outbox) readState(id string) (string, error) { return o.operation().readState(id) }
+
+func (o outboxOperations) readState(id string) (string, error) {
 	b, err := os.ReadFile(o.statePath(id))
 	if os.IsNotExist(err) {
 		return preparedState, nil
@@ -217,11 +280,13 @@ func (o Outbox) readState(id string) (string, error) {
 // decide is a cross-process compare-and-set: commit and abort race to create
 // the same immutable state marker. The winner is durable and the loser reads
 // that decision rather than overwriting it.
-func (o Outbox) decide(id, decision string) error {
+func (o Outbox) decide(id, decision string) error { return o.operation().decide(id, decision) }
+
+func (o outboxOperations) decide(id, decision string) error {
 	if decision != committedState && decision != abortedState {
 		return fmt.Errorf("invalid event decision")
 	}
-	err := writeNewAtomic(o.statePath(id), []byte(decision+"\n"))
+	err := o.writeNewAtomic(o.statePath(id), []byte(decision+"\n"))
 	if err == nil {
 		return nil
 	}
@@ -260,7 +325,9 @@ func subscriberNames(subscribers []Subscriber) ([]string, error) {
 
 // Recover rebuilds pending indexes for every committed ledger record. An ack
 // is the durable per-subscriber cursor; a stale marker beside an ack is pruned.
-func (o Outbox) Recover() error {
+func (o Outbox) Recover() error { return o.operation().recover() }
+
+func (o outboxOperations) recover() error {
 	entries, err := os.ReadDir(filepath.Join(o.Root, "ledger"))
 	if os.IsNotExist(err) {
 		return nil
@@ -289,18 +356,18 @@ func (o Outbox) Recover() error {
 	}
 	return nil
 }
-func (o Outbox) recoverRecord(record ledgerRecord) error {
+func (o outboxOperations) recoverRecord(record ledgerRecord) error {
 	for _, name := range record.Subscribers {
 		pending := o.pendingPath(name, record.Event.UUID)
 		if _, err := os.Stat(o.ackPath(name, record.Event.UUID)); err == nil {
-			if err := removeOutboxFile(pending); err != nil {
+			if err := o.removeOutboxFile(pending); err != nil {
 				return err
 			}
 			continue
 		} else if !os.IsNotExist(err) {
 			return err
 		}
-		if err := touchExclusive(pending); err != nil {
+		if err := o.touchExclusive(pending); err != nil {
 			return err
 		}
 	}
@@ -329,7 +396,9 @@ type PreparedRecord struct {
 // Prepared lists unresolved prepared records in deterministic UUID order.
 // It never follows absolute or parent-traversing artifact paths while
 // collecting local evidence.
-func (o Outbox) Prepared() ([]PreparedRecord, error) {
+func (o Outbox) Prepared() ([]PreparedRecord, error) { return o.operation().prepared() }
+
+func (o outboxOperations) prepared() ([]PreparedRecord, error) {
 	entries, err := os.ReadDir(filepath.Join(o.Root, "ledger"))
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -385,10 +454,14 @@ func ReconciliationToken(record PreparedRecord, decision string) string {
 }
 
 func (o Outbox) Replay(ctx context.Context, subscribers []Subscriber, name string, limit int) (ReplayResult, error) {
-	if err := o.Recover(); err != nil {
+	return o.operation().replay(ctx, subscribers, name, limit)
+}
+
+func (o outboxOperations) replay(ctx context.Context, subscribers []Subscriber, name string, limit int) (ReplayResult, error) {
+	if err := o.recover(); err != nil {
 		return ReplayResult{}, err
 	}
-	prepared, err := o.Prepared()
+	prepared, err := o.prepared()
 	if err != nil {
 		return ReplayResult{}, err
 	}
@@ -444,10 +517,10 @@ func (o Outbox) Replay(ctx context.Context, subscribers []Subscriber, name strin
 				result.Failed = append(result.Failed, SubscriberFailure{Name: n, Err: err})
 				continue
 			}
-			if err := touchExclusive(o.ackPath(n, id)); err != nil {
+			if err := o.touchExclusive(o.ackPath(n, id)); err != nil {
 				return result, err
 			}
-			if err := removeOutboxFile(o.pendingPath(n, id)); err != nil {
+			if err := o.removeOutboxFile(o.pendingPath(n, id)); err != nil {
 				return result, err
 			}
 			result.Delivered++
@@ -456,11 +529,11 @@ func (o Outbox) Replay(ctx context.Context, subscribers []Subscriber, name strin
 	return result, nil
 }
 
-func touchExclusive(path string) error {
-	if err := ensureOutboxDirectory(filepath.Dir(path)); err != nil {
+func (o outboxOperations) touchExclusive(path string) error {
+	if err := o.ensureOutboxDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := o.operations().OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if os.IsExist(err) {
 		return nil
 	}
@@ -474,18 +547,18 @@ func touchExclusive(path string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return syncOutboxDirectory(filepath.Dir(path))
+	return o.syncOutboxDirectory(filepath.Dir(path))
 }
-func writeNewAtomic(path string, data []byte) error {
-	if err := ensureOutboxDirectory(filepath.Dir(path)); err != nil {
+func (o outboxOperations) writeNewAtomic(path string, data []byte) error {
+	if err := o.ensureOutboxDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".event-")
+	f, err := o.operations().CreateTemp(filepath.Dir(path), ".event-")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
-	defer func() { _ = os.Remove(tmp) }()
+	defer func() { _ = o.operations().Remove(tmp) }()
 	if _, err = f.Write(data); err != nil {
 		_ = f.Close()
 		return err
@@ -497,14 +570,14 @@ func writeNewAtomic(path string, data []byte) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err = outboxLink(tmp, path); err != nil {
+	if err = o.operations().Link(tmp, path); err != nil {
 		return err
 	}
-	return syncOutboxDirectory(filepath.Dir(path))
+	return o.syncOutboxDirectory(filepath.Dir(path))
 }
 
-func syncOutboxDirectory(path string) error {
-	f, err := os.Open(path)
+func (o outboxOperations) syncOutboxDirectory(path string) error {
+	f, err := o.operations().Open(path)
 	if err != nil {
 		return err
 	}
@@ -512,8 +585,8 @@ func syncOutboxDirectory(path string) error {
 	return f.Sync()
 }
 
-func ensureOutboxDirectory(path string) error {
-	info, err := os.Stat(path)
+func (o outboxOperations) ensureOutboxDirectory(path string) error {
+	info, err := o.operations().Stat(path)
 	if err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("outbox parent is not a directory")
@@ -527,24 +600,24 @@ func ensureOutboxDirectory(path string) error {
 	if parent == path {
 		return err
 	}
-	if err := ensureOutboxDirectory(parent); err != nil {
+	if err := o.ensureOutboxDirectory(parent); err != nil {
 		return err
 	}
-	if err := os.Mkdir(path, 0o755); err != nil && !os.IsExist(err) {
+	if err := o.operations().Mkdir(path, 0o755); err != nil && !os.IsExist(err) {
 		return err
 	}
-	if err := syncOutboxDirectory(parent); err != nil {
+	if err := o.syncOutboxDirectory(parent); err != nil {
 		return err
 	}
-	return syncOutboxDirectory(path)
+	return o.syncOutboxDirectory(path)
 }
 
-func removeOutboxFile(path string) error {
-	if err := os.Remove(path); err != nil {
+func (o outboxOperations) removeOutboxFile(path string) error {
+	if err := o.operations().Remove(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	return syncOutboxDirectory(filepath.Dir(path))
+	return o.syncOutboxDirectory(filepath.Dir(path))
 }
