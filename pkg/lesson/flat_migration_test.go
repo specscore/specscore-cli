@@ -315,6 +315,39 @@ func TestFinalizeFlatMigration_RejectsMismatchedOrIncompleteTransaction(t *testi
 	}
 }
 
+func TestFlatMigration_DurableMarkerIsTheOnlyResumeAuthority(t *testing.T) {
+	lessons := filepath.Join(t.TempDir(), "spec", "lessons")
+	if err := os.MkdirAll(lessons, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ref := coverageLegacySource()
+	marker := flatMigrationMarker{
+		SchemaVersion:   1,
+		Source:          ref,
+		Slug:            "resume-boundary",
+		Classifications: []string{"process"},
+		EventUUID:       "01234567-89ab-4def-8123-456789abcdef",
+	}
+	b, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lessons, ".flat-migration-resume-boundary.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := FlatMigrationOptions{LessonsDir: lessons, Slug: "resume-boundary", Classifications: []string{"process"}}
+	preflight, err := PreflightFlatMigration(opts)
+	if err != nil || !preflight.PendingTransaction || preflight.EventUUID != marker.EventUUID {
+		t.Fatalf("preflight=%#v err=%v", preflight, err)
+	}
+	if _, err := MigrateFlat(FlatMigrationOptions{LessonsDir: lessons, Slug: opts.Slug, Classifications: opts.Classifications, EventUUID: "01234567-89ab-4def-8123-456789abcdea"}); err == nil {
+		t.Fatal("resume accepted a different caller event UUID")
+	}
+	if _, err := MigrateFlat(opts); err == nil {
+		t.Fatal("resume accepted a marker without the canonical proof")
+	}
+}
+
 func TestMigrateFlat_SourceRemoveDirectorySyncFailureResumesSameTransaction(t *testing.T) {
 	withFlatSourceIdentity(t)
 	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
