@@ -129,7 +129,7 @@ Build an end-to-end fixture that records a Lesson, captures an occurrence, share
 
 ## Open Questions
 
-- Which native orchestration plugin implements the neutral `lesson agents` hook envelope and publishes its durable projection? The generic SpecScore core must remain independent of that plugin's live transport and storage.
+- **Blocked native dependency — Synchestra Cloud/API and CLI.** The authoritative Cloud API currently has session list/get/send, but no Lesson association/filter, no auditable resume, and no complete projection refresh contract; Git fallback has durable envelopes but no public construction/config/CLI and no reconciliation. A separate Synchestra Feature must bind the project-anchored Lesson slug to `GET /v1/lesson-agents`, use `POST /v1/sessions/:id/send` with a stable idempotent message ID and durable receipt/retry, add an auditable resume path, and publish the adapter-produced projection. Until that exact journey is implemented and proven, Tasks 10–11 remain blocked.
 
 ---
 
