@@ -16,6 +16,78 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+type occurrenceTestFS struct {
+	lessonFS
+	openFn       func(string) (lessonFile, error)
+	removeFn     func(string) error
+	createTempFn func(string, string) (lessonFile, error)
+	linkFn       func(string, string) error
+}
+
+func (fs occurrenceTestFS) Open(path string) (lessonFile, error) {
+	if fs.openFn != nil {
+		return fs.openFn(path)
+	}
+	return fs.lessonFS.Open(path)
+}
+
+func (fs occurrenceTestFS) Remove(path string) error {
+	if fs.removeFn != nil {
+		return fs.removeFn(path)
+	}
+	return fs.lessonFS.Remove(path)
+}
+
+func (fs occurrenceTestFS) CreateTemp(dir, pattern string) (lessonFile, error) {
+	if fs.createTempFn != nil {
+		return fs.createTempFn(dir, pattern)
+	}
+	return fs.lessonFS.CreateTemp(dir, pattern)
+}
+
+func (fs occurrenceTestFS) Link(oldname, newname string) error {
+	if fs.linkFn != nil {
+		return fs.linkFn(oldname, newname)
+	}
+	return fs.lessonFS.Link(oldname, newname)
+}
+
+type occurrenceTestFile struct {
+	lessonFile
+	chmodErr error
+	writeErr error
+	syncErr  error
+	closeErr error
+}
+
+func (f occurrenceTestFile) Chmod(mode os.FileMode) error {
+	if f.chmodErr != nil {
+		return f.chmodErr
+	}
+	return f.lessonFile.Chmod(mode)
+}
+
+func (f occurrenceTestFile) Write(data []byte) (int, error) {
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	return f.lessonFile.Write(data)
+}
+
+func (f occurrenceTestFile) Sync() error {
+	if f.syncErr != nil {
+		return f.syncErr
+	}
+	return f.lessonFile.Sync()
+}
+
+func (f occurrenceTestFile) Close() error {
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	return f.lessonFile.Close()
+}
+
 func TestOccurrenceContractValidatesAgainstPinnedCoreSchema(t *testing.T) {
 	const (
 		schemaURL      = "https://specscore.md/new/lesson-occurrence.schema.json"
@@ -227,32 +299,112 @@ func TestAddOccurrence_PublicationFsyncAndRollbackFaultsCarryTriState(t *testing
 	base := AddOccurrenceOptions{LessonPath: path, ID: "01234567-89ab-4def-8123-456789abcdef", Summary: "boundary", Context: map[string]any{}, Evidence: Evidence{Kind: "none"}, Now: time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)}
 
 	t.Run("rollback-durably-completes", func(t *testing.T) {
-		origSync := occurrenceSyncDirectory
+		baseFS := osLessonFS{}
 		calls := 0
-		occurrenceSyncDirectory = func(dir string) error {
+		fs := occurrenceTestFS{lessonFS: baseFS}
+		fs.openFn = func(dir string) (lessonFile, error) {
 			calls++
-			if calls == 1 {
-				return errors.New("injected post-link fsync failure")
+			file, err := baseFS.Open(dir)
+			if err != nil {
+				return nil, err
 			}
-			return origSync(dir)
+			if calls == 1 {
+				return occurrenceTestFile{lessonFile: file, syncErr: errors.New("injected post-link fsync failure")}, nil
+			}
+			return file, nil
 		}
-		t.Cleanup(func() { occurrenceSyncDirectory = origSync })
-		_, err := AddOccurrence(base)
+		_, err := addOccurrenceWithFS(base, fs)
 		if MutationOutcomeOf(err) != MutationCompensated {
 			t.Fatalf("outcome=%v err=%v", MutationOutcomeOf(err), err)
 		}
 	})
 
 	t.Run("rollback-removal-uncertain", func(t *testing.T) {
-		origSync, origRemove := occurrenceSyncDirectory, occurrenceRemove
-		occurrenceSyncDirectory = func(string) error { return errors.New("injected post-link fsync failure") }
-		occurrenceRemove = func(string) error { return errors.New("injected rollback removal failure") }
-		t.Cleanup(func() { occurrenceSyncDirectory, occurrenceRemove = origSync, origRemove })
-		_, err := AddOccurrence(base)
+		baseFS := osLessonFS{}
+		fs := occurrenceTestFS{lessonFS: baseFS}
+		fs.openFn = func(dir string) (lessonFile, error) {
+			file, err := baseFS.Open(dir)
+			if err != nil {
+				return nil, err
+			}
+			return occurrenceTestFile{lessonFile: file, syncErr: errors.New("injected post-link fsync failure")}, nil
+		}
+		fs.removeFn = func(string) error { return errors.New("injected rollback removal failure") }
+		_, err := addOccurrenceWithFS(base, fs)
 		if MutationOutcomeOf(err) != MutationUncertain {
 			t.Fatalf("outcome=%v err=%v", MutationOutcomeOf(err), err)
 		}
 	})
+}
+
+func TestAddOccurrenceWithFS_FileBoundaryFaultsAreIsolated(t *testing.T) {
+	newFixture := func(t *testing.T) (AddOccurrenceOptions, occurrenceTestFS) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "spec", "lessons", "rule", "README.md")
+		if err := os.MkdirAll(filepath.Join(filepath.Dir(path), "occurrences"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body, err := ScaffoldCanonical(ScaffoldOptions{Slug: "rule"}, []string{"process"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return AddOccurrenceOptions{LessonPath: path, ID: "01234567-89ab-4def-8123-456789abcdef", Summary: "boundary", Context: map[string]any{}, Evidence: Evidence{Kind: "none"}, Now: time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)}, occurrenceTestFS{lessonFS: osLessonFS{}}
+	}
+	tests := []struct {
+		name  string
+		fault func(*testing.T, *occurrenceTestFS)
+		want  MutationOutcome
+	}{
+		{"create-temp", func(_ *testing.T, fs *occurrenceTestFS) {
+			fs.createTempFn = func(string, string) (lessonFile, error) { return nil, errors.New("create temp") }
+		}, MutationUncertain},
+		{"chmod", func(t *testing.T, fs *occurrenceTestFS) {
+			base := osLessonFS{}
+			fs.createTempFn = func(dir, pattern string) (lessonFile, error) {
+				f, err := base.CreateTemp(dir, pattern)
+				return occurrenceTestFile{lessonFile: f, chmodErr: errors.New("chmod")}, err
+			}
+		}, MutationPrePublication},
+		{"write", func(t *testing.T, fs *occurrenceTestFS) {
+			base := osLessonFS{}
+			fs.createTempFn = func(dir, pattern string) (lessonFile, error) {
+				f, err := base.CreateTemp(dir, pattern)
+				return occurrenceTestFile{lessonFile: f, writeErr: errors.New("write")}, err
+			}
+		}, MutationPrePublication},
+		{"sync", func(t *testing.T, fs *occurrenceTestFS) {
+			base := osLessonFS{}
+			fs.createTempFn = func(dir, pattern string) (lessonFile, error) {
+				f, err := base.CreateTemp(dir, pattern)
+				return occurrenceTestFile{lessonFile: f, syncErr: errors.New("sync")}, err
+			}
+		}, MutationPrePublication},
+		{"close", func(t *testing.T, fs *occurrenceTestFS) {
+			base := osLessonFS{}
+			fs.createTempFn = func(dir, pattern string) (lessonFile, error) {
+				f, err := base.CreateTemp(dir, pattern)
+				return occurrenceTestFile{lessonFile: f, closeErr: errors.New("close")}, err
+			}
+		}, MutationPrePublication},
+		{"link", func(_ *testing.T, fs *occurrenceTestFS) {
+			fs.linkFn = func(string, string) error { return errors.New("link") }
+		}, MutationPrePublication},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			opts, fs := newFixture(t)
+			tt.fault(t, &fs)
+			_, err := addOccurrenceWithFS(opts, fs)
+			if got := MutationOutcomeOf(err); got != tt.want {
+				t.Fatalf("outcome=%v want=%v err=%v", got, tt.want, err)
+			}
+		})
+	}
 }
 
 func TestAddOccurrence_ExclusiveAtomicPublicationDoesNotOverwrite(t *testing.T) {

@@ -25,9 +25,6 @@ var occurrenceUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[
 var gitCommit = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 var repositoryID = regexp.MustCompile(`^[^/\s]+/[^/\s]+/[^/\s]+$`)
 var occurredAtLexical = regexp.MustCompile(`^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?Z$`)
-var occurrencePublishLink = os.Link
-var occurrenceSyncDirectory = syncDirectory
-var occurrenceRemove = os.Remove
 
 // occurrenceForbiddenNames match the published schema policy. Callers must
 // redact before write; validators reject unsafe shape instead of silently
@@ -251,6 +248,10 @@ func validateRepoRelativePath(value string) error {
 
 // AddOccurrence writes exactly one new immutable child JSON file.
 func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
+	return addOccurrenceWithFS(opts, osLessonFS{})
+}
+
+func addOccurrenceWithFS(opts AddOccurrenceOptions, fs lessonFS) (Occurrence, error) {
 	l, err := Parse(opts.LessonPath)
 	if err != nil {
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
@@ -278,7 +279,7 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	if err := ValidateOccurrence(o); err != nil {
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
-	if err := ensureOccurrenceDirectory(l.OccurrencesDir); err != nil {
+	if err := ensureOccurrenceDirectoryWithFS(l.OccurrencesDir, fs); err != nil {
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	o.Path = filepath.Join(l.OccurrencesDir, o.ID+".json")
@@ -286,12 +287,12 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	if err != nil {
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
-	f, err := os.CreateTemp(l.OccurrencesDir, ".occurrence-")
+	f, err := fs.CreateTemp(l.OccurrencesDir, ".occurrence-")
 	if err != nil {
 		return Occurrence{}, err
 	}
 	tmp := f.Name()
-	defer func() { _ = os.Remove(tmp) }()
+	defer func() { _ = fs.Remove(tmp) }()
 	if err := f.Chmod(0o644); err != nil {
 		_ = f.Close()
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
@@ -307,17 +308,17 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	if err := f.Close(); err != nil {
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
-	if err := occurrencePublishLink(tmp, o.Path); err != nil {
+	if err := fs.Link(tmp, o.Path); err != nil {
 		// link is an exclusive publication primitive: an existing destination
 		// belongs to another writer and is not evidence that we published.
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
-	if err := occurrenceSyncDirectory(l.OccurrencesDir); err != nil {
+	if err := syncDirectoryWithFS(l.OccurrencesDir, fs); err != nil {
 		return Occurrence{}, CompensatePublication(func() error {
-			if removeErr := occurrenceRemove(o.Path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			if removeErr := fs.Remove(o.Path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				return removeErr
 			}
-			return occurrenceSyncDirectory(l.OccurrencesDir)
+			return syncDirectoryWithFS(l.OccurrencesDir, fs)
 		}, fmt.Errorf("durably publishing occurrence: %w", err))
 	}
 	return o, nil
@@ -327,14 +328,22 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 // compensate a just-published immutable child. It does not infer ownership
 // from path existence: callers pass the path returned by AddOccurrence.
 func RemoveOccurrence(path string) error {
-	if err := occurrenceRemove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	return removeOccurrenceWithFS(path, osLessonFS{})
+}
+
+func removeOccurrenceWithFS(path string, fs lessonFS) error {
+	if err := fs.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return occurrenceSyncDirectory(filepath.Dir(path))
+	return syncDirectoryWithFS(filepath.Dir(path), fs)
 }
 
 func ensureOccurrenceDirectory(path string) error {
-	info, err := os.Stat(path)
+	return ensureOccurrenceDirectoryWithFS(path, osLessonFS{})
+}
+
+func ensureOccurrenceDirectoryWithFS(path string, fs lessonFS) error {
+	info, err := fs.Stat(path)
 	if err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("occurrence store is not a directory")
@@ -344,18 +353,22 @@ func ensureOccurrenceDirectory(path string) error {
 	if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Mkdir(path, 0o755); err != nil {
+	if err := fs.Mkdir(path, 0o755); err != nil {
 		return err
 	}
-	if err := syncDirectory(filepath.Dir(path)); err != nil {
+	if err := syncDirectoryWithFS(filepath.Dir(path), fs); err != nil {
 		return err
 	}
-	return syncDirectory(path)
+	return syncDirectoryWithFS(path, fs)
 }
 
 // DiscoverOccurrences validates every child file and returns deterministic
 // chronological order. A malformed child is an error, never silently ignored.
 func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
+	return discoverOccurrencesWithFS(lessonPath, osLessonFS{})
+}
+
+func discoverOccurrencesWithFS(lessonPath string, fs lessonFS) ([]Occurrence, error) {
 	l, err := Parse(lessonPath)
 	if err != nil {
 		return nil, err
@@ -363,7 +376,7 @@ func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
 	if !l.Canonical {
 		return nil, nil
 	}
-	entries, err := os.ReadDir(l.OccurrencesDir)
+	entries, err := fs.ReadDir(l.OccurrencesDir)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -376,7 +389,7 @@ func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
 			continue
 		}
 		path := filepath.Join(l.OccurrencesDir, e.Name())
-		o, err := ValidateOccurrenceFile(path)
+		o, err := validateOccurrenceFileWithFS(path, fs)
 		if err != nil {
 			return nil, err
 		}
@@ -394,7 +407,11 @@ func DiscoverOccurrences(lessonPath string) ([]Occurrence, error) {
 // ValidateOccurrenceFile validates one child independently so lint can report
 // every malformed child instead of aborting a directory scan at the first.
 func ValidateOccurrenceFile(path string) (Occurrence, error) {
-	data, err := os.ReadFile(path)
+	return validateOccurrenceFileWithFS(path, osLessonFS{})
+}
+
+func validateOccurrenceFileWithFS(path string, fs lessonFS) (Occurrence, error) {
+	data, err := fs.ReadFile(path)
 	if err != nil {
 		return Occurrence{}, err
 	}
@@ -477,7 +494,11 @@ func scanOccurrenceJSON(value any) error {
 }
 
 func FindOccurrence(lessonPath, id string) (Occurrence, error) {
-	occurrences, err := DiscoverOccurrences(lessonPath)
+	return findOccurrenceWithFS(lessonPath, id, osLessonFS{})
+}
+
+func findOccurrenceWithFS(lessonPath, id string, fs lessonFS) (Occurrence, error) {
+	occurrences, err := discoverOccurrencesWithFS(lessonPath, fs)
 	if err != nil {
 		return Occurrence{}, err
 	}

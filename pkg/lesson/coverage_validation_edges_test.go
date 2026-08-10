@@ -375,3 +375,192 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 		t.Fatalf("manifest=%s err=%v", manifest, err)
 	}
 }
+
+func TestCoverageRelationHelpersAndStorageEdges(t *testing.T) {
+	for _, relation := range [][3]string{{"bad slug", "related", "other"}, {"one", "related", "one"}, {"one", "invalid", "two"}} {
+		if err := ValidateRelation(relation[0], relation[1], relation[2]); err == nil {
+			t.Fatalf("invalid relation accepted: %v", relation)
+		}
+	}
+	if err := ValidateRelation("one", "related", "two"); err != nil {
+		t.Fatal(err)
+	}
+	if RelationToken("one", "related", "two") == RelationToken("two", "related", "one") {
+		t.Fatal("relation token lost direction")
+	}
+
+	if err := ensureRelationFieldsAvailable([]byte("**Status:** Recorded\n"), map[string]string{"Supersedes": "two"}); err == nil {
+		t.Fatal("missing relation field accepted")
+	}
+	if err := ensureRelationFieldsAvailable([]byte("**Supersedes:** other\n"), map[string]string{"Supersedes": "two"}); err == nil {
+		t.Fatal("conflicting relation field accepted")
+	}
+	if err := ensureRelationFieldsAvailable([]byte("**Supersedes:** —\n"), map[string]string{"Supersedes": "two"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := relationField([]byte("**Status:** Recorded\n"), "missing"); got != "" {
+		t.Fatalf("missing relation field=%q", got)
+	}
+	if _, err := rewriteRelationFields([]byte("**Status:** Recorded\n"), "lesson", map[string]string{"Supersedes": "two"}); err == nil {
+		t.Fatal("rewrite missing field accepted")
+	}
+	rewritten, err := rewriteRelationFields([]byte("status: Recorded\n**Status:** Recorded\n**Supersedes:** —\n"), "lesson", map[string]string{"Status": "Superseded", "Supersedes": "two"})
+	if err != nil || !bytes.Contains(rewritten, []byte("status: Superseded")) || !bytes.Contains(rewritten, []byte("**Supersedes:** two")) {
+		t.Fatalf("rewritten=%q err=%v", rewritten, err)
+	}
+
+	root := t.TempDir()
+	lessons := relationFixture(t, "one", "two")
+	if rels, err := readRelatedRelations(lessons); err != nil || len(rels) != 0 {
+		t.Fatalf("missing sidecar=%v err=%v", rels, err)
+	}
+	for _, body := range [][]byte{
+		[]byte("{"), []byte(`[] []`), []byte(`[{"from":"one","type":"supersedes","to":"two"}]`),
+		[]byte(`[{"from":"one","type":"related","to":"missing"}]`),
+	} {
+		if _, err := decodeRelatedRelations(lessons, body); err == nil {
+			t.Fatalf("invalid related sidecar accepted: %s", body)
+		}
+	}
+	valid := []byte(`[{"from":"one","type":"related","to":"two"}]`)
+	if rels, err := decodeRelatedRelations(lessons, valid); err != nil || len(rels) != 1 {
+		t.Fatalf("valid sidecar=%v err=%v", rels, err)
+	}
+	if got := dedupeRelations([]Relation{{From: "one", Type: "related", To: "two"}, {From: "one", Type: "related", To: "two"}, {From: "two", Type: "related", To: "one"}}); len(got) != 2 {
+		t.Fatalf("dedupe=%#v", got)
+	}
+	if cycle, err := wouldCycle(lessons, "one", "missing"); err == nil || cycle {
+		t.Fatalf("unknown cycle=%v err=%v", cycle, err)
+	}
+
+	path := filepath.Join(root, "relation.json")
+	if err := replaceRelationCAS(path, nil, []byte("first\n"), "coverage"); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceRelationCAS(path, []byte("different"), []byte("second"), "coverage"); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
+		t.Fatalf("CAS conflict err=%v outcome=%v", err, MutationOutcomeOf(err))
+	}
+	origHook := relationBeforePublish
+	relationBeforePublish = func(string) error { return errors.New("injected prepublication") }
+	t.Cleanup(func() { relationBeforePublish = origHook })
+	if err := replaceRelationCAS(path, []byte("first\n"), []byte("second\n"), "coverage"); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
+		t.Fatalf("hook err=%v", err)
+	}
+	relationBeforePublish = origHook
+	if err := relationSnapshotsMatch(map[string][]byte{path: []byte("different")}); err == nil {
+		t.Fatal("snapshot mismatch accepted")
+	}
+	if err := relationSnapshotsMatch(map[string][]byte{filepath.Join(root, "missing"): nil}); err == nil {
+		t.Fatal("missing snapshot accepted")
+	}
+	if err := atomicReplace(path, []byte("second\n")); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "second\n" {
+		t.Fatalf("atomic replacement=%q err=%v", b, err)
+	}
+}
+
+func TestCoverageOccurrenceStorageEdges(t *testing.T) {
+	root := t.TempDir()
+	lessons := filepath.Join(root, "spec", "lessons")
+	legacy := filepath.Join(lessons, "legacy.md")
+	if err := os.MkdirAll(lessons, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("# Lesson: Legacy\n\n**Status:** Recorded\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddOccurrence(AddOccurrenceOptions{LessonPath: legacy}); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
+		t.Fatalf("legacy occurrence err=%v outcome=%v", err, MutationOutcomeOf(err))
+	}
+	if _, err := AddOccurrence(AddOccurrenceOptions{LessonPath: filepath.Join(root, "missing")}); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
+		t.Fatalf("missing occurrence err=%v outcome=%v", err, MutationOutcomeOf(err))
+	}
+
+	canonical := filepath.Join(lessons, "rule", "README.md")
+	body, err := ScaffoldCanonical(ScaffoldOptions{Slug: "rule", Owner: "tester", Date: "2026-08-10"}, []string{"process"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonical, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	occurrences := filepath.Join(filepath.Dir(canonical), "occurrences")
+	if err := ensureOccurrenceDirectory(occurrences); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureOccurrenceDirectory(occurrences); err != nil {
+		t.Fatal(err)
+	}
+	badStore := filepath.Join(root, "not-directory")
+	if err := os.WriteFile(badStore, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureOccurrenceDirectory(badStore); err == nil {
+		t.Fatal("file occurrence store accepted")
+	}
+
+	first, err := AddOccurrence(AddOccurrenceOptions{LessonPath: canonical, Summary: "", Now: time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := AddOccurrence(AddOccurrenceOptions{LessonPath: canonical, ID: "01234567-89ab-4def-8123-456789abcdef", Summary: "Second immutable observation.", Context: map[string]any{}, Evidence: Evidence{Kind: "none"}, Now: time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := DiscoverOccurrences(canonical)
+	if err != nil || len(items) != 2 || items[0].ID != second.ID || first.Summary != "Lesson gap observed." {
+		t.Fatalf("occurrences=%#v first=%#v err=%v", items, first, err)
+	}
+	if found, err := FindOccurrence(canonical, second.ID); err != nil || found.Path != second.Path {
+		t.Fatalf("found=%#v err=%v", found, err)
+	}
+	if _, err := FindOccurrence(canonical, "01234567-89ab-4def-8123-456789abcdea"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing occurrence err=%v", err)
+	}
+	if err := RemoveOccurrence(second.Path); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveOccurrence(second.Path); err != nil {
+		t.Fatal(err)
+	}
+
+	malformed := filepath.Join(occurrences, "broken.json")
+	if err := os.WriteFile(malformed, []byte(`{"occurred_at":4}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DiscoverOccurrences(canonical); err == nil {
+		t.Fatal("malformed occurrence accepted")
+	}
+	if err := os.Remove(malformed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(occurrences); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(occurrences, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DiscoverOccurrences(canonical); err == nil {
+		t.Fatal("file occurrence store accepted by discovery")
+	}
+	if values, err := DiscoverOccurrences(legacy); err != nil || values != nil {
+		t.Fatalf("legacy discovery=%v err=%v", values, err)
+	}
+
+	for _, data := range [][]byte{[]byte("{"), []byte(`[]`), []byte(`{"id":"x"}`), []byte(`{"occurred_at":4}`), []byte(`{"occurred_at":"2026-08-10T12:00:00+00:00"}`)} {
+		if err := validateOccurrenceRaw(data); err == nil {
+			t.Fatalf("invalid occurrence raw JSON accepted: %s", data)
+		}
+	}
+	if err := scanOccurrenceJSON(map[string]any{"safe": []any{"ordinary"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := scanOccurrenceJSON(map[string]any{"secret": "no"}); err == nil {
+		t.Fatal("forbidden occurrence property accepted")
+	}
+}
