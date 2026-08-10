@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,5 +55,79 @@ func TestLessonAgentsRefusesInvalidProjectionAndActions(t *testing.T) {
 	_, _, err = runLesson(t, "agents", "flat")
 	if exitCodeOfErr(err) != exitcode.InvalidState {
 		t.Fatalf("flat exit=%d err=%v", exitCodeOfErr(err), err)
+	}
+}
+
+func TestLessonAgentsProjectionValidationAndFormats(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agents.json")
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"invalid-json", `{`, "invalid JSON"},
+		{"unsupported-version", `{"version":"2"}`, "unsupported projection version"},
+		{"missing-agent-id", `{"version":"1","agents":[{}]}`, "agent id is required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := readLessonAgentsProjection(path)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if _, err := readLessonAgentsProjection(filepath.Join(dir, "missing.json")); !os.IsNotExist(err) {
+		t.Fatalf("missing projection err = %v, want not-exist", err)
+	}
+	p := lessonAgentsProjection{Version: "1", Agents: []lessonAgent{{ID: "a", Role: "reviewer", State: "idle", URL: "https://example.test/a"}}}
+	for _, format := range []string{"json", "yaml", "text"} {
+		t.Run(format, func(t *testing.T) {
+			var out strings.Builder
+			if err := writeLessonAgentsProjection(&out, format, p); err != nil {
+				t.Fatalf("write %s: %v", format, err)
+			}
+			if !strings.Contains(out.String(), "a") {
+				t.Fatalf("%s output omitted agent: %q", format, out.String())
+			}
+		})
+	}
+	for _, format := range []string{"json", "yaml", "text"} {
+		t.Run(format+"-writer-error", func(t *testing.T) {
+			if err := writeLessonAgentsProjection(&errWriter{}, format, p); err == nil {
+				t.Fatalf("expected %s writer error", format)
+			}
+		})
+	}
+}
+
+func TestLessonAgentsActionAndHookFailures(t *testing.T) {
+	root := canonicalLessonProject(t)
+	// No projection is a normal offline absence, not an implicit network read.
+	_, _, err := runLesson(t, "agents", "review-before-merge")
+	if exitCodeOfErr(err) != exitcode.NotFound {
+		t.Fatalf("missing projection exit=%d err=%v", exitCodeOfErr(err), err)
+	}
+	path := filepath.Join(root, "spec", "lessons", "review-before-merge", "README.md")
+	cmd := lessonAgentsCommand()
+	cmd.SetContext(context.Background())
+	t.Setenv(lessonAgentsHookEnv, "")
+	if err := invokeLessonAgentsHook(cmd, "refresh", root, path, "review-before-merge", "", ""); exitCodeOfErr(err) != exitcode.InvalidState {
+		t.Fatalf("missing hook exit=%d err=%v", exitCodeOfErr(err), err)
+	}
+	t.Setenv(lessonAgentsHookEnv, "/usr/bin/false")
+	if err := invokeLessonAgentsHook(cmd, "refresh", root, path, "review-before-merge", "", ""); err == nil {
+		t.Fatal("expected failed hook")
+	}
+	t.Setenv(lessonAgentsHookEnv, "/bin/cat")
+	out, _, err := runLesson(t, "agents", "review-before-merge", "--resume", "codex-1")
+	if err != nil || !strings.Contains(out, `"action":"resume"`) {
+		t.Fatalf("resume out=%q err=%v", out, err)
+	}
+	if _, _, err := runLesson(t, "agents", "review-before-merge", "--format=bogus"); exitCodeOfErr(err) != exitcode.InvalidArgs {
+		t.Fatalf("bad format exit=%d err=%v", exitCodeOfErr(err), err)
 	}
 }
