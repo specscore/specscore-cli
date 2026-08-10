@@ -166,8 +166,12 @@ func lessonClassifications(specRoot string) (map[string]bool, error) {
 	if !ok {
 		return nil, fmt.Errorf("specscore.yaml lacks lessons.classifications")
 	}
+	return lessonClassificationsFrom(raw["classifications"])
+}
+
+func lessonClassificationsFrom(raw any) (map[string]bool, error) {
 	var values []string
-	switch x := raw["classifications"].(type) {
+	switch x := raw.(type) {
 	case []any:
 		for _, v := range x {
 			if s, ok := v.(string); ok {
@@ -570,6 +574,9 @@ func readLessonIndexRows(path string) (rows []lessonIndexRow, canonical, malform
 
 func splitMarkdownRow(line string) []string {
 	line = strings.TrimSpace(strings.Trim(line, "|"))
+	if line == "" {
+		return nil
+	}
 	parts := strings.Split(line, "|")
 	for i := range parts {
 		parts[i] = strings.TrimSpace(parts[i])

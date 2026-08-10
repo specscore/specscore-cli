@@ -588,3 +588,66 @@ func TestUpsertLessonIndexRow_SkipsExistingProjectionRowsBeforeInsertion(t *test
 		t.Fatal(err)
 	}
 }
+
+func TestUpsertLessonIndexRow_MigratesLegacyProjectionForFirstCanonicalLesson(t *testing.T) {
+	specRoot := t.TempDir()
+	lessons := filepath.Join(specRoot, "lessons")
+	legacyPath := filepath.Join(lessons, "legacy.md")
+	if err := os.MkdirAll(lessons, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(fullLesson("Recorded")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	canonicalPath := filepath.Join(lessons, "canonical", "README.md")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(canonicalPath), "occurrences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: "canonical", Owner: "codex", Date: "2026-08-10"}, []string{"process"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonicalPath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(lessons, "README.md")
+	legacyIndex := "## Lessons\n\n| Lesson | Status | Recurred | Date | Owner |\n|---|---|---|---|---|\n| [legacy](legacy.md) | Recorded | 0 | 2026-08-10 | codex |\n"
+	if err := os.WriteFile(indexPath, []byte(legacyIndex), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := lesson.Parse(canonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertLessonIndexRow(specRoot, canonical); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if !strings.Contains(text, "| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |") || !strings.Contains(text, "[legacy](legacy.md)") || !strings.Contains(text, "[canonical](canonical/README.md)") {
+		t.Fatalf("first canonical lesson must rewrite the complete flat projection:\n%s", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(lessons, "canonical.md"), []byte(fullLesson("Recorded")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, []byte(legacyIndex), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertLessonIndexRow(specRoot, canonical); err == nil || !strings.Contains(err.Error(), "discovering Lessons") {
+		t.Fatalf("duplicate co-owned Lesson must prevent an incomplete migration, got %v", err)
+	}
+}
+
+func TestLessonClassificationAndMarkdownCellCompatibilityBranches(t *testing.T) {
+	classes, err := lessonClassificationsFrom([]string{"process", "quality"})
+	if err != nil || !classes["process"] || !classes["quality"] {
+		t.Fatalf("typed classification compatibility = %#v, %v", classes, err)
+	}
+	if got := firstMarkdownCell(""); got != "" {
+		t.Fatalf("empty markdown row first cell = %q", got)
+	}
+}
