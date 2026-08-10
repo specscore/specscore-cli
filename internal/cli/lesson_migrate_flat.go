@@ -64,6 +64,10 @@ Docs: docs/agent-lessons.md#migrate-a-structured-flat-lesson`,
 }
 
 func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
+	return runLessonMigrateFlatWithDeps(cmd, args, defaultLessonCommandDeps())
+}
+
+func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lessonCommandDeps) error {
 	slug := args[0]
 	if err := lesson.ValidateSlug(slug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
@@ -109,12 +113,12 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 		LessonsDir: lessonsDir, Classifications: selected, Slug: slug,
 		Control: control, Verification: verification, Evidence: evidence,
 	}
-	preflight, err := lesson.PreflightFlatMigration(opts)
+	preflight, err := deps.preflightFlatMigration(opts)
 	if err != nil {
 		return exitcode.InvalidStateErrorf("flat migration preflight refused: %v", err)
 	}
 	if preflight.AlreadyMigrated {
-		result, migrateErr := lesson.MigrateFlat(opts)
+		result, migrateErr := deps.migrateFlat(opts)
 		if migrateErr != nil {
 			return exitcode.InvalidStateErrorf("verifying completed flat migration: %v", migrateErr)
 		}
@@ -132,18 +136,18 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 	var flatBefore, indexBefore []byte
 	indexExisted := false
 	if !resuming {
-		flatBefore, err = os.ReadFile(flatPath)
+		flatBefore, err = deps.readFile(flatPath)
 		if err != nil {
 			return exitcode.UnexpectedErrorf("reading flat Lesson: %v", err)
 		}
-		indexBefore, err = os.ReadFile(indexPath)
+		indexBefore, err = deps.readFile(indexPath)
 		indexExisted = err == nil
 		if err != nil && !os.IsNotExist(err) {
 			return exitcode.UnexpectedErrorf("reading lessons index: %v", err)
 		}
 	}
 
-	prepared, err := prepareLessonEventWithID(root, "lesson.flat-migrated", slug, map[string]any{
+	prepared, err := deps.prepareLessonEventWithID(root, "lesson.flat-migrated", slug, map[string]any{
 		"classifications": selected,
 		"source_path":     preflight.Source.Path,
 		"source_revision": preflight.Source.Revision,
@@ -152,7 +156,7 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing flat-migration event: %v", err)
 	}
-	result, err := lesson.MigrateFlat(opts)
+	result, err := deps.migrateFlat(opts)
 	if err != nil {
 		if recovery, resolved := prepared.ResolveMutationFailure("migrating flat Lesson", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
@@ -169,25 +173,25 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		var first error
-		if err := os.RemoveAll(filepath.Dir(result.CanonicalPath)); err != nil {
+		if err := deps.removeAll(filepath.Dir(result.CanonicalPath)); err != nil {
 			first = err
 		}
-		if err := os.WriteFile(flatPath, flatBefore, 0o644); err != nil && first == nil {
+		if err := deps.writeFile(flatPath, flatBefore, 0o644); err != nil && first == nil {
 			first = err
 		}
 		if result.ManifestPath != "" {
-			if err := os.Remove(result.ManifestPath); err != nil && !os.IsNotExist(err) && first == nil {
+			if err := deps.remove(result.ManifestPath); err != nil && !os.IsNotExist(err) && first == nil {
 				first = err
 			}
 		}
 		if indexExisted {
-			if err := os.WriteFile(indexPath, indexBefore, 0o644); err != nil && first == nil {
+			if err := deps.writeFile(indexPath, indexBefore, 0o644); err != nil && first == nil {
 				first = err
 			}
-		} else if err := os.Remove(indexPath); err != nil && !os.IsNotExist(err) && first == nil {
+		} else if err := deps.remove(indexPath); err != nil && !os.IsNotExist(err) && first == nil {
 			first = err
 		}
-		if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) && first == nil {
+		if err := deps.remove(markerPath); err != nil && !os.IsNotExist(err) && first == nil {
 			first = err
 		}
 		return first
@@ -243,7 +247,7 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 	if err := injectFlatMigrationCrash("event-commit"); err != nil {
 		return err
 	}
-	if err := lesson.FinalizeFlatMigration(opts, preflight.EventUUID); err != nil {
+	if err := deps.finalizeFlatMigration(opts, preflight.EventUUID); err != nil {
 		return exitcode.UnexpectedErrorf("finalizing flat migration after durable event commit: %v", err)
 	}
 	result.PendingFinalize = false

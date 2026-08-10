@@ -37,6 +37,10 @@ func lessonOccurrenceAddCommand() *cobra.Command {
 }
 
 func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
+	return runLessonOccurrenceAddWithDeps(cmd, args, defaultLessonOccurrenceDeps())
+}
+
+func runLessonOccurrenceAddWithDeps(cmd *cobra.Command, args []string, deps lessonOccurrenceDeps) error {
 	slug := args[0]
 	if err := lesson.ValidateSlug(slug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
@@ -58,7 +62,7 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 		return exitcode.InvalidStateErrorf("lesson %q is legacy flat form; `lesson recur` remains available until explicit migration", slug)
 	}
 	root := projectRootForOccurrence(project)
-	indexSnapshot, err := snapshotOccurrenceIndex(root)
+	indexSnapshot, err := snapshotOccurrenceIndexWithDeps(root, deps)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
 	}
@@ -80,11 +84,11 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	}
 	id := uuid.NewString()
 	now := time.Now().UTC()
-	prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": id}, now)
+	prepared, err := deps.prepareEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": id}, now)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing occurrence event: %v", err)
 	}
-	o, err := lessonAddOccurrenceFn(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: summary, Context: context, Evidence: evidence, Now: now})
+	o, err := deps.addOccurrence(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: summary, Context: context, Evidence: evidence, Now: now})
 	if err != nil {
 		if recovery, resolved := prepared.ResolveMutationFailure("recording occurrence", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
@@ -92,7 +96,7 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 			return exitcode.InvalidArgsErrorf("invalid occurrence: %v", resolved)
 		}
 	}
-	if err := lessonIndexUpsertFn(filepath.Join(root, "spec"), l); err != nil {
+	if err := deps.indexUpsert(filepath.Join(root, "spec"), l); err != nil {
 		failure := lesson.CompensatePublication(func() error {
 			if removeErr := lesson.RemoveOccurrence(o.Path); removeErr != nil {
 				return removeErr
@@ -127,12 +131,16 @@ type occurrenceIndexSnapshot struct {
 }
 
 func snapshotOccurrenceIndex(root string) (occurrenceIndexSnapshot, error) {
+	return snapshotOccurrenceIndexWithDeps(root, defaultLessonOccurrenceDeps())
+}
+
+func snapshotOccurrenceIndexWithDeps(root string, deps lessonOccurrenceDeps) (occurrenceIndexSnapshot, error) {
 	path := filepath.Join(root, "spec", "lessons", "README.md")
-	b, err := os.ReadFile(path)
+	b, err := deps.readFile(path)
 	if err != nil {
 		return occurrenceIndexSnapshot{}, err
 	}
-	info, err := os.Stat(path)
+	info, err := deps.stat(path)
 	if err != nil {
 		return occurrenceIndexSnapshot{}, err
 	}
