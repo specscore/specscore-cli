@@ -29,10 +29,12 @@ func lessonInfoCommand() *cobra.Command {
 		Use:   "info <slug>",
 		Short: "Show lesson metadata — status, recurrence count, and section coverage",
 		Long: `Returns a lesson's metadata (slug, status, date, owner, recurrence
-count, successor when superseded) together with which of the four required
-sections (Incident, Process gap, Check, Enforcement) are present. Default
-output is YAML; use --format for JSON or text. A missing lesson exits 3 with
-no stdout output.`,
+count, successor when superseded) together with its layout-specific required
+section coverage. Canonical Lessons report Lesson, Process Gap, Tracking,
+Enforcement, and Open Questions; compatibility flat Lessons report Incident,
+Process gap, Check, and Enforcement. Canonical recurrence is derived from
+validated child JSON. Default output is YAML; use --format for JSON or text. A
+missing lesson exits 3 with no stdout output.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -76,21 +78,29 @@ func runLessonInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	var present []string
-	for _, s := range lesson.RequiredSections {
+	for _, s := range lesson.RequiredSectionsFor(l) {
 		if l.HasSection(s) {
 			present = append(present, s)
 		}
 	}
 
+	recurred := l.Recurred
+	if l.Canonical {
+		occurrences, err := lesson.DiscoverOccurrences(path)
+		if err != nil {
+			return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
+		}
+		recurred = len(occurrences)
+	}
 	doc := lessonInfoDoc{
 		Slug:            l.Slug,
 		Status:          l.Status,
 		Date:            l.Date,
 		Owner:           l.Owner,
-		Recurred:        l.Recurred,
+		Recurred:        recurred,
 		SupersededBy:    l.SupersededBy,
 		Sections:        present,
-		MissingSections: l.MissingRequiredSections(),
+		MissingSections: l.MissingRequiredSectionsForLayout(),
 	}
 
 	w := cmd.OutOrStdout()

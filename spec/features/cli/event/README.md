@@ -14,7 +14,7 @@ status: Stable
 
 ## Summary
 
-The shared event-dispatch plumbing for the `specscore` CLI. Owns the `pkg/event` Go package — the `Subscriber` interface, the three first-class subscriber implementations (`JsonlWriter`, `NoOp`, `Exec`), the `events:` config block schema in `specscore.yaml`, the envelope validator, and the fan-out dispatcher. The user-facing emission verb (`specscore event emit`) is owned by the child Feature `cli/event/emit`. Future event-consuming verbs (e.g. log, replay) attach as additional siblings under this parent without re-architecting the dispatch core.
+The shared reliable event-delivery plumbing for the `specscore` CLI. It owns the `pkg/event` envelope, subscribers, direct dispatcher, and durable per-subscriber outbox. `specscore event emit` and artifact mutations prepare or enqueue one immutable event for the complete subscriber set; `event replay` retries only unacknowledged deliveries; `event reconcile` resolves an interrupted prepared record against artifact evidence.
 
 ## Contents
 
@@ -128,7 +128,7 @@ events:
       path: .specscore/events.jsonl
 ```
 
-This preserves the pre-dispatcher convention as the zero-config default. An **explicitly empty** subscriber list (`events: { subscribers: [] }`) MUST be treated as the explicit no-subscribers configuration — equivalent in effect to a single `noop` (no event reaches any sink, dispatch reports success). Both forms MUST be accepted; the dispatcher MUST NOT synthesize the default when the user has written an empty list.
+This preserves the pre-dispatcher convention as the zero-config default. An **explicitly empty** subscriber list (`events: { subscribers: [] }`) MUST be treated as the explicit no-subscribers configuration: no event reaches a sink, dispatch reports success, and no recipientless outbox record is created. A configured `noop` also has no external sink effect but does retain a durable delivery acknowledgement. Both forms MUST be accepted; the dispatcher MUST NOT synthesize the default when the user has written an empty list.
 
 ### Envelope validation
 
@@ -150,7 +150,7 @@ Before any subscriber's `Deliver` is called, the dispatcher MUST validate that t
 - `artifact.revision` is a non-empty string. The literal `uncommitted` is accepted for pre-commit emissions.
 - `payload` is present and parses as a JSON object (`{}` is acceptable). The dispatcher MUST NOT inspect, validate, or transform payload fields — payload schemas are out of scope (REQ:payload-opaque clause below).
 
-**REQ:payload-opaque clause.** Payload is passed through to subscribers as opaque JSON. New event names MAY ship in event-emitting callers without modifying or releasing the CLI, provided the envelope satisfies the rules above. Per-event payload schemas are tracked as an Outstanding Question for a future additive Feature.
+**REQ:payload-opaque clause.** Payload is passed through to subscribers as opaque JSON. New event names MAY ship in event-emitting callers without modifying or releasing the CLI, provided the envelope satisfies the rules above. Per-event payload schemas are tracked as an Open Question for a future additive Feature.
 
 Validation failure MUST exit non-zero per REQ:dispatch-exit-codes with a stderr message naming the offending field and the rule violated. No subscriber's `Deliver` MUST be called when validation fails.
 
@@ -183,6 +183,24 @@ The dispatcher MUST map outcomes to exit codes consistent with the parent `cli` 
 
 The "single subscriber failed, others succeeded" case is success (exit 0) with stderr diagnostics per REQ:fan-out-dispatch. The "explicitly empty subscriber list" case is also success (REQ:default-and-empty-config).
 
+### Durable per-subscriber delivery
+
+The dispatcher remains the synchronous delivery primitive. Public emission and artifact-mutation commands place a validated envelope in the durable outbox before delivery so success at one sink cannot erase another sink's failure.
+
+#### REQ: immutable-prepared-ledger
+
+`Prepare` MUST exclusively publish one immutable ledger record containing the validated event and the complete sorted, unique, nonempty subscriber-name set before the corresponding artifact mutation. An explicitly empty configured subscriber list is the project-level opt-out and MUST create no recipientless ledger. The event UUID is the delivery idempotency key. Ledger publication MUST be no-clobber and parent-directory durable. Commit and abort MUST use per-event synchronization and refuse invalid state transitions.
+
+Before replay or recovery, the reader MUST reject unknown or trailing JSON, an invalid event envelope, and an empty, duplicate, or unsorted subscriber set. A schema-valid malicious local rewrite cannot currently be authenticated and MUST remain an explicitly Planned capability rather than a claimed guarantee.
+
+#### REQ: reconstructible-pending-delivery
+
+Commit MUST make the ledger record authoritative before delivery and reconstruct one pending marker for every subscriber from that ledger. One successful delivery acknowledges only its own subscriber. Failure or interruption leaves that subscriber inspectable and replayable even when another subscriber succeeds. Delivery is at least once around a subscriber-success/ack interruption, so subscribers MUST deduplicate by event UUID.
+
+#### REQ: prepared-reconciliation
+
+A prepared record left by a stopped process MUST remain visible. `specscore event reconcile` MUST require an explicit commit-or-abort decision and confirmation token after the operator compares the record with its artifact evidence. It MUST NOT silently ignore or guess the outcome. Artifact writers MUST keep an inspectable prepared record if artifact mutation succeeds but event commit cannot complete.
+
 ### Documentation surface
 
 The repo carries a single human-readable events document at a stable location.
@@ -198,6 +216,7 @@ The repository MUST contain `docs/events.md` with the following second-level sec
 | `pkg/event/` (Go package) | The only place subscriber implementations live. Owns the `Subscriber` interface, the three built-in subscribers, the envelope type, the dispatcher, and the config loader. | The emit verb in `internal/cli/event_emit.go` (defined by `cli/event/emit`). Future event-consuming verbs attach here. | `pkg/projectdef` for project-root resolution; YAML library for config parsing; `os/exec` stdlib for the Exec subscriber. |
 | `pkg/event/subscriber.go` | The `Subscriber` interface and the `Event` envelope struct. | The dispatcher; every subscriber implementation. | None. |
 | `pkg/event/dispatcher.go` | Iterates the configured subscriber list and calls `Deliver` on each. Implements REQ:fan-out-dispatch and the failure-logging contract. | The emit verb. | `pkg/event/subscriber.go`. |
+| `pkg/event/outbox.go` | Publishes immutable prepared records, reconstructs per-subscriber pending markers, records acknowledgements, and exposes replay/reconciliation. | The emit verb and artifact-mutation commands. | `pkg/event/subscriber.go`; project-local `.specscore/event-outbox/`. |
 | `pkg/event/envelope.go` | The envelope validator (REQ:envelope-validation). Pure function: `Validate(Event) error`. | The dispatcher. | Stdlib regex for `name` pattern. |
 | `pkg/event/jsonl.go` | The `JsonlWriter` subscriber. | Dispatcher (via config loader). | Stdlib `os`. |
 | `pkg/event/noop.go` | The `NoOp` subscriber. | Dispatcher (via config loader). | None. |
@@ -292,11 +311,11 @@ Per-AC Rehearse stubs are scaffolded for the testable ACs (envelope validation, 
 - **The `specscore event emit` verb itself.** Owned by the child Feature `cli/event/emit`.
 - **HTTP webhook subscribers.** Deferred per the source Idea's Not Doing list. Exec subscribers fronting `curl` cover the case at one-tenth the v1 design cost.
 - **Go plugin / wasm subscribers.** Deferred per the source Idea.
-- **Asynchronous or queued dispatch.** Synchronous fan-out per the source Idea — skills already block on emission today.
+- **Background daemon dispatch.** Replay is command-driven; no resident SpecScore delivery daemon is introduced.
 - **Per-subscriber event filtering / topic routing.** Every subscriber receives every event in v1. Subscribers filter in-process if they care.
-- **Retry / backoff on subscriber failure.** Log-and-continue is the contract.
-- **Per-event payload schema validation.** Envelope-only validation in v1. Per-event schemas couple CLI releases to skill releases; tracked as Outstanding Question for a future additive Feature.
-- **Replay / seek API over `.specscore/events.jsonl`.** The file is append-only by convention; consumers tail it themselves.
+- **Automated timed backoff.** Failed subscriber delivery remains pending for explicit replay; no scheduler is introduced.
+- **Per-event payload schema validation.** Envelope-only validation in v1. Per-event schemas couple CLI releases to skill releases; tracked as an Open Question for a future additive Feature.
+- **Replay / seek API over `.specscore/events.jsonl`.** Durable replay is based on the immutable outbox ledger and per-subscriber acknowledgements, not scanning the compatibility JSONL sink.
 - **A `specscore event log` pretty-printer.** Deliberately omitted; `jq . .specscore/events.jsonl` covers the read path.
 - **Migration of any event-emitting skill other than `verify`.** Tracked as follow-up work in the SDD skills repository.
 
@@ -434,6 +453,30 @@ Per-AC Rehearse stubs are scaffolded for the testable ACs (envelope validation, 
 **Given** a non-empty subscriber list where every subscriber's `Deliver` returns a non-nil error
 **When** the dispatch verb runs with a valid envelope
 **Then** every subscriber MUST be invoked once; stderr MUST contain one failure line per subscriber per REQ:fan-out-dispatch; exit code MUST be `10`.
+
+### AC: subscriber-success-never-masks-another-pending-sink
+
+**Requirements:** cli/event#req:immutable-prepared-ledger, cli/event#req:reconstructible-pending-delivery
+
+**Given** one subscriber succeeds and a second subscriber fails for the same committed event
+**When** delivery finishes and `event replay --subscriber <failed>` runs
+**Then** the first subscriber remains acknowledged, the second remains independently pending and is retried with the same event UUID, and no successful sink acknowledges another sink's work.
+
+### AC: interrupted-prepared-event-is-explicit
+
+**Requirements:** cli/event#req:prepared-reconciliation
+
+**Given** a process stops after publishing a prepared record and artifact evidence but before committing the event
+**When** `event replay` and `event reconcile` inspect the outbox
+**Then** replay reports the unresolved prepared record without delivering it, and only a confirmed commit or abort decision transitions it.
+
+### AC: corrupt-ledger-never-reaches-a-subscriber
+
+**Requirements:** cli/event#req:immutable-prepared-ledger
+
+**Given** a local ledger record with an invalid envelope, unknown/trailing JSON, or a noncanonical subscriber set
+**When** replay or recovery reads it
+**Then** validation fails before any subscriber is called; cryptographic detection of an otherwise schema-valid rewrite remains Planned.
 
 ### AC: docs-events-md-skeleton-present
 

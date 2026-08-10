@@ -32,10 +32,10 @@ var (
 	setSupersededByFn = lifecycle.SetSupersededBy
 )
 
-// PostMutationHook is the callback the cobra adapter wires to
-// `specscore spec lint --fix`. It MUST return nil on success; a non-nil
-// return triggers full rollback of every on-disk mutation and the error is
-// returned by ChangeStatus.
+// PostMutationHook is the callback the cobra adapter wires to its bounded
+// index synchronization and read-only validation. It MUST return nil on
+// success; a non-nil return triggers full rollback of every on-disk mutation
+// and the error is returned by ChangeStatus.
 type PostMutationHook func() error
 
 // ChangeStatusOptions packages the inputs to ChangeStatus.
@@ -169,17 +169,32 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil
 }
 
-// ResolveLessonFile resolves <slug> to an existing Lesson file under
-// lessonsDir (spec/lessons/<slug>.md). A slug that does not resolve returns
-// exit 3 (NotFound), naming the canonical path.
+// ResolveLessonFile resolves a canonical directory Lesson first, then a legacy
+// flat file during the compatibility window. Both forms for the same slug are
+// a conflict: picking one would make lifecycle changes nondeterministic.
 func ResolveLessonFile(lessonsDir, slug string) (string, error) {
+	canonical := filepath.Join(lessonsDir, slug, "README.md")
 	flat := filepath.Join(lessonsDir, slug+".md")
-	if _, err := os.Stat(flat); err == nil {
-		return flat, nil
-	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorf("stat %s: %v", flat, err)
+	_, canonicalErr := os.Stat(canonical)
+	_, flatErr := os.Stat(flat)
+	canonicalExists := canonicalErr == nil
+	flatExists := flatErr == nil
+	if canonicalExists && flatExists {
+		return "", exitcode.ConflictErrorf("lesson %q has both canonical directory and legacy flat forms", slug)
 	}
-	return "", exitcode.NotFoundErrorf("lesson not found at %s", flat)
+	if canonicalExists {
+		return canonical, nil
+	}
+	if canonicalErr != nil && !os.IsNotExist(canonicalErr) {
+		return "", exitcode.UnexpectedErrorf("stat %s: %v", canonical, canonicalErr)
+	}
+	if flatExists {
+		return flat, nil
+	}
+	if flatErr != nil && !os.IsNotExist(flatErr) {
+		return "", exitcode.UnexpectedErrorf("stat %s: %v", flat, flatErr)
+	}
+	return "", exitcode.NotFoundErrorf("lesson not found: %s", slug)
 }
 
 // statusNames converts a slice of Status values to plain strings, for

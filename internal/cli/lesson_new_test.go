@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,11 +12,12 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
 func readLesson(t *testing.T, root, slug string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(root, "spec", "lessons", slug+".md"))
+	b, err := os.ReadFile(filepath.Join(root, "spec", "lessons", slug, "README.md"))
 	if err != nil {
 		t.Fatalf("reading lesson %s: %v", slug, err)
 	}
@@ -23,30 +26,35 @@ func readLesson(t *testing.T, root, slug string) string {
 
 // AC: scaffold-emits-frontmatter-and-sections — the embedded (offline)
 // scaffold carries format:/status: frontmatter mirroring the body, all four
-// required sections, and the footer, AND `lesson new` leaves the tree
-// lint-clean (including the lessons index row) because it runs an internal
-// `spec lint --fix` pass — the near-zero-friction guarantee.
+// required sections, and the footer, AND `lesson new` leaves its bounded
+// Lesson/index write set lint-clean without invoking a repository-wide fixer.
 func TestLessonNew_EmbeddedEmitsFrontmatterSectionsAndIndex(t *testing.T) {
 	root := setupSpecRoot(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
 	withCwd(t, root)
 
 	_, stderr, err := runLesson(t, "new", "kinder-fake", "--owner", "alex")
 	if err != nil {
 		t.Fatalf("lesson new: %v (stderr=%s)", err, stderr)
 	}
-	if !strings.Contains(stderr, "used built-in template") {
-		t.Errorf("expected offline fallback warning, got %q", stderr)
+	if strings.Contains(stderr, "no specscore.yaml") {
+		t.Errorf("configured project must not take legacy fallback: %q", stderr)
 	}
-	s := readLesson(t, root, "kinder-fake")
+	b, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
 	for _, want := range []string{
 		"---\nformat: https://specscore.md/lesson-specification\nstatus: Recorded\n---",
 		"# Lesson: Kinder Fake",
 		"**Status:** Recorded",
-		"**Recurred:** 0",
 		"**Owner:** alex",
-		"## Incident",
-		"## Process gap",
-		"## Check",
+		"## Lesson",
+		"## Process Gap",
+		"## Tracking",
 		"## Enforcement",
 		"*This document follows the https://specscore.md/lesson-specification*",
 	} {
@@ -55,14 +63,8 @@ func TestLessonNew_EmbeddedEmitsFrontmatterSectionsAndIndex(t *testing.T) {
 		}
 	}
 
-	// The lessons index row was inserted by the internal lint --fix pass —
-	// no separate step is needed to keep the tree lint-clean.
-	idx, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
-	if err != nil {
-		t.Fatalf("reading lessons index: %v", err)
-	}
-	if !strings.Contains(string(idx), "kinder-fake") {
-		t.Errorf("lessons index missing the new row:\n%s", idx)
+	if _, err := os.Stat(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences")); err != nil {
+		t.Fatalf("canonical occurrence directory missing: %v", err)
 	}
 }
 
@@ -110,7 +112,7 @@ func TestLessonNew_AncestorIndexesMaterialized(t *testing.T) {
 	if _, _, err := runLesson(t, "new", "l1"); err != nil {
 		t.Fatalf("lesson new: %v", err)
 	}
-	for _, rel := range []string{"spec/README.md", "spec/lessons/README.md", "spec/lessons/l1.md"} {
+	for _, rel := range []string{"spec/README.md", "spec/lessons/README.md", "spec/lessons/l1/README.md", "spec/lessons/l1/occurrences"} {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("expected %s to exist: %v", rel, err)
 		}
@@ -139,6 +141,51 @@ func TestLessonNew_ResolveSpecRootError(t *testing.T) {
 	_, _, err := runLesson(t, "new", "p")
 	if err == nil {
 		t.Fatal("expected error when no spec root can be resolved")
+	}
+}
+
+func TestLessonNew_ConfigPreflightWritesNothing(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	cmd := lessonCommand()
+	cmd.SetArgs([]string{"new", "must-not-write"})
+	if err := cmd.Execute(); exitCodeOf(err) != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want InvalidState; err=%v", exitCodeOf(err), err)
+	}
+	for _, rel := range []string{"specscore.yaml", "spec/README.md", "spec/lessons/must-not-write/README.md"} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
+			t.Errorf("preflight unexpectedly wrote %s", rel)
+		}
+	}
+}
+
+func TestLessonNew_InvalidClassificationVocabularyPreflightWritesNothing(t *testing.T) {
+	tests := []struct {
+		name            string
+		classifications []string
+	}{
+		{name: "classification is not a slug", classifications: []string{"Bad Value"}},
+		{name: "classification is duplicated", classifications: []string{"process", "process"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := setupSpecRoot(t)
+			cfg := projectdef.SpecConfig{Extras: map[string]any{
+				"lessons": map[string]any{"classifications": tt.classifications},
+			}}
+			if err := projectdef.WriteSpecConfig(root, cfg); err != nil {
+				t.Fatal(err)
+			}
+			before := treeDigestForCLI(t, root)
+
+			_, _, err := runLesson(t, "new", "must-not-write", "--project", root)
+			if got := exitCodeOf(err); got != exitcode.InvalidState {
+				t.Fatalf("exit = %d, want InvalidState; err=%v", got, err)
+			}
+			if after := treeDigestForCLI(t, root); !bytes.Equal(before, after) {
+				t.Fatal("classification preflight changed the project tree")
+			}
+		})
 	}
 }
 
@@ -177,53 +224,36 @@ func TestLessonNew_WriteError(t *testing.T) {
 	}
 }
 
-func TestLessonNew_ScaffoldError(t *testing.T) {
-	orig := lessonScaffoldFn
-	t.Cleanup(func() { lessonScaffoldFn = orig })
-	lessonScaffoldFn = func(lesson.ScaffoldOptions) ([]byte, error) {
-		return nil, errors.New("forced scaffold failure")
-	}
+// AC: narrow-index-upsert-failure — the lint-owned bounded row writer fails
+// transactionally without invoking a whole-tree lint fixer.
+func TestLessonNew_IndexUpsertFails(t *testing.T) {
 	root := setupSpecRoot(t)
-	withCwd(t, root)
-	_, _, err := runLesson(t, "new", "boom")
-	if got := exitCodeOf(err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// AC: internal-fix-pass-failure — a lint --fix failure removes the partial
-// file and exits 10.
-func TestLessonNew_LintFixFails(t *testing.T) {
-	root := setupSpecRoot(t)
 	withCwd(t, root)
-	orig := lintLintFn
-	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
-		if opts.Fix {
-			return nil, errors.New("fix boom")
-		}
-		return nil, nil
-	}
-	t.Cleanup(func() { lintLintFn = orig })
+	orig := lessonIndexUpsertFn
+	lessonIndexUpsertFn = func(string, *lesson.Lesson) error { return errors.New("index boom") }
+	t.Cleanup(func() { lessonIndexUpsertFn = orig })
 
 	_, _, err := runLesson(t, "new", "boom")
 	if got := exitCodeOf(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom.md")); statErr == nil {
-		t.Error("partial file should be removed after a fix-pass failure")
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom", "README.md")); statErr == nil {
+		t.Error("partial file should be removed after an index-upsert failure")
 	}
 }
 
-// AC: internal-verify-pass-failure — the second (non-fix) lint call erroring
-// exits 10.
+// AC: internal-verify-pass-failure — the focused read-only lint call erroring exits 10.
 func TestLessonNew_LintVerifyFails(t *testing.T) {
 	root := setupSpecRoot(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
 	withCwd(t, root)
 	orig := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
-		if opts.Fix {
-			return nil, nil
-		}
 		return nil, errors.New("verify boom")
 	}
 	t.Cleanup(func() { lintLintFn = orig })
@@ -235,18 +265,18 @@ func TestLessonNew_LintVerifyFails(t *testing.T) {
 }
 
 // AC: generated-lesson-lint-error-surfaced — a remaining error-severity
-// violation touching the new file (or the lessons/ family) after the fix
+// violation touching the new file (or the lessons/ family) after the read-only
 // pass surfaces as a failure rather than a silent success.
 func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 	root := setupSpecRoot(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
 	withCwd(t, root)
 	orig := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
-		if opts.Fix {
-			return nil, nil
-		}
 		return []lint.Violation{
-			{File: "lessons/boom.md", Line: 1, Rule: "L-001", Severity: "error", Message: "boom"},
+			{File: "lessons/boom/README.md", Line: 1, Rule: "L-001", Severity: "error", Message: "boom"},
 		}, nil
 	}
 	t.Cleanup(func() { lintLintFn = orig })
@@ -255,8 +285,71 @@ func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 	if got := exitCodeOf(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
 	}
-	if !strings.Contains(err.Error(), "generated lesson failed lint") {
+	if !strings.Contains(err.Error(), "generated Lesson failed lint") {
 		t.Errorf("expected generated-lesson-failed-lint message, got: %v", err)
+	}
+}
+
+func TestLessonNew_DoesNotMigrateUnrelatedOutstandingQuestions(t *testing.T) {
+	root := setupLintCleanProject(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedDir := filepath.Join(root, "spec", "research")
+	if err := os.MkdirAll(unrelatedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedPath := filepath.Join(unrelatedDir, "legacy.md")
+	unrelated := []byte("# Legacy research\n\n## Outstanding Questions\n\n- Keep this byte-identical until explicit lint --fix.\n")
+	if err := os.WriteFile(unrelatedPath, unrelated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := runLesson(t, "new", "bounded-write", "--project", root); err != nil {
+		t.Fatalf("lesson new: %v", err)
+	}
+	if got, err := os.ReadFile(unrelatedPath); err != nil || !bytes.Equal(got, unrelated) {
+		t.Fatalf("lesson new ran a hidden whole-tree fixer: err=%v\n%s", err, got)
+	}
+}
+
+func TestLessonNew_CommitsDurableCreatedEvent(t *testing.T) {
+	root := setupLintCleanProject(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runLesson(t, "new", "durable-created-event", "--project", root); err != nil {
+		t.Fatal(err)
+	}
+	outboxRoot := filepath.Join(root, ".specscore", "event-outbox")
+	ledgerEntries, err := os.ReadDir(filepath.Join(outboxRoot, "ledger"))
+	if err != nil || len(ledgerEntries) != 1 {
+		t.Fatalf("lesson new ledger entries = %d err=%v", len(ledgerEntries), err)
+	}
+	ledgerBytes, err := os.ReadFile(filepath.Join(outboxRoot, "ledger", ledgerEntries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Event struct {
+			Name     string `json:"name"`
+			UUID     string `json:"uuid"`
+			Artifact struct {
+				ID string `json:"id"`
+			} `json:"artifact"`
+		} `json:"event"`
+		Subscribers []string `json:"subscribers"`
+		State       string   `json:"state"`
+	}
+	if err := json.Unmarshal(ledgerBytes, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Event.Name != "lesson.created" || record.Event.Artifact.ID != "durable-created-event" || record.Event.UUID == "" || len(record.Subscribers) != 1 || record.State != "prepared" {
+		t.Fatalf("unexpected immutable created-event ledger: %#v", record)
+	}
+	state, err := os.ReadFile(filepath.Join(outboxRoot, "state", record.Event.UUID))
+	if err != nil || strings.TrimSpace(string(state)) != "committed" {
+		t.Fatalf("created event was not committed: %q err=%v", state, err)
 	}
 }
 
@@ -264,6 +357,9 @@ func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 // introduces no error-severity violations anywhere in the tree.
 func TestLessonNew_LintCleanOutsideFile(t *testing.T) {
 	root := setupLintCleanProject(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := runLesson(t, "new", "clean-lesson", "--project", root); err != nil {
 		t.Fatalf("lesson new: %v", err)
 	}

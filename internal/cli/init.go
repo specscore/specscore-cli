@@ -334,14 +334,12 @@ func lessonsIndexContent(_ projectdef.SpecConfig) string {
 format: https://specscore.md/lessons-index-specification
 ---
 
-# Lessons
+# SpecScore Lessons
 
-Canonical index of all lessons in this repository. Each lesson is a single Markdown file under ` + "`spec/lessons/`" + ` recording a gap in process — a missing check, gate, convention, or review step — and the enforcement mechanism that closes it. Ask "what have we learned but not yet enforced?" with ` + "`specscore lesson list --not-enforced`" + `.
+## Lessons
 
-## Index
-
-| Lesson | Status | Recurred | Date | Owner |
-|---|---|---|---|---|
+| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |
+|---|---|---|---:|---|---|
 
 ## Open Questions
 

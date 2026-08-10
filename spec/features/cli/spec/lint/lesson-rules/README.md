@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-Adds four lint rules (`L-001`–`L-004`) and the underlying single-file Lesson parser to `specscore spec lint`, implementing the structural half of the [cli/lesson](../../../lesson/README.md) contract: `L-001` requires the four required sections (`Incident`, `Process gap`, `Check`, `Enforcement`) to exist — presence only, never content — with `Process gap` and `Enforcement` load-bearing; `L-002` rejects a `**Status:**` value outside the canonical enforcement-ladder set; `L-003`/`L-004` require the lessons index (`spec/lessons/README.md`) to list every lesson and stay in row-sync (`Status`/`Recurred`/`Date`/`Owner`), mirroring `idea-index-completeness`/`idea-index-row-sync`.
+Adds the Lesson lint family and underlying parser to `specscore spec lint`. Existing rules `L-001`–`L-004` retain compatibility. The extension adds directory-form discovery, flat-file compatibility, required tracking/evidence metadata, relation integrity, occurrence integrity, and exact index integrity. The concurrently reviewed SpecScore meta-format owns the final required fields and layout.
 
 ## Problem
 
@@ -21,9 +21,9 @@ A lint rule that checked section *content* would recreate the exact failure mode
 
 ### Lesson artifact detection
 
-#### REQ: lesson-detection-single-file
+#### REQ: lesson-detection-layouts
 
-The rules MUST only operate on single-file Lessons at `spec/lessons/<slug>.md` (files directly under `spec/lessons/`, `.md` extension, not named `README.md`).
+The rules MUST discover both legacy flat Lessons at `spec/lessons/<slug>.md` and directory Lessons at `spec/lessons/<slug>/README.md`. A slug present in both layouts is an error naming both paths; lint and read commands never choose one silently. Relocation is explicit, never an autofix side effect.
 
 #### REQ: lesson-detection-title-prefix
 
@@ -55,12 +55,32 @@ A file is recognized as a Lesson when its first H1 heading matches `# Lesson: <t
 
 `L-004` MUST report a violation naming every index row whose `Status`/`Recurred`/`Date`/`Owner` cells do not match the corresponding Lesson file. `--fix` MUST regenerate drifted rows. A missing `spec/lessons/README.md` emits neither `L-003` nor `L-004` — that gap is the generic `readme-exists` rule's job.
 
+### Required ownership, evidence, and graph integrity
+
+#### REQ: extended-lesson-rules
+
+The default suite MUST register error rules `L-005`–`L-009`:
+
+| Rule | Requirement |
+|---|---|
+| L-005 | Required Status/Date/Owner/non-negative Recurred metadata is present and valid. |
+| L-006 | Exactly one actionable tracking reference, or a structured reviewer-gate exception, is present. |
+| L-007 | An Enforced Lesson carries a repository-relative enforcement-evidence path which resolves under project root. |
+| L-008 | Supersession/human-confirmed relations resolve, are non-self, non-duplicated, symmetric where required, and acyclic where directed. |
+| L-009 | Occurrences have unique IDs, RFC-3339 times, opaque JSON-object context, and resolvable parents. |
+
+Lint checks syntax, identity, local paths, and graph consistency only. It does not claim a remote issue is open, a test ran, or prose is semantically duplicate.
+
+#### REQ: generic-document-registry
+
+Flat and directory Lesson READMEs MUST join the generic status-bearing document registry so shared format-field, adherence-footer, footer-format-mirror, and status-mirror checks apply. Occurrence JSON is not a Markdown document artifact and is excluded from those walkers.
+
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
 | [spec lint](../../README.md) | Parent — registers `L-001`–`L-004` in the rule catalog. |
-| [cli/lesson](../../../lesson/README.md) | Consumes this family: `lesson new` runs an internal `spec lint --fix` pass so a freshly scaffolded lesson is immediately clean against all four rules. |
+| [cli/lesson](../../../lesson/README.md) | Consumes this family: focused writers preflight configuration, update only their declared Lesson/index paths, then run lint read-only. Only an explicit `spec lint --fix` invocation runs fixers. |
 | [cli/spec/lint/plan-rules](../plan-rules/README.md) | Closest structural sibling — `L-003`/`L-004` mirror `idea-index-completeness`/`idea-index-row-sync` rather than Plan's (Plan currently has no equivalent index-sync rule). |
 
 ## Acceptance Criteria

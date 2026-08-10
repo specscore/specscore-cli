@@ -9,6 +9,8 @@ var lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
 	return lint.Lint(opts)
 }
 
+var lessonIndexUpsertFn = lint.UpsertLessonIndexRow
+
 // lintMigrateFn is the seam for the frontmatter migration backfill; tests
 // replace it to exercise the migrate verb's error path.
 var lintMigrateFn = lint.Migrate

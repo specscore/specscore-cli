@@ -28,9 +28,10 @@ case-insensitive (recorded, stated, enforced, withdrawn, superseded); an
 unrecognized value exits 2 naming it rather than silently matching nothing.
 --status and --not-enforced are mutually exclusive.
 
---min-recurred N additionally restricts to lessons whose **Recurred:** count
-is at least N, so "which lessons have recurred and are still not enforced?"
-is one command: --not-enforced --min-recurred=1.
+--min-recurred N additionally restricts to lessons whose recurrence count is
+at least N. Canonical counts derive from validated child occurrences; legacy
+flat counts use **Recurred:**. Thus "which lessons have recurred and are still
+not enforced?" is one command: --not-enforced --min-recurred=1.
 
 Output is empty (exit 0) when no lessons match.`,
 		Args: cobra.NoArgs,
@@ -188,14 +189,25 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 		return exitcode.UnexpectedErrorf("discovering lessons: %v", err)
 	}
 
-	matched := func(l *lesson.Lesson) bool {
+	recurrenceCount := func(l *lesson.Lesson) (int, error) {
+		if !l.Canonical {
+			return l.Recurred, nil
+		}
+		items, err := lesson.DiscoverOccurrences(l.Path)
+		return len(items), err
+	}
+	matched := func(l *lesson.Lesson) (bool, int, error) {
+		recurred, err := recurrenceCount(l)
+		if err != nil {
+			return false, 0, err
+		}
 		if statusSet != nil && !statusSet[strings.ToLower(strings.TrimSpace(l.Status))] {
-			return false
+			return false, recurred, nil
 		}
-		if minRecurred > 0 && l.Recurred < minRecurred {
-			return false
+		if minRecurred > 0 && recurred < minRecurred {
+			return false, recurred, nil
 		}
-		return true
+		return true, recurred, nil
 	}
 
 	w := cmd.OutOrStdout()
@@ -203,12 +215,20 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 	if len(fields) > 0 {
 		var entries []map[string]string
 		for _, l := range lessons {
-			if !matched(l) {
+			ok, recurred, err := matched(l)
+			if err != nil {
+				return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
+			}
+			if !ok {
 				continue
 			}
 			entry := map[string]string{"slug": l.Slug}
 			for _, f := range fields {
-				entry[f] = lessonFieldValue(l, f)
+				if f == "recurred" {
+					entry[f] = strconv.Itoa(recurred)
+				} else {
+					entry[f] = lessonFieldValue(l, f)
+				}
 			}
 			entries = append(entries, entry)
 		}
@@ -224,10 +244,14 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 
 	var entries []lessonListEntry
 	for _, l := range lessons {
-		if !matched(l) {
+		ok, recurred, err := matched(l)
+		if err != nil {
+			return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
+		}
+		if !ok {
 			continue
 		}
-		entries = append(entries, lessonListEntry{Slug: l.Slug, Status: strings.TrimSpace(l.Status), Recurred: l.Recurred})
+		entries = append(entries, lessonListEntry{Slug: l.Slug, Status: strings.TrimSpace(l.Status), Recurred: recurred})
 	}
 
 	switch format {
