@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 159
+Total rules: 164
 
 ## capability
 
@@ -210,10 +210,10 @@ Total rules: 159
 | L-003 | error | Requires the lessons index to list every lesson; --fix inserts missing rows. |
 | L-004 | error | Requires each lessons index row to match the layout-specific Lesson projection; --fix regenerates drifted rows. |
 | L-005 | error | Requires canonical directory Lessons to carry ordered metadata and repository-controlled classifications. |
-| L-006 | error | Requires canonical Tracking to declare the append-only occurrence store, derived recurrence, and published schema URL. |
+| L-006 | error | Requires canonical Lesson Tracking to declare the append-only occurrence store, derived recurrence, and published schema URL. |
 | L-007 | error | Requires Enforced Lessons to declare deterministic control, verification, and stable evidence. |
 | L-008 | error | Requires duplicate and supersession relations to resolve without conflicts or cycles. |
-| L-009 | error | Requires every canonical occurrence child to satisfy the published append-only JSON contract. |
+| L-009 | error | Requires every canonical Lesson occurrence child to satisfy the published append-only JSON contract. |
 
 ## plan
 
