@@ -12,6 +12,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
 // setupFeatureSpec stages a lint-clean spec tree at a fresh t.TempDir,
@@ -1250,7 +1251,10 @@ func TestFeatureNew_LintClean(t *testing.T) {
 // A post-scaffold lint-fix failure is surfaced as an Unexpected error instead
 // of reporting a successful feature creation.
 func TestFeatureNew_LintFixError(t *testing.T) {
-	setupFeatureSpec(t, "Draft")
+	root := setupFeatureSpec(t, "Draft")
+	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{}); err != nil {
+		t.Fatal(err)
+	}
 
 	orig := lintLintFn
 	lintLintFn = func(lint.Options) ([]lint.Violation, error) {

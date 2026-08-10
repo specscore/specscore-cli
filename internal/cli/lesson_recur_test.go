@@ -22,9 +22,13 @@ func TestLessonRecur_HappyPath(t *testing.T) {
 	if stdout != "kinder-fake: recurred 1\n" {
 		t.Errorf("stdout = %q", stdout)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
-	if !strings.Contains(string(body), "**Recurred:** 1") || !strings.Contains(string(body), "happened again") {
-		t.Errorf("recurrence not recorded:\n%s", body)
+	entries, _ := os.ReadDir(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences"))
+	if len(entries) != 1 {
+		t.Fatalf("expected one immutable occurrence, got %d", len(entries))
+	}
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences", entries[0].Name()))
+	if !strings.Contains(string(body), "happened again") {
+		t.Errorf("recurrence summary not recorded: %s", body)
 	}
 }
 
@@ -75,9 +79,9 @@ func TestLessonRecur_WarnsOnRetiredStatuses(t *testing.T) {
 			if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, status) {
 				t.Errorf("expected a warning naming %q, got stderr=%q", status, stderr)
 			}
-			body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
-			if !strings.Contains(string(body), "**Recurred:** 1") || !strings.Contains(string(body), "happened again anyway") {
-				t.Errorf("recurrence must still be recorded despite the warning:\n%s", body)
+			entries, _ := os.ReadDir(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences"))
+			if len(entries) != 1 {
+				t.Fatalf("recurrence must still be recorded despite warning")
 			}
 		})
 	}
@@ -140,7 +144,11 @@ func TestLessonRecur_NotFoundExits3(t *testing.T) {
 }
 
 func TestLessonRecur_RecurFnFails(t *testing.T) {
-	stageLesson(t, "kinder-fake", "Stated")
+	root := stageLesson(t, "kinder-fake", "Stated")
+	if err := os.RemoveAll(filepath.Join(root, "spec", "lessons", "kinder-fake")); err != nil {
+		t.Fatal(err)
+	}
+	writeLessonInDir(t, filepath.Join(root, "spec", "lessons"), "kinder-fake", "Stated")
 	orig := lessonRecurFn
 	lessonRecurFn = func(string, string) (int, error) {
 		return 0, errors.New("boom")
@@ -154,7 +162,11 @@ func TestLessonRecur_RecurFnFails(t *testing.T) {
 }
 
 func TestLessonRecur_LintFixFails(t *testing.T) {
-	stageLesson(t, "kinder-fake", "Stated")
+	root := stageLesson(t, "kinder-fake", "Stated")
+	if err := os.RemoveAll(filepath.Join(root, "spec", "lessons", "kinder-fake")); err != nil {
+		t.Fatal(err)
+	}
+	writeLessonInDir(t, filepath.Join(root, "spec", "lessons"), "kinder-fake", "Stated")
 	orig := lintLintFn
 	lintLintFn = func(lint.Options) ([]lint.Violation, error) {
 		return nil, errors.New("fix boom")

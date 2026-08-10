@@ -15,6 +15,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
 
@@ -743,13 +744,19 @@ func runFeatureNew(cmd *cobra.Command, _ []string) error {
 	// host/org/repo and so must be backfilled here. Mirrors the
 	// scaffold→--fix pattern used by `idea/decision/issue new`. specSub is
 	// the spec tree root (featuresDir is <specSub>/features).
-	specSub := filepath.Dir(featuresDir)
-	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
-		return exitcode.UnexpectedErrorf("running lint fix: %v", err)
+	repoRoot := filepath.Dir(filepath.Dir(featuresDir)) // spec/features/ → repo root
+	if _, statErr := os.Stat(filepath.Join(repoRoot, projectdef.SpecConfigFile)); statErr == nil {
+		specSub := filepath.Dir(featuresDir)
+		if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
+			return exitcode.UnexpectedErrorf("running lint fix: %v", err)
+		}
+	} else if os.IsNotExist(statErr) {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: no specscore.yaml; feature scaffold did not run lint --fix. Run `specscore init` then `specscore spec lint --fix` explicitly to migrate this repository.")
+	} else {
+		return exitcode.UnexpectedErrorf("reading %s: %v", projectdef.SpecConfigFile, statErr)
 	}
 
 	if commitFlag {
-		repoRoot := filepath.Dir(filepath.Dir(featuresDir)) // spec/features/ → repo root
 		if !isGitRepo(repoRoot) {
 			return exitcode.UnexpectedError("not a git repository; cannot commit")
 		}

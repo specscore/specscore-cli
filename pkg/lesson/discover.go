@@ -1,6 +1,7 @@
 package lesson
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,11 +27,16 @@ func Discover(lessonsDir string) ([]*Lesson, error) {
 
 	var lessons []*Lesson
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
 		path := filepath.Join(lessonsDir, e.Name())
-		if !IsSingleFileLessonPath(lessonsDir, path) {
+		if e.IsDir() {
+			path = filepath.Join(path, "README.md")
+			if _, err := os.Stat(path); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+		} else if !IsSingleFileLessonPath(lessonsDir, path) {
 			continue
 		}
 		l, err := Parse(path)
@@ -46,5 +52,12 @@ func Discover(lessonsDir string) ([]*Lesson, error) {
 	sort.Slice(lessons, func(i, j int) bool {
 		return lessons[i].Slug < lessons[j].Slug
 	})
+	seen := make(map[string]bool, len(lessons))
+	for _, l := range lessons {
+		if seen[l.Slug] {
+			return nil, fmt.Errorf("lesson %q has both legacy flat and canonical directory forms", l.Slug)
+		}
+		seen[l.Slug] = true
+	}
 	return lessons, nil
 }

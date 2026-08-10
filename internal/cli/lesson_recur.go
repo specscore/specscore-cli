@@ -86,6 +86,19 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("parsing lesson %s: %v", slug, err)
 	}
 	warnIfLessonRetired(cmd.ErrOrStderr(), slug, before.Status)
+	if before.Canonical {
+		o, err := lesson.AddOccurrence(lesson.AddOccurrenceOptions{LessonPath: path, Summary: note, Context: captureOccurrenceContext(root, path), Evidence: lesson.Evidence{Kind: "none"}})
+		if err != nil {
+			return exitcode.UnexpectedErrorf("recording occurrence: %v", err)
+		}
+		items, err := lesson.DiscoverOccurrences(path)
+		if err != nil {
+			return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
+		}
+		_, _ = o, items // occurrence identifier stays internal for historical output compatibility.
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: recurred %d\n", slug, len(items))
+		return nil
+	}
 
 	count, err := lessonRecurFn(path, note)
 	if err != nil {

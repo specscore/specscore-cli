@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,10 +37,33 @@ const FormatURL = "https://specscore.md/lesson-specification"
 // refusal.
 var RequiredSections = []string{"Incident", "Process gap", "Check", "Enforcement"}
 
+// RequiredSectionsFor preserves legacy compatibility while exposing the
+// canonical compact Lesson's actual contract to readers.
+func RequiredSectionsFor(l *Lesson) []string {
+	if l != nil && l.Canonical {
+		return []string{"Lesson", "Process Gap", "Tracking", "Enforcement", "Open Questions"}
+	}
+	return RequiredSections
+}
+
+func (l *Lesson) MissingRequiredSectionsForLayout() []string {
+	var missing []string
+	for _, req := range RequiredSectionsFor(l) {
+		if !l.HasSection(req) {
+			missing = append(missing, req)
+		}
+	}
+	return missing
+}
+
 // Lesson is a parsed single-file Lesson artifact.
 type Lesson struct {
 	Path string // absolute path on disk
 	Slug string // filename without `.md`
+	// Canonical is true when Path is spec/lessons/<slug>/README.md.
+	Canonical bool
+	// OccurrencesDir is non-empty only for canonical directory lessons.
+	OccurrencesDir string
 
 	HasLessonTitle bool   // first H1 line was `# Lesson: <title>`
 	TitleLine      int    // 1-based line number of the title (0 when absent)
@@ -131,7 +155,15 @@ func Parse(path string) (*Lesson, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	l := &Lesson{Path: path, Slug: slugFromPath(path), SectionLines: map[string]int{}}
+	slug := slugFromPath(path)
+	canonical := filepath.Base(path) == "README.md" && filepath.Base(filepath.Dir(filepath.Dir(path))) == "lessons"
+	if canonical {
+		slug = filepath.Base(filepath.Dir(path))
+	}
+	l := &Lesson{Path: path, Slug: slug, Canonical: canonical, SectionLines: map[string]int{}}
+	if canonical {
+		l.OccurrencesDir = filepath.Join(filepath.Dir(path), "occurrences")
+	}
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)

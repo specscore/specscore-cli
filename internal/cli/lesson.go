@@ -29,6 +29,8 @@ func lessonCommand() *cobra.Command {
 		lessonNewCommand(),
 		lessonChangeStatusCommand(),
 		lessonRecurCommand(),
+		lessonOccurrenceCommand(),
+		lessonCheckCommand(),
 	)
 	return cmd
 }
@@ -78,7 +80,17 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	target := filepath.Join(root, "spec", "lessons", slug+".md")
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	_, configErr := os.Stat(filepath.Join(root, projectdef.SpecConfigFile))
+	configured := configErr == nil
+	if configErr != nil && !os.IsNotExist(configErr) {
+		return exitcode.UnexpectedErrorf("reading %s: %v", projectdef.SpecConfigFile, configErr)
+	}
+	target := filepath.Join(lessonsDir, slug, "README.md")
+	legacy := filepath.Join(lessonsDir, slug+".md")
+	if _, err := os.Stat(legacy); err == nil {
+		return exitcode.ConflictErrorf("legacy lesson already exists: %s; migrate it before creating canonical %q", legacy, slug)
+	}
 	if _, statErr := os.Stat(target); statErr == nil && !force {
 		return exitcode.ConflictErrorf("lesson already exists: %s (pass --force to overwrite)", target)
 	}
@@ -90,26 +102,30 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("materializing ancestor indexes: %v", err)
 	}
 
-	repl := map[string]string{
-		"<Lesson Name>": templateTitleOrSlug(title, slug),
-		"YYYY-MM-DD":    templateTodayUTC(),
-		"<your-handle>": templateOwnerOrUnknown(owner),
-	}
-	body, err := bareOrEmbedded(true, "lesson", repl, cmd.ErrOrStderr(), func() ([]byte, error) {
-		return lessonScaffoldFn(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner})
-	})
+	// Writers always create the accepted canonical directory form. A missing
+	// config affects only whether the caller explicitly opted into linting.
+	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, lessonClassifications(root))
 	if err != nil {
 		return exitcode.UnexpectedErrorf("scaffolding lesson: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return exitcode.UnexpectedErrorf("creating lesson directory: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
+		return exitcode.UnexpectedErrorf("creating occurrences directory: %v", err)
 	}
 	if err := os.WriteFile(target, body, 0o644); err != nil {
 		return exitcode.UnexpectedErrorf("writing %s: %v", target, err)
 	}
 
-	// Run lint in --fix mode to insert the freshly created lesson's index row,
-	// then re-run without fix to surface any remaining errors touching this
-	// file — mirroring `idea new` (internal/cli/idea.go:runIdeaNew), the
-	// established pattern for keeping a freshly scaffolded artifact
-	// immediately lint-clean including its index.
+	// A scaffold must never use a hidden broad lint migration as a side effect.
+	// Only SpecScore-configured projects opt into their explicit lint contract;
+	// unconfigured legacy trees can be initialized then migrated deliberately.
+	if !configured {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: no specscore.yaml; created only the Lesson. Run `specscore init` then `specscore spec lint --fix` deliberately to migrate this repository.")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)
+		return nil
+	}
 	specSub := filepath.Join(root, "spec")
 	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
 		_ = os.Remove(target)
@@ -132,6 +148,31 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)
 	return nil
+}
+
+func lessonClassifications(root string) []string {
+	cfg, err := projectdef.ReadSpecConfig(root)
+	if err != nil || cfg.Extras == nil {
+		return []string{"process"}
+	}
+	raw, ok := cfg.Extras["lessons"].(map[string]any)
+	if !ok {
+		return []string{"process"}
+	}
+	values, ok := raw["classifications"].([]any)
+	if !ok {
+		return []string{"process"}
+	}
+	var out []string
+	for _, v := range values {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	if len(out) == 0 {
+		return []string{"process"}
+	}
+	return out
 }
 
 // lessonChangeStatusCommand transitions a Lesson's **Status:** field via the
@@ -290,9 +331,5 @@ func resolveLessonsDir(projectFlag string) (string, error) {
 // resolveLessonPath joins lessonsDir/<slug>.md and verifies the file exists.
 // A missing file yields an exit-3 NotFound error naming the slug.
 func resolveLessonPath(lessonsDir, slug string) (string, error) {
-	path := filepath.Join(lessonsDir, slug+".md")
-	if _, err := os.Stat(path); err != nil {
-		return "", exitcode.NotFoundErrorf("lesson not found: %s", slug)
-	}
-	return path, nil
+	return lesson.ResolveLessonFile(lessonsDir, slug)
 }
