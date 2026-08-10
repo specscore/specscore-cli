@@ -31,6 +31,18 @@ specscore lesson check --not-enforced --min-recurred 1 --format json
 
 `recur` appends a canonical child occurrence without editing the README. It only edits the old recurrence prose while a flat Lesson remains in compatibility mode. `info`, `list`, and `check` reject invalid children rather than hiding them.
 
+## Durable agent context
+
+<!-- capability: specscore.lesson.agents -->
+
+Read agent context offline from an adapter-produced `agents.json` beside a canonical Lesson. SpecScore never creates or rewrites that projection: the repository's native orchestration plugin decides whether it is versioned or local. Live actions are opt-in and use only the neutral executable named by `SPECSCORE_LESSON_AGENTS_HOOK`; the hook receives a versioned JSON request on stdin and owns authentication, messages, retries, and all backend access.
+
+```sh
+specscore lesson agents verify-before-merge --format json
+SPECSCORE_LESSON_AGENTS_HOOK=synchestra-lesson-agents specscore lesson agents verify-before-merge --refresh
+SPECSCORE_LESSON_AGENTS_HOOK=synchestra-lesson-agents specscore lesson agents verify-before-merge --message codex-1 --text "Please review the occurrence."
+```
+
 ## Import and migration
 
 <!-- capability: specscore.lesson.import-legacy -->

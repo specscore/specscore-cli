@@ -36,6 +36,7 @@ func lessonCommand() *cobra.Command {
 		lessonImportLegacyCommand(),
 		lessonMigrateFlatCommand(),
 		lessonCheckCommand(),
+		lessonAgentsCommand(),
 	)
 	return cmd
 }
