@@ -65,7 +65,11 @@ Every directory under `spec/features/` that contains a `README.md` is treated as
 
 #### REQ: index-entries-bidirectional
 
-`index-entries` MUST report a violation when:
+`index-entries` MUST derive each indexed child only from the row cell selected
+by the table's artifact identity header. Standard identity headers (`Feature`,
+`Child`, `Directory`/`Dir`, or `Artifact`) MAY appear in any column. A legacy
+custom artifact label MAY be used only when it is the one unambiguous
+non-metadata column. It MUST report a violation when:
 
 - the index contains a Markdown link to a child README (link target ending in `<dirname>/README.md`) but that directory does not exist on disk, OR
 - a child directory exists on disk (with its own `README.md`) but is not linked from the parent index.
@@ -76,20 +80,20 @@ The reserved `spec/features/<feature-id>/proposals/` container is also excluded 
 
 #### REQ: index-entries-canonical-table-only
 
-Only direct-child links in the first contiguous Markdown table under `## Index` or `## Contents` satisfy index completeness. A child link in prose, an H3 summary, or a loose table-shaped row after that table MUST NOT count as an index entry. For legacy READMEs without either canonical heading, the first Markdown table is treated as the index.
+Only direct-child identity links under the artifact identity header in the first contiguous Markdown table under `## Index` or `## Contents` satisfy index completeness. Links in Status, Description/Summary, or any other non-identity cell are content and MUST NOT declare children or phantom rows. A child link in prose, an H3 summary, or a loose table-shaped row after that table MUST NOT count as an index entry. For legacy READMEs without either canonical heading, the first Markdown table is treated as the index. A missing, duplicate, or ambiguous artifact identity header MUST fail closed with an `index-entries` violation when the parent has child Feature directories; `--fix` MUST leave that unsafe table byte-for-byte unchanged.
 
 #### REQ: index-entries-fix-deletes-phantom-rows
 
-When `index-entries` reports `Index mentions non-existent directory: <name>` and `spec lint` runs with `--fix`, the fixer MUST remove from the parent README's index table the single row whose link target ends in `<name>/README.md`. Surrounding rows, table delimiters, and the rest of the document MUST be preserved.
+When `index-entries` reports `Index mentions non-existent directory: <name>` and `spec lint` runs with `--fix`, the fixer MUST remove from the parent README's index table the single row whose artifact-identity-cell link target ends in `<name>/README.md`. A link in a Description/Summary or another non-identity cell MUST NOT cause its row to be removed. Surrounding rows, table delimiters, and the rest of the document MUST be preserved.
 
 #### REQ: index-entries-fix-inserts-orphan-rows
 
-When `index-entries` reports `Child directory not listed in index: <name>` and `spec lint` runs with `--fix`, the fixer MUST append a row that links the missing child. The row shape MUST match what `specscore feature new` already writes via `UpdateFeatureIndex` / `UpdateParentContents`:
+When `index-entries` reports `Child directory not listed in index: <name>` and `spec lint` runs with `--fix`, the fixer MUST append a row that links the missing child. For an existing valid table, the row MUST preserve its exact column count and put the child link under the schema-selected artifact identity header; known derived cells (`Status`, `Kind`, `URL`, and Description aliases) use the same values/placeholders as feature scaffolding, while other cells use `—`. When no table exists, the row shape MUST match what `specscore feature new` already writes via `UpdateFeatureIndex` / `UpdateParentContents`:
 
 - At the root features index (`spec/features/README.md`), a 4-cell row of the form `| \[<name>\]\(<name>/README.md\) | <status> | — | TODO: Add description. |`. `<status>` is parsed from the child's `**Status:**` header via `feature.ParseFeatureStatus`; `Kind` and `Description` use the same hand-maintained placeholder convention `feature new` codifies.
 - At a nested feature index, a 2-cell row in the `## Contents` table of the form `| \[<name>\]\(<name>/README.md\) | TODO: Add description. |`. The `## Contents` block is created if absent.
 
-The fixer MUST NOT mutate any cell beyond the inserted row; existing rows are preserved byte-for-byte. The deletion direction (phantom rows) runs first so the insertion phase reads a phantom-free index.
+The fixer MUST NOT mutate any cell beyond the inserted row; existing rows are preserved byte-for-byte. It MUST validate the identity schema before mutation, compose phantom deletion and orphan insertion in memory, and publish the valid-table result with one write so a later parse refusal cannot leave a partial Phase 1 mutation.
 
 This REQ does NOT violate `fix-is-safe-subset`. Status flows from a structurally-parsed field; Kind and Description use placeholders the project has already codified for `feature new`, so the autofix is byte-identical to user-driven scaffolding. The placeholders are visibly under-filled (`—`, `TODO: ...`), inviting the author to populate them rather than masking missing intent.
 
@@ -401,6 +405,12 @@ Given a feature tree where `spec/features/orphan/README.md` exists on disk but `
 **Requirements:** cli/spec/lint#req:index-entries-bidirectional, cli/spec/lint#req:index-entries-canonical-table-only
 
 Given a nested child Feature that is absent from its parent's `## Contents` table but linked by a loose table-shaped row after an H3 summary, running `specscore spec lint` reports `Child directory not listed in index` for that child. Moving the same row into the contiguous Contents table clears the violation.
+
+### AC: index-entries-ignores-nonidentity-cell-links
+
+**Requirements:** cli/spec/lint#req:index-entries-bidirectional, cli/spec/lint#req:index-entries-canonical-table-only, cli/spec/lint#req:index-entries-fix-deletes-phantom-rows
+
+Given a root Features index whose `Feature` identity links correctly list its direct children, and whose row-sync-derived Description cells contain child-relative `README.md` links from those Features' Summaries, running `specscore spec lint` reports no `index-entries` violation for those Description links and `--fix` preserves the valid rows. Moving the `Feature` identity column after an ordinal column retains the same result, as does an unambiguous legacy artifact-specific identity header. In a sibling fixture whose identity cell names a non-existent child while its Description links a real child, lint still reports both the phantom identity child and the unlisted real child; the Description link cannot mask either finding. Missing, duplicate, and ambiguous identity headers produce a schema violation and remain write-free under `--fix`.
 
 ### AC: plan-index-sync-detects-and-fixes-row-drift
 

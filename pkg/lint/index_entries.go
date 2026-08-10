@@ -10,6 +10,7 @@
 package lint
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -68,12 +69,25 @@ func (c *indexEntriesChecker) check(specRoot string) ([]Violation, error) {
 			}
 		}
 
+		relPath, _ := filepath.Rel(specRoot, readmePath)
 		mentioned, parseErr := extractChildRefsFromReadme(readmePath)
 		if parseErr != nil {
+			// A table whose identity column cannot be determined must not be
+			// treated as evidence that arbitrary links in later cells list the
+			// children. Report the unsafe schema when it matters to an actual
+			// parent; support READMEs with unrelated tables and no child Features
+			// remain outside this rule.
+			if len(actualChildren) > 0 {
+				violations = append(violations, Violation{
+					File:     relPath,
+					Line:     0,
+					Severity: "error",
+					Rule:     "index-entries",
+					Message:  "Index child identity schema is invalid: " + parseErr.Error(),
+				})
+			}
 			return nil
 		}
-
-		relPath, _ := filepath.Rel(specRoot, readmePath)
 
 		// Flag index entries that reference non-existent directories.
 		actualSet := make(map[string]bool, len(actualChildren))
@@ -169,146 +183,190 @@ func (c *indexEntriesChecker) fix(specRoot string) error {
 			actualSet[e.Name()] = true
 		}
 
-		// Phase 1: drop phantom rows.
+		// Parse the table schema before any mutation. A missing or ambiguous
+		// identity column makes the whole fix write-free; otherwise Phase 1 and
+		// Phase 2 are composed in memory and published by one write below.
 		content, err := os.ReadFile(readmePath)
 		if err != nil {
 			return nil
 		}
-		if rewritten, changed := dropPhantomIndexRows(string(content), actualSet); changed {
-			if err := os.WriteFile(readmePath, []byte(rewritten), 0o644); err != nil {
-				return err
-			}
+		lines := strings.Split(string(content), "\n")
+		schema, hasTable, parseErr := childIndexSchema(lines)
+		if parseErr != nil {
+			return nil
 		}
 
-		// Phase 2: insert rows for orphan children. Re-parse the index AFTER
-		// Phase 1 so we don't count phantom mentions as already-listed.
-		mentioned, _ := extractChildRefsFromReadme(readmePath)
+		// A README without a table retains the established scaffolding shape,
+		// but all missing rows are composed and published once rather than
+		// delegating to one write per child.
+		if !hasTable {
+			sort.Strings(actualChildren)
+			if len(actualChildren) == 0 {
+				return nil
+			}
+			lines = scaffoldChildIndex(lines, path == featureDir, path, actualChildren)
+			if err := os.WriteFile(readmePath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		// Phase 1: drop phantom rows from the already-validated identity column.
+		lines, schema, changed := dropPhantomIndexRowsWithSchema(lines, schema, actualSet)
+
+		// Phase 2: append orphan rows in the existing table's exact schema.
+		mentioned := childRefsFromLines(lines, schema)
 		mentionedSet := make(map[string]bool, len(mentioned))
 		for _, m := range mentioned {
 			mentionedSet[m] = true
 		}
 
-		isRootFeaturesIndex := path == featureDir
-		// Sort for deterministic ordering across runs.
 		sort.Strings(actualChildren)
 		for _, child := range actualChildren {
 			if mentionedSet[child] {
 				continue
 			}
-			childReadme := filepath.Join(path, child, "README.md")
-			status, _ := feature.ParseFeatureStatus(childReadme)
-			if status == "" || status == "Unknown" {
-				status = "Draft"
-			}
-			if isRootFeaturesIndex {
-				if _, err := feature.UpdateFeatureIndex(readmePath, child, status, ""); err != nil {
-					return err
-				}
-			} else {
-				if _, err := feature.UpdateParentContents(readmePath, child, ""); err != nil {
-					return err
-				}
+			status := childFeatureStatus(filepath.Join(path, child, "README.md"))
+			row := renderChildIndexRow(schema, child, status, path)
+			lines = insertStringAt(lines, schema.dataEnd, row)
+			schema.dataEnd++
+			mentionedSet[child] = true
+			changed = true
+		}
+		if changed {
+			if err := os.WriteFile(readmePath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
 }
 
-// dropPhantomIndexRows returns content with every table row removed whose
-// Markdown link target ends in `<dirname>/README.md` where <dirname> is not
-// present in actualSet. Lines outside fenced code blocks are considered. Only
-// lines starting with `|` (whitespace-trimmed) are eligible for deletion, so
-// inline prose references — which the index-entries check parses for read but
-// would never sit on a table row — are left untouched. Returns the same
-// content and false when nothing was dropped.
+func childFeatureStatus(readmePath string) string {
+	status, _ := feature.ParseFeatureStatus(readmePath)
+	if status == "" || status == "Unknown" {
+		return "Draft"
+	}
+	return status
+}
+
+func scaffoldChildIndex(lines []string, isRoot bool, parentDir string, children []string) []string {
+	rows := make([]string, 0, len(children))
+	for _, child := range children {
+		status := childFeatureStatus(filepath.Join(parentDir, child, "README.md"))
+		if isRoot {
+			rows = append(rows, fmt.Sprintf("| [%s](%s/README.md) | %s | — | TODO: Add description. |", child, child, status))
+		} else {
+			rows = append(rows, fmt.Sprintf("| [%s](%s/README.md) | TODO: Add description. |", child, child))
+		}
+	}
+	if isRoot {
+		return append(append(lines, ""), rows...)
+	}
+
+	insertAt := 0
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "## Summary" {
+			continue
+		}
+		insertAt = i + 1
+		for insertAt < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[insertAt]), "## ") {
+			insertAt++
+		}
+		break
+	}
+	block := []string{"## Contents", "", "| Child | Description |", "|---|---|"}
+	block = append(block, rows...)
+	block = append(block, "")
+	result := make([]string, 0, len(lines)+len(block))
+	result = append(result, lines[:insertAt]...)
+	result = append(result, block...)
+	return append(result, lines[insertAt:]...)
+}
+
+// dropPhantomIndexRows returns content with every canonical child-index row
+// removed whose identity-cell link targets a child absent from actualSet.
+// Links in later content cells cannot cause a deletion. A table with a missing
+// or ambiguous identity schema is left byte-for-byte untouched.
 func dropPhantomIndexRows(content string, actualSet map[string]bool) (string, bool) {
 	lines := strings.Split(content, "\n")
-	out := make([]string, 0, len(lines))
-	inCodeBlock := false
-	changed := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inCodeBlock = !inCodeBlock
-			out = append(out, line)
-			continue
-		}
-		if inCodeBlock || !strings.HasPrefix(trimmed, "|") {
-			out = append(out, line)
-			continue
-		}
-		if dirname, ok := phantomDirInTableRow(line, actualSet); ok {
-			changed = true
-			_ = dirname // dropped line; no further bookkeeping needed
-			continue
-		}
-		out = append(out, line)
+	schema, ok, err := childIndexSchema(lines)
+	if err != nil || !ok {
+		return content, false
 	}
+	lines, _, changed := dropPhantomIndexRowsWithSchema(lines, schema, actualSet)
 	if !changed {
 		return content, false
 	}
-	return strings.Join(out, "\n"), true
+	return strings.Join(lines, "\n"), true
 }
 
-// phantomDirInTableRow inspects a single line that is known to start with `|`
-// and returns (dirname, true) if it contains a Markdown link whose target is
-// of the form `<dirname>/README.md` and <dirname> is NOT in actualSet.
-// Returns ("", false) otherwise. If the row links multiple children and any
-// one of them is real, the row is kept (false) — the row carries live data
-// for the real child and should not be silently deleted.
-func phantomDirInTableRow(line string, actualSet map[string]bool) (string, bool) {
-	rest := line
-	var phantom string
-	for {
-		idx := strings.Index(rest, "](")
-		if idx < 0 {
-			break
+func dropPhantomIndexRowsWithSchema(lines []string, schema childIndexTableSchema, actualSet map[string]bool) ([]string, childIndexTableSchema, bool) {
+	out := make([]string, 0, len(lines))
+	changed := false
+	dropped := 0
+	for i, line := range lines {
+		if i >= schema.dataStart && i < schema.dataEnd {
+			if dirname, phantom := phantomDirInTableRowAtColumn(line, schema.identityColumn, actualSet); phantom {
+				changed = true
+				dropped++
+				_ = dirname // dropped line; no further bookkeeping needed
+				continue
+			}
 		}
-		after := rest[idx+2:]
-		end := strings.Index(after, ")")
-		if end < 0 {
-			break
-		}
-		target := after[:end]
-		rest = after[end+1:]
-
-		if !strings.HasSuffix(target, "/README.md") {
-			continue
-		}
-		parts := strings.Split(strings.TrimPrefix(target, "./"), "/")
-		if len(parts) != 2 {
-			continue
-		}
-		dirname := parts[0]
-		if dirname == "." || dirname == ".." || strings.HasPrefix(dirname, "_") {
-			continue
-		}
-		if actualSet[dirname] {
-			// Row links a real child — keep it even if it also links a phantom;
-			// deleting would lose the real link.
-			return "", false
-		}
-		if phantom == "" {
-			phantom = dirname
-		}
+		out = append(out, line)
 	}
-	if phantom == "" {
+	schema.dataEnd -= dropped
+	return out, schema, changed
+}
+
+// phantomDirInTableRow retains the compatibility helper used by focused tests:
+// a caller supplying an isolated row is asking about its first cell. Production
+// table parsing calls phantomDirInTableRowAtColumn with the schema-derived
+// identity column.
+func phantomDirInTableRow(line string, actualSet map[string]bool) (string, bool) {
+	return phantomDirInTableRowAtColumn(line, 0, actualSet)
+}
+
+func phantomDirInTableRowAtColumn(line string, identityColumn int, actualSet map[string]bool) (string, bool) {
+	dirname, ok := directChildRefFromIndexRow(line, identityColumn)
+	if !ok || actualSet[dirname] {
 		return "", false
 	}
-	return phantom, true
+	return dirname, true
 }
 
-// extractChildRefsFromReadme reads direct-child links from the first Markdown
-// table under ## Contents or ## Index. Legacy READMEs without either heading
-// fall back to their first Markdown table. Links in prose or loose rows outside
-// that table do not satisfy index completeness.
-func extractChildRefsFromReadme(readmePath string) ([]string, error) {
-	data, err := os.ReadFile(readmePath)
-	if err != nil {
-		return nil, err
+// directChildRefFromIndexRow parses the canonical identity link from the
+// schema-selected cell of one Markdown table row. It deliberately ignores
+// every other cell: row-sync may copy link-rich Feature summaries into
+// Description, and those links describe the indexed Feature rather than
+// siblings in this index.
+func directChildRefFromIndexRow(line string, identityColumn int) (string, bool) {
+	cells, ok := splitMarkdownTableCells(strings.TrimSpace(line))
+	if !ok || identityColumn < 0 || identityColumn >= len(cells) {
+		return "", false
 	}
+	_, dirname, ok := parseFeatureIndexLink(cells[identityColumn])
+	if !ok || strings.Contains(dirname, "/") || dirname == "." || dirname == ".." || strings.HasPrefix(dirname, "_") {
+		return "", false
+	}
+	return dirname, true
+}
 
-	lines := strings.Split(string(data), "\n")
+type childIndexTableSchema struct {
+	identityColumn int
+	dataStart      int
+	dataEnd        int
+	headers        []string
+}
+
+// childIndexSchema locates the first contiguous Markdown table under
+// ## Contents or ## Index (falling back to the document's first table for
+// legacy files), then resolves exactly one artifact identity column from its
+// header. Standard Feature/Child/Directory headers may appear in any column.
+// A custom artifact label such as Mini-product is accepted only when every
+// other column is recognized metadata, leaving one unambiguous candidate.
+func childIndexSchema(lines []string) (childIndexTableSchema, bool, error) {
 	sectionStart, sectionEnd := 0, len(lines)
 	inCodeBlock := false
 	for i, line := range lines {
@@ -348,49 +406,181 @@ func extractChildRefsFromReadme(readmePath string) ([]string, error) {
 		}
 	}
 	if headerLine < 0 {
-		return nil, nil
+		return childIndexTableSchema{}, false, nil
 	}
 
-	var children []string
-	seen := make(map[string]bool)
-	for _, originalLine := range lines[headerLine+2 : sectionEnd] {
-		if !strings.HasPrefix(strings.TrimSpace(originalLine), "|") {
+	headers, _ := splitMarkdownTableCells(strings.TrimSpace(lines[headerLine]))
+	identityColumn, err := childIdentityColumn(headers)
+	if err != nil {
+		return childIndexTableSchema{}, false, err
+	}
+
+	dataEnd := sectionEnd
+	for i := headerLine + 2; i < sectionEnd; i++ {
+		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
+			dataEnd = i
 			break
 		}
-		line := originalLine
-		// Look for links to child README.md: [text](dirname/README.md)
-		for {
-			idx := strings.Index(line, "](")
-			if idx < 0 {
-				break
-			}
-			rest := line[idx+2:]
-			end := strings.Index(rest, ")")
-			if end < 0 {
-				break
-			}
-			linkTarget := rest[:end]
-			line = rest[end+1:] // advance past this link
+	}
+	return childIndexTableSchema{
+		identityColumn: identityColumn,
+		dataStart:      headerLine + 2,
+		dataEnd:        dataEnd,
+		headers:        headers,
+	}, true, nil
+}
 
-			// Only consider links ending in README.md and pointing to a direct child.
-			if !strings.HasSuffix(linkTarget, "README.md") && !strings.HasSuffix(linkTarget, "README.md)") {
-				continue
-			}
-			parts := strings.Split(strings.TrimPrefix(linkTarget, "./"), "/")
-			if len(parts) == 2 {
-				dirname := parts[0]
-				if dirname != "." && dirname != ".." && !strings.HasPrefix(dirname, "_") && !seen[dirname] {
-					seen[dirname] = true
-					children = append(children, dirname)
-				}
-			}
+func childIdentityColumn(headers []string) (int, error) {
+	var canonical []int
+	for i, header := range headers {
+		if isCanonicalChildIdentityHeader(normalizeIndexHeader(header)) {
+			canonical = append(canonical, i)
 		}
 	}
+	if len(canonical) == 1 {
+		return canonical[0], nil
+	}
+	if len(canonical) > 1 {
+		return -1, fmt.Errorf("multiple child identity columns")
+	}
 
+	var custom []int
+	for i, header := range headers {
+		normalized := normalizeIndexHeader(header)
+		if normalized != "" && !isIndexMetadataHeader(normalized) {
+			custom = append(custom, i)
+		}
+	}
+	if len(custom) == 1 {
+		return custom[0], nil
+	}
+	if len(custom) == 0 {
+		return -1, fmt.Errorf("missing child identity column")
+	}
+	return -1, fmt.Errorf("ambiguous child identity columns")
+}
+
+func normalizeIndexHeader(header string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(header), "*_`"))
+}
+
+func isCanonicalChildIdentityHeader(header string) bool {
+	switch header {
+	case "feature", "child", "directory", "dir", "artifact":
+		return true
+	default:
+		return false
+	}
+}
+
+func isIndexMetadataHeader(header string) bool {
+	switch header {
+	case "#", "no", "no.", "number",
+		"status", "kind", "type", "stage",
+		"description", "desc", "summary", "purpose", "notes",
+		"domain", "captures", "owner", "title",
+		"url", "consumer path", "index":
+		return true
+	default:
+		return false
+	}
+}
+
+func childRefsFromLines(lines []string, schema childIndexTableSchema) []string {
+	var children []string
+	seen := make(map[string]bool)
+	for _, line := range lines[schema.dataStart:schema.dataEnd] {
+		dirname, ok := directChildRefFromIndexRow(line, schema.identityColumn)
+		if ok && !seen[dirname] {
+			seen[dirname] = true
+			children = append(children, dirname)
+		}
+	}
 	if len(children) == 0 {
+		return nil
+	}
+	return children
+}
+
+func renderChildIndexRow(schema childIndexTableSchema, child, status, parentDir string) string {
+	cells := make([]string, len(schema.headers))
+	for i, header := range schema.headers {
+		if i == schema.identityColumn {
+			cells[i] = fmt.Sprintf("[%s](%s/README.md)", child, child)
+			continue
+		}
+		switch normalizeIndexHeader(header) {
+		case "status":
+			cells[i] = status
+		case "description", "desc", "summary", "purpose":
+			cells[i] = "TODO: Add description."
+		case "kind":
+			if strings.HasSuffix(child, "-index") {
+				cells[i] = "Index"
+			} else {
+				cells[i] = "—"
+			}
+		case "url":
+			cells[i] = childSpecURL(filepath.Join(parentDir, child, "README.md"))
+			if cells[i] == "" {
+				cells[i] = "—"
+			}
+		default:
+			cells[i] = "—"
+		}
+	}
+	return "| " + strings.Join(cells, " | ") + " |"
+}
+
+func childSpecURL(readmePath string) string {
+	data, err := os.ReadFile(readmePath)
+	if err != nil {
+		return ""
+	}
+	const marker = "*This document follows the "
+	idx := strings.LastIndex(string(data), marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := string(data)[idx+len(marker):]
+	end := strings.Index(rest, "*")
+	if end < 0 {
+		return ""
+	}
+	url := strings.TrimSpace(rest[:end])
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return ""
+	}
+	return url
+}
+
+func insertStringAt(lines []string, at int, value string) []string {
+	lines = append(lines, "")
+	copy(lines[at+1:], lines[at:])
+	lines[at] = value
+	return lines
+}
+
+// extractChildRefsFromReadme reads direct-child links from the first Markdown
+// table under ## Contents or ## Index. Legacy READMEs without either heading
+// fall back to their first Markdown table. Links in prose or loose rows outside
+// that table do not satisfy index completeness.
+func extractChildRefsFromReadme(readmePath string) ([]string, error) {
+	data, err := os.ReadFile(readmePath)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	schema, ok, err := childIndexSchema(lines)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, nil
 	}
-	return children, nil
+
+	return childRefsFromLines(lines, schema), nil
 }
 
 func isMarkdownTableSeparator(line string) bool {

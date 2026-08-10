@@ -9,6 +9,20 @@ import (
 	"testing"
 )
 
+// Reused from independently validated coverage commit ca3e46c.
+func TestIsPlanDisposition(t *testing.T) {
+	for _, status := range []Status{PlanRejected, PlanWithdrawn, PlanSuperseded, PlanDeprecated} {
+		if !IsPlanDisposition(status) {
+			t.Errorf("%s must be a Plan disposition", status)
+		}
+	}
+	for _, status := range []Status{PlanImplemented, PlanDraft, "unknown"} {
+		if IsPlanDisposition(status) {
+			t.Errorf("%s must remain a live or unknown Plan status", status)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Rewrite — ErrStatusLineNotFound branch (tested in lifecycle_test.go)
 // ---------------------------------------------------------------------------
