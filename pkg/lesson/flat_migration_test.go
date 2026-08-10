@@ -2,6 +2,7 @@ package lesson
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -207,6 +208,72 @@ func TestMigrateFlat_CompletedRetryIsReceiptBackedAndByteStable(t *testing.T) {
 	}
 	if first.CanonicalPath != second.CanonicalPath || !bytes.Equal(before, after) {
 		t.Fatalf("completed retry changed durable projection: %#v %#v", first, second)
+	}
+}
+
+func TestFlatMigration_PublicFailureEdgesRemainWriteFree(t *testing.T) {
+	root := t.TempDir()
+	lessons := filepath.Join(root, "spec", "lessons")
+	if err := os.MkdirAll(lessons, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreflightFlatMigration(FlatMigrationOptions{}); err == nil {
+		t.Fatal("invalid options accepted")
+	}
+	if _, err := MigrateFlat(FlatMigrationOptions{LessonsDir: lessons, Slug: "rule", Classifications: []string{"process"}}); err == nil {
+		t.Fatal("missing flat source without proof accepted")
+	}
+
+	markerPath := filepath.Join(lessons, ".flat-migration-rule.json")
+	if err := os.WriteFile(markerPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreflightFlatMigration(FlatMigrationOptions{LessonsDir: lessons, Slug: "rule", Classifications: []string{"process"}}); err == nil {
+		t.Fatal("malformed marker accepted")
+	}
+	if err := os.Remove(markerPath); err != nil {
+		t.Fatal(err)
+	}
+	invalidMarker, err := json.Marshal(flatMigrationMarker{SchemaVersion: 1, Slug: "rule"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, invalidMarker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateFlat(FlatMigrationOptions{LessonsDir: lessons, Slug: "rule", Classifications: []string{"process"}}); err == nil {
+		t.Fatal("invalid marker accepted")
+	}
+	if err := os.Remove(markerPath); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := coverageLegacySource()
+	marker := flatMigrationMarker{SchemaVersion: 1, Source: ref, Slug: "rule", Classifications: []string{"process"}, EventUUID: "01234567-89ab-4def-8123-456789abcdef"}
+	markerBytes, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, markerBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreflightFlatMigration(FlatMigrationOptions{LessonsDir: lessons, Slug: "rule", Classifications: []string{"validation"}}); err == nil {
+		t.Fatal("changed retry classifications accepted")
+	}
+	if err := os.Remove(markerPath); err != nil {
+		t.Fatal(err)
+	}
+
+	flat := writeFlatFixture(t, lessons, "rule", flatFixture("Recorded", 0, ""))
+	if err := os.WriteFile(filepath.Join(lessons, "rule"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withFlatSourceIdentity(t)
+	if _, err := MigrateFlat(FlatMigrationOptions{LessonsDir: lessons, Slug: "rule", Classifications: []string{"process"}}); err == nil {
+		t.Fatal("regular canonical target accepted")
+	}
+	if b, err := os.ReadFile(flat); err != nil || !bytes.Contains(b, []byte("# Lesson:")) {
+		t.Fatalf("failed migration mutated source: %q err=%v", b, err)
 	}
 }
 
