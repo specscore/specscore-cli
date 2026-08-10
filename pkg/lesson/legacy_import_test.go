@@ -69,6 +69,29 @@ func TestInventoryLegacy_DuplicateIDsAreDistinctAndLossless(t *testing.T) {
 	}
 }
 
+func TestPreflightLegacyApply_UsesTheSameWriteFreeValidation(t *testing.T) {
+	dir := t.TempDir()
+	lessonsDir := filepath.Join(dir, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "legacy.md")
+	if err := os.WriteFile(source, []byte("## L1 — reviewed rule\n\n**Status:** Recorded\n\ntext\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventoryLegacyForApply(t, source)
+	mapping := legacyMapping(inv, reviewedNew("L1#1", "reviewed-rule"))
+	if err := PreflightLegacyApply(lessonsDir, []string{"process"}, inv, mapping); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(lessonsDir, "reviewed-rule")); !os.IsNotExist(err) {
+		t.Fatalf("preflight wrote a target: %v", err)
+	}
+	if err := PreflightLegacyApply(lessonsDir, nil, inv, mapping); err == nil {
+		t.Fatal("preflight accepted an empty classification vocabulary")
+	}
+}
+
 func TestApplyLegacy_ReviewedMappingIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	lessonsDir := filepath.Join(dir, "spec", "lessons")
