@@ -40,6 +40,12 @@ block's **Status:** is set to complete, and the plan's own **Status:** is set
 to the execution band that then derives from the rollup — Implemented, since a
 plan with every task complete always derives Implemented.
 
+When a prior reconciliation overstated delivery, ` + "`--reopen-tasks=10,11`" + `
+is the deliberately narrow correction path: each named task MUST currently be
+complete and is rewritten directly to blocked; every other task is preserved and
+the Plan status is re-derived. It cannot be combined with --tasks or
+--force-tasks. The mandatory note/evidence record why the earlier claim was false.
+
 --note is REQUIRED: reconcile refuses (exit 2) without a justification
 explaining why the record is being corrected. --evidence is optional — a
 comma-separated list of commit SHAs, PR URLs, or file paths backing the
@@ -82,6 +88,7 @@ Examples:
 	cmd.Flags().String("note", "", "required justification for the reconciliation; written to a ## Resolution section")
 	cmd.Flags().String("evidence", "", "optional comma-separated commit SHAs / PR URLs / file paths backing the reconciliation")
 	cmd.Flags().String("force-tasks", "", "comma-separated task numbers to explicitly acknowledge overriding from failed/aborted to complete; required only when such tasks exist")
+	cmd.Flags().String("reopen-tasks", "", "comma-separated falsely-complete task numbers to correct to blocked; cannot be combined with --tasks")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().Bool(coordinationForceFlagName, false, coordinationForceFlagUsage)
 	return cmd
@@ -102,10 +109,15 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 
 	tasksRaw, _ := cmd.Flags().GetString("tasks")
 	tasksRaw = strings.TrimSpace(tasksRaw)
-	if tasksRaw == "" {
+	reopenRaw, _ := cmd.Flags().GetString("reopen-tasks")
+	reopenRaw = strings.TrimSpace(reopenRaw)
+	if tasksRaw == "" && reopenRaw == "" {
 		return exitcode.InvalidArgsError("missing required flag: --tasks=complete")
 	}
-	if !strings.EqualFold(tasksRaw, "complete") {
+	if tasksRaw != "" && reopenRaw != "" {
+		return exitcode.InvalidArgsError("--tasks and --reopen-tasks are mutually exclusive")
+	}
+	if tasksRaw != "" && !strings.EqualFold(tasksRaw, "complete") {
 		return exitcode.InvalidArgsErrorf(
 			"unrecognized --tasks value %q; only \"complete\" is currently supported (reconciles every embedded task to complete)", tasksRaw)
 	}
@@ -139,6 +151,21 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		}
 		forceTasks = append(forceTasks, n)
 	}
+	var reopenTasks []int
+	for _, tok := range strings.Split(reopenRaw, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		n, convErr := strconv.Atoi(tok)
+		if convErr != nil || n <= 0 {
+			return exitcode.InvalidArgsErrorf("invalid --reopen-tasks value %q: must be a comma-separated list of positive task numbers", tok)
+		}
+		reopenTasks = append(reopenTasks, n)
+	}
+	if len(reopenTasks) > 0 && len(forceTasks) > 0 {
+		return exitcode.InvalidArgsError("--force-tasks is only valid with --tasks=complete")
+	}
 
 	projectFlag, _ := cmd.Flags().GetString("project")
 	specRoot, err := resolveSpecRoot(projectFlag)
@@ -169,14 +196,15 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		Note:         note,
 		Evidence:     evidence,
 		ForceTasks:   forceTasks,
+		ReopenTasks:  reopenTasks,
 		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
 	})
 	if err != nil {
 		return err
 	}
 
-	msg := fmt.Sprintf("%s: %s → %s (reconciled, %d task(s) marked complete",
-		result.Slug, string(result.From), string(result.To), result.TasksReconciled)
+	msg := fmt.Sprintf("%s: %s → %s (reconciled, %d task(s) marked %s",
+		result.Slug, string(result.From), string(result.To), result.TasksReconciled, result.Target)
 	if len(result.Overrides) > 0 {
 		parts := make([]string, len(result.Overrides))
 		for i, o := range result.Overrides {

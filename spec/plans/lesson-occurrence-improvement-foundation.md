@@ -4,7 +4,8 @@ status: Draft
 ---
 # Plan: Lesson Occurrence Improvement Foundation
 
-**Status:** Draft
+**Status:** Blocked
+**Reconciled:** 2026-08-10
 **Source Feature:** cli/lesson
 **Date:** 2026-08-10
 **Owner:** alex
@@ -32,7 +33,7 @@ The format gate is first because every parser, linter, writer, and migration mus
 **Id:** format-gate
 **Verifies:** cli/lesson#ac:directory-form-remains-flat-compatible
 **Depends-On:** —
-**Status:** planning
+**Status:** complete
 
 Do not implement code until the upstream meta-spec review accepts directory layout, occurrence schema, mandatory metadata, tracking/evidence representation, relations, and import-manifest location. Pin tests to that schema and record the released CLI dependency; this task is a hard dependency, not paperwork.
 
@@ -41,7 +42,7 @@ Do not implement code until the upstream meta-spec review accepts directory layo
 **Id:** layout-registry
 **Verifies:** cli/lesson#ac:directory-form-remains-flat-compatible, cli/lesson#ac:group-exposes-subcommands
 **Depends-On:** 1
-**Status:** planning
+**Status:** complete
 
 Extend `pkg/lesson` discovery/resolution and every read command to address flat and directory Lessons deterministically. Register both Lesson README layouts as status-bearing generic document targets; add collision, status-mirror, footer, and no-relocation tests.
 
@@ -50,7 +51,7 @@ Extend `pkg/lesson` discovery/resolution and every read command to address flat 
 **Id:** occurrences
 **Verifies:** cli/lesson#ac:occurrence-capture-is-lossless-and-lazy
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 Implement `pkg/lesson/occurrence` and `lesson occurrence add|list|info`: opaque JSON input validation, lazy default capture, ID/time ordering, lossless JSON output, and atomic writes. Test explicit-context paths prove no live Synchestra or ambient-session access.
 
@@ -59,7 +60,7 @@ Implement `pkg/lesson/occurrence` and `lesson occurrence add|list|info`: opaque 
 **Id:** recur-compatibility
 **Verifies:** cli/lesson#ac:recur-does-not-change-status, cli/lesson#ac:recur-against-retired-lesson-warns, cli/lesson#ac:not-enforced-and-min-recurred-compose
 **Depends-On:** 3
-**Status:** planning
+**Status:** complete
 
 Delegate directory-form `recur` to occurrence creation while preserving command output/status semantics; retain flat-file behavior until migration. Update list/info/index rollups from occurrence data and test a mixed flat/directory project.
 
@@ -68,7 +69,7 @@ Delegate directory-form `recur` to occurrence creation while preserving command 
 **Id:** legacy-import
 **Verifies:** cli/lesson#ac:legacy-import-requires-reviewed-mapping
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 Implement parser fixtures from the real legacy variants, deterministic dry-run report/digest/mapping, and apply-only creation. Include destructive-safety tests: source files are byte-identical, ambiguous rows block apply, and repeated apply writes nothing new.
 
@@ -77,7 +78,7 @@ Implement parser fixtures from the real legacy variants, deterministic dry-run r
 **Id:** relations
 **Verifies:** cli/lesson#ac:relations-are-human-confirmed
 **Depends-On:** 2
-**Status:** planning
+**Status:** complete
 
 Add durable relation storage, preview-token confirmation, relation list output, and graph validation. Test that no fuzzy/title-match heuristic changes a Lesson and that failed confirmation/cycle validation is mutation-free.
 
@@ -86,7 +87,7 @@ Add durable relation storage, preview-token confirmation, relation list output, 
 **Id:** lesson-lints
 **Verifies:** cli/lesson#ac:process-gap-required, cli/lesson#ac:ownership-and-enforcement-evidence-are-linted
 **Depends-On:** 3, 6
-**Status:** planning
+**Status:** complete
 
 Implement L-005–L-009 and strengthen index detection for duplicate/unknown rows. Add negative fixtures for missing metadata/tracking, invalid evidence path, flat-directory collision, invalid occurrence JSON/time, broken relation, and status-mirror registry coverage; preserve L-001 TODO-friendly behavior.
 
@@ -95,7 +96,7 @@ Implement L-005–L-009 and strengthen index detection for duplicate/unknown row
 **Id:** recurrence-check
 **Verifies:** cli/lesson#ac:recurrence-policy-is-ci-visible
 **Depends-On:** 4, 7
-**Status:** planning
+**Status:** complete
 
 Implement `lesson check` by reusing the list filter parser and ordered result model, with explicit `--max` exit semantics. Add command tests for error/empty/baseline behavior and a CI documentation fixture; it never changes status.
 
@@ -104,7 +105,7 @@ Implement `lesson check` by reusing the list filter parser and ordered result mo
 **Id:** durable-events
 **Verifies:** cli/lesson#ac:lesson-events-replay-per-subscriber
 **Depends-On:** 3, 4, 5, 6, 7
-**Status:** planning
+**Status:** complete
 
 Extend the existing event subsystem with immutable ledger, independent durable-subscriber outboxes/cursors, UUID idempotency, and `event replay`. Wire automatic events only after each successful Lesson mutation's durable commit point; test rollback emits none and one failed subscriber does not redeliver an acknowledged peer.
 
@@ -113,7 +114,7 @@ Extend the existing event subsystem with immutable ledger, independent durable-s
 **Id:** synchestra-coordination
 **Verifies:** cli/lesson#ac:coordination-delegates-live-work
 **Depends-On:** 9
-**Status:** planning
+**Status:** blocked
 
 Implement local projection rendering plus explicit `--refresh|--open|--message|--resume` adapter calls. Integrate only through Synchestra's configured authoritative public CLI/server endpoint/outbox; contract tests must prove no direct mirror, Git, SQLite, DALgo, or inGitDB access, no message persistence/outbox, and graceful visible mirror-lag rendering.
 
@@ -122,13 +123,27 @@ Implement local projection rendering plus explicit `--refresh|--open|--message|-
 **Id:** journey-e2e
 **Verifies:** cli/lesson#ac:occurrence-capture-is-lossless-and-lazy, cli/lesson#ac:recurrence-policy-is-ci-visible, cli/lesson#ac:lesson-events-replay-per-subscriber, cli/lesson#ac:coordination-delegates-live-work
 **Depends-On:** 5, 8, 9, 10
-**Status:** planning
+**Status:** blocked
 
 Build an end-to-end fixture that records a Lesson, captures an occurrence, shares durable agent context, promotes with evidence, exercises policy, fails/replays one subscriber, and verifies both closure and human-confirmed-overlap epilogues. Dogfood the release against Backstage with a dry-run import before any apply; do not enable the recurrence CI gate until its baseline is explicitly handled.
 
 ## Open Questions
 
-- The plan is intentionally blocked on upstream meta-format acceptance. The implementation owner must not substitute a local schema merely to begin Task 2.
+- Which native orchestration plugin implements the neutral `lesson agents` hook envelope and publishes its durable projection? The generic SpecScore core must remain independent of that plugin's live transport and storage.
 
 ---
+
+## Resolution
+
+**Reconciled Draft → Implemented outside the tracked `change-status` flow** (11 task(s) marked complete to match delivered code; this did not walk the legal-transition matrix).
+
+Founder selected reconciliation and landing on 2026-08-10 after approving the Lesson/Occurrence design; all eleven delivered tasks are reconciled from the recovery implementation rather than being represented as an unstarted Draft.
+
+Evidence: 09ed24b, aa45ba9, e935c1f, adf7530, d0b6386
+
+**Reconciled Implemented → Blocked outside the tracked `change-status` flow** (2 task(s) marked blocked; this did not walk the legal-transition matrix).
+
+Audit found the approved generic lesson-agents projection and external hook contract absent. Tasks 10 and 11 were incorrectly swept into the prior all-complete reconciliation; this correction restores their true blocked state until the generic core and native adapter are proven.
+
+Evidence: d0b6386, spec/features/cli/lesson/coordination/README.md, internal/cli/lesson.go
 *This document follows the https://specscore.md/plan-specification*

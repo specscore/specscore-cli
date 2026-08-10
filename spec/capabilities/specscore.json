@@ -384,6 +384,19 @@
               "modes": []
             },
             {
+              "path": "specscore lesson agents",
+              "flags": [
+                "--format",
+                "--message",
+                "--open",
+                "--project",
+                "--refresh",
+                "--resume",
+                "--text"
+              ],
+              "modes": []
+            },
+            {
               "path": "specscore lesson change-status",
               "flags": [
                 "--note",
@@ -571,6 +584,7 @@
                 "--force-tasks",
                 "--note",
                 "--project",
+                "--reopen-tasks",
                 "--tasks"
               ],
               "modes": []
@@ -1068,6 +1082,79 @@
         }
       },
       "notes": "Delivery is at-least-once; subscribers contractually deduplicate Event.UUID."
+    },
+    {
+      "id": "specscore.lesson.agents",
+      "feature_refs": [
+        "spec/features/cli/lesson/coordination/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Partial",
+          "commands": [
+            {
+              "path": "specscore lesson agents",
+              "flags": [
+                "--format",
+                "--message",
+                "--open",
+                "--project",
+                "--refresh",
+                "--resume",
+                "--text"
+              ],
+              "modes": [
+                "offline projection; explicit neutral executable hook"
+              ]
+            }
+          ],
+          "limitation": "A native orchestration adapter owns live transport and projection updates."
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore lesson agents --help",
+              "contains": [
+                "SPECSCORE_LESSON_AGENTS_HOOK",
+                "never writes"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.lesson.agents",
+              "examples": [
+                "specscore lesson agents verify-before-merge --format json"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Partial",
+          "references": [
+            {
+              "path": "internal/cli/lesson_agents_test.go",
+              "name": "TestLessonAgentsReadsOfflineProjectionAndStreamsNeutralHook",
+              "kind": "integration"
+            },
+            {
+              "path": "internal/cli/lesson_agents_test.go",
+              "name": "TestLessonAgentsRefusesInvalidProjectionAndActions",
+              "kind": "integration"
+            }
+          ],
+          "limitation": "The native adapter conformance test belongs to the orchestration repository."
+        }
+      },
+      "notes": "The core projection and hook envelope are generic; no orchestrator dependency is imported."
     },
     {
       "id": "specscore.lesson.import-legacy",
