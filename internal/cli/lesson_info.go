@@ -76,21 +76,29 @@ func runLessonInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	var present []string
-	for _, s := range lesson.RequiredSections {
+	for _, s := range lesson.RequiredSectionsFor(l) {
 		if l.HasSection(s) {
 			present = append(present, s)
 		}
 	}
 
+	recurred := l.Recurred
+	if l.Canonical {
+		occurrences, err := lesson.DiscoverOccurrences(path)
+		if err != nil {
+			return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
+		}
+		recurred = len(occurrences)
+	}
 	doc := lessonInfoDoc{
 		Slug:            l.Slug,
 		Status:          l.Status,
 		Date:            l.Date,
 		Owner:           l.Owner,
-		Recurred:        l.Recurred,
+		Recurred:        recurred,
 		SupersededBy:    l.SupersededBy,
 		Sections:        present,
-		MissingSections: l.MissingRequiredSections(),
+		MissingSections: l.MissingRequiredSectionsForLayout(),
 	}
 
 	w := cmd.OutOrStdout()

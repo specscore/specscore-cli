@@ -74,11 +74,11 @@ func TestDiscover_ParseError(t *testing.T) {
 	}
 }
 
-func TestDiscover_SkipsSubdirectories(t *testing.T) {
+func TestDiscover_AcceptsCanonicalDirectoryForm(t *testing.T) {
 	dir := t.TempDir()
 	lessonsDir := filepath.Join(dir, "lessons")
 	writeLesson(t, lessonsDir, "single", "# Lesson: Single\n\n## Incident\n\nx\n")
-	// A subdirectory (not a recognized artifact shape for Lesson) is skipped.
+	// A canonical directory-form Lesson is discovered beside compatibility files.
 	if err := os.MkdirAll(filepath.Join(lessonsDir, "dirform"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestDiscover_SkipsSubdirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(got) != 1 || got[0].Slug != "single" {
-		t.Fatalf("expected only [single], got %+v", got)
+	if len(got) != 2 || got[0].Slug != "dirform" || got[1].Slug != "single" {
+		t.Fatalf("expected [dirform, single], got %+v", got)
 	}
 }

@@ -87,3 +87,36 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 
 	return []byte(b.String()), nil
 }
+
+// ScaffoldCanonical returns the compact directory-form Lesson README. The
+// incident diary lives in immutable child occurrences, so the README contains
+// only the durable lesson and its enforceable control.
+func ScaffoldCanonical(opts ScaffoldOptions, classifications []string) ([]byte, error) {
+	if err := ValidateSlug(opts.Slug); err != nil {
+		return nil, err
+	}
+	title := strings.TrimSpace(opts.Title)
+	if title == "" {
+		title = titleCaseFromSlug(opts.Slug)
+	}
+	owner := strings.TrimSpace(opts.Owner)
+	if owner == "" {
+		owner = "unknown"
+	}
+	date := strings.TrimSpace(opts.Date)
+	if date == "" {
+		date = time.Now().UTC().Format("2006-01-02")
+	}
+	if len(classifications) == 0 {
+		classifications = []string{"process"}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\nformat: %s\nstatus: Recorded\n---\n\n", FormatURL)
+	fmt.Fprintf(&b, "# Lesson: %s\n\n", title)
+	fmt.Fprintf(&b, "**Status:** Recorded\n**Date:** %s\n**Owner:** %s\n", date, owner)
+	fmt.Fprintf(&b, "**Classifications:** %s\n", strings.Join(classifications, ", "))
+	b.WriteString("**Legacy Provenance:** —\n**Duplicate Of:** —\n**Supersedes:** —\n**Superseded By:** —\n\n")
+	b.WriteString("## Lesson\n\n<!-- TODO: the durable rule. -->\n\n## Process Gap\n\n<!-- TODO: what should have caught this, and why it did not. -->\n\n## Tracking\n\n- **Occurrence store:** `occurrences/`\n- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n\n## Enforcement\n\n**Control:** —\n**Verification:** —\n**Evidence:** —\n\n## Open Questions\n\nNone at this time.\n\n")
+	fmt.Fprintf(&b, "---\n*This document follows the %s*\n", FormatURL)
+	return []byte(b.String()), nil
+}

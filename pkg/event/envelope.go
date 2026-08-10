@@ -22,7 +22,7 @@ var (
 	uuidRegex = regexp.MustCompile(uuidPattern)
 
 	actorKinds    = []string{"skill", "user", "external"}
-	artifactTypes = []string{"idea", "feature", "plan", "task", "idea-seed", "consilium-review"}
+	artifactTypes = []string{"idea", "feature", "plan", "task", "lesson", "idea-seed", "consilium-review"}
 )
 
 // ValidationError is the deterministic error returned by Validate. The
