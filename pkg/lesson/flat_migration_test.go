@@ -184,6 +184,32 @@ func TestMigrateFlat_PreservesImmutableProvenanceAndEveryStructuredObservation(t
 	}
 }
 
+func TestMigrateFlat_CompletedRetryIsReceiptBackedAndByteStable(t *testing.T) {
+	withFlatSourceIdentity(t)
+	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+	writeFlatFixture(t, lessonsDir, "retry-boundary", flatFixture("Enforced", 0, ""))
+	opts := FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "retry-boundary", Classifications: []string{"process"}, Control: "Run durable migration checks.", Verification: "go test ./pkg/lesson", Evidence: "pkg/lesson/flat_migration_test.go"}
+	first, err := MigrateFlat(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(first.CanonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := MigrateFlat(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(second.CanonicalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CanonicalPath != second.CanonicalPath || !bytes.Equal(before, after) {
+		t.Fatalf("completed retry changed durable projection: %#v %#v", first, second)
+	}
+}
+
 func TestMigrateFlat_SourceRemoveDirectorySyncFailureResumesSameTransaction(t *testing.T) {
 	withFlatSourceIdentity(t)
 	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
