@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/gofrs/flock"
 )
 
 type Relation struct {
@@ -26,6 +28,15 @@ type Relation struct {
 const relatedRelationsFile = ".relations.json"
 
 var relationRename = os.Rename
+var relationSyncDirectory = syncDirectory
+
+// relationBeforePublish is a package seam used to exercise a real competing
+// writer between snapshot and publication. Production leaves it nil.
+var relationBeforePublish func(string) error
+
+// relationLockAcquired is a test seam that holds an advisory lock while a
+// second OS process attempts a competing AddRelation call.
+var relationLockAcquired func()
 
 func RelationToken(from, typ, to string) string {
 	s := sha256.Sum256([]byte(from + "\x00" + typ + "\x00" + to))
@@ -119,6 +130,53 @@ func relationFields(path string) ([]Relation, error) {
 }
 
 func AddRelation(lessonsDir, from, typ, to string) error {
+	return withRelationLock(lessonsDir, func() error {
+		return addRelationLocked(lessonsDir, from, typ, to)
+	})
+}
+
+// withRelationLock serializes cooperating SpecScore relation writers across
+// processes. The ignored project-private lock is advisory and auto-released
+// by the OS on process death, so it cannot wedge a tracked Lesson tree. Byte
+// snapshots below also refuse a non-cooperating external write observed
+// before publication; no advisory lock can make an arbitrary writer honor a
+// read-to-rename critical section after that final observation.
+func withRelationLock(lessonsDir string, fn func() error) error {
+	lockPath, err := relationLockPath(lessonsDir)
+	if err != nil {
+		return mutationFailure(MutationPrePublication, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return mutationFailure(MutationPrePublication, fmt.Errorf("creating relation lock directory: %w", err))
+	}
+	lock := flock.New(lockPath)
+	locked, err := lock.TryLock()
+	if err != nil {
+		return mutationFailure(MutationPrePublication, fmt.Errorf("acquiring relation publication lock: %w", err))
+	}
+	if !locked {
+		return mutationFailure(MutationPrePublication, fmt.Errorf("another SpecScore relation writer is active"))
+	}
+	defer func() { _ = lock.Unlock() }()
+	if relationLockAcquired != nil {
+		relationLockAcquired()
+	}
+	return fn()
+}
+
+func relationLockPath(lessonsDir string) (string, error) {
+	abs, err := filepath.Abs(lessonsDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving relation lock root: %w", err)
+	}
+	root, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(abs)))
+	if err != nil {
+		return "", fmt.Errorf("resolving physical relation lock root: %w", err)
+	}
+	return filepath.Join(root, ".specscore", "locks", "lesson-relations.lock"), nil
+}
+
+func addRelationLocked(lessonsDir, from, typ, to string) error {
 	if err := ValidateRelation(from, typ, to); err != nil {
 		return err
 	}
@@ -143,17 +201,7 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 	}
 
 	if typ == "related" {
-		relations, err := readRelatedRelations(lessonsDir)
-		if err != nil {
-			return err
-		}
-		for _, r := range relations {
-			if r.Type == typ && ((r.From == from && r.To == to) || (r.From == to && r.To == from)) {
-				return nil
-			}
-		}
-		relations = append(relations, Relation{From: from, Type: typ, To: to})
-		return writeRelatedRelations(lessonsDir, relations)
+		return appendRelatedRelation(lessonsDir, Relation{From: from, Type: typ, To: to})
 	}
 	if typ == "supersedes" {
 		cycle, err := wouldCycle(lessonsDir, from, to)
@@ -166,7 +214,7 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 	}
 	if typ == "duplicates" {
 		if fromLesson.Status == "Enforced" {
-			return fmt.Errorf("Enforced Lesson %q cannot be retained as a duplicate", from)
+			return fmt.Errorf("enforced Lesson %q cannot be retained as a duplicate", from)
 		}
 		if fromLesson.Supersedes != "" && fromLesson.Supersedes != "—" {
 			return fmt.Errorf("Lesson %q cannot be both a retained duplicate and a superseding Lesson", from)
@@ -184,7 +232,21 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 		if err := ensureRelationFieldAvailable(fromPath, "Superseded By", to); err != nil {
 			return err
 		}
-		return updateRelationFields(fromPath, map[string]string{"Duplicate Of": to, "Superseded By": to, "Status": "Superseded"})
+		before, err := os.ReadFile(fromPath)
+		if err != nil {
+			return err
+		}
+		if err := ensureRelationFieldsAvailable(before, map[string]string{"Duplicate Of": to, "Superseded By": to}); err != nil {
+			return err
+		}
+		if relationField(before, "Status") == "Enforced" {
+			return fmt.Errorf("enforced Lesson %q cannot be retained as a duplicate", from)
+		}
+		after, err := rewriteRelationFields(before, fromPath, map[string]string{"Duplicate Of": to, "Superseded By": to, "Status": "Superseded"})
+		if err != nil {
+			return err
+		}
+		return replaceRelationCAS(fromPath, before, after, "duplicates")
 	}
 	if err := ensureRelationFieldAvailable(fromPath, "Supersedes", to); err != nil {
 		return err
@@ -203,6 +265,12 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureRelationFieldsAvailable(a, map[string]string{"Supersedes": to}); err != nil {
+		return err
+	}
+	if err := ensureRelationFieldsAvailable(b, map[string]string{"Superseded By": from}); err != nil {
+		return err
+	}
 	newA, err := rewriteRelationFields(a, fromPath, map[string]string{"Supersedes": to})
 	if err != nil {
 		return err
@@ -211,21 +279,22 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 	if err != nil {
 		return err
 	}
-	if current, err := os.ReadFile(fromPath); err != nil || !bytes.Equal(current, a) {
-		return fmt.Errorf("Lesson %q changed during relation publication", from)
+	if err := relationPublicationHook("supersedes"); err != nil {
+		return mutationFailure(MutationPrePublication, err)
 	}
-	if current, err := os.ReadFile(toPath); err != nil || !bytes.Equal(current, b) {
-		return fmt.Errorf("Lesson %q changed during relation publication", to)
+	if err := relationSnapshotsMatch(map[string][]byte{fromPath: a, toPath: b}); err != nil {
+		return mutationFailure(MutationPrePublication, err)
 	}
 	if err := atomicReplace(fromPath, newA); err != nil {
 		return err
 	}
 	if err := atomicReplace(toPath, newB); err != nil {
-		rollbackErr := atomicReplace(fromPath, a)
-		if rollbackErr != nil {
-			return fmt.Errorf("publishing relation failed: %v; rollback failed: %v", err, rollbackErr)
+		if MutationOutcomeOf(err) == MutationUncertain {
+			// The second rename may already be visible. Do not call the first
+			// rollback "compensated" while the pair can be asymmetric.
+			return mutationFailure(MutationUncertain, fmt.Errorf("publishing superseding relation: %w", err))
 		}
-		return err
+		return CompensatePublication(func() error { return replaceRelationCAS(fromPath, newA, a, "supersedes-rollback") }, err)
 	}
 	return nil
 }
@@ -270,28 +339,39 @@ func ensureRelationFieldAvailable(path, name, want string) error {
 	if err != nil {
 		return err
 	}
-	for _, line := range strings.Split(string(b), "\n") {
-		field, value, ok := matchBoldField(strings.TrimSpace(line))
-		if ok && field == name {
-			if value != "" && value != "—" && value != want {
-				return fmt.Errorf("Lesson relation field %q already targets a different Lesson", name)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("Lesson is missing relation field %q", name)
+	return ensureRelationFieldsAvailable(b, map[string]string{name: want})
 }
 
-func updateRelationFields(path string, values map[string]string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
+func ensureRelationFieldsAvailable(b []byte, values map[string]string) error {
+	seen := make(map[string]bool, len(values))
+	for _, line := range strings.Split(string(b), "\n") {
+		field, value, ok := matchBoldField(strings.TrimSpace(line))
+		if !ok {
+			continue
+		}
+		if want, wanted := values[field]; wanted {
+			seen[field] = true
+			if value != "" && value != "—" && value != want {
+				return fmt.Errorf("Lesson relation field %q already targets a different Lesson", field)
+			}
+		}
 	}
-	updated, err := rewriteRelationFields(b, path, values)
-	if err != nil {
-		return err
+	for name := range values {
+		if !seen[name] {
+			return fmt.Errorf("Lesson is missing relation field %q", name)
+		}
 	}
-	return atomicReplace(path, updated)
+	return nil
+}
+
+func relationField(b []byte, want string) string {
+	for _, line := range strings.Split(string(b), "\n") {
+		name, value, ok := matchBoldField(strings.TrimSpace(line))
+		if ok && name == want {
+			return value
+		}
+	}
+	return ""
 }
 
 func rewriteRelationFields(b []byte, path string, values map[string]string) ([]byte, error) {
@@ -330,6 +410,10 @@ func readRelatedRelations(lessonsDir string) ([]Relation, error) {
 		}
 		return nil, err
 	}
+	return decodeRelatedRelations(lessonsDir, b)
+}
+
+func decodeRelatedRelations(lessonsDir string, b []byte) ([]Relation, error) {
 	var r []Relation
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -356,7 +440,32 @@ func readRelatedRelations(lessonsDir string) ([]Relation, error) {
 	}
 	return r, nil
 }
-func writeRelatedRelations(lessonsDir string, relations []Relation) error {
+
+// appendRelatedRelation derives both the sidecar snapshot and replacement
+// from the same bytes. In particular, it never computes an "after" value
+// from an older read and then overwrites a newer sidecar at the CAS boundary.
+func appendRelatedRelation(lessonsDir string, relation Relation) error {
+	path := filepath.Join(lessonsDir, relatedRelationsFile)
+	before, err := os.ReadFile(path)
+	sidecarExists := err == nil
+	if os.IsNotExist(err) {
+		before = nil
+	} else if err != nil {
+		return err
+	}
+	var relations []Relation
+	if sidecarExists {
+		relations, err = decodeRelatedRelations(lessonsDir, before)
+		if err != nil {
+			return err
+		}
+	}
+	for _, existing := range relations {
+		if (existing.From == relation.From && existing.To == relation.To) || (existing.From == relation.To && existing.To == relation.From) {
+			return nil
+		}
+	}
+	relations = append(relations, relation)
 	relations = dedupeRelations(relations)
 	sort.Slice(relations, func(i, j int) bool {
 		if relations[i].Type != relations[j].Type {
@@ -371,7 +480,43 @@ func writeRelatedRelations(lessonsDir string, relations []Relation) error {
 	if err != nil {
 		return err
 	}
-	return atomicReplace(filepath.Join(lessonsDir, relatedRelationsFile), append(b, '\n'))
+	return replaceRelationCAS(path, before, append(b, '\n'), "related")
+}
+
+func relationPublicationHook(kind string) error {
+	if relationBeforePublish == nil {
+		return nil
+	}
+	return relationBeforePublish(kind)
+}
+
+func relationSnapshotsMatch(expected map[string][]byte) error {
+	for path, want := range expected {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(got, want) {
+			return fmt.Errorf("Lesson changed during relation publication: %s", path)
+		}
+	}
+	return nil
+}
+
+func replaceRelationCAS(path string, before, after []byte, kind string) error {
+	if err := relationPublicationHook(kind); err != nil {
+		return mutationFailure(MutationPrePublication, err)
+	}
+	current, err := os.ReadFile(path)
+	if os.IsNotExist(err) && before == nil {
+		current = nil
+	} else if err != nil {
+		return mutationFailure(MutationPrePublication, err)
+	}
+	if !bytes.Equal(current, before) {
+		return mutationFailure(MutationPrePublication, fmt.Errorf("relation target changed during publication: %s", path))
+	}
+	return atomicReplace(path, after)
 }
 func atomicReplace(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -394,7 +539,13 @@ func atomicReplace(path string, data []byte) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return relationRename(tmp, path)
+	if err := relationRename(tmp, path); err != nil {
+		return mutationFailure(MutationPrePublication, err)
+	}
+	if err := relationSyncDirectory(filepath.Dir(path)); err != nil {
+		return mutationFailure(MutationUncertain, fmt.Errorf("durably publishing relation: %w", err))
+	}
+	return nil
 }
 func dedupeRelations(in []Relation) []Relation {
 	seen := map[string]bool{}

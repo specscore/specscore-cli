@@ -31,7 +31,7 @@ specscore lesson occurrence list <lesson> [--format text|yaml|json]
 specscore lesson occurrence info <lesson> <occurrence-id> [--format text|yaml|json]
 ```
 
-`add` persists a unique time-sortable ID, RFC-3339 UTC time, actor, optional summary, and opaque JSON-object context. Explicit JSON inputs are mutually exclusive; malformed/non-object JSON exits `2` before a write. If none is supplied, `--capture-context` defaults on and *lazily* collects only safe local facts (project root, git revision/branch if available, actor). It MUST NOT touch Synchestra, browser state, credentials, remote APIs, or git when explicit context is present. `--capture-context=false` writes `{}`. `list` is chronological and `info` is read-only; structured output preserves unknown JSON keys.
+`add` persists a lowercase hyphenated UUID v4, RFC-3339 UTC time, optional summary, and opaque JSON-object context. The occurrence schema has no top-level `actor` field; an optional safe execution identifier may appear inside `context.execution`. Explicit JSON inputs are mutually exclusive; malformed/non-object JSON exits `2` before a write. If none is supplied, `--capture-context` defaults on and *lazily* collects only safe local facts (project root and git revision/branch if available). It MUST NOT touch Synchestra, browser state, credentials, remote APIs, or git when explicit context is present. `--capture-context=false` writes `{}`. `list` is chronological and `info` is read-only; structured output preserves unknown JSON keys.
 
 ### `recur` compatibility
 
@@ -59,7 +59,7 @@ For directory Lessons, `lesson recur <slug> --note` delegates to `occurrence add
 
 ## Open Questions
 
-- The final occurrence schema and filename are blocked on the upstream meta-format review; implementation consumes that accepted schema rather than inventing one.
+None at this time.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

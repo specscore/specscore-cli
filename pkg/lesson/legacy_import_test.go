@@ -557,6 +557,41 @@ func TestApplyLegacy_PostLinkDurabilityFailureRollsBackOwnedArtifacts(t *testing
 	}
 }
 
+func TestApplyLegacy_CompensationFailureAfterPublicationRemainsUncertain(t *testing.T) {
+	dir := t.TempDir()
+	lessonsDir := filepath.Join(dir, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "legacy.md")
+	if err := os.WriteFile(source, []byte("## L1 — one\n\na\n## L2 — two\n\nb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventoryLegacyForApply(t, source)
+	mapping := legacyMapping(inv, reviewedNew("L1#1", "one"), reviewedNew("L2#1", "two"))
+	original := legacySyncDirectory
+	calls := 0
+	legacySyncDirectory = func(path string) error {
+		calls++
+		// Call four is the second Lesson's parent-directory durability
+		// fence, after its README link is visible. Calls five and six make
+		// the inner and outer removals respectively non-durable.
+		if calls == 4 || calls == 5 || calls == 6 {
+			return errors.New("injected rollback directory sync failure")
+		}
+		return syncDirectory(path)
+	}
+	t.Cleanup(func() { legacySyncDirectory = original })
+
+	_, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	if MutationOutcomeOf(err) != MutationUncertain {
+		t.Fatalf("outcome=%v err=%v; post-publication compensation was not proven durable", MutationOutcomeOf(err), err)
+	}
+	if calls < 6 {
+		t.Fatalf("fault plan did not reach both compensation fences: calls=%d", calls)
+	}
+}
+
 func TestApplyLegacy_UnsafeHistoricalSourceIsReferencedNotRepublished(t *testing.T) {
 	dir := t.TempDir()
 	lessonsDir := filepath.Join(dir, "spec", "lessons")

@@ -657,13 +657,42 @@ func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyI
 
 	var published []string
 	manifestDirExisted := pathIsDirectory(filepath.Dir(manifestPath))
-	rollback := func() {
+	rollback := func() error {
+		var first error
 		for i := len(published) - 1; i >= 0; i-- {
-			_ = os.RemoveAll(published[i])
+			if err := os.RemoveAll(published[i]); err != nil && first == nil {
+				first = err
+			}
+			if err := legacySyncDirectory(filepath.Dir(published[i])); err != nil && first == nil {
+				first = err
+			}
 		}
 		if !manifestDirExisted {
-			_ = os.Remove(filepath.Dir(manifestPath))
+			if err := os.Remove(filepath.Dir(manifestPath)); err != nil && !os.IsNotExist(err) && first == nil {
+				first = err
+			}
+			if err := legacySyncDirectory(filepath.Dir(filepath.Dir(manifestPath))); err != nil && first == nil {
+				first = err
+			}
 		}
+		return first
+	}
+	failAfterPublication := func(cause error) (LegacyApplyResult, error) {
+		rollbackErr := rollback()
+		// A nested occurrence writer may already have crossed a publication or
+		// fsync boundary. Rolling back sibling files cannot prove that child is
+		// gone, so its prepared event must remain recoverable even when the
+		// outer rollback itself succeeds.
+		if MutationOutcomeOf(cause) == MutationUncertain {
+			if rollbackErr != nil {
+				return LegacyApplyResult{}, mutationFailure(MutationUncertain, fmt.Errorf("%v; outer rollback also failed: %w", cause, rollbackErr))
+			}
+			return LegacyApplyResult{}, mutationFailure(MutationUncertain, cause)
+		}
+		if rollbackErr != nil {
+			return LegacyApplyResult{}, mutationFailure(MutationUncertain, fmt.Errorf("%v; rollback failed: %w", cause, rollbackErr))
+		}
+		return LegacyApplyResult{}, mutationFailure(MutationCompensated, cause)
 	}
 	for _, key := range keys {
 		m := byMap[key]
@@ -675,27 +704,23 @@ func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyI
 		}
 		finalDir := filepath.Join(lessonsDir, m.Slug)
 		if err := publishStagedLesson(filepath.Join(stageDir, m.Slug), finalDir); err != nil {
-			rollback()
-			return LegacyApplyResult{}, err
+			return failAfterPublication(err)
 		}
 		published = append(published, finalDir)
 		result.CreatedLessons = append(result.CreatedLessons, m.Slug)
 	}
 	if !manifestExists {
 		if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
-			rollback()
-			return LegacyApplyResult{}, err
+			return failAfterPublication(err)
 		}
 		if err := legacyPublishLink(filepath.Join(stageDir, "manifest.json"), manifestPath); err != nil {
-			rollback()
-			return LegacyApplyResult{}, err
+			return failAfterPublication(err)
 		}
 		// Ownership begins when the exclusive link succeeds, not after fsync.
 		// Recording it first guarantees a post-link durability failure removes it.
 		published = append(published, manifestPath)
 		if err := legacySyncDirectory(filepath.Dir(manifestPath)); err != nil {
-			rollback()
-			return LegacyApplyResult{}, err
+			return failAfterPublication(err)
 		}
 	}
 	for _, key := range keys {
@@ -707,8 +732,7 @@ func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyI
 		id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
 		o, err := AddOccurrence(legacyOccurrenceOptions(path, id, inv, e))
 		if err != nil {
-			rollback()
-			return LegacyApplyResult{}, err
+			return failAfterPublication(err)
 		}
 		published = append(published, o.Path)
 		result.CreatedOccurrences = append(result.CreatedOccurrences, o.ID)

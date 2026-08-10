@@ -2,11 +2,15 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/specscore/specscore-cli/pkg/event"
+	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
@@ -80,6 +84,43 @@ func TestLessonOccurrenceRejectsBadContextBeforeWrite(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("invalid input wrote occurrences: %v", entries)
+	}
+}
+
+func TestLessonReadCommandsRejectTraversalThroughCentralResolver(t *testing.T) {
+	canonicalLessonProject(t)
+	for name, args := range map[string][]string{
+		"lesson-info":     {"info", "../outside"},
+		"occurrence-list": {"occurrence", "list", "../outside"},
+		"occurrence-info": {"occurrence", "info", "../outside", "01234567-89ab-4def-8123-456789abcdef"},
+		"relation-list":   {"relation", "list", "../outside"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := runLesson(t, args...)
+			if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit=%d want=%d err=%v", got, exitcode.InvalidArgs, err)
+			}
+		})
+	}
+}
+
+func TestLessonOccurrence_UnknownPostPublicationFailureRetainsPreparedEvent(t *testing.T) {
+	root := canonicalLessonProject(t)
+	orig := lessonAddOccurrenceFn
+	lessonAddOccurrenceFn = func(lesson.AddOccurrenceOptions) (lesson.Occurrence, error) {
+		return lesson.Occurrence{}, errors.New("injected publication/fsync boundary uncertainty")
+	}
+	t.Cleanup(func() { lessonAddOccurrenceFn = orig })
+	_, stderr, err := runLesson(t, "occurrence", "add", "review-before-merge")
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Fatalf("exit=%d want=%d err=%v", got, exitcode.Unexpected, err)
+	}
+	if !strings.Contains(stderr+err.Error(), "recovery required: prepared event") {
+		t.Fatalf("missing visible recovery instruction: stderr=%q err=%v", stderr, err)
+	}
+	prepared, readErr := event.NewOutbox(root).Prepared()
+	if readErr != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.occurrence-recorded" {
+		t.Fatalf("serialized outbox must retain prepared recovery state: %#v err=%v", prepared, readErr)
 	}
 }
 

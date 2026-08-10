@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 
 func relationFixture(t *testing.T, slugs ...string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "lessons")
+	dir := filepath.Join(t.TempDir(), "spec", "lessons")
 	for _, slug := range slugs {
 		path := filepath.Join(dir, slug, "README.md")
 		if err := os.MkdirAll(filepath.Join(filepath.Dir(path), "occurrences"), 0o755); err != nil {
@@ -125,6 +126,40 @@ func TestAddRelation_MalformedSidecarIsFatalAndWriteFree(t *testing.T) {
 	}
 }
 
+func TestAddRelation_FirstRelatedEdgeCreatesSidecar(t *testing.T) {
+	lessons := relationFixture(t, "a", "b")
+	if err := AddRelation(lessons, "a", "related", "b"); err != nil {
+		t.Fatalf("first related edge: %v", err)
+	}
+	relations, err := readRelatedRelations(lessons)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(relations) != 1 || relations[0] != (Relation{From: "a", Type: "related", To: "b"}) {
+		t.Fatalf("related sidecar = %#v", relations)
+	}
+}
+
+func TestRelationLockPathUsesPhysicalProjectRoot(t *testing.T) {
+	lessons := relationFixture(t, "a", "b")
+	root := filepath.Dir(filepath.Dir(lessons))
+	alias := filepath.Join(t.TempDir(), "project-alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	physical, err := relationLockPath(lessons)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaAlias, err := relationLockPath(filepath.Join(alias, "spec", "lessons"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if physical != viaAlias {
+		t.Fatalf("symlink aliases must coordinate on one advisory lock: physical=%s alias=%s", physical, viaAlias)
+	}
+}
+
 func TestAddRelation_SecondPublishFailureRollsBackFirstLesson(t *testing.T) {
 	lessons := relationFixture(t, "successor", "prior")
 	from := filepath.Join(lessons, "successor", "README.md")
@@ -148,5 +183,155 @@ func TestAddRelation_SecondPublishFailureRollsBackFirstLesson(t *testing.T) {
 	afterTo, _ := os.ReadFile(to)
 	if !bytes.Equal(beforeFrom, afterFrom) || !bytes.Equal(beforeTo, afterTo) {
 		t.Fatal("failed two-Lesson publication was not rolled back")
+	}
+}
+
+func TestAddRelation_SecondPostRenameSyncFailureRemainsUncertain(t *testing.T) {
+	lessons := relationFixture(t, "successor", "prior")
+	from := filepath.Join(lessons, "successor", "README.md")
+	to := filepath.Join(lessons, "prior", "README.md")
+	original := relationSyncDirectory
+	calls := 0
+	relationSyncDirectory = func(path string) error {
+		calls++
+		if calls == 2 {
+			return errors.New("injected second post-rename directory sync failure")
+		}
+		return syncDirectory(path)
+	}
+	t.Cleanup(func() { relationSyncDirectory = original })
+
+	err := AddRelation(lessons, "successor", "supersedes", "prior")
+	if MutationOutcomeOf(err) != MutationUncertain {
+		t.Fatalf("outcome=%v err=%v; second renamed file can remain", MutationOutcomeOf(err), err)
+	}
+	fromBytes, readErr := os.ReadFile(from)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	toBytes, readErr := os.ReadFile(to)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(fromBytes), "**Supersedes:** prior") || !strings.Contains(string(toBytes), "**Superseded By:** successor") {
+		t.Fatalf("both renamed files must be treated as possibly published:\nfrom=%s\nto=%s", fromBytes, toBytes)
+	}
+}
+
+func TestAddRelation_AdversarialOverwriteRacesAreWriteFree(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  string
+		from string
+		to   string
+		hook func(t *testing.T, lessons string)
+	}{
+		{
+			name: "duplicate", typ: "duplicates", from: "a", to: "b",
+			hook: func(t *testing.T, lessons string) {
+				path := filepath.Join(lessons, "a", "README.md")
+				raw, _ := os.ReadFile(path)
+				if err := os.WriteFile(path, append(raw, []byte("\nexternal writer\n")...), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "supersedes-two-files", typ: "supersedes", from: "a", to: "b",
+			hook: func(t *testing.T, lessons string) {
+				path := filepath.Join(lessons, "a", "README.md")
+				raw, _ := os.ReadFile(path)
+				if err := os.WriteFile(path, append(raw, []byte("\nexternal writer\n")...), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "related-sidecar", typ: "related", from: "a", to: "b",
+			hook: func(t *testing.T, lessons string) {
+				if err := os.WriteFile(filepath.Join(lessons, relatedRelationsFile), []byte("[]\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lessons := relationFixture(t, "a", "b")
+			beforeB, _ := os.ReadFile(filepath.Join(lessons, "b", "README.md"))
+			orig := relationBeforePublish
+			fired := false
+			relationBeforePublish = func(kind string) error {
+				if !fired && (kind == tc.typ || (tc.typ == "supersedes" && kind == "supersedes")) {
+					fired = true
+					tc.hook(t, lessons)
+				}
+				return nil
+			}
+			t.Cleanup(func() { relationBeforePublish = orig })
+			if err := AddRelation(lessons, tc.from, tc.typ, tc.to); err == nil {
+				t.Fatal("race must refuse publication")
+			}
+			if !fired {
+				t.Fatal("test hook did not exercise the publication boundary")
+			}
+			afterB, _ := os.ReadFile(filepath.Join(lessons, "b", "README.md"))
+			if !bytes.Equal(beforeB, afterB) {
+				t.Fatal("racing writer caused a clobber of an unrelated target")
+			}
+		})
+	}
+}
+
+// TestRelationLockHelper is run in a subprocess by the overlapping-writer
+// test below. The process must observe the parent command's advisory lock and
+// refuse before writing any relation.
+func TestRelationLockHelper(t *testing.T) {
+	if os.Getenv("SPECSCORE_RELATION_LOCK_HELPER") != "1" {
+		return
+	}
+	lessons := os.Getenv("SPECSCORE_RELATION_LESSONS")
+	if err := AddRelation(lessons, "a", "duplicates", "b"); err == nil {
+		t.Fatal("competing process acquired a relation lock held by another AddRelation")
+	}
+}
+
+func TestAddRelation_CrossProcessAdvisoryLockRefusesOverlappingWriter(t *testing.T) {
+	lessons := relationFixture(t, "a", "b")
+	path := filepath.Join(lessons, "a", "README.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	original := relationLockAcquired
+	relationLockAcquired = func() {
+		close(locked)
+		<-release
+	}
+	t.Cleanup(func() { relationLockAcquired = original })
+	first := make(chan error, 1)
+	go func() { first <- AddRelation(lessons, "a", "duplicates", "b") }()
+	<-locked
+
+	child := exec.Command(os.Args[0], "-test.run=^TestRelationLockHelper$")
+	child.Env = append(os.Environ(), "SPECSCORE_RELATION_LOCK_HELPER=1", "SPECSCORE_RELATION_LESSONS="+lessons)
+	if output, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("competing process did not refuse under advisory lock: %v\n%s", err, output)
+	}
+	during, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, during) {
+		t.Fatal("overlapping writer modified the Lesson while the first call held the lock")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first relation writer failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(lessons, ".relations.lock")); !os.IsNotExist(err) {
+		t.Fatalf("relation lock polluted tracked Lesson tree: %v", err)
 	}
 }

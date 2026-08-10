@@ -21,7 +21,7 @@ The existing event dispatcher is best-effort fan-out: a failure may be ignored w
 
 ### Automatic Lesson events
 
-Mutating commands prepare the complete event and recipient set before artifact publication, then commit it only after artifact and bounded index validation: `lesson.created`, `lesson.lifecycle-changed`, `lesson.occurrence-recorded`, `lesson.relation-recorded`, `lesson.legacy-import-applied`, and `lesson.flat-migrated`. Payloads contain Lesson identity/path, event UUID/time/actor, and minimal mutation facts; occurrence context remains in the validated child rather than being copied into the envelope. Failed and rolled-back mutations abort the prepared record; a crash leaves it inspectable for explicit reconciliation. Callers never need a separate `event emit`.
+Mutating commands prepare the complete event and recipient set before artifact publication, then commit it only after artifact and bounded index validation: `lesson.created`, `lesson.lifecycle-changed`, `lesson.occurrence-recorded`, `lesson.relation-recorded`, `lesson.legacy-import-applied`, and `lesson.flat-migrated`. Payloads contain Lesson identity/path, event UUID/time/actor, and minimal mutation facts; occurrence context remains in the validated child rather than being copied into the envelope. A failed mutation aborts its prepared record only when it is proven pre-publication or its exact rollback plus durability fence completed; any publication, removal, or fsync uncertainty retains the prepared record with its UUID for explicit reconciliation. Callers never need a separate `event emit`.
 
 ### Durable per-subscriber outbox and replay
 

@@ -181,7 +181,7 @@ The dispatcher MUST map outcomes to exit codes consistent with the parent `cli` 
 | `3` | `specscore.yaml` not found via the standard `--project` autodetect (the parent `cli` Feature's REQ:project-autodetect). | Resource not found. |
 | `10` | The configured subscriber list is non-empty AND every subscriber's `Deliver` returned a non-nil error or timed out. | Unexpected runtime error. |
 
-The "single subscriber failed, others succeeded" case is success (exit 0) with stderr diagnostics per REQ:fan-out-dispatch. The "explicitly empty subscriber list" case is also success (REQ:default-and-empty-config).
+The "single subscriber failed, others succeeded" case is success (exit 0) with stderr diagnostics per REQ:fan-out-dispatch. The "explicitly empty subscriber list" case is also success (REQ:default-and-empty-config). This is the contract of the in-process dispatcher primitive only. The durable public `specscore event emit` verb owns a stricter handoff boundary: after it commits the ledger and replays pending recipients, **any** recipient still pending exits `10` (defined by `cli/event/emit#req:dispatch-handoff`). A partial-success dispatcher result therefore never authorizes a public durable emission to report exit `0`.
 
 ### Durable per-subscriber delivery
 
