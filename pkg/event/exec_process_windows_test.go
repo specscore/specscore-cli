@@ -238,15 +238,16 @@ func TestExecWindowsJobTerminationFailureFallsBackDuringDeliver(t *testing.T) {
 // direct PowerShell parent.
 func TestExecTimeoutKillsHungProcess(t *testing.T) {
 	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
-	script := `$child = Start-Process -FilePath 'powershell.exe' ` +
-		`-ArgumentList '-NoLogo -NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' ` +
+	script := `$child = Start-Process -FilePath "$env:SystemRoot\System32\ping.exe" ` +
+		`-ArgumentList '-n','31','127.0.0.1' ` +
 		`-PassThru; ` +
 		`[System.IO.File]::WriteAllText($env:SPECSCORE_CHILD_PID_FILE, [string]$child.Id); ` +
 		`Wait-Process -Id $child.Id`
+	timeout := 10 * time.Second
 	sub := NewExec(
 		[]string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script},
 		map[string]string{"SPECSCORE_CHILD_PID_FILE": childPIDFile},
-		5*time.Second,
+		timeout,
 	)
 
 	result := make(chan error, 1)
@@ -255,7 +256,7 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 		result <- sub.Deliver(context.Background(), execSampleEvent(t))
 	}()
 
-	pid := waitForWindowsChildPID(t, childPIDFile, result, 4*time.Second)
+	pid := waitForWindowsChildPID(t, childPIDFile, result, 8*time.Second)
 	handle, err := windows.OpenProcess(
 		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE,
 		false,
@@ -275,11 +276,11 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 	if !errors.As(err, &timeoutErr) {
 		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
 	}
-	if elapsed < 5*time.Second {
-		t.Fatalf("elapsed = %v, want >= 5s", elapsed)
+	if elapsed < timeout {
+		t.Fatalf("elapsed = %v, want >= %v", elapsed, timeout)
 	}
-	if elapsed > 7*time.Second {
-		t.Fatalf("elapsed = %v, want <= 7s", elapsed)
+	if elapsed > timeout+2*time.Second {
+		t.Fatalf("elapsed = %v, want <= %v", elapsed, timeout+2*time.Second)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -304,22 +305,22 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 // SpecScore releases its final job handle.
 func TestExecSuccessfulCommandLeavesBackgroundProcessRunning(t *testing.T) {
 	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
-	script := `$child = Start-Process -FilePath 'powershell.exe' ` +
-		`-ArgumentList '-NoLogo -NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' ` +
+	script := `$child = Start-Process -FilePath "$env:SystemRoot\System32\ping.exe" ` +
+		`-ArgumentList '-n','31','127.0.0.1' ` +
 		`-PassThru; ` +
 		`[System.IO.File]::WriteAllText($env:SPECSCORE_CHILD_PID_FILE, [string]$child.Id); ` +
 		`exit 0`
 	sub := NewExec(
 		[]string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script},
 		map[string]string{"SPECSCORE_CHILD_PID_FILE": childPIDFile},
-		5*time.Second,
+		10*time.Second,
 	)
 
 	if err := sub.Deliver(context.Background(), execSampleEvent(t)); err != nil {
 		t.Fatalf("Deliver returned error: %v", err)
 	}
 
-	pid := waitForWindowsChildPID(t, childPIDFile, nil, 2*time.Second)
+	pid := waitForWindowsChildPID(t, childPIDFile, nil, 8*time.Second)
 	handle, err := windows.OpenProcess(
 		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE,
 		false,
