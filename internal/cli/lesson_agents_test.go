@@ -25,6 +25,12 @@ func TestLessonAgentsReadsOfflineProjectionAndStreamsNeutralHook(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"action":"message"`) || !strings.Contains(out, `"agent_id":"codex-1"`) {
 		t.Fatalf("hook out=%q err=%v", out, err)
 	}
+	// Explicit project selection must become the executable's working directory.
+	t.Setenv(lessonAgentsHookEnv, "/bin/pwd")
+	out, _, err = runLesson(t, "agents", "review-before-merge", "--project", root, "--refresh")
+	if err != nil || strings.TrimSpace(out) != root {
+		t.Fatalf("project-anchored hook out=%q err=%v want=%q", out, err, root)
+	}
 }
 
 func TestLessonAgentsRefusesInvalidProjectionAndActions(t *testing.T) {

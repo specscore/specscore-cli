@@ -200,11 +200,14 @@ func invokeLessonAgentsHook(cmd *cobra.Command, action, root, path, slug, agentI
 		return exitcode.UnexpectedErrorf("encoding external hook request: %v", err)
 	}
 	external := lessonAgentsCommandContext(cmd.Context(), hook)
+	// The selected project, not the caller's ambient CWD, is the hook's
+	// canonical anchor. This makes --project deterministic for native adapters
+	// that locate their configuration and durable state relative to a repo.
+	external.Dir = root
 	external.Stdin = bytes.NewReader(payload)
 	external.Stdout, external.Stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
 	if err := external.Run(); err != nil {
 		return exitcode.UnexpectedErrorf("external lesson-agents hook failed: %v", err)
 	}
-	_ = root // root proves the project was resolved before an external action.
 	return nil
 }
