@@ -48,12 +48,15 @@ func runLessonRelationAdd(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("preparing relation event: %v", err)
 	}
 	if err := lesson.AddRelation(dir, from, typ, to); err != nil {
-		_ = prepared.Abort()
-		return exitcode.InvalidStateErrorf("adding relation: %v", err)
+		if recovery, resolved := prepared.ResolveMutationFailure("adding relation", err); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.InvalidStateErrorf("adding relation: %v", resolved)
+		}
 	}
 	delivery, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: relation recorded; durable event delivery is pending: %v\n", commitErr)
+		return exitcode.UnexpectedErrorf("relation recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
 	for _, failure := range delivery.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)

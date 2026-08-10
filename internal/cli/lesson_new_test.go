@@ -24,6 +24,44 @@ func readLesson(t *testing.T, root, slug string) string {
 	return string(b)
 }
 
+func TestLessonScaffoldSnapshotRestorePreservesCapturedMode(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "spec", "lessons", "existing", "README.md")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := snapshotLessonScaffold(root, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("mutated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.restore(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original\n" {
+		t.Fatalf("restored bytes = %q", got)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("restored mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
 // AC: scaffold-emits-frontmatter-and-sections — the embedded (offline)
 // scaffold carries format:/status: frontmatter mirroring the body, all four
 // required sections, and the footer, AND `lesson new` leaves its bounded

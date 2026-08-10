@@ -79,14 +79,17 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing occurrence event: %v", err)
 	}
-	o, err := lesson.AddOccurrence(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: summary, Context: context, Evidence: evidence, Now: now})
+	o, err := lessonAddOccurrenceFn(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: summary, Context: context, Evidence: evidence, Now: now})
 	if err != nil {
-		_ = prepared.Abort()
-		return exitcode.InvalidArgsErrorf("invalid occurrence: %v", err)
+		if recovery, resolved := prepared.ResolveMutationFailure("recording occurrence", err); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.InvalidArgsErrorf("invalid occurrence: %v", resolved)
+		}
 	}
 	result, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: occurrence recorded; durable event delivery is pending: %v\n", commitErr)
+		return exitcode.UnexpectedErrorf("occurrence recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
 	for _, failure := range result.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)

@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/specscore/specscore-cli/pkg/event"
+	"github.com/specscore/specscore-cli/pkg/lesson"
 )
 
 type preparedLessonEvent struct {
@@ -58,6 +60,34 @@ func (p *preparedLessonEvent) Abort() error {
 	return p.outbox.Abort(p.event.UUID)
 }
 
+// ResolveMutationFailure is the only place a prepared Lesson event may be
+// aborted after its writer has started.  A path merely existing is never proof
+// of this writer's publication: writers return a MutationOutcome that records
+// whether publication was impossible, compensation was durably completed, or
+// a crash/fence failure leaves recovery work.  The latter must stay prepared
+// and name its UUID so an operator can reconcile it deliberately.
+func (p *preparedLessonEvent) ResolveMutationFailure(operation string, cause error) (recoveryRequired bool, err error) {
+	outcome := lesson.MutationOutcomeOf(cause)
+	if p == nil || p.disabled {
+		if outcome == lesson.MutationPrePublication || outcome == lesson.MutationCompensated {
+			return false, cause
+		}
+		ledger := "no prepared event is available"
+		if p != nil && p.disabled {
+			ledger = "event delivery was disabled, so there is no durable event record"
+		}
+		return true, fmt.Errorf("%s: %w; recovery required: artifact state is uncertain; %s; inspect the artifact before retrying", operation, cause, ledger)
+	}
+	if outcome == lesson.MutationPrePublication || outcome == lesson.MutationCompensated {
+		if err := p.Abort(); err == nil {
+			return false, cause
+		} else {
+			cause = fmt.Errorf("%w; aborting fully-compensated event failed: %v", cause, err)
+		}
+	}
+	return true, fmt.Errorf("%s: %w; recovery required: prepared event %s remains inspectable; reconcile it explicitly with `specscore event reconcile`", operation, cause, p.event.UUID)
+}
+
 func (p *preparedLessonEvent) Commit(ctx context.Context) (event.ReplayResult, error) {
 	if p == nil || p.disabled {
 		return event.ReplayResult{}, nil
@@ -68,15 +98,4 @@ func (p *preparedLessonEvent) Commit(ctx context.Context) (event.ReplayResult, e
 	// Best effort is intentional only after durable enqueue: a failure remains
 	// inspectable/replayable and does not suppress other subscribers.
 	return p.outbox.Replay(ctx, p.subscribers, "", 0)
-}
-
-// emitLessonEvent is retained for non-artifact emitters. Mutating Lesson
-// commands use prepareLessonEvent before their first artifact write.
-func emitLessonEvent(ctx context.Context, root, name, slug string, payload map[string]any, at time.Time) error {
-	p, err := prepareLessonEvent(root, name, slug, payload, at)
-	if err != nil {
-		return err
-	}
-	_, err = p.Commit(ctx)
-	return err
 }
