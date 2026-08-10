@@ -369,6 +369,17 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 	if !hasLegacyProvenance(file, provenance) || validateImportedLesson(file, entry, LegacyInventory{Source: validSource}) == nil {
 		t.Fatal("imported lesson validation did not require occurrence store")
 	}
+	imported := filepath.Join(root, "imported", "README.md")
+	mapping := LegacyMappingEntry{Slug: "imported", Lesson: "Reviewed compact Lesson text.", ProcessGap: "Reviewed compact process gap.", Classifications: []string{"process"}}
+	if err := writeImportedLesson(imported, "imported", "Imported rule", mapping, entry, LegacyInventory{Source: validSource}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImportedLesson(imported, entry, LegacyInventory{Source: validSource}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeImportedLesson(filepath.Join(root, "unsafe", "README.md"), "unsafe", "Unsafe", LegacyMappingEntry{Slug: "unsafe", Lesson: "<!-- TODO: unsafe -->", ProcessGap: "Reviewed gap.", Classifications: []string{"process"}}, entry, LegacyInventory{Source: validSource}); err == nil {
+		t.Fatal("placeholder imported lesson accepted")
+	}
 
 	manifest, err := legacyManifestBytes(LegacyInventory{Source: validSource, Entries: []LegacyEntry{entry}, LessonCount: 1, EntryProjectionSHA256: "projection"}, LegacyMapping{Source: validSource})
 	if err != nil || !bytes.Contains(manifest, []byte(`"schema_version": 1`)) {
