@@ -45,13 +45,13 @@ With no flags, `lesson list` MUST print every lesson's slug, one per line, sorte
 
 #### REQ: min-recurred-filter
 
-`--min-recurred <N>` MUST restrict output to lessons whose `**Recurred:**` count is at least `N` (default `0`, meaning no filter). It MUST compose with either status filter (AND semantics), not replace it. A negative `N` MUST exit `2`.
+`--min-recurred <N>` MUST restrict output to lessons whose recurrence count is at least `N` (default `0`, meaning no filter). Canonical counts derive from validated child Occurrences; compatibility flat counts use `**Recurred:**`. It MUST compose with either status filter (AND semantics), not replace it. A negative `N` MUST exit `2`.
 
 ### Recurrence surfaced in text output
 
 #### REQ: text-shows-recurrence
 
-In the default `text` format, a lesson with `**Recurred:** N` where `N > 0` MUST render as `<slug> (recurred N)` instead of the bare slug, so a recurring-but-not-yet-graduated lesson is visible without a separate query.
+In the default `text` format, a lesson with derived recurrence count `N > 0` MUST render as `<slug> (recurred N)` instead of the bare slug, so a recurring-but-not-yet-graduated lesson is visible without a separate query.
 
 ### Structured output
 
@@ -65,7 +65,7 @@ In the default `text` format, a lesson with `**Recurred:** N` where `N > 0` MUST
 |---|---|---|
 | `--status` | No | Filter by one or more statuses, comma-separated, case-insensitive: `recorded`, `stated`, `enforced`, `withdrawn`, `superseded`. Mutually exclusive with `--not-enforced`. An unrecognized value exits `2`. |
 | `--not-enforced` | No | The headline query: shorthand for `--status=recorded,stated`. Mutually exclusive with `--status`. |
-| `--min-recurred` | No | Restrict to lessons with `**Recurred:** >= N` (default `0` = no filter). Composes with either status filter. |
+| `--min-recurred` | No | Restrict to lessons with derived recurrence count `>= N` (default `0` = no filter). Composes with either status filter. |
 | `--fields` | No | Comma-separated: `status`, `recurred`, `date`, `owner`. Upgrades output to structured form. |
 | `--format` | No | `text` (default), `yaml`, `json`. |
 | `--project` | No | Project root (autodetected). |

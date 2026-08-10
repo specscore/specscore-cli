@@ -1,0 +1,7 @@
+{
+  "repository": "github.com/specscore/specscore",
+  "revision": "b16caad0d0693c407bfb4230b492bce5f2aa8458",
+  "path": "new/cli-capability-delivery.schema.json",
+  "schema_id": "https://specscore.md/new/cli-capability-delivery.schema.json",
+  "sha256": "d573758c9bf41c197fce3f69af7082bf02b5926b3160bd05958c1516d95232a2"
+}

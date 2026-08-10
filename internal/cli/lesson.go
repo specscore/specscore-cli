@@ -33,27 +33,29 @@ func lessonCommand() *cobra.Command {
 		lessonOccurrenceCommand(),
 		lessonRelationCommand(),
 		lessonImportLegacyCommand(),
+		lessonMigrateFlatCommand(),
 		lessonCheckCommand(),
 	)
 	return cmd
 }
 
-// lessonNewCommand scaffolds a lint-clean flat Lesson artifact at
-// spec/lessons/<slug>.md per the cli/lesson/new Feature.
+// lessonNewCommand scaffolds a lint-clean canonical Lesson directory at
+// spec/lessons/<slug>/ per the cli/lesson/new Feature.
 func lessonNewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "new <slug>",
 		Short: "Scaffold a new Lesson artifact",
-		Long: `Creates a lint-clean Lesson at spec/lessons/<slug>/README.md, carrying the
-artifact-frontmatter-convention frontmatter (format:/status:), the
-body-metadata header (Status: Recorded, Date, Owner, Recurred: 0), the four
-required sections with TODO prompts — Incident, Process gap, Check,
-Enforcement — and the adherence footer.
+		Long: `Creates the canonical compact Lesson at
+spec/lessons/<slug>/README.md plus an empty occurrences/ directory. The README
+contains controlled classifications, relation/provenance fields, the durable
+Lesson and Process Gap, exact occurrence-schema Tracking line, deterministic
+Enforcement fields, Open Questions, and the adherence footer.
 
-No flag beyond the slug is required: recording a lesson is meant to be as
-close to free as writing it in prose, so the CLI never blocks on missing
-detail. Lint checks only that the four sections exist, never their content —
-fill them in whenever you have time, not before the entry is saved.
+The command preflights specscore.yaml and non-empty lessons.classifications
+before creating any path. Its bounded write set is the requested Lesson, the
+declared ancestor/index rows, and the durable prepared event/outbox; it never
+runs a repository-wide fixer. A sibling
+legacy spec/lessons/<slug>.md is a collision and must be migrated explicitly.
 
 Docs: docs/agent-lessons.md#create-and-record`,
 		Args: cobra.ExactArgs(1),
@@ -100,62 +102,184 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 	if len(classifications) == 0 {
 		return exitcode.InvalidStateError("lesson new requires non-empty lessons.classifications in specscore.yaml; configure the repository vocabulary, then retry")
 	}
+	seenClassifications := map[string]bool{}
+	for _, classification := range classifications {
+		if err := lesson.ValidateSlug(classification); err != nil || seenClassifications[classification] {
+			return exitcode.InvalidStateError("lesson new requires unique slug-form values in lessons.classifications; fix specscore.yaml before retrying")
+		}
+		seenClassifications[classification] = true
+	}
 
 	lessonsDir := filepath.Join(root, "spec", "lessons")
 	target := filepath.Join(lessonsDir, slug, "README.md")
 	legacy := filepath.Join(lessonsDir, slug+".md")
 	if _, err := os.Stat(legacy); err == nil {
 		return exitcode.ConflictErrorf("legacy lesson already exists: %s; migrate it before creating canonical %q", legacy, slug)
+	} else if !os.IsNotExist(err) {
+		return exitcode.UnexpectedErrorf("preflighting %s: %v", legacy, err)
 	}
 	if _, statErr := os.Stat(target); statErr == nil && !force {
 		return exitcode.ConflictErrorf("lesson already exists: %s (pass --force to overwrite)", target)
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return exitcode.UnexpectedErrorf("preflighting %s: %v", target, statErr)
 	}
 
-	// Materialize ancestor indexes before the lesson file, mirroring
-	// cli/plan/new#req:ancestor-indexes-materialized. Existing files are left
-	// untouched.
-	if err := ensureLessonAncestorIndexes(root); err != nil {
-		return exitcode.UnexpectedErrorf("materializing ancestor indexes: %v", err)
-	}
-
-	// Writers always create the accepted canonical directory form. A missing
-	// config affects only whether the caller explicitly opted into linting.
 	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, classifications)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("scaffolding lesson: %v", err)
 	}
+	if err := lesson.ValidateSafeContent("Lesson scaffold", string(body)); err != nil {
+		return exitcode.InvalidArgsErrorf("unsafe Lesson content: %v", err)
+	}
+
+	snapshot, err := snapshotLessonScaffold(root, target)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("snapshotting declared write set: %v", err)
+	}
+	prepared, err := prepareLessonEvent(root, "lesson.created", slug, map[string]any{"classifications": classifications}, time.Time{})
+	if err != nil {
+		return exitcode.UnexpectedErrorf("preparing lesson event: %v", err)
+	}
+	fail := func(message string, cause error) error {
+		if rollbackErr := snapshot.restore(); rollbackErr != nil {
+			message += fmt.Sprintf("; rollback failed: %v", rollbackErr)
+		}
+		_ = prepared.Abort()
+		return exitcode.UnexpectedErrorf(message+": %v", cause)
+	}
+
+	// Materialize only the two declared ancestor indexes. Existing files are
+	// byte-preserved; the narrow row upsert below owns the new Lesson's row.
+	if err := ensureLessonAncestorIndexes(root); err != nil {
+		return fail("materializing ancestor indexes", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return exitcode.UnexpectedErrorf("creating lesson directory: %v", err)
+		return fail("creating lesson directory", err)
 	}
 	if err := os.MkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
-		return exitcode.UnexpectedErrorf("creating occurrences directory: %v", err)
+		return fail("creating occurrences directory", err)
 	}
 	if err := os.WriteFile(target, body, 0o644); err != nil {
-		return exitcode.UnexpectedErrorf("writing %s: %v", target, err)
+		return fail("writing Lesson", err)
 	}
 
 	specSub := filepath.Join(root, "spec")
-	if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
-		_ = os.Remove(target)
-		return exitcode.UnexpectedErrorf("running lint fix: %v", err)
+	parsed, err := lesson.Parse(target)
+	if err != nil {
+		return fail("parsing generated Lesson", err)
+	}
+	if err := lessonIndexUpsertFn(specSub, parsed); err != nil {
+		return fail("upserting declared Lesson index row", err)
 	}
 	violations, err := lintLintFn(lint.Options{SpecRoot: specSub})
 	if err != nil {
-		return exitcode.UnexpectedErrorf("running lint: %v", err)
+		return fail("running read-only lint", err)
 	}
 	relTarget, _ := filepath.Rel(specSub, target)
 	var own []string
 	for _, v := range violations {
-		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "lessons/")) {
+		ownedIndexFinding := v.File == "lessons/README.md" && (v.Rule == "L-003" || v.Rule == "L-004") && strings.Contains(v.Message, slug)
+		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding) {
 			own = append(own, fmt.Sprintf("  %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message))
 		}
 	}
 	if len(own) > 0 {
-		return exitcode.UnexpectedError("generated lesson failed lint:\n" + strings.Join(own, "\n"))
+		return fail("generated Lesson failed lint", fmt.Errorf("%s", strings.Join(own, "\n")))
+	}
+	result, commitErr := prepared.Commit(cmd.Context())
+	if commitErr != nil {
+		// If Abort succeeds, the event never committed and the artifact can be
+		// safely rolled back. If it cannot abort, the ledger is already durable;
+		// keep the successful mutation and report delivery as pending.
+		if abortErr := prepared.Abort(); abortErr == nil {
+			_ = snapshot.restore()
+			return exitcode.UnexpectedErrorf("committing lesson event: %v", commitErr)
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: Lesson created; durable event delivery is pending: %v\n", commitErr)
+	}
+	for _, delivery := range result.Failed {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", delivery.Name, delivery.Err)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)
 	return nil
+}
+
+type fileSnapshot struct {
+	path   string
+	data   []byte
+	mode   os.FileMode
+	exists bool
+}
+
+type lessonScaffoldSnapshot struct {
+	files         []fileSnapshot
+	lessonsDir    string
+	lessonDir     string
+	occurrences   string
+	hadLessonsDir bool
+	hadLessonDir  bool
+	hadOccurrence bool
+}
+
+func snapshotLessonScaffold(root, target string) (lessonScaffoldSnapshot, error) {
+	s := lessonScaffoldSnapshot{
+		lessonsDir:  filepath.Join(root, "spec", "lessons"),
+		lessonDir:   filepath.Dir(target),
+		occurrences: filepath.Join(filepath.Dir(target), "occurrences"),
+	}
+	for _, p := range []string{filepath.Join(root, "spec", "README.md"), filepath.Join(root, "spec", "lessons", "README.md"), target} {
+		b, err := os.ReadFile(p)
+		if err == nil {
+			info, statErr := os.Stat(p)
+			if statErr != nil {
+				return s, statErr
+			}
+			s.files = append(s.files, fileSnapshot{path: p, data: b, mode: info.Mode().Perm(), exists: true})
+		} else if os.IsNotExist(err) {
+			s.files = append(s.files, fileSnapshot{path: p})
+		} else {
+			return s, err
+		}
+	}
+	s.hadLessonsDir = pathIsDir(s.lessonsDir)
+	s.hadLessonDir = pathIsDir(s.lessonDir)
+	s.hadOccurrence = pathIsDir(s.occurrences)
+	return s, nil
+}
+
+func pathIsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func (s lessonScaffoldSnapshot) restore() error {
+	var first error
+	for _, f := range s.files {
+		if f.exists {
+			if err := os.WriteFile(f.path, f.data, f.mode); err != nil && first == nil {
+				first = err
+			}
+		} else if err := os.Remove(f.path); err != nil && !os.IsNotExist(err) && first == nil {
+			first = err
+		}
+	}
+	if !s.hadOccurrence {
+		if err := os.Remove(s.occurrences); err != nil && !os.IsNotExist(err) && first == nil {
+			first = err
+		}
+	}
+	if !s.hadLessonDir {
+		if err := os.Remove(s.lessonDir); err != nil && !os.IsNotExist(err) && first == nil {
+			first = err
+		}
+	}
+	if !s.hadLessonsDir {
+		if err := os.Remove(s.lessonsDir); err != nil && !os.IsNotExist(err) && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 func lessonClassifications(root string) []string {
@@ -211,11 +335,13 @@ func lessonChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "change-status <slug> --to=<status>",
 		Short: "Transition a Lesson's Status up the enforcement ladder (or retire it)",
-		Long: `Transitions spec/lessons/<slug>.md from its current **Status:** to the
-value named by --to. The transition is validated against the Lesson
+		Long: `Transitions the canonical spec/lessons/<slug>/README.md or a
+compatibility spec/lessons/<slug>.md from its current **Status:** to the value
+named by --to. The transition is validated against the Lesson
 legal-transition matrix below; illegal (from, to) pairs exit 4. On success,
-the verb runs ` + "`specscore spec lint --fix`" + ` to keep the lessons index in
-sync, prints "<slug>: <from> → <to>" to stdout, and exits 0.
+the verb upserts only that Lesson's index row, runs lint read-only, prints
+"<slug>: <from> → <to>" to stdout, and exits 0. Repository-wide fixes remain
+exclusive to an explicit ` + "`specscore spec lint --fix`" + ` command.
 
 Both dispositions require a reason: --to=withdrawn and --to=superseded
 require --note. --to=superseded additionally requires --successor naming the
@@ -301,8 +427,16 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 		successor = strings.TrimSpace(successor)
 		if _, rerr := lesson.ResolveLessonFile(filepath.Join(specRoot, "spec", "lessons"), successor); rerr != nil {
 			return exitcode.InvalidArgsErrorf(
-				"successor lesson %q does not resolve to an existing lesson at spec/lessons/%s.md", successor, successor)
+				"successor lesson %q does not resolve to an existing canonical or compatibility Lesson", successor)
 		}
+	}
+	postMutation, err := prepareLessonPostMutation(specRoot, slug)
+	if err != nil {
+		return err
+	}
+	prepared, err := prepareLessonEvent(specRoot, "lesson.lifecycle-changed", slug, map[string]any{"to": string(to)}, time.Time{})
+	if err != nil {
+		return exitcode.UnexpectedErrorf("preparing lifecycle event: %v", err)
 	}
 
 	result, err := lesson.ChangeStatus(lesson.ChangeStatusOptions{
@@ -311,18 +445,81 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 		To:           to,
 		Note:         note,
 		Successor:    successor,
-		PostMutation: lesson.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
+		PostMutation: postMutation,
 	})
 	if err != nil {
+		_ = prepared.Abort()
 		return err
 	}
-	if err := emitLessonEvent(cmd.Context(), specRoot, "lesson.lifecycle-changed", result.Slug, map[string]any{"from": string(result.From), "to": string(result.To)}, time.Time{}); err != nil {
-		return exitcode.UnexpectedErrorf("queueing lifecycle event: %v", err)
+	delivery, commitErr := prepared.Commit(cmd.Context())
+	if commitErr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: status changed; durable event delivery is pending: %v\n", commitErr)
+	}
+	for _, failure := range delivery.Failed {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
 	return nil
+}
+
+// prepareLessonPostMutation snapshots the only index file owned by a Lesson
+// lifecycle change. The returned hook upserts that Lesson's row, then runs
+// lint read-only. It deliberately does not invoke the repository-wide fixer:
+// only an explicit `specscore spec lint --fix` may migrate unrelated content
+// such as an Outstanding Questions heading.
+func prepareLessonPostMutation(root, slug string) (lesson.PostMutationHook, error) {
+	specSub := filepath.Join(root, "spec")
+	indexPath := filepath.Join(specSub, "lessons", "README.md")
+	indexBefore, err := os.ReadFile(indexPath)
+	if err != nil {
+		return nil, exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
+	}
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		return nil, exitcode.UnexpectedErrorf("snapshotting lessons index mode: %v", err)
+	}
+	restore := func() error { return os.WriteFile(indexPath, indexBefore, info.Mode().Perm()) }
+	fail := func(message string, cause error) error {
+		if rollbackErr := restore(); rollbackErr != nil {
+			message += fmt.Sprintf("; index rollback failed: %v", rollbackErr)
+		}
+		return exitcode.UnexpectedErrorf(message+": %v", cause)
+	}
+
+	return func() error {
+		path, err := lesson.ResolveLessonFile(filepath.Join(specSub, "lessons"), slug)
+		if err != nil {
+			return fail("resolving rewritten Lesson", err)
+		}
+		updated, err := lesson.Parse(path)
+		if err != nil {
+			return fail("parsing rewritten Lesson", err)
+		}
+		if err := lessonIndexUpsertFn(specSub, updated); err != nil {
+			return fail("upserting Lesson index row", err)
+		}
+		violations, err := lintLintFn(lint.Options{SpecRoot: specSub})
+		if err != nil {
+			return fail("running read-only lint", err)
+		}
+		var errs []lint.Violation
+		for _, violation := range violations {
+			if violation.Severity == "error" {
+				errs = append(errs, violation)
+			}
+		}
+		if len(errs) == 0 {
+			return nil
+		}
+		var message strings.Builder
+		message.WriteString("lint failed after status rewrite")
+		for _, violation := range errs {
+			fmt.Fprintf(&message, "\n  %s:%d [%s] %s", violation.File, violation.Line, violation.Rule, violation.Message)
+		}
+		return fail(message.String(), fmt.Errorf("%d error-severity violation(s)", len(errs)))
+	}, nil
 }
 
 // ensureLessonAncestorIndexes materializes spec/README.md and

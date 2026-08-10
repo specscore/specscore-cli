@@ -5,10 +5,12 @@ package lesson
 // importer or linter guess.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,6 +24,8 @@ type Relation struct {
 }
 
 const relatedRelationsFile = ".relations.json"
+
+var relationRename = os.Rename
 
 func RelationToken(from, typ, to string) string {
 	s := sha256.Sum256([]byte(from + "\x00" + typ + "\x00" + to))
@@ -51,7 +55,11 @@ func ListRelations(lessonsDir, slug string) ([]Relation, error) {
 		return nil, err
 	}
 	var out []Relation
-	for _, r := range readRelatedRelations(lessonsDir) {
+	related, err := readRelatedRelations(lessonsDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range related {
 		if r.From == slug || r.To == slug {
 			out = append(out, r)
 		}
@@ -61,13 +69,12 @@ func ListRelations(lessonsDir, slug string) ([]Relation, error) {
 		return nil, err
 	}
 	for _, l := range lessons {
-		if l.Slug == slug && l.SupersededBy != "" && l.SupersededBy != "—" {
-			out = append(out, Relation{From: slug, Type: "superseded-by", To: l.SupersededBy})
+		fields, err := relationFields(l.Path)
+		if err != nil {
+			return nil, err
 		}
-		if l.Slug == slug && l.SupersededBy == "" { /* legacy field omitted */
-		}
-		if l.Slug == slug {
-			for _, f := range relationFields(l.Path) {
+		for _, f := range fields {
+			if f.From == slug || f.To == slug {
 				out = append(out, f)
 			}
 		}
@@ -84,10 +91,10 @@ func ListRelations(lessonsDir, slug string) ([]Relation, error) {
 	return dedupeRelations(out), nil
 }
 
-func relationFields(path string) []Relation {
+func relationFields(path string) ([]Relation, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	slug := filepath.Base(filepath.Dir(path))
 	if filepath.Base(path) != "README.md" {
@@ -108,7 +115,7 @@ func relationFields(path string) []Relation {
 			out = append(out, Relation{From: slug, Type: "superseded-by", To: value})
 		}
 	}
-	return out
+	return out, nil
 }
 
 func AddRelation(lessonsDir, from, typ, to string) error {
@@ -136,7 +143,10 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 	}
 
 	if typ == "related" {
-		relations := readRelatedRelations(lessonsDir)
+		relations, err := readRelatedRelations(lessonsDir)
+		if err != nil {
+			return err
+		}
 		for _, r := range relations {
 			if r.Type == typ && ((r.From == from && r.To == to) || (r.From == to && r.To == from)) {
 				return nil
@@ -145,11 +155,42 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 		relations = append(relations, Relation{From: from, Type: typ, To: to})
 		return writeRelatedRelations(lessonsDir, relations)
 	}
-	if typ == "supersedes" && wouldCycle(lessonsDir, from, to) {
-		return fmt.Errorf("supersedes relation would form a cycle: %s -> %s", from, to)
+	if typ == "supersedes" {
+		cycle, err := wouldCycle(lessonsDir, from, to)
+		if err != nil {
+			return err
+		}
+		if cycle {
+			return fmt.Errorf("supersedes relation would form a cycle: %s -> %s", from, to)
+		}
 	}
 	if typ == "duplicates" {
+		if fromLesson.Status == "Enforced" {
+			return fmt.Errorf("Enforced Lesson %q cannot be retained as a duplicate", from)
+		}
+		if fromLesson.Supersedes != "" && fromLesson.Supersedes != "—" {
+			return fmt.Errorf("Lesson %q cannot be both a retained duplicate and a superseding Lesson", from)
+		}
+		cycle, err := wouldCycle(lessonsDir, from, to)
+		if err != nil {
+			return err
+		}
+		if cycle {
+			return fmt.Errorf("duplicate relation would form a cycle: %s -> %s", from, to)
+		}
+		if err := ensureRelationFieldAvailable(fromPath, "Duplicate Of", to); err != nil {
+			return err
+		}
+		if err := ensureRelationFieldAvailable(fromPath, "Superseded By", to); err != nil {
+			return err
+		}
 		return updateRelationFields(fromPath, map[string]string{"Duplicate Of": to, "Superseded By": to, "Status": "Superseded"})
+	}
+	if err := ensureRelationFieldAvailable(fromPath, "Supersedes", to); err != nil {
+		return err
+	}
+	if err := ensureRelationFieldAvailable(toPath, "Superseded By", from); err != nil {
+		return err
 	}
 	// A successor declares the forward relation; the predecessor gains the
 	// derived backwards pointer and status.  Snapshot both files so a partial
@@ -162,40 +203,83 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 	if err != nil {
 		return err
 	}
-	if err := updateRelationFields(fromPath, map[string]string{"Supersedes": to}); err != nil {
+	newA, err := rewriteRelationFields(a, fromPath, map[string]string{"Supersedes": to})
+	if err != nil {
 		return err
 	}
-	if err := updateRelationFields(toPath, map[string]string{"Superseded By": from, "Status": "Superseded"}); err != nil {
-		_ = os.WriteFile(fromPath, a, 0o644)
-		_ = os.WriteFile(toPath, b, 0o644)
+	newB, err := rewriteRelationFields(b, toPath, map[string]string{"Superseded By": from, "Status": "Superseded"})
+	if err != nil {
+		return err
+	}
+	if current, err := os.ReadFile(fromPath); err != nil || !bytes.Equal(current, a) {
+		return fmt.Errorf("Lesson %q changed during relation publication", from)
+	}
+	if current, err := os.ReadFile(toPath); err != nil || !bytes.Equal(current, b) {
+		return fmt.Errorf("Lesson %q changed during relation publication", to)
+	}
+	if err := atomicReplace(fromPath, newA); err != nil {
+		return err
+	}
+	if err := atomicReplace(toPath, newB); err != nil {
+		rollbackErr := atomicReplace(fromPath, a)
+		if rollbackErr != nil {
+			return fmt.Errorf("publishing relation failed: %v; rollback failed: %v", err, rollbackErr)
+		}
 		return err
 	}
 	return nil
 }
 
-func wouldCycle(lessonsDir, from, to string) bool {
+func wouldCycle(lessonsDir, from, to string) (bool, error) {
 	seen := map[string]bool{}
-	var visit func(string) bool
-	visit = func(cur string) bool {
+	var visit func(string) (bool, error)
+	visit = func(cur string) (bool, error) {
 		if cur == from {
-			return true
+			return true, nil
 		}
 		if seen[cur] {
-			return false
+			return false, nil
 		}
 		seen[cur] = true
 		p, err := ResolveLessonFile(lessonsDir, cur)
 		if err != nil {
-			return false
+			return false, err
 		}
-		for _, r := range relationFields(p) {
-			if r.Type == "supersedes" && visit(r.To) {
-				return true
+		fields, err := relationFields(p)
+		if err != nil {
+			return false, err
+		}
+		for _, r := range fields {
+			if r.Type == "supersedes" || r.Type == "duplicates" {
+				found, err := visit(r.To)
+				if err != nil {
+					return false, err
+				}
+				if found {
+					return true, nil
+				}
 			}
 		}
-		return false
+		return false, nil
 	}
 	return visit(to)
+}
+
+func ensureRelationFieldAvailable(path, name, want string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		field, value, ok := matchBoldField(strings.TrimSpace(line))
+		if ok && field == name {
+			if value != "" && value != "—" && value != want {
+				return fmt.Errorf("Lesson relation field %q already targets a different Lesson", name)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("Lesson is missing relation field %q", name)
 }
 
 func updateRelationFields(path string, values map[string]string) error {
@@ -203,6 +287,14 @@ func updateRelationFields(path string, values map[string]string) error {
 	if err != nil {
 		return err
 	}
+	updated, err := rewriteRelationFields(b, path, values)
+	if err != nil {
+		return err
+	}
+	return atomicReplace(path, updated)
+}
+
+func rewriteRelationFields(b []byte, path string, values map[string]string) ([]byte, error) {
 	lines := strings.Split(string(b), "\n")
 	seen := map[string]bool{}
 	for i, line := range lines {
@@ -216,7 +308,7 @@ func updateRelationFields(path string, values map[string]string) error {
 	}
 	for name := range values {
 		if !seen[name] {
-			return fmt.Errorf("Lesson %s is missing required metadata field %q", path, name)
+			return nil, fmt.Errorf("Lesson %s is missing required metadata field %q", path, name)
 		}
 	}
 	if status, ok := values["Status"]; ok {
@@ -227,19 +319,42 @@ func updateRelationFields(path string, values map[string]string) error {
 			}
 		}
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return []byte(strings.Join(lines, "\n")), nil
 }
 
-func readRelatedRelations(lessonsDir string) []Relation {
+func readRelatedRelations(lessonsDir string) ([]Relation, error) {
 	b, err := os.ReadFile(filepath.Join(lessonsDir, relatedRelationsFile))
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	var r []Relation
-	if json.Unmarshal(b, &r) != nil {
-		return nil
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", relatedRelationsFile, err)
 	}
-	return r
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("invalid %s: trailing JSON", relatedRelationsFile)
+	}
+	for _, edge := range r {
+		if edge.Type != "related" {
+			return nil, fmt.Errorf("invalid %s: sidecar only stores related edges", relatedRelationsFile)
+		}
+		if err := ValidateRelation(edge.From, edge.Type, edge.To); err != nil {
+			return nil, fmt.Errorf("invalid %s: %w", relatedRelationsFile, err)
+		}
+		if _, err := ResolveLessonFile(lessonsDir, edge.From); err != nil {
+			return nil, fmt.Errorf("invalid %s: unresolved from endpoint", relatedRelationsFile)
+		}
+		if _, err := ResolveLessonFile(lessonsDir, edge.To); err != nil {
+			return nil, fmt.Errorf("invalid %s: unresolved to endpoint", relatedRelationsFile)
+		}
+	}
+	return r, nil
 }
 func writeRelatedRelations(lessonsDir string, relations []Relation) error {
 	relations = dedupeRelations(relations)
@@ -256,7 +371,30 @@ func writeRelatedRelations(lessonsDir string, relations []Relation) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(lessonsDir, relatedRelationsFile), append(b, '\n'), 0o644)
+	return atomicReplace(filepath.Join(lessonsDir, relatedRelationsFile), append(b, '\n'))
+}
+func atomicReplace(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".relation-")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if _, err = f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return relationRename(tmp, path)
 }
 func dedupeRelations(in []Relation) []Relation {
 	seen := map[string]bool{}

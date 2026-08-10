@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson info <slug>` returns a single lesson's metadata (status, date, owner, recurrence count, successor when superseded) together with which of the four required sections are present versus missing. Default output is YAML; `--format` selects `json` or `text`.
+`specscore lesson info <slug>` returns a single lesson's metadata (status, date, owner, recurrence count, successor when superseded) together with layout-specific required-section coverage. Canonical recurrence is derived from validated child Occurrences. Default output is YAML; `--format` selects `json` or `text`.
 
 ## Synopsis
 
@@ -33,19 +33,19 @@ Inspecting a single lesson otherwise means opening the file and reading it by ey
 
 #### REQ: info-returns-section-coverage
 
-The output MUST include `sections` (the required sections present, in canonical order) and `missing_sections` (the required sections absent). A lesson with all four sections present has an empty `missing_sections`.
+The output MUST include `sections` (the required sections present, in layout-specific canonical order) and `missing_sections` (the required sections absent). Directory Lessons use `Lesson`, `Process Gap`, `Tracking`, `Enforcement`, and `Open Questions`; compatibility flat Lessons use `Incident`, `Process gap`, `Check`, and `Enforcement`.
 
 ### Slug resolution
 
 #### REQ: slug-resolution
 
-`<slug>` MUST resolve to `spec/lessons/<slug>.md`. A slug that does not resolve MUST exit `3` (NotFound) naming the requested slug, with no partial stdout.
+`<slug>` MUST resolve canonical `spec/lessons/<slug>/README.md` first, then compatibility `spec/lessons/<slug>.md`. If both exist the command MUST reject the ambiguous layout. A slug that does not resolve MUST exit `3` (NotFound) naming the requested slug, with no partial stdout.
 
 ## Parameters
 
 | Name | Required | Description |
 |---|---|---|
-| `slug` | Yes | Lesson slug — resolves to `spec/lessons/<slug>.md`. |
+| `slug` | Yes | Lesson slug — resolves canonical directory or compatibility flat layout. |
 | `--format` | No | `yaml` (default), `json`, `text`. |
 | `--project` | No | Project root (autodetected). |
 
@@ -55,7 +55,7 @@ The output MUST include `sections` (the required sections present, in canonical 
 |---|---|
 | `0` | Metadata returned. |
 | `2` | Missing/extra positional argument, or invalid `--format`. |
-| `3` | No lesson at `spec/lessons/<slug>.md`. |
+| `3` | No canonical or compatibility Lesson for the slug. |
 
 ## Interaction with Other Features
 
@@ -74,9 +74,9 @@ The output MUST include `sections` (the required sections present, in canonical 
 
 ### AC: info-returns-section-coverage (verifies REQ:info-returns-section-coverage)
 
-**Given** a lesson whose body carries only `## Incident` and `## Process gap`
+**Given** a canonical Lesson whose body carries only `## Lesson` and `## Process Gap`
 **When** the user runs `specscore lesson info <slug>`
-**Then** `missing_sections` lists `Check` and `Enforcement`, and `sections` lists `Incident` and `Process gap`.
+**Then** `missing_sections` lists `Tracking`, `Enforcement`, and `Open Questions`, and `sections` lists `Lesson` and `Process Gap`.
 
 ### AC: not-found-exits-3 (verifies REQ:slug-resolution)
 

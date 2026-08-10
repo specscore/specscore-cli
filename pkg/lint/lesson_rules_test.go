@@ -500,8 +500,11 @@ func TestLessonIndexRules_FixFailsWhenIndexMalformed(t *testing.T) {
 // reachable through the checker's own call sites -----
 
 func TestExpectedLessonIndexRow_NilLesson(t *testing.T) {
-	got := expectedLessonIndexRow("ghost", nil)
-	want := lessonIndexRow{slug: "ghost", recurred: "0"}
+	got, err := expectedLessonIndexRow("ghost", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := lessonIndexRow{slug: "ghost", link: "ghost/README.md", occurrences: "0", enforcement: "—"}
 	if got != want {
 		t.Errorf("expectedLessonIndexRow(nil) = %+v, want %+v", got, want)
 	}
@@ -532,7 +535,7 @@ func TestRewriteLessonIndex_ReadFileError(t *testing.T) {
 }
 
 func TestReadLessonIndexRows_OpenError(t *testing.T) {
-	if _, err := readLessonIndexRows(filepath.Join(t.TempDir(), "missing.md")); err == nil {
+	if _, _, _, err := readLessonIndexRows(filepath.Join(t.TempDir(), "missing.md")); err == nil {
 		t.Fatal("expected os.Open error for a nonexistent index file")
 	}
 }

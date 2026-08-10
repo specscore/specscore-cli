@@ -14,7 +14,9 @@ require (
 	github.com/ingitdb/dalgo2ingitdb v0.2.4
 	github.com/ingitdb/ingitdb-go/ingitdb v0.5.2
 	github.com/posthog/posthog-go v1.23.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.10
 	github.com/strongo/selfupdate v0.2.0
 	github.com/zclconf/go-cty v1.19.0
 	golang.org/x/mod v0.38.0
@@ -63,7 +65,6 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/strongo/random v0.0.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect

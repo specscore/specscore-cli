@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
@@ -23,9 +26,8 @@ func readLesson(t *testing.T, root, slug string) string {
 
 // AC: scaffold-emits-frontmatter-and-sections — the embedded (offline)
 // scaffold carries format:/status: frontmatter mirroring the body, all four
-// required sections, and the footer, AND `lesson new` leaves the tree
-// lint-clean (including the lessons index row) because it runs an internal
-// `spec lint --fix` pass — the near-zero-friction guarantee.
+// required sections, and the footer, AND `lesson new` leaves its bounded
+// Lesson/index write set lint-clean without invoking a repository-wide fixer.
 func TestLessonNew_EmbeddedEmitsFrontmatterSectionsAndIndex(t *testing.T) {
 	root := setupSpecRoot(t)
 	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
@@ -157,6 +159,36 @@ func TestLessonNew_ConfigPreflightWritesNothing(t *testing.T) {
 	}
 }
 
+func TestLessonNew_InvalidClassificationVocabularyPreflightWritesNothing(t *testing.T) {
+	tests := []struct {
+		name            string
+		classifications []string
+	}{
+		{name: "classification is not a slug", classifications: []string{"Bad Value"}},
+		{name: "classification is duplicated", classifications: []string{"process", "process"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := setupSpecRoot(t)
+			cfg := projectdef.SpecConfig{Extras: map[string]any{
+				"lessons": map[string]any{"classifications": tt.classifications},
+			}}
+			if err := projectdef.WriteSpecConfig(root, cfg); err != nil {
+				t.Fatal(err)
+			}
+			before := treeDigestForCLI(t, root)
+
+			_, _, err := runLesson(t, "new", "must-not-write", "--project", root)
+			if got := exitCodeOf(err); got != exitcode.InvalidState {
+				t.Fatalf("exit = %d, want InvalidState; err=%v", got, err)
+			}
+			if after := treeDigestForCLI(t, root); !bytes.Equal(before, after) {
+				t.Fatal("classification preflight changed the project tree")
+			}
+		})
+	}
+}
+
 func TestLessonNew_AncestorIndexError(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -192,34 +224,28 @@ func TestLessonNew_WriteError(t *testing.T) {
 	}
 }
 
-// AC: internal-fix-pass-failure — a lint --fix failure removes the partial
-// file and exits 10.
-func TestLessonNew_LintFixFails(t *testing.T) {
+// AC: narrow-index-upsert-failure — the lint-owned bounded row writer fails
+// transactionally without invoking a whole-tree lint fixer.
+func TestLessonNew_IndexUpsertFails(t *testing.T) {
 	root := setupSpecRoot(t)
 	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
 		t.Fatal(err)
 	}
 	withCwd(t, root)
-	orig := lintLintFn
-	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
-		if opts.Fix {
-			return nil, errors.New("fix boom")
-		}
-		return nil, nil
-	}
-	t.Cleanup(func() { lintLintFn = orig })
+	orig := lessonIndexUpsertFn
+	lessonIndexUpsertFn = func(string, *lesson.Lesson) error { return errors.New("index boom") }
+	t.Cleanup(func() { lessonIndexUpsertFn = orig })
 
 	_, _, err := runLesson(t, "new", "boom")
 	if got := exitCodeOf(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom", "README.md")); statErr == nil {
-		t.Error("partial file should be removed after a fix-pass failure")
+		t.Error("partial file should be removed after an index-upsert failure")
 	}
 }
 
-// AC: internal-verify-pass-failure — the second (non-fix) lint call erroring
-// exits 10.
+// AC: internal-verify-pass-failure — the focused read-only lint call erroring exits 10.
 func TestLessonNew_LintVerifyFails(t *testing.T) {
 	root := setupSpecRoot(t)
 	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
@@ -228,9 +254,6 @@ func TestLessonNew_LintVerifyFails(t *testing.T) {
 	withCwd(t, root)
 	orig := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
-		if opts.Fix {
-			return nil, nil
-		}
 		return nil, errors.New("verify boom")
 	}
 	t.Cleanup(func() { lintLintFn = orig })
@@ -242,7 +265,7 @@ func TestLessonNew_LintVerifyFails(t *testing.T) {
 }
 
 // AC: generated-lesson-lint-error-surfaced — a remaining error-severity
-// violation touching the new file (or the lessons/ family) after the fix
+// violation touching the new file (or the lessons/ family) after the read-only
 // pass surfaces as a failure rather than a silent success.
 func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 	root := setupSpecRoot(t)
@@ -252,11 +275,8 @@ func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 	withCwd(t, root)
 	orig := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
-		if opts.Fix {
-			return nil, nil
-		}
 		return []lint.Violation{
-			{File: "lessons/boom.md", Line: 1, Rule: "L-001", Severity: "error", Message: "boom"},
+			{File: "lessons/boom/README.md", Line: 1, Rule: "L-001", Severity: "error", Message: "boom"},
 		}, nil
 	}
 	t.Cleanup(func() { lintLintFn = orig })
@@ -265,8 +285,71 @@ func TestLessonNew_GeneratedLessonFailsLint(t *testing.T) {
 	if got := exitCodeOf(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
 	}
-	if !strings.Contains(err.Error(), "generated lesson failed lint") {
+	if !strings.Contains(err.Error(), "generated Lesson failed lint") {
 		t.Errorf("expected generated-lesson-failed-lint message, got: %v", err)
+	}
+}
+
+func TestLessonNew_DoesNotMigrateUnrelatedOutstandingQuestions(t *testing.T) {
+	root := setupLintCleanProject(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedDir := filepath.Join(root, "spec", "research")
+	if err := os.MkdirAll(unrelatedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedPath := filepath.Join(unrelatedDir, "legacy.md")
+	unrelated := []byte("# Legacy research\n\n## Outstanding Questions\n\n- Keep this byte-identical until explicit lint --fix.\n")
+	if err := os.WriteFile(unrelatedPath, unrelated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := runLesson(t, "new", "bounded-write", "--project", root); err != nil {
+		t.Fatalf("lesson new: %v", err)
+	}
+	if got, err := os.ReadFile(unrelatedPath); err != nil || !bytes.Equal(got, unrelated) {
+		t.Fatalf("lesson new ran a hidden whole-tree fixer: err=%v\n%s", err, got)
+	}
+}
+
+func TestLessonNew_CommitsDurableCreatedEvent(t *testing.T) {
+	root := setupLintCleanProject(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runLesson(t, "new", "durable-created-event", "--project", root); err != nil {
+		t.Fatal(err)
+	}
+	outboxRoot := filepath.Join(root, ".specscore", "event-outbox")
+	ledgerEntries, err := os.ReadDir(filepath.Join(outboxRoot, "ledger"))
+	if err != nil || len(ledgerEntries) != 1 {
+		t.Fatalf("lesson new ledger entries = %d err=%v", len(ledgerEntries), err)
+	}
+	ledgerBytes, err := os.ReadFile(filepath.Join(outboxRoot, "ledger", ledgerEntries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Event struct {
+			Name     string `json:"name"`
+			UUID     string `json:"uuid"`
+			Artifact struct {
+				ID string `json:"id"`
+			} `json:"artifact"`
+		} `json:"event"`
+		Subscribers []string `json:"subscribers"`
+		State       string   `json:"state"`
+	}
+	if err := json.Unmarshal(ledgerBytes, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Event.Name != "lesson.created" || record.Event.Artifact.ID != "durable-created-event" || record.Event.UUID == "" || len(record.Subscribers) != 1 || record.State != "prepared" {
+		t.Fatalf("unexpected immutable created-event ledger: %#v", record)
+	}
+	state, err := os.ReadFile(filepath.Join(outboxRoot, "state", record.Event.UUID))
+	if err != nil || strings.TrimSpace(string(state)) != "committed" {
+		t.Fatalf("created event was not committed: %q err=%v", state, err)
 	}
 }
 
