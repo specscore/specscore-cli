@@ -13,7 +13,7 @@ import (
 func canonicalLessonProject(t *testing.T) string {
 	t.Helper()
 	root := setupSpecRoot(t)
-	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{}); err != nil {
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
 		t.Fatal(err)
 	}
 	withCwd(t, root)

@@ -8,12 +8,31 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
 // runLesson invokes the `lesson` cobra command tree in-process and captures
 // stdout, stderr, and the returned error.
 func runLesson(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
+	// Most historical command tests predate the config-gated canonical
+	// scaffolder. Keep their fixture focused on the behavior under test while
+	// dedicated preflight tests exercise the unconfigured path directly.
+	if len(args) > 0 && args[0] == "new" {
+		if cwd, err := os.Getwd(); err == nil {
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == "--project" {
+					cwd = args[i+1]
+					break
+				}
+			}
+			if _, statErr := os.Stat(filepath.Join(cwd, projectdef.SpecConfigFile)); os.IsNotExist(statErr) {
+				if info, dirErr := os.Stat(filepath.Join(cwd, "spec")); dirErr == nil && info.IsDir() {
+					_ = projectdef.WriteSpecConfig(cwd, lessonTestConfig())
+				}
+			}
+		}
+	}
 	cmd := lessonCommand()
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -37,6 +56,10 @@ func setupLessonsSpec(t *testing.T) string {
 	}
 	withCwd(t, root)
 	return lessonsDir
+}
+
+func lessonTestConfig() projectdef.SpecConfig {
+	return projectdef.SpecConfig{Extras: map[string]any{"lessons": map[string]any{"classifications": []string{"process"}}}}
 }
 
 // writeLessonInDir writes a single-file lesson at lessonsDir/<slug>.md with

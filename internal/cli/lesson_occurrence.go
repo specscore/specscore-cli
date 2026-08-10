@@ -1,12 +1,12 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -21,7 +21,7 @@ func lessonOccurrenceCommand() *cobra.Command {
 }
 
 func lessonOccurrenceAddCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "add <lesson>", Short: "Append one typed occurrence without rewriting the Lesson", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonOccurrenceAdd}
+	cmd := &cobra.Command{Use: "add <lesson>", Short: "Append one typed occurrence without rewriting the Lesson", Long: "Context is strict, bounded, and secret-free; original prompts and raw logs are refused. Docs: docs/agent-lessons.md#create-and-record", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonOccurrenceAdd}
 	cmd.Flags().String("summary", "", "bounded factual summary (defaults to a neutral observation)")
 	cmd.Flags().String("context-json", "", "JSON object with safe generic context")
 	cmd.Flags().String("context-file", "", "path to a JSON context object")
@@ -73,6 +73,11 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	o, err := lesson.AddOccurrence(lesson.AddOccurrenceOptions{LessonPath: path, Summary: summary, Context: context, Evidence: evidence})
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("invalid occurrence: %v", err)
+	}
+	if root := projectRootForOccurrence(project); root != "" {
+		if err := emitLessonEvent(cmd.Context(), root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": o.ID}, o.OccurredAt); err != nil {
+			return exitcode.UnexpectedErrorf("queueing occurrence event: %v", err)
+		}
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: occurrence %s\n", slug, o.ID)
 	return nil
@@ -137,8 +142,12 @@ func captureOccurrenceContext(root, lessonPath string) map[string]any {
 	if root == "" {
 		return ctx
 	}
-	if rel, err := filepath.Rel(root, filepath.Dir(lessonPath)); err == nil {
-		ctx["worktree"] = map[string]any{"path_hint": filepath.ToSlash(rel)}
+	if root != "" {
+		s := sha256.Sum256([]byte(root))
+		// The worktree is the repository root, not the Lesson directory. The
+		// opaque digest lets a server correlate a local claim without exposing
+		// the machine path in a committed occurrence.
+		ctx["worktree"] = map[string]any{"path_hint": ".", "id": fmt.Sprintf("local-%x", s[:6])}
 	}
 	git := map[string]any{}
 	if out, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output(); err == nil {
@@ -154,7 +163,7 @@ func captureOccurrenceContext(root, lessonPath string) map[string]any {
 }
 
 func lessonOccurrenceListCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "list <lesson>", Short: "List occurrences in deterministic chronological order", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonOccurrenceList}
+	cmd := &cobra.Command{Use: "list <lesson>", Short: "List occurrences in deterministic chronological order", Long: "List immutable safe occurrence facts. Docs: docs/agent-lessons.md#create-and-record", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonOccurrenceList}
 	cmd.Flags().String("format", "text", "output format: text, yaml, json")
 	cmd.Flags().String("project", "", "project root")
 	return cmd
