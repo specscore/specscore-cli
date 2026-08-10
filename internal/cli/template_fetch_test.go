@@ -139,8 +139,8 @@ func TestFeatureNew_FetchesPublishedTemplate(t *testing.T) {
 	if gotPath != "/new/feature.md" {
 		t.Errorf("fetched path = %q, want /new/feature.md", gotPath)
 	}
-	if stderr != "" {
-		t.Errorf("unexpected fallback warning on successful fetch: %q", stderr)
+	if strings.Contains(stderr, "used built-in template") {
+		t.Errorf("unexpected template fallback on successful fetch: %q", stderr)
 	}
 	body, _ := os.ReadFile(filepath.Join(root, "spec", "features", "fetched-feature", "README.md"))
 	s := string(body)

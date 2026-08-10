@@ -28,7 +28,7 @@ func stageLesson(t *testing.T, slug, status string) string {
 		t.Fatalf("write features README: %v", err)
 	}
 
-	path := filepath.Join(root, "spec", "lessons", slug+".md")
+	path := filepath.Join(root, "spec", "lessons", slug, "README.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read lesson: %v", err)
@@ -67,7 +67,7 @@ func TestLessonChangeStatus_RecordedToStated_CLI(t *testing.T) {
 	if want := "kinder-fake: Recorded → Stated\n"; stdout != want {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Stated") {
 		t.Errorf("status not rewritten:\n%s", body)
 	}
@@ -90,7 +90,7 @@ func TestLessonChangeStatus_Withdrawn_CLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Withdrawn") || !strings.Contains(string(body), "turned out to be a one-off") {
 		t.Errorf("withdrawn/resolution not written:\n%s", body)
 	}
@@ -105,7 +105,7 @@ func TestLessonChangeStatus_Superseded_CLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
 	for _, want := range []string{"**Status:** Superseded", "**Superseded By:** kinder-fake-v2", "generalized"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("missing %q:\n%s", want, body)
@@ -167,7 +167,7 @@ func TestLessonChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Recorded") {
 		t.Errorf("status not rolled back after lint failure:\n%s", body)
 	}
