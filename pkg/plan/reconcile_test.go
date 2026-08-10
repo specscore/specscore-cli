@@ -537,6 +537,118 @@ func TestReconcile_ReadOriginalSnapshotError(t *testing.T) {
 	}
 }
 
+// AC: false-completion-correction — a reconciliation that claimed every task
+// complete can be corrected audibly, without hand-editing a task status. Only
+// the named complete task changes, the plan rolls back into the Blocked band,
+// and the Resolution says what was corrected.
+func TestReconcile_ReopenCompleteTasksToBlocked(t *testing.T) {
+	pinReconcileDate(t, "2026-08-10")
+	root, path := stageReconcilePlan(t, "auth", "Implemented", "complete", "complete")
+	res, err := Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", Note: "audit found task 2 was not delivered",
+		Evidence: []string{"audit.md"}, ReopenTasks: []int{2}, PostMutation: okHook,
+	})
+	if err != nil {
+		t.Fatalf("Reconcile reopen: %v", err)
+	}
+	if res.From != lifecycle.PlanImplemented || res.To != lifecycle.PlanBlocked || res.Target != StatusBlocked || res.TasksReconciled != 1 {
+		t.Fatalf("unexpected reopen result: %+v", res)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "**Status:** Blocked\n") || strings.Count(s, "**Status:** blocked") != 1 {
+		t.Fatalf("status correction missing from plan:\n%s", s)
+	}
+	if !strings.Contains(s, "Reconciled Implemented → Blocked") || !strings.Contains(s, "audit found task 2") || !strings.Contains(s, "Evidence: audit.md") {
+		t.Fatalf("auditable correction record missing:\n%s", s)
+	}
+}
+
+func TestReconcile_ReopenValidationAndRollback(t *testing.T) {
+	t.Run("invalid-number", func(t *testing.T) {
+		root, _ := stageReconcilePlan(t, "auth", "Implemented", "complete")
+		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{0}, PostMutation: okHook})
+		if got := codeOf(t, err); got != exitcode.InvalidArgs {
+			t.Fatalf("exit = %d, want %d: %v", got, exitcode.InvalidArgs, err)
+		}
+	})
+	t.Run("unknown-task", func(t *testing.T) {
+		root, _ := stageReconcilePlan(t, "auth", "Implemented", "complete")
+		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{2}, PostMutation: okHook})
+		if got := codeOf(t, err); got != exitcode.InvalidState {
+			t.Fatalf("exit = %d, want %d: %v", got, exitcode.InvalidState, err)
+		}
+	})
+	t.Run("not-complete", func(t *testing.T) {
+		root, _ := stageReconcilePlan(t, "auth", "Blocked", "blocked")
+		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
+		if got := codeOf(t, err); got != exitcode.InvalidState {
+			t.Fatalf("exit = %d, want %d: %v", got, exitcode.InvalidState, err)
+		}
+	})
+	t.Run("post-mutation-failure-restores-bytes", func(t *testing.T) {
+		root, path := stageReconcilePlan(t, "auth", "Implemented", "complete")
+		before, _ := os.ReadFile(path)
+		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: func() error { return errors.New("lint boom") }})
+		if err == nil {
+			t.Fatal("expected post-mutation failure")
+		}
+		after, _ := os.ReadFile(path)
+		if string(after) != string(before) {
+			t.Fatalf("reopen rollback changed plan:\nbefore=%s\nafter=%s", before, after)
+		}
+	})
+	t.Run("snapshot-read-and-note-write-failures", func(t *testing.T) {
+		root, path := stageReconcilePlan(t, "auth", "Implemented", "complete")
+		before, _ := os.ReadFile(path)
+		originalRead := reconcileReadOriginalFn
+		reconcileReadOriginalFn = func(string) ([]byte, error) { return nil, errors.New("read boom") }
+		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
+		reconcileReadOriginalFn = originalRead
+		if got := codeOf(t, err); got != exitcode.Unexpected {
+			t.Fatalf("read failure exit = %d, want %d: %v", got, exitcode.Unexpected, err)
+		}
+		originalAppend := appendNoteFn
+		appendNoteFn = func(string, string) ([]byte, bool, error) { return nil, false, errors.New("note boom") }
+		_, err = Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
+		appendNoteFn = originalAppend
+		if got := codeOf(t, err); got != exitcode.Unexpected {
+			t.Fatalf("note failure exit = %d, want %d: %v", got, exitcode.Unexpected, err)
+		}
+		after, _ := os.ReadFile(path)
+		if string(after) != string(before) {
+			t.Fatalf("reopen failure changed plan:\nbefore=%s\nafter=%s", before, after)
+		}
+	})
+}
+
+func TestFirstReconcileTask_EmptyAndNonEmpty(t *testing.T) {
+	if got := firstReconcileTask(nil); got != 0 {
+		t.Fatalf("empty map = %d, want 0", got)
+	}
+	if got := firstReconcileTask(map[int]bool{9: true}); got != 9 {
+		t.Fatalf("single task = %d, want 9", got)
+	}
+}
+
+func TestReconcile_ReopenWriteFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits are not enforced for root")
+	}
+	root, path := stageReconcilePlan(t, "auth", "Implemented", "complete")
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
+	if got := codeOf(t, err); got != exitcode.Unexpected {
+		t.Fatalf("exit = %d, want %d: %v", got, exitcode.Unexpected, err)
+	}
+}
+
 // AC: write-plan-error — the target file itself is read-only, so the
 // combined status-line rewrite's os.WriteFile fails.
 func TestReconcile_WritePlanError(t *testing.T) {
