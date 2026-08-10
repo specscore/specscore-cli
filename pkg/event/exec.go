@@ -128,11 +128,11 @@ func (x *Exec) Deliver(ctx context.Context, e Event) error {
 		}
 		return fmt.Errorf("exec: stdin pipe: %w", err)
 	}
-	if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, nil); timeoutErr != nil {
-		_ = stdin.Close()
-		return timeoutErr
-	}
 
+	// CommandContext checks its context immediately inside Start, before it
+	// creates a process. A separate deadline preflight here would add a TOCTOU
+	// window and can hide a more specific Start failure that races the deadline;
+	// classify the Start result against the same context below instead.
 	if err := cmdStartFn(cmd); err != nil {
 		_ = stdin.Close()
 		if timeoutErr := execTimeoutIfDeadlineExceeded(cctx, x.timeout, err); timeoutErr != nil {
