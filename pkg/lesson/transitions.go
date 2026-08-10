@@ -173,6 +173,9 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 // flat file during the compatibility window. Both forms for the same slug are
 // a conflict: picking one would make lifecycle changes nondeterministic.
 func ResolveLessonFile(lessonsDir, slug string) (string, error) {
+	if err := ValidateSlug(slug); err != nil {
+		return "", exitcode.InvalidArgsErrorf("invalid lesson slug %q: %v", slug, err)
+	}
 	canonical := filepath.Join(lessonsDir, slug, "README.md")
 	flat := filepath.Join(lessonsDir, slug+".md")
 	_, canonicalErr := os.Stat(canonical)

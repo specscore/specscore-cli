@@ -3,6 +3,7 @@ package cli
 // Features implemented: cli/lesson
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -141,11 +142,12 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("preparing lesson event: %v", err)
 	}
 	fail := func(message string, cause error) error {
-		if rollbackErr := snapshot.restore(); rollbackErr != nil {
-			message += fmt.Sprintf("; rollback failed: %v", rollbackErr)
+		failure := lesson.CompensatePublication(snapshot.restore, cause)
+		if recovery, resolved := prepared.ResolveMutationFailure(message, failure); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.UnexpectedErrorf(message+": %v", resolved)
 		}
-		_ = prepared.Abort()
-		return exitcode.UnexpectedErrorf(message+": %v", cause)
 	}
 
 	// Materialize only the two declared ancestor indexes. Existing files are
@@ -188,14 +190,7 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 	}
 	result, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
-		// If Abort succeeds, the event never committed and the artifact can be
-		// safely rolled back. If it cannot abort, the ledger is already durable;
-		// keep the successful mutation and report delivery as pending.
-		if abortErr := prepared.Abort(); abortErr == nil {
-			_ = snapshot.restore()
-			return exitcode.UnexpectedErrorf("committing lesson event: %v", commitErr)
-		}
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: Lesson created; durable event delivery is pending: %v\n", commitErr)
+		return exitcode.UnexpectedErrorf("Lesson created but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
 	for _, delivery := range result.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", delivery.Name, delivery.Err)
@@ -257,37 +252,29 @@ func (s lessonScaffoldSnapshot) restore() error {
 	var first error
 	for _, f := range s.files {
 		if f.exists {
-			if err := os.WriteFile(f.path, f.data, f.mode); err != nil && first == nil {
+			if err := durableRestoreFile(f.path, f.data, f.mode); err != nil && first == nil {
 				first = err
 			}
-		} else if err := os.Remove(f.path); err != nil && !os.IsNotExist(err) && first == nil {
+		} else if err := durableRemovePath(f.path); err != nil && first == nil {
 			first = err
 		}
 	}
 	if !s.hadOccurrence {
-		if err := os.Remove(s.occurrences); err != nil && !os.IsNotExist(err) && first == nil {
+		if err := durableRemovePath(s.occurrences); err != nil && first == nil {
 			first = err
 		}
 	}
 	if !s.hadLessonDir {
-		if err := os.Remove(s.lessonDir); err != nil && !os.IsNotExist(err) && first == nil {
+		if err := durableRemovePath(s.lessonDir); err != nil && first == nil {
 			first = err
 		}
 	}
 	if !s.hadLessonsDir {
-		if err := os.Remove(s.lessonsDir); err != nil && !os.IsNotExist(err) && first == nil {
+		if err := durableRemovePath(s.lessonsDir); err != nil && first == nil {
 			first = err
 		}
 	}
 	return first
-}
-
-func lessonClassifications(root string) []string {
-	cfg, err := projectdef.ReadSpecConfig(root)
-	if err != nil {
-		return nil
-	}
-	return lessonClassificationsFromConfig(cfg)
 }
 
 func lessonClassificationsFromConfig(cfg projectdef.SpecConfig) []string {
@@ -430,6 +417,21 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 				"successor lesson %q does not resolve to an existing canonical or compatibility Lesson", successor)
 		}
 	}
+	// Establish every non-mutating lifecycle precondition before preparing an
+	// outbox record. This keeps ordinary missing/illegal-transition failures
+	// write-free rather than manufacturing a recovery item for a mutation that
+	// could not have started.
+	path, err := lesson.ResolveLessonFile(filepath.Join(specRoot, "spec", "lessons"), slug)
+	if err != nil {
+		return err
+	}
+	if _, err := lifecycle.Validate(lifecycle.KindLesson, path, to); err != nil {
+		var transition *lifecycle.InvalidTransitionError
+		if errors.As(err, &transition) {
+			return exitcode.InvalidStateErrorf("invalid transition: lesson %q is in status %q", slug, string(transition.From))
+		}
+		return exitcode.UnexpectedErrorf("reading lesson status: %v", err)
+	}
 	postMutation, err := prepareLessonPostMutation(specRoot, slug)
 	if err != nil {
 		return err
@@ -448,12 +450,15 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 		PostMutation: postMutation,
 	})
 	if err != nil {
-		_ = prepared.Abort()
-		return err
+		if recovery, resolved := prepared.ResolveMutationFailure("changing lesson status", err); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return resolved
+		}
 	}
 	delivery, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: status changed; durable event delivery is pending: %v\n", commitErr)
+		return exitcode.UnexpectedErrorf("status changed but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
 	for _, failure := range delivery.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)

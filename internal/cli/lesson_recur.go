@@ -99,20 +99,26 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return exitcode.UnexpectedErrorf("preparing occurrence event: %v", err)
 		}
-		o, err := lesson.AddOccurrence(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: note, Context: captureOccurrenceContext(root, path), Evidence: lesson.Evidence{Kind: "none"}, Now: now})
+		o, err := lessonAddOccurrenceFn(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: note, Context: captureOccurrenceContext(root, path), Evidence: lesson.Evidence{Kind: "none"}, Now: now})
 		if err != nil {
-			_ = prepared.Abort()
-			return exitcode.UnexpectedErrorf("recording occurrence: %v", err)
+			if recovery, resolved := prepared.ResolveMutationFailure("recording occurrence", err); recovery {
+				return exitcode.UnexpectedErrorf("%v", resolved)
+			} else {
+				return exitcode.UnexpectedErrorf("recording occurrence: %v", resolved)
+			}
 		}
 		items, err := lesson.DiscoverOccurrences(path)
 		if err != nil {
-			_ = os.Remove(o.Path)
-			_ = prepared.Abort()
-			return exitcode.UnexpectedErrorf("reading occurrences: %v", err)
+			failure := lesson.CompensatePublication(func() error { return lesson.RemoveOccurrence(o.Path) }, err)
+			if recovery, resolved := prepared.ResolveMutationFailure("reading occurrences after publication", failure); recovery {
+				return exitcode.UnexpectedErrorf("%v", resolved)
+			} else {
+				return exitcode.UnexpectedErrorf("reading occurrences: %v", resolved)
+			}
 		}
 		result, commitErr := prepared.Commit(cmd.Context())
 		if commitErr != nil {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: occurrence recorded; durable event delivery is pending: %v\n", commitErr)
+			return exitcode.UnexpectedErrorf("occurrence recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 		}
 		for _, failure := range result.Failed {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
@@ -130,9 +136,21 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return exitcode.UnexpectedErrorf("snapshotting legacy Lesson: %v", err)
 	}
+	bodyInfo, err := os.Stat(path)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("snapshotting legacy Lesson mode: %v", err)
+	}
 	beforeIndex, indexErr := os.ReadFile(indexPath)
 	if indexErr != nil && !os.IsNotExist(indexErr) {
 		return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", indexErr)
+	}
+	var indexMode os.FileMode
+	if indexErr == nil {
+		indexInfo, statErr := os.Stat(indexPath)
+		if statErr != nil {
+			return exitcode.UnexpectedErrorf("snapshotting lessons index mode: %v", statErr)
+		}
+		indexMode = indexInfo.Mode().Perm()
 	}
 	prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"kind": "legacy-recurrence"}, time.Now().UTC())
 	if err != nil {
@@ -140,28 +158,38 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 	}
 	count, err := lessonRecurFn(path, note)
 	if err != nil {
-		_ = prepared.Abort()
-		return exitcode.UnexpectedErrorf("recording recurrence: %v", err)
+		if recovery, resolved := prepared.ResolveMutationFailure("recording legacy recurrence", err); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.UnexpectedErrorf("recording recurrence: %v", resolved)
+		}
 	}
 
 	specSub := filepath.Join(root, "spec")
 	updated, parseErr := lesson.Parse(path)
 	if parseErr != nil {
-		_ = os.WriteFile(path, beforeBody, 0o644)
-		_ = prepared.Abort()
-		return exitcode.UnexpectedErrorf("parsing updated legacy Lesson: %v", parseErr)
+		failure := lesson.CompensatePublication(func() error {
+			return restoreLegacyRecurFiles(path, beforeBody, bodyInfo.Mode().Perm(), indexPath, beforeIndex, indexMode, indexErr == nil)
+		}, parseErr)
+		if recovery, resolved := prepared.ResolveMutationFailure("parsing updated legacy Lesson", failure); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.UnexpectedErrorf("parsing updated legacy Lesson: %v", resolved)
+		}
 	}
 	if err := lessonIndexUpsertFn(specSub, updated); err != nil {
-		_ = os.WriteFile(path, beforeBody, 0o644)
-		if indexErr == nil {
-			_ = os.WriteFile(indexPath, beforeIndex, 0o644)
+		failure := lesson.CompensatePublication(func() error {
+			return restoreLegacyRecurFiles(path, beforeBody, bodyInfo.Mode().Perm(), indexPath, beforeIndex, indexMode, indexErr == nil)
+		}, err)
+		if recovery, resolved := prepared.ResolveMutationFailure("upserting legacy Lesson index row", failure); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.UnexpectedErrorf("upserting legacy Lesson index row: %v", resolved)
 		}
-		_ = prepared.Abort()
-		return exitcode.UnexpectedErrorf("upserting legacy Lesson index row: %v", err)
 	}
 	result, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: recurrence recorded; durable event delivery is pending: %v\n", commitErr)
+		return exitcode.UnexpectedErrorf("recurrence recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
 	for _, failure := range result.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
@@ -169,4 +197,54 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: recurred %d\n", slug, count)
 	return nil
+}
+
+func restoreLegacyRecurFiles(path string, body []byte, bodyMode os.FileMode, indexPath string, index []byte, indexMode os.FileMode, restoreIndex bool) error {
+	if err := durableRestoreFile(path, body, bodyMode); err != nil {
+		return err
+	}
+	if restoreIndex {
+		return durableRestoreFile(indexPath, index, indexMode)
+	}
+	return nil
+}
+
+func durableRestoreFile(path string, data []byte, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
+}
+
+func durableRemovePath(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
 }

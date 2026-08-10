@@ -6,6 +6,7 @@ package lesson
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -25,6 +26,8 @@ var gitCommit = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 var repositoryID = regexp.MustCompile(`^[^/\s]+/[^/\s]+/[^/\s]+$`)
 var occurredAtLexical = regexp.MustCompile(`^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?Z$`)
 var occurrencePublishLink = os.Link
+var occurrenceSyncDirectory = syncDirectory
+var occurrenceRemove = os.Remove
 
 // occurrenceForbiddenNames match the published schema policy. Callers must
 // redact before write; validators reject unsafe shape instead of silently
@@ -250,10 +253,10 @@ func validateRepoRelativePath(value string) error {
 func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	l, err := Parse(opts.LessonPath)
 	if err != nil {
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	if !l.Canonical {
-		return Occurrence{}, fmt.Errorf("lesson %q is legacy flat form", l.Slug)
+		return Occurrence{}, mutationFailure(MutationPrePublication, fmt.Errorf("lesson %q is legacy flat form", l.Slug))
 	}
 	if opts.Now.IsZero() {
 		opts.Now = time.Now().UTC()
@@ -273,15 +276,15 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 		o.Summary = "Lesson gap observed."
 	}
 	if err := ValidateOccurrence(o); err != nil {
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	if err := ensureOccurrenceDirectory(l.OccurrencesDir); err != nil {
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	o.Path = filepath.Join(l.OccurrencesDir, o.ID+".json")
 	b, err := json.MarshalIndent(o, "", "  ")
 	if err != nil {
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	f, err := os.CreateTemp(l.OccurrencesDir, ".occurrence-")
 	if err != nil {
@@ -291,27 +294,43 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 	defer func() { _ = os.Remove(tmp) }()
 	if err := f.Chmod(0o644); err != nil {
 		_ = f.Close()
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	if _, err := f.Write(append(b, '\n')); err != nil {
 		_ = f.Close()
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	if err := f.Close(); err != nil {
-		return Occurrence{}, err
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	if err := occurrencePublishLink(tmp, o.Path); err != nil {
-		return Occurrence{}, err
+		// link is an exclusive publication primitive: an existing destination
+		// belongs to another writer and is not evidence that we published.
+		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
-	if err := syncDirectory(l.OccurrencesDir); err != nil {
-		_ = os.Remove(o.Path)
-		return Occurrence{}, err
+	if err := occurrenceSyncDirectory(l.OccurrencesDir); err != nil {
+		return Occurrence{}, CompensatePublication(func() error {
+			if removeErr := occurrenceRemove(o.Path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				return removeErr
+			}
+			return occurrenceSyncDirectory(l.OccurrencesDir)
+		}, fmt.Errorf("durably publishing occurrence: %w", err))
 	}
 	return o, nil
+}
+
+// RemoveOccurrence is the exact inverse used only when a caller must
+// compensate a just-published immutable child. It does not infer ownership
+// from path existence: callers pass the path returned by AddOccurrence.
+func RemoveOccurrence(path string) error {
+	if err := occurrenceRemove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return occurrenceSyncDirectory(filepath.Dir(path))
 }
 
 func ensureOccurrenceDirectory(path string) error {

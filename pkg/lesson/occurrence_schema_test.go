@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -209,6 +210,49 @@ func TestValidateOccurrenceFile_FilenameMustEqualID(t *testing.T) {
 	if _, err := ValidateOccurrenceFile(path); err == nil || !strings.Contains(err.Error(), "filename and id differ") {
 		t.Fatalf("filename/id mismatch accepted: %v", err)
 	}
+}
+
+func TestAddOccurrence_PublicationFsyncAndRollbackFaultsCarryTriState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spec", "lessons", "x", "README.md")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(path), "occurrences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := ScaffoldCanonical(ScaffoldOptions{Slug: "x"}, []string{"process"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := AddOccurrenceOptions{LessonPath: path, ID: "01234567-89ab-4def-8123-456789abcdef", Summary: "boundary", Context: map[string]any{}, Evidence: Evidence{Kind: "none"}, Now: time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)}
+
+	t.Run("rollback-durably-completes", func(t *testing.T) {
+		origSync := occurrenceSyncDirectory
+		calls := 0
+		occurrenceSyncDirectory = func(dir string) error {
+			calls++
+			if calls == 1 {
+				return errors.New("injected post-link fsync failure")
+			}
+			return origSync(dir)
+		}
+		t.Cleanup(func() { occurrenceSyncDirectory = origSync })
+		_, err := AddOccurrence(base)
+		if MutationOutcomeOf(err) != MutationCompensated {
+			t.Fatalf("outcome=%v err=%v", MutationOutcomeOf(err), err)
+		}
+	})
+
+	t.Run("rollback-removal-uncertain", func(t *testing.T) {
+		origSync, origRemove := occurrenceSyncDirectory, occurrenceRemove
+		occurrenceSyncDirectory = func(string) error { return errors.New("injected post-link fsync failure") }
+		occurrenceRemove = func(string) error { return errors.New("injected rollback removal failure") }
+		t.Cleanup(func() { occurrenceSyncDirectory, occurrenceRemove = origSync, origRemove })
+		_, err := AddOccurrence(base)
+		if MutationOutcomeOf(err) != MutationUncertain {
+			t.Fatalf("outcome=%v err=%v", MutationOutcomeOf(err), err)
+		}
+	})
 }
 
 func TestAddOccurrence_ExclusiveAtomicPublicationDoesNotOverwrite(t *testing.T) {

@@ -184,6 +184,99 @@ func TestMigrateFlat_PreservesImmutableProvenanceAndEveryStructuredObservation(t
 	}
 }
 
+func TestMigrateFlat_SourceRemoveDirectorySyncFailureResumesSameTransaction(t *testing.T) {
+	withFlatSourceIdentity(t)
+	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+	body := flatFixture("Recorded", 0, "")
+	flatPath := writeFlatFixture(t, lessonsDir, "sync-resume", body)
+	opts := FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "sync-resume", Classifications: []string{"process"}}
+	preflight, err := PreflightFlatMigration(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := flatSyncDirectory
+	injected := false
+	flatSyncDirectory = func(path string) error {
+		if path == lessonsDir {
+			if _, statErr := os.Stat(flatPath); os.IsNotExist(statErr) && !injected {
+				injected = true
+				return errors.New("injected source-remove directory sync failure")
+			}
+		}
+		return orig(path)
+	}
+	t.Cleanup(func() { flatSyncDirectory = orig })
+	if _, err := MigrateFlat(opts); err == nil {
+		t.Fatal("expected source-remove directory sync failure")
+	}
+	if !injected {
+		t.Fatal("source-remove sync seam did not run")
+	}
+	if _, err := os.Stat(flatPath); !os.IsNotExist(err) {
+		t.Fatalf("source removal was not observable: %v", err)
+	}
+	marker := filepath.Join(lessonsDir, ".flat-migration-sync-resume.json")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("resume marker missing: %v", err)
+	}
+
+	flatSyncDirectory = orig
+	retryPreflight, err := PreflightFlatMigration(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retryPreflight.PendingTransaction || retryPreflight.EventUUID != preflight.EventUUID {
+		t.Fatalf("retry did not retain deterministic transaction: %#v", retryPreflight)
+	}
+	retry, err := MigrateFlat(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: opts.Slug, Classifications: opts.Classifications, EventUUID: retryPreflight.EventUUID})
+	if err != nil || !retry.PendingFinalize {
+		t.Fatalf("resume=%#v err=%v", retry, err)
+	}
+	writeFlatMigrationIndex(t, lessonsDir, retry.CanonicalPath)
+	if err := FinalizeFlatMigration(opts, preflight.EventUUID); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := MigrateFlat(opts)
+	if err != nil || !completed.AlreadyMigrated {
+		t.Fatalf("final retry=%#v err=%v", completed, err)
+	}
+}
+
+func TestPreflightFlatMigration_SourceAbsentWithoutMarkerRequiresManifestAndExactIndex(t *testing.T) {
+	withFlatSourceIdentity(t)
+	for name, breakProof := range map[string]func(t *testing.T, lessonsDir string, result FlatMigrationResult){
+		"missing manifest": func(t *testing.T, _ string, result FlatMigrationResult) {
+			if err := os.Remove(result.ManifestPath); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"missing exact index row": func(t *testing.T, lessonsDir string, _ FlatMigrationResult) {
+			if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte("# Lessons\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+			writeFlatFixture(t, lessonsDir, "proof-required", flatFixture("Recorded", 0, ""))
+			opts := FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "proof-required", Classifications: []string{"process"}}
+			result, err := MigrateFlat(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFlatMigrationIndex(t, lessonsDir, result.CanonicalPath)
+			marker := filepath.Join(lessonsDir, ".flat-migration-proof-required.json")
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			breakProof(t, lessonsDir, result)
+			if _, err := PreflightFlatMigration(opts); err == nil {
+				t.Fatal("source-absent manual/incomplete state was accepted as migrated")
+			}
+		})
+	}
+}
+
 func TestMigrateFlat_EnforcedSourceRequiresReviewedEvidenceWithoutFabrication(t *testing.T) {
 	withFlatSourceIdentity(t)
 	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")

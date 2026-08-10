@@ -98,6 +98,7 @@ type flatSection struct {
 }
 
 var flatPublishLink = os.Link
+var flatSyncDirectory = syncDirectory
 
 var flatStatus = map[string]bool{
 	"Recorded": true, "Stated": true, "Enforced": true,
@@ -150,7 +151,7 @@ func PreflightFlatMigration(opts FlatMigrationOptions) (FlatMigrationPreflight, 
 	}
 	flatBytes, err := os.ReadFile(flatPath)
 	if os.IsNotExist(err) {
-		if err := validateCompletedFlatMigration(canonicalPath); err != nil {
+		if err := validateCompletedFlatMigrationProof(opts.LessonsDir, canonicalPath, opts.Slug); err != nil {
 			return FlatMigrationPreflight{}, fmt.Errorf("legacy flat Lesson is absent and canonical migration is not verifiable: %w", err)
 		}
 		return FlatMigrationPreflight{AlreadyMigrated: true}, nil
@@ -210,7 +211,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 	}
 	if os.IsNotExist(flatErr) {
 		if os.IsNotExist(markerErr) {
-			if err := validateCompletedFlatMigration(canonicalPath); err != nil {
+			if err := validateCompletedFlatMigrationProof(opts.LessonsDir, canonicalPath, opts.Slug); err != nil {
 				return result, fmt.Errorf("legacy flat Lesson is absent and canonical migration is not verifiable: %w", err)
 			}
 			result.AlreadyMigrated = true
@@ -322,7 +323,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 		if createdMarker {
 			_ = os.Remove(markerPath)
 		}
-		_ = syncDirectory(opts.LessonsDir)
+		_ = flatSyncDirectory(opts.LessonsDir)
 	}
 	if os.IsNotExist(markerErr) {
 		markerStage := filepath.Join(stageDir, "transaction.json")
@@ -333,7 +334,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 			return result, err
 		}
 		createdMarker = true
-		if err := syncDirectory(opts.LessonsDir); err != nil {
+		if err := flatSyncDirectory(opts.LessonsDir); err != nil {
 			rollback()
 			return result, err
 		}
@@ -371,11 +372,11 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 			return result, err
 		}
 	}
-	if err := syncDirectory(filepath.Join(canonicalDir, "occurrences")); err != nil {
+	if err := flatSyncDirectory(filepath.Join(canonicalDir, "occurrences")); err != nil {
 		rollback()
 		return result, err
 	}
-	if err := syncDirectory(canonicalDir); err != nil {
+	if err := flatSyncDirectory(canonicalDir); err != nil {
 		rollback()
 		return result, err
 	}
@@ -390,7 +391,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 			return result, err
 		}
 		createdManifest = true
-		if err := syncDirectory(filepath.Dir(manifestPath)); err != nil {
+		if err := flatSyncDirectory(filepath.Dir(manifestPath)); err != nil {
 			rollback()
 			return result, err
 		}
@@ -412,7 +413,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 		rollback()
 		return result, err
 	}
-	if err := syncDirectory(opts.LessonsDir); err != nil {
+	if err := flatSyncDirectory(opts.LessonsDir); err != nil {
 		return result, err
 	}
 	result.PendingFinalize = true
@@ -456,16 +457,13 @@ func FinalizeFlatMigration(opts FlatMigrationOptions, eventUUID string) error {
 		return err
 	}
 	canonicalPath := filepath.Join(opts.LessonsDir, opts.Slug, "README.md")
-	if err := validateCompletedFlatMigration(canonicalPath); err != nil {
-		return err
-	}
-	if err := validateFlatMigrationIndexRow(opts.LessonsDir, canonicalPath); err != nil {
+	if err := validateCompletedFlatMigrationProof(opts.LessonsDir, canonicalPath, opts.Slug); err != nil {
 		return err
 	}
 	if err := os.Remove(markerPath); err != nil {
 		return err
 	}
-	return syncDirectory(opts.LessonsDir)
+	return flatSyncDirectory(opts.LessonsDir)
 }
 
 func validateFlatMigrationIndexRow(lessonsDir, canonicalPath string) error {
@@ -523,7 +521,7 @@ func stageFlatMigration(opts FlatMigrationOptions, sourceBytes []byte, flatPath 
 	sections := splitFlatSections(sourceBytes)
 	recurrences := flatRecurrenceObservations(sourceBytes, sections["Recurrences"])
 	if len(recurrences) != legacy.Recurred {
-		return "", flatMigrationManifest{}, nil, fmt.Errorf("Recurred is %d but Recurrences contains %d structured entries; refusing to invent or drop history", legacy.Recurred, len(recurrences))
+		return "", flatMigrationManifest{}, nil, fmt.Errorf("recurred is %d but Recurrences contains %d structured entries; refusing to invent or drop history", legacy.Recurred, len(recurrences))
 	}
 
 	redacted := []string{}
@@ -554,7 +552,7 @@ func stageFlatMigration(opts FlatMigrationOptions, sourceBytes []byte, flatPath 
 	var reviewedEnforcement *flatEnforcement
 	if legacy.Status == "Enforced" {
 		if strings.TrimSpace(opts.Control) == "" || strings.TrimSpace(opts.Verification) == "" || strings.TrimSpace(opts.Evidence) == "" {
-			return "", flatMigrationManifest{}, nil, fmt.Errorf("Enforced flat Lesson requires reviewed control, verification, and evidence mappings; provenance alone does not prove enforcement")
+			return "", flatMigrationManifest{}, nil, fmt.Errorf("enforced flat Lesson requires reviewed control, verification, and evidence mappings; provenance alone does not prove enforcement")
 		}
 		for field, value := range map[string]string{
 			"control": opts.Control, "verification": opts.Verification, "evidence": opts.Evidence,
@@ -821,6 +819,44 @@ func validateCompletedFlatMigration(canonicalPath string) error {
 	}
 	_, err = DiscoverOccurrences(canonicalPath)
 	return err
+}
+
+// validateCompletedFlatMigrationProof is intentionally stronger than parsing
+// the canonical README.  Once the old flat source and transaction marker are
+// gone, declaring a migration already complete is safe only when the immutable
+// manifest/source proof and the exact denormalized index row still agree.
+func validateCompletedFlatMigrationProof(lessonsDir, canonicalPath, slug string) error {
+	if err := validateCompletedFlatMigration(canonicalPath); err != nil {
+		return err
+	}
+	l, err := Parse(canonicalPath)
+	if err != nil {
+		return err
+	}
+	match := regexp.MustCompile(`^[^@]+@([0-9a-f]{40}):[^#]+#bytes=0-([0-9]+);sha256=([0-9a-f]{64})$`).FindStringSubmatch(l.LegacyProvenance)
+	if len(match) != 4 {
+		return fmt.Errorf("canonical Lesson has malformed immutable legacy provenance")
+	}
+	manifestPath := filepath.Join(lessonsDir, ".legacy-import", "flat-"+match[3]+"-"+slug+".json")
+	b, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("immutable migration manifest is unavailable: %w", err)
+	}
+	var manifest flatMigrationManifest
+	if err := decodeStrictJSON(b, &manifest); err != nil {
+		return fmt.Errorf("immutable migration manifest is malformed: %w", err)
+	}
+	if manifest.SchemaVersion != 1 || manifest.Kind != "specscore.flat-lesson-migration/v1" || manifest.Slug != slug || validateLegacySourceRef(manifest.Source) != nil {
+		return fmt.Errorf("immutable migration manifest does not describe this canonical Lesson")
+	}
+	if manifest.Source.Revision != match[1] || manifest.Source.SHA256 != match[3] || fmt.Sprintf("%d", manifest.Source.ByteCount) != match[2] || manifest.SourceRange.StartByte != 0 || manifest.SourceRange.EndByte != manifest.Source.ByteCount || manifest.SourceRange.BytesSHA256 != manifest.Source.SHA256 {
+		return fmt.Errorf("immutable migration manifest/source provenance differs from canonical Lesson")
+	}
+	wantProvenance := fmt.Sprintf("%s@%s:%s#bytes=0-%d;sha256=%s", manifest.Source.Repository, manifest.Source.Revision, manifest.Source.Path, manifest.Source.ByteCount, manifest.Source.SHA256)
+	if l.LegacyProvenance != wantProvenance || l.Status != manifest.SourceStatus {
+		return fmt.Errorf("canonical Lesson and immutable migration manifest disagree")
+	}
+	return validateFlatMigrationIndexRow(lessonsDir, canonicalPath)
 }
 
 func marshalSafeJSON(field string, value any) ([]byte, error) {

@@ -154,10 +154,11 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 	}
 	result, err := lesson.MigrateFlat(opts)
 	if err != nil {
-		if !resuming {
-			_ = prepared.Abort()
+		if recovery, resolved := prepared.ResolveMutationFailure("migrating flat Lesson", err); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.InvalidStateErrorf("flat migration refused: %v", resolved)
 		}
-		return exitcode.InvalidStateErrorf("flat migration refused: %v", err)
 	}
 	if err := injectFlatMigrationCrash("artifact-publication"); err != nil {
 		return err
@@ -192,15 +193,19 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 		return first
 	}
 	failAfterMutation := func(message string, cause error) error {
-		if rollbackErr := rollbackFresh(); rollbackErr != nil {
-			message += fmt.Sprintf("; rollback failed: %v", rollbackErr)
-		}
 		if resuming {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: resumed migration remains durably inspectable after post-publication failure\n")
-			return exitcode.UnexpectedErrorf(message+": %v", cause)
+			if recovery, resolved := prepared.ResolveMutationFailure(message, cause); recovery {
+				return exitcode.UnexpectedErrorf("%v", resolved)
+			} else {
+				return exitcode.UnexpectedErrorf(message+": %v", resolved)
+			}
 		}
-		_ = prepared.Abort()
-		return exitcode.UnexpectedErrorf(message+": %v", cause)
+		failure := lesson.CompensatePublication(rollbackFresh, cause)
+		if recovery, resolved := prepared.ResolveMutationFailure(message, failure); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.UnexpectedErrorf(message+": %v", resolved)
+		}
 	}
 
 	parsed, err := lesson.Parse(result.CanonicalPath)
@@ -230,8 +235,7 @@ func runLessonMigrateFlat(cmd *cobra.Command, args []string) error {
 	}
 	delivery, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: Lesson migration remains durably resumable; event commit or delivery is pending: %v\n", commitErr)
-		return exitcode.UnexpectedErrorf("committing flat-migration event: %v", commitErr)
+		return exitcode.UnexpectedErrorf("flat migration remains durably resumable; event %s commit or delivery is pending: %v", prepared.event.UUID, commitErr)
 	}
 	for _, failure := range delivery.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)

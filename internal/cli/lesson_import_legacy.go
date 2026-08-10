@@ -63,7 +63,7 @@ func runLessonImportLegacy(cmd *cobra.Command, _ []string) error {
 	if !filepath.IsAbs(source) {
 		source = filepath.Join(root, source)
 	}
-	inv, err := lesson.InventoryLegacy(source)
+	inv, err := lessonInventoryLegacyFn(source)
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("reading legacy source: %v", err)
 	}
@@ -104,14 +104,17 @@ func runLessonImportLegacy(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing import event: %v", err)
 	}
-	result, err := lesson.ApplyLegacy(dir, allowedClassifications, inv, mapping)
+	result, err := lessonApplyLegacyFn(dir, allowedClassifications, inv, mapping)
 	if err != nil {
-		_ = prepared.Abort()
-		return exitcode.InvalidStateErrorf("legacy import refused: %v", err)
+		if recovery, resolved := prepared.ResolveMutationFailure("applying legacy import", err); recovery {
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		} else {
+			return exitcode.InvalidStateErrorf("legacy import refused: %v", resolved)
+		}
 	}
 	delivery, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: legacy import applied; durable event delivery is pending: %v\n", commitErr)
+		return exitcode.UnexpectedErrorf("legacy import applied but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
 	for _, failure := range delivery.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
