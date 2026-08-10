@@ -218,7 +218,9 @@ func TestExecStdinPipeSuccessAfterDeadlineReturnsTimeoutError(t *testing.T) {
 	}
 
 	timeout := 25 * time.Millisecond
-	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
+	// Use an existing executable so CommandContext's canceled-context check,
+	// rather than path lookup, is the Start result being classified.
+	err := NewExec([]string{os.Args[0]}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
 	assertExecTimeoutError(t, err, timeout, context.DeadlineExceeded)
 	if stdin.closeCalls != 1 {
 		t.Fatalf("stdin Close calls = %d, want 1", stdin.closeCalls)
@@ -226,14 +228,17 @@ func TestExecStdinPipeSuccessAfterDeadlineReturnsTimeoutError(t *testing.T) {
 }
 
 // TestExecStartErrorAfterDeadlineReturnsTimeoutError proves a plain Start
-// failure does not erase the stable timeout error type when the deadline wins
-// the race. cmdStartFn is intentionally a narrow seam because os/exec does
-// not expose a deterministic way to delay Start itself in a unit test.
+// failure does not erase the stable timeout error type when an earlier setup
+// step consumes the deadline. cmdStartFn is intentionally a narrow seam
+// because os/exec does not expose a deterministic Start failure at this exact
+// boundary.
 func TestExecStartErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
 	originalConfigure := configureExecProcessTreeFn
+	originalStdinPipe := cmdStdinPipeFn
 	originalStart := cmdStartFn
 	t.Cleanup(func() {
 		configureExecProcessTreeFn = originalConfigure
+		cmdStdinPipeFn = originalStdinPipe
 		cmdStartFn = originalStart
 	})
 	var setupCtx context.Context
@@ -241,15 +246,27 @@ func TestExecStartErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
 		setupCtx = ctx
 		return &fakeExecProcessTree{}, nil
 	}
-	sentinel := errors.New("start after deadline")
-	cmdStartFn = func(*exec.Cmd) error {
+	stdin := &fakeWriteCloser{}
+	cmdStdinPipeFn = func(*exec.Cmd) (io.WriteCloser, error) {
 		<-setupCtx.Done()
+		return stdin, nil
+	}
+	sentinel := errors.New("start after deadline")
+	startCalls := 0
+	cmdStartFn = func(*exec.Cmd) error {
+		startCalls++
 		return sentinel
 	}
 
 	timeout := 25 * time.Millisecond
 	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
 	assertExecTimeoutError(t, err, timeout, sentinel)
+	if startCalls != 1 {
+		t.Fatalf("Start calls = %d, want 1", startCalls)
+	}
+	if stdin.closeCalls != 1 {
+		t.Fatalf("stdin Close calls = %d, want 1", stdin.closeCalls)
+	}
 }
 
 // TestExecDeadlineDuringAfterStartReturnsTimeoutError covers the other
