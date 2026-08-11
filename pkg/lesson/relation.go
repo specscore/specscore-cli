@@ -26,6 +26,11 @@ type Relation struct {
 	To   string `json:"to"`
 }
 
+// RelationPostMutationHook reconciles derived state while every affected
+// per-Lesson lock and the relation-project lock remain held. A CLI hook may
+// acquire only the shared Lesson-index lock, which is last in the total order.
+type RelationPostMutationHook func() error
+
 const relatedRelationsFile = ".relations.json"
 
 type relationLocker interface {
@@ -157,21 +162,45 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 	return addRelationWithDeps(lessonsDir, from, typ, to, defaultRelationDeps())
 }
 
+// AddRelationWithPostMutation holds both endpoint locks (lexical slug order),
+// then the project relation lock, across artifact publication and bounded
+// index/durability reconciliation.
+func AddRelationWithPostMutation(lessonsDir, from, typ, to string, postMutation RelationPostMutationHook) error {
+	return addRelationWithPostMutationWithDeps(lessonsDir, from, typ, to, postMutation, defaultRelationDeps(), defaultLessonMutationLockDeps())
+}
+
 func addRelationWithDeps(lessonsDir, from, typ, to string, deps relationDeps) error {
-	return withRelationLockWithDeps(lessonsDir, deps, func() error {
-		err := addRelationLockedWithDeps(lessonsDir, from, typ, to, deps)
-		if err == nil {
-			return nil
-		}
-		// Every untyped failure returned by the locked implementation occurs
-		// before its first rename/link publication. Preserve explicit outcomes
-		// from the atomic writers, but classify validation and preparation
-		// failures so a caller can safely abort its prepared event.
-		var mutation *MutationError
-		if errors.As(err, &mutation) {
-			return err
-		}
+	return addRelationWithPostMutationWithDeps(lessonsDir, from, typ, to, nil, deps, defaultLessonMutationLockDeps())
+}
+
+func addRelationWithPostMutationWithDeps(lessonsDir, from, typ, to string, postMutation RelationPostMutationHook, deps relationDeps, lockDeps lessonMutationLockDeps) error {
+	if err := ValidateRelation(from, typ, to); err != nil {
 		return mutationFailure(MutationPrePublication, err)
+	}
+	projectRoot, err := relationProjectRootWithDeps(lessonsDir, deps)
+	if err != nil {
+		return mutationFailure(MutationPrePublication, err)
+	}
+	return withLessonMutationLocks(projectRoot, []string{from, to}, lockDeps, func() error {
+		return withRelationLockWithDeps(lessonsDir, deps, func() error {
+			err := addRelationLockedWithDeps(lessonsDir, from, typ, to, deps)
+			if err != nil {
+				// Every untyped failure returned by the locked implementation occurs
+				// before its first rename/link publication. Preserve explicit outcomes
+				// from atomic writers so callers never abort an uncertain event.
+				var mutation *MutationError
+				if errors.As(err, &mutation) {
+					return err
+				}
+				return mutationFailure(MutationPrePublication, err)
+			}
+			if postMutation != nil {
+				if err := postMutation(); err != nil {
+					return mutationFailure(MutationUncertain, fmt.Errorf("reconciling published relation: %w", err))
+				}
+			}
+			return nil
+		})
 	})
 }
 
@@ -209,15 +238,23 @@ func relationLockPath(lessonsDir string) (string, error) {
 }
 
 func relationLockPathWithDeps(lessonsDir string, deps relationDeps) (string, error) {
+	root, err := relationProjectRootWithDeps(lessonsDir, deps)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, ".specscore", "locks", "lesson-relations.lock"), nil
+}
+
+func relationProjectRootWithDeps(lessonsDir string, deps relationDeps) (string, error) {
 	abs, err := deps.abs(lessonsDir)
 	if err != nil {
-		return "", fmt.Errorf("resolving relation lock root: %w", err)
+		return "", fmt.Errorf("resolving relation project root: %w", err)
 	}
 	root, err := deps.evalSymlinks(filepath.Dir(filepath.Dir(abs)))
 	if err != nil {
-		return "", fmt.Errorf("resolving physical relation lock root: %w", err)
+		return "", fmt.Errorf("resolving physical relation project root: %w", err)
 	}
-	return filepath.Join(root, ".specscore", "locks", "lesson-relations.lock"), nil
+	return root, nil
 }
 
 func addRelationLockedWithDeps(lessonsDir, from, typ, to string, deps relationDeps) error {
@@ -257,8 +294,8 @@ func addRelationLockedWithDeps(lessonsDir, from, typ, to string, deps relationDe
 		}
 	}
 	if typ == "duplicates" {
-		if fromLesson.Status == "Enforced" {
-			return fmt.Errorf("enforced Lesson %q cannot be retained as a duplicate", from)
+		if fromLesson.Status != "Recorded" && fromLesson.Status != "Stated" && fromLesson.Status != "Superseded" {
+			return fmt.Errorf("Lesson %q in status %q cannot transition to Superseded as a duplicate", from, fromLesson.Status)
 		}
 		if fromLesson.Supersedes != "" && fromLesson.Supersedes != "—" {
 			return fmt.Errorf("Lesson %q cannot be both a retained duplicate and a superseding Lesson", from)
@@ -297,6 +334,9 @@ func addRelationLockedWithDeps(lessonsDir, from, typ, to string, deps relationDe
 	}
 	if err := ensureRelationFieldAvailableWithFS(toPath, "Superseded By", from, deps.fs); err != nil {
 		return err
+	}
+	if toLesson.Status != "Recorded" && toLesson.Status != "Stated" && toLesson.Status != "Superseded" {
+		return fmt.Errorf("Lesson %q in status %q cannot transition to Superseded", to, toLesson.Status)
 	}
 	// A successor declares the forward relation; the predecessor gains the
 	// derived backwards pointer and status.  Snapshot both files so a partial

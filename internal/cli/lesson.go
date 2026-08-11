@@ -3,6 +3,7 @@ package cli
 // Features implemented: cli/lesson
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -125,10 +126,15 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		return exitcode.UnexpectedErrorf("preflighting %s: %v", legacy, err)
 	}
 	targetExisted := false
+	var targetBefore []byte
 	if _, statErr := deps.fs.stat(target); statErr == nil && !force {
 		return exitcode.ConflictErrorf("lesson already exists: %s (pass --force to overwrite)", target)
 	} else if statErr == nil {
 		targetExisted = true
+		targetBefore, err = deps.fs.read(target)
+		if err != nil {
+			return exitcode.UnexpectedErrorf("reading existing Lesson before --force: %v", err)
+		}
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return exitcode.UnexpectedErrorf("preflighting %s: %v", target, statErr)
 	}
@@ -160,59 +166,68 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		}
 	}
 
-	// Materialize only the two declared ancestor indexes. Existing files are
-	// byte-preserved; the narrow row upsert below owns the new Lesson's row.
-	if err := ensureLessonAncestorIndexes(root); err != nil {
-		return fail("materializing ancestor indexes", err)
-	}
-	if err := deps.fs.mkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fail("creating lesson directory", err)
-	}
-	if err := deps.fs.mkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
-		return fail("creating occurrences directory", err)
-	}
-	var publishErr error
-	if targetExisted {
-		// --force is an explicit update of the already-resolved artifact. New
-		// artifact creation always uses the exclusive durable primitive below.
-		publishErr = deps.fs.write(target, body, 0o644)
-	} else {
-		publishErr = deps.publishExclusive(target, body, 0o644)
-	}
-	if publishErr != nil {
-		return fail("writing Lesson", publishErr)
-	}
-
 	specSub := filepath.Join(root, "spec")
-	parsed, err := deps.parse(target)
-	if err != nil {
-		return fail("parsing generated Lesson", err)
-	}
-	if err := deps.indexUpsert(specSub, parsed); err != nil {
-		return fail("upserting declared Lesson index row", err)
-	}
-	violations, err := deps.lint(lint.Options{SpecRoot: specSub})
-	if err != nil {
-		return fail("running read-only lint", err)
-	}
-	relTarget, _ := filepath.Rel(specSub, target)
-	var own []string
-	for _, v := range violations {
-		ownedIndexFinding := v.File == "lessons/README.md" && (v.Rule == "L-003" || v.Rule == "L-004") && strings.Contains(v.Message, slug)
-		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding) {
-			own = append(own, fmt.Sprintf("  %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message))
+	mutationErr := deps.withMutationLock(root, slug, func() error {
+		if targetExisted {
+			current, err := deps.fs.read(target)
+			if err != nil {
+				return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: fmt.Errorf("re-reading --force target: %w", err)}
+			}
+			if !bytes.Equal(current, targetBefore) {
+				return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: fmt.Errorf("lesson changed after --force preflight; retry against the current artifact")}
+			}
 		}
-	}
-	if len(own) > 0 {
-		return fail("generated Lesson failed lint", fmt.Errorf("%s", strings.Join(own, "\n")))
-	}
-	if err := transaction.Fence(
-		filepath.Join(root, "spec", "README.md"),
-		filepath.Join(root, "spec", "lessons", "README.md"),
-		target,
-		filepath.Join(filepath.Dir(target), "occurrences"),
-	); err != nil {
-		return fail("durably fencing Lesson scaffold", err)
+		// Materialize only the two declared ancestor indexes. Existing files are
+		// byte-preserved; the narrow row upsert below owns this Lesson's row.
+		if err := ensureLessonAncestorIndexes(root); err != nil {
+			return fmt.Errorf("materializing ancestor indexes: %w", err)
+		}
+		if err := deps.fs.mkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("creating lesson directory: %w", err)
+		}
+		if err := deps.fs.mkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
+			return fmt.Errorf("creating occurrences directory: %w", err)
+		}
+		var publishErr error
+		if targetExisted {
+			publishErr = deps.rewriteAtomic(target, body)
+		} else {
+			publishErr = deps.publishExclusive(target, body, 0o644)
+		}
+		if publishErr != nil {
+			return fmt.Errorf("writing Lesson: %w", publishErr)
+		}
+		parsed, err := deps.parse(target)
+		if err != nil {
+			return fmt.Errorf("parsing generated Lesson: %w", err)
+		}
+		if err := deps.indexUpsert(specSub, parsed); err != nil {
+			return fmt.Errorf("upserting declared Lesson index row: %w", err)
+		}
+		violations, err := deps.lint(lint.Options{SpecRoot: specSub})
+		if err != nil {
+			return fmt.Errorf("running read-only lint: %w", err)
+		}
+		relTarget, _ := filepath.Rel(specSub, target)
+		var own []string
+		for _, v := range violations {
+			ownedIndexFinding := v.File == "lessons/README.md" && (v.Rule == "L-003" || v.Rule == "L-004") && strings.Contains(v.Message, slug)
+			if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding) {
+				own = append(own, fmt.Sprintf("  %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message))
+			}
+		}
+		if len(own) > 0 {
+			return fmt.Errorf("generated Lesson failed lint: %s", strings.Join(own, "\n"))
+		}
+		return transaction.Fence(
+			filepath.Join(root, "spec", "README.md"),
+			filepath.Join(root, "spec", "lessons", "README.md"),
+			target,
+			filepath.Join(filepath.Dir(target), "occurrences"),
+		)
+	})
+	if mutationErr != nil {
+		return fail("creating Lesson transaction", mutationErr)
 	}
 	result, commitErr := transaction.Commit(cmd.Context())
 	if commitErr != nil {

@@ -94,3 +94,20 @@ func TestDiscover_AcceptsCanonicalDirectoryForm(t *testing.T) {
 		t.Fatalf("expected [dirform, single], got %+v", got)
 	}
 }
+
+// Historical current-main symbol retained for deletion-audit continuity.
+// Directory discovery now deliberately accepts canonical <slug>/README.md
+// Lessons, while still skipping unrelated subdirectories.
+func TestDiscover_SkipsSubdirectories(t *testing.T) {
+	lessonsDir := filepath.Join(t.TempDir(), "lessons")
+	if err := os.MkdirAll(filepath.Join(lessonsDir, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Discover(lessonsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("unrelated subdirectory was discovered as a Lesson: %#v", got)
+	}
+}

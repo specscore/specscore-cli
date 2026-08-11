@@ -193,7 +193,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 			rewritten, replaced := rewriteTrailingAdherenceFooterURL(s, target.url)
 			if replaced {
 				if rewritten != s {
-					if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
+					if err := writeLintFile(specRoot, path, []byte(rewritten), 0o644); err != nil {
 						writeErr = err
 					}
 				}
@@ -207,7 +207,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 				s += "\n"
 			}
 			s += "\n---\n*This document follows the " + target.url + "*\n"
-			if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+			if err := writeLintFile(specRoot, path, []byte(s), 0o644); err != nil {
 				writeErr = err
 			}
 		})

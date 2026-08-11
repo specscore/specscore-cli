@@ -79,6 +79,14 @@ func writeRecurFileAtomic(path string, data []byte) error {
 	return writeRecurFileAtomicWithFS(path, data, osLessonFS{})
 }
 
+// RewriteFileAtomic replaces an existing Lesson artifact with a same-directory
+// temp, file fsync, atomic rename, and parent-directory fsync. Callers that
+// coordinate with lifecycle writers must hold WithMutationLock across their
+// ownership check, this rewrite, and any shared-index reconciliation.
+func RewriteFileAtomic(path string, data []byte) error {
+	return writeRecurFileAtomic(path, data)
+}
+
 func writeRecurFileAtomicWithFS(path string, data []byte, fs lessonFS) error {
 	info, err := fs.Stat(path)
 	if err != nil {

@@ -229,31 +229,34 @@ func TestLessonCheckResidualPredicatesAndErrors(t *testing.T) {
 func TestLessonRelationAdapterFailures(t *testing.T) {
 	root := setupSpecRoot(t)
 	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
 	from, typ, to := "one", "related", "two"
-	for _, phase := range []string{"root", "prepare", "add-compensated", "add-uncertain", "commit", "delivery"} {
+	for _, phase := range []string{"root", "post-preflight", "prepare", "add-compensated", "add-uncertain", "commit", "delivery"} {
 		cmd := lessonRelationAddCommand()
 		flags := map[string]string{"project": root, "type": typ, "confirm": lesson.RelationToken(from, typ, to)}
 		deps := defaultLessonCLIDeps()
 		switch phase {
 		case "root":
 			flags["project"] = filepath.Join(t.TempDir(), "missing")
+		case "post-preflight":
+			deps.fs.stat = func(string) (os.FileInfo, error) { return nil, errors.New("index preflight") }
 		case "prepare":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")
 			}
 		case "add-compensated":
-			deps.addRelation = func(string, string, string, string) error {
+			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error {
 				return &lesson.MutationError{Outcome: lesson.MutationCompensated, Err: errors.New("add")}
 			}
 		case "add-uncertain":
-			deps.addRelation = func(string, string, string, string) error { return errors.New("add") }
+			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error { return errors.New("add") }
 		case "commit":
-			deps.addRelation = func(string, string, string, string) error { return nil }
+			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error { return nil }
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return &preparedLessonEvent{outbox: event.NewOutbox(root), event: event.Event{UUID: "missing"}}, nil
 			}
 		case "delivery":
-			deps.addRelation = func(string, string, string, string) error { return nil }
+			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error { return nil }
 			configureFailingLessonEvents(t, root)
 		}
 		setLessonCommandFlags(t, cmd, flags)

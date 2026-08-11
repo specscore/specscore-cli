@@ -8,6 +8,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/spf13/cobra"
 )
 
@@ -47,11 +48,15 @@ func runLessonRelationAddWithDeps(cmd *cobra.Command, args []string, deps lesson
 		return err
 	}
 	dir := filepath.Join(root, "spec", "lessons")
+	postMutation, err := prepareRelationPostMutationWithDeps(root, from, typ, to, deps)
+	if err != nil {
+		return err
+	}
 	prepared, err := deps.prepareEvent(root, "lesson.relation-recorded", from, map[string]any{"type": typ, "to": to}, time.Time{})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing relation event: %v", err)
 	}
-	if err := deps.addRelation(dir, from, typ, to); err != nil {
+	if err := deps.addRelationWithPostMutation(dir, from, typ, to, postMutation); err != nil {
 		if recovery, resolved := prepared.ResolveMutationFailure("adding relation", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
 		} else {
@@ -67,6 +72,51 @@ func runLessonRelationAddWithDeps(cmd *cobra.Command, args []string, deps lesson
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", from, typ, to)
 	return nil
+}
+
+func prepareRelationPostMutationWithDeps(root, from, typ, to string, deps lessonCLIDeps) (lesson.RelationPostMutationHook, error) {
+	specRoot := filepath.Join(root, "spec")
+	lessonsDir := filepath.Join(specRoot, "lessons")
+	indexPath := filepath.Join(lessonsDir, "README.md")
+	if _, err := deps.fs.stat(indexPath); err != nil {
+		return nil, exitcode.UnexpectedErrorf("preflighting lessons index: %v", err)
+	}
+	return func() error {
+		paths := make([]string, 0, 4)
+		for _, slug := range []string{from, to} {
+			path, err := lesson.ResolveLessonFile(lessonsDir, slug)
+			if err != nil {
+				return exitcode.UnexpectedErrorf("resolving relation endpoint %s: %v", slug, err)
+			}
+			updated, err := deps.parse(path)
+			if err != nil {
+				return exitcode.UnexpectedErrorf("parsing relation endpoint %s: %v", slug, err)
+			}
+			if err := deps.indexUpsert(specRoot, updated); err != nil {
+				return exitcode.UnexpectedErrorf("upserting relation endpoint %s: %v", slug, err)
+			}
+			paths = append(paths, path)
+		}
+		violations, err := deps.lint(lint.Options{SpecRoot: specRoot})
+		if err != nil {
+			return exitcode.UnexpectedErrorf("running read-only relation lint: %v", err)
+		}
+		for _, violation := range violations {
+			ownedEndpoint := violation.File == filepath.ToSlash(filepath.Join("lessons", from, "README.md")) || violation.File == filepath.ToSlash(filepath.Join("lessons", to, "README.md"))
+			ownedIndex := violation.File == "lessons/README.md" && (violation.Rule == "L-003" || violation.Rule == "L-004") && (strings.Contains(violation.Message, from) || strings.Contains(violation.Message, to))
+			if violation.Severity == "error" && (ownedEndpoint || ownedIndex) {
+				return exitcode.UnexpectedErrorf("relation failed lint: %s:%d [%s] %s", violation.File, violation.Line, violation.Rule, violation.Message)
+			}
+		}
+		if typ == "related" {
+			paths = append(paths, filepath.Join(lessonsDir, ".relations.json"))
+		}
+		paths = append(paths, indexPath)
+		if err := newLessonMutationCoordinator(nil, deps.durable).Fence(paths...); err != nil {
+			return exitcode.UnexpectedErrorf("%v", err)
+		}
+		return nil
+	}, nil
 }
 
 func lessonRelationListCommand() *cobra.Command {

@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
 type relationTestFS struct {
@@ -337,16 +340,14 @@ func TestAddRelation_ValidationFailuresAreClassifiedPrePublication(t *testing.T)
 }
 
 // TestRelationLockHelper is run in a subprocess by the overlapping-writer
-// test below. The process must observe the parent command's advisory lock and
-// refuse before writing any relation.
+// test below. It must wait for the parent transaction's endpoint lock rather
+// than publishing concurrently.
 func TestRelationLockHelper(t *testing.T) {
 	if os.Getenv("SPECSCORE_RELATION_LOCK_HELPER") != "1" {
 		return
 	}
 	lessons := os.Getenv("SPECSCORE_RELATION_LESSONS")
-	if err := AddRelation(lessons, "a", "duplicates", "b"); err == nil {
-		t.Fatal("competing process acquired a relation lock held by another AddRelation")
-	}
+	_ = AddRelation(lessons, "a", "duplicates", "b")
 }
 
 func TestAddRelation_CrossProcessAdvisoryLockRefusesOverlappingWriter(t *testing.T) {
@@ -369,8 +370,18 @@ func TestAddRelation_CrossProcessAdvisoryLockRefusesOverlappingWriter(t *testing
 
 	child := exec.Command(os.Args[0], "-test.run=^TestRelationLockHelper$")
 	child.Env = append(os.Environ(), "SPECSCORE_RELATION_LOCK_HELPER=1", "SPECSCORE_RELATION_LESSONS="+lessons)
-	if output, err := child.CombinedOutput(); err != nil {
-		t.Fatalf("competing process did not refuse under advisory lock: %v\n%s", err, output)
+	var childOutput bytes.Buffer
+	child.Stdout = &childOutput
+	child.Stderr = &childOutput
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	childResult := make(chan error, 1)
+	go func() { childResult <- child.Wait() }()
+	select {
+	case err := <-childResult:
+		t.Fatalf("competing process escaped endpoint serialization: %v\n%s", err, childOutput.String())
+	case <-time.After(100 * time.Millisecond):
 	}
 	during, err := os.ReadFile(path)
 	if err != nil {
@@ -383,7 +394,56 @@ func TestAddRelation_CrossProcessAdvisoryLockRefusesOverlappingWriter(t *testing
 	if err := <-first; err != nil {
 		t.Fatalf("first relation writer failed: %v", err)
 	}
+	select {
+	case err := <-childResult:
+		if err != nil {
+			t.Fatalf("serialized competing process failed: %v\n%s", err, childOutput.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serialized competing process did not finish after endpoint release")
+	}
 	if _, err := os.Stat(filepath.Join(lessons, ".relations.lock")); !os.IsNotExist(err) {
 		t.Fatalf("relation lock polluted tracked Lesson tree: %v", err)
+	}
+}
+
+func TestAddRelation_HoldsEndpointLocksThroughPostMutation(t *testing.T) {
+	lessons := relationFixture(t, "retained", "canonical")
+	root := filepath.Dir(filepath.Dir(lessons))
+	postEntered := make(chan struct{})
+	releasePost := make(chan struct{})
+	relationResult := make(chan error, 1)
+	go func() {
+		relationResult <- AddRelationWithPostMutation(lessons, "retained", "duplicates", "canonical", func() error {
+			close(postEntered)
+			<-releasePost
+			return nil
+		})
+	}()
+	<-postEntered
+
+	lifecycleResult := make(chan error, 1)
+	go func() {
+		_, err := ChangeStatus(ChangeStatusOptions{SpecRoot: root, Slug: "retained", To: lifecycle.LessonStated, PostMutation: func() error { return nil }})
+		lifecycleResult <- err
+	}()
+	select {
+	case err := <-lifecycleResult:
+		t.Fatalf("lifecycle escaped the relation endpoint lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releasePost)
+	if err := <-relationResult; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-lifecycleResult; err == nil {
+		t.Fatal("relation and incompatible lifecycle mutation both succeeded")
+	}
+	retained, err := Parse(filepath.Join(lessons, "retained", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained.Status != "Superseded" || retained.DuplicateOf != "canonical" {
+		t.Fatalf("serial relation state was lost: %#v", retained)
 	}
 }

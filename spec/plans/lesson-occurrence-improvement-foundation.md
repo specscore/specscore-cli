@@ -1,10 +1,10 @@
 ---
 format: https://specscore.md/plan-specification
-status: Blocked
+status: Executing
 ---
 # Plan: Lesson Occurrence Improvement Foundation
 
-**Status:** Blocked
+**Status:** Executing
 **Reconciled:** 2026-08-10
 **Source Feature:** cli/lesson
 **Date:** 2026-08-10
@@ -39,7 +39,9 @@ The format gate is first because every parser, linter, writer, and migration mus
 **Id:** format-gate
 **Verifies:** cli/lesson#ac:directory-form-remains-flat-compatible
 **Depends-On:** —
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Do not implement code until the upstream meta-spec review accepts directory layout, occurrence schema, mandatory metadata, tracking/evidence representation, relations, and import-manifest location. Pin tests to that schema and record the released CLI dependency; this task is a hard dependency, not paperwork.
 
@@ -48,7 +50,9 @@ Do not implement code until the upstream meta-spec review accepts directory layo
 **Id:** layout-registry
 **Verifies:** cli/lesson#ac:directory-form-remains-flat-compatible, cli/lesson#ac:group-exposes-subcommands
 **Depends-On:** 1
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Extend `pkg/lesson` discovery/resolution and every read command to address flat and directory Lessons deterministically. Register both Lesson README layouts as status-bearing generic document targets; add collision, status-mirror, footer, and no-relocation tests.
 
@@ -57,7 +61,9 @@ Extend `pkg/lesson` discovery/resolution and every read command to address flat 
 **Id:** occurrences
 **Verifies:** cli/lesson#ac:occurrence-capture-is-lossless-and-lazy
 **Depends-On:** 2
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Implement `pkg/lesson/occurrence` and `lesson occurrence add|list|info`: opaque JSON input validation, lazy default capture, ID/time ordering, lossless JSON output, and atomic writes. Test explicit-context paths prove no live Synchestra or ambient-session access.
 
@@ -66,7 +72,9 @@ Implement `pkg/lesson/occurrence` and `lesson occurrence add|list|info`: opaque 
 **Id:** recur-compatibility
 **Verifies:** cli/lesson#ac:recur-does-not-change-status, cli/lesson#ac:recur-against-retired-lesson-warns, cli/lesson#ac:not-enforced-and-min-recurred-compose
 **Depends-On:** 3
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Delegate directory-form `recur` to occurrence creation while preserving command output/status semantics; retain flat-file behavior until migration. Update list/info/index rollups from occurrence data and test a mixed flat/directory project.
 
@@ -75,7 +83,9 @@ Delegate directory-form `recur` to occurrence creation while preserving command 
 **Id:** legacy-import
 **Verifies:** cli/lesson#ac:legacy-import-requires-reviewed-mapping
 **Depends-On:** 2
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Implement parser fixtures from the real legacy variants, deterministic dry-run report/digest/mapping, and apply-only creation. Include destructive-safety tests: source files are byte-identical, ambiguous rows block apply, and repeated apply writes nothing new.
 
@@ -84,7 +94,9 @@ Implement parser fixtures from the real legacy variants, deterministic dry-run r
 **Id:** relations
 **Verifies:** cli/lesson#ac:relations-are-human-confirmed
 **Depends-On:** 2
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Add durable relation storage, preview-token confirmation, relation list output, and graph validation. Test that no fuzzy/title-match heuristic changes a Lesson and that failed confirmation/cycle validation is mutation-free.
 
@@ -93,7 +105,9 @@ Add durable relation storage, preview-token confirmation, relation list output, 
 **Id:** lesson-lints
 **Verifies:** cli/lesson#ac:process-gap-required, cli/lesson#ac:ownership-and-enforcement-evidence-are-linted
 **Depends-On:** 3, 6
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Implement L-005–L-009 and strengthen index detection for duplicate/unknown rows. Add negative fixtures for missing metadata/tracking, invalid evidence path, flat-directory collision, invalid occurrence JSON/time, broken relation, and status-mirror registry coverage; preserve L-001 TODO-friendly behavior.
 
@@ -102,7 +116,9 @@ Implement L-005–L-009 and strengthen index detection for duplicate/unknown row
 **Id:** recurrence-check
 **Verifies:** cli/lesson#ac:recurrence-policy-is-ci-visible
 **Depends-On:** 4, 7
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Implement `lesson check` by reusing the list filter parser and ordered result model, with explicit `--max` exit semantics. Add command tests for error/empty/baseline behavior and a CI documentation fixture; it never changes status.
 
@@ -111,7 +127,9 @@ Implement `lesson check` by reusing the list filter parser and ordered result mo
 **Id:** durable-events
 **Verifies:** cli/lesson#ac:lesson-events-replay-per-subscriber
 **Depends-On:** 3, 4, 5, 6, 7
-**Status:** complete
+**Status:** in_progress
+**Note:** Validated on PR #128; awaiting merge to satisfy Definition of Done
+**Evidence:** https://github.com/specscore/specscore-cli/pull/128
 
 Extend the existing event subsystem with immutable ledger, independent durable-subscriber outboxes/cursors, UUID idempotency, and `event replay`. Wire automatic events only after each successful Lesson mutation's durable commit point; test rollback emits none and one failed subscriber does not redeliver an acknowledged peer.
 
@@ -140,6 +158,21 @@ receipts/retries, resume auditing, and projection refresh end to end.
 
 Build an end-to-end fixture that records a Lesson, captures an occurrence, shares durable agent context, promotes with evidence, exercises policy, fails/replays one subscriber, and verifies both closure and human-confirmed-overlap epilogues. Dogfood the release against Backstage with a dry-run import before any apply; do not enable the recurrence CI gate until its baseline is explicitly handled.
 
+### Task 12: Finalize validated task lifecycle after merge
+
+**Id:** post-merge-finalization
+**Verifies:** cli/lesson#ac:directory-form-remains-flat-compatible, cli/lesson#ac:group-exposes-subcommands, cli/lesson#ac:occurrence-capture-is-lossless-and-lazy, cli/lesson#ac:recur-does-not-change-status, cli/lesson#ac:recur-against-retired-lesson-warns, cli/lesson#ac:not-enforced-and-min-recurred-compose, cli/lesson#ac:legacy-import-requires-reviewed-mapping, cli/lesson#ac:relations-are-human-confirmed, cli/lesson#ac:process-gap-required, cli/lesson#ac:ownership-and-enforcement-evidence-are-linted, cli/lesson#ac:recurrence-policy-is-ci-visible, cli/lesson#ac:lesson-events-replay-per-subscriber
+**Depends-On:** 9
+**Status:** blocked
+
+After PR #128 is merged and exact-main CI is green, a separate implementation
+agent confirms the landed ancestry, transitions Tasks 1–9 from in_progress to
+complete through `specscore task change-status`, then advances this task through
+in_progress to complete. This is deliberately not assigned to the mechanical
+merger: merging establishes the Definition of Done, while lifecycle
+finalization records that established fact without expanding merge authority.
+Tasks 10–11 remain Blocked until their own acceptance criteria are delivered.
+
 ## Open Questions
 
 - **Blocked native dependency — Synchestra Cloud/API and CLI.** The authoritative Cloud API currently has session list/get/send, but no Lesson association/filter, no auditable resume, and no complete projection refresh contract; Git fallback has durable envelopes but no public construction/config/CLI and no reconciliation. A separate Synchestra Feature must bind the project-anchored Lesson slug to `GET /v1/lesson-agents`, use `POST /v1/sessions/:id/send` with a stable idempotent message ID and durable receipt/retry, add an auditable resume path, and publish the adapter-produced projection. Until that exact journey is implemented and proven, Tasks 10–11 remain blocked.
@@ -163,4 +196,10 @@ adapter and the dependent whole journey are still absent. Their Blocked
 statuses therefore remain truthful.
 
 Evidence: 2caec14, cf8cf3c, spec/features/cli/lesson/coordination/README.md, internal/cli/lesson_agents.go
+
+**Reconciled Blocked → Blocked outside the tracked `change-status` flow** (9 task(s) marked blocked; this did not walk the legal-transition matrix).
+
+Tasks are validated on PR #128 but remain unmerged; Definition of Done requires main
+
+Evidence: https://github.com/specscore/specscore-cli/pull/128, d07d39e8320c0189faa878748a64556e346787f1
 *This document follows the https://specscore.md/plan-specification*
