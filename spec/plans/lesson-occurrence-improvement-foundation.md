@@ -13,7 +13,13 @@ status: Draft
 
 ## Summary
 
-Implements the reviewed Lesson/Occurrence system without losing existing flat Lessons: directory-form parsing and generic registry support; normalized occurrence capture/query and `recur` compatibility; lossless legacy import; human-confirmed relations; tracking/evidence lint; a nonzero recurrence gate; coordination links delegated to Synchestra; and automatic events backed by a durable per-subscriber replay outbox. This plan remains Draft until the upstream SpecScore meta-format accepts the schema; no Go task may start beforehand.
+Implements the reviewed Lesson/Occurrence system without losing existing flat Lessons: directory-form parsing and generic registry support; normalized occurrence capture/query and `recur` compatibility; lossless legacy import; human-confirmed relations; tracking/evidence lint; a nonzero recurrence gate; coordination links delegated to Synchestra; and automatic events backed by a durable per-subscriber replay outbox. The upstream SpecScore meta-format gate is accepted; the remaining block is the native Synchestra adapter and its dependent whole-journey proof.
+
+Tasks 1–9 are implemented in this candidate and remain validated, not merged.
+The generic projection and external-hook boundary required by Task 10 is also
+present, but the native Synchestra adapter is not implemented or proven, so
+Task 10 remains Blocked and the dependent whole-journey Task 11 remains
+Blocked. This checkpoint does not claim programme completion.
 
 ## Approach
 
@@ -118,6 +124,13 @@ Extend the existing event subsystem with immutable ledger, independent durable-s
 
 Implement local projection rendering plus explicit `--refresh|--open|--message|--resume` adapter calls. Integrate only through Synchestra's configured authoritative public CLI/server endpoint/outbox; contract tests must prove no direct mirror, Git, SQLite, DALgo, or inGitDB access, no message persistence/outbox, and graceful visible mirror-lag rendering.
 
+The candidate implements the vendor-neutral core: it reads the adapter-owned
+`agents.json` projection without network access and delegates live actions to
+an explicitly configured external hook using a typed JSON request anchored to
+the selected project. The task remains Blocked until a native Synchestra
+adapter implements that hook contract and proves authentication, idempotent
+receipts/retries, resume auditing, and projection refresh end to end.
+
 ### Task 11: Whole journey and downstream migration verification
 
 **Id:** journey-e2e
@@ -143,7 +156,11 @@ Evidence: 09ed24b, aa45ba9, e935c1f, adf7530, d0b6386
 
 **Reconciled Implemented → Blocked outside the tracked `change-status` flow** (2 task(s) marked blocked; this did not walk the legal-transition matrix).
 
-Audit found the approved generic lesson-agents projection and external hook contract absent. Tasks 10 and 11 were incorrectly swept into the prior all-complete reconciliation; this correction restores their true blocked state until the generic core and native adapter are proven.
+Tasks 10 and 11 were incorrectly swept into the prior all-complete
+reconciliation. The generic lesson-agents projection and external-hook
+contract are now present in this candidate, while the native Synchestra
+adapter and the dependent whole journey are still absent. Their Blocked
+statuses therefore remain truthful.
 
-Evidence: d0b6386, spec/features/cli/lesson/coordination/README.md, internal/cli/lesson.go
+Evidence: 2caec14, cf8cf3c, spec/features/cli/lesson/coordination/README.md, internal/cli/lesson_agents.go
 *This document follows the https://specscore.md/plan-specification*
