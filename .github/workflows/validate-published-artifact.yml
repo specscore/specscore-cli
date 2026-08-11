@@ -19,12 +19,10 @@ concurrency:
 
 jobs:
   validate:
-    uses: strongo/cicd/.github/workflows/release.yml@v1
+    uses: strongo/cicd/.github/workflows/validate-published-artifact.yml@v1
     permissions:
       contents: read
     with:
-      existing_artifact_tag: ${{ inputs.release_tag }}
-      artifact_smoke_test: true
-      artifact_smoke_test_binary: specscore
-      artifact_smoke_test_command: --version
-      artifact_smoke_test_homebrew_cask: false
+      release_tag: ${{ inputs.release_tag }}
+      artifact_binary: specscore
+      artifact_command: --version

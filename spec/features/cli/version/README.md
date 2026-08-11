@@ -84,7 +84,7 @@ A release build MUST supply all three. The release workflow (goreleaser / equiva
 
 #### REQ: published-artifact-revalidation
 
-The repository MUST provide a manually dispatched, validation-only workflow that accepts one exact existing release tag and executes the published archive's `specscore --version` command. It MUST use that requested tag for both the release asset and the GoReleaser configuration used to resolve it; it MUST NOT create a tag, run GoReleaser, publish a release, or install a Homebrew cask. This preserves a safe way to revalidate an already published SpecScore CLI artifact after a shared CI repair without creating a new release.
+The repository MUST provide a manually dispatched, validation-only workflow that accepts one exact existing release tag and executes the published archive's `specscore --version` command. It MUST call a reusable workflow whose maximum permission is `contents: read`, pass `specscore` as the explicit expected executable, and use only the requested tag when downloading release assets. It MUST NOT call the write-capable release workflow, create a tag, run GoReleaser, publish a release, or install a Homebrew cask. This preserves a safe way to revalidate an already published SpecScore CLI artifact after a shared CI repair without creating a new release or granting publication permission to validation.
 
 #### REQ: default-placeholders
 
@@ -155,7 +155,7 @@ Version output follows Go-ecosystem convention: no `v` prefix on the printed num
 
 **Requirements:** cli/version#req:flag-output, cli/version#req:published-artifact-revalidation
 
-Dispatching the validation-only workflow with an existing SpecScore CLI release tag downloads that exact published archive and runs `specscore --version` successfully. The workflow does not create a tag or release, run GoReleaser, or execute the Homebrew-cask layer.
+Dispatching the validation-only workflow with an existing SpecScore CLI release tag starts successfully with only `contents: read`, downloads that exact published archive, and runs `specscore --version`. The workflow does not call the release workflow, create a tag or release, run GoReleaser, or execute the Homebrew-cask layer.
 
 ## Open Questions
 
