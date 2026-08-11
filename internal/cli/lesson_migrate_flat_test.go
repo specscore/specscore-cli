@@ -196,7 +196,7 @@ func TestLessonMigrateFlat_DurabilityFenceFailureRetainsRecovery(t *testing.T) {
 	root := setupFlatMigrationCLIProject(t, "fence-boundary")
 	deps := defaultLessonCLIDeps()
 	deps.durable = faultDurableOps("open-dir")
-	if _, _, err := runFlatMigrationWithDeps(t, root, "fence-boundary", deps); err == nil || !strings.Contains(err.Error(), "durably fencing flat migration") {
+	if _, _, err := runFlatMigrationWithDeps(t, root, "fence-boundary", deps); err == nil || !strings.Contains(err.Error(), "durably fencing Lesson mutation") {
 		t.Fatalf("durability fence err=%v", err)
 	}
 	marker := filepath.Join(root, "spec", "lessons", ".flat-migration-fence-boundary.json")

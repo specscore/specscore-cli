@@ -3,12 +3,10 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
-	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/spf13/cobra"
 )
 
@@ -105,6 +103,13 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 		LessonsDir: lessonsDir, Classifications: selected, Slug: slug,
 		Control: control, Verification: verification, Evidence: evidence,
 	}
+	return deps.withMutationLock(root, slug, func() error {
+		return runLessonMigrateFlatLocked(cmd, format, root, slug, selected, opts, deps)
+	})
+}
+
+func runLessonMigrateFlatLocked(cmd *cobra.Command, format, root, slug string, selected []string, opts lesson.FlatMigrationOptions, deps lessonCLIDeps) error {
+	lessonsDir := opts.LessonsDir
 	preflight, err := deps.preflightFlat(opts)
 	if err != nil {
 		return exitcode.InvalidStateErrorf("flat migration preflight refused: %v", err)
@@ -121,7 +126,6 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 	// identity; parsing cannot fail after that contract succeeds.
 	eventAt, _ := time.Parse(time.RFC3339, preflight.Source.CommittedAt)
 	markerPath := filepath.Join(lessonsDir, ".flat-migration-"+slug+".json")
-	indexPath := filepath.Join(lessonsDir, "README.md")
 
 	prepared, err := deps.prepareEventWithID(root, "lesson.flat-migrated", slug, map[string]any{
 		"classifications": selected,
@@ -151,30 +155,8 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 		return failAfterMutation("continuing after flat artifact publication", err)
 	}
 
-	parsed, err := deps.parse(result.CanonicalPath)
-	if err != nil {
-		return failAfterMutation("parsing canonical migrated Lesson", err)
-	}
-	if err := deps.indexUpsert(filepath.Join(root, "spec"), parsed); err != nil {
-		return failAfterMutation("upserting migrated Lesson index row", err)
-	}
-	violations, err := deps.lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
-	if err != nil {
-		return failAfterMutation("running read-only lint", err)
-	}
-	relTarget, _ := filepath.Rel(filepath.Join(root, "spec"), result.CanonicalPath)
-	var own []string
-	for _, violation := range violations {
-		ownedIndexFinding := violation.File == "lessons/README.md" && (violation.Rule == "L-003" || violation.Rule == "L-004") && strings.Contains(violation.Message, slug)
-		if violation.Severity == "error" && (violation.File == relTarget || strings.HasPrefix(violation.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding) {
-			own = append(own, fmt.Sprintf("%s:%d [%s] %s", violation.File, violation.Line, violation.Rule, violation.Message))
-		}
-	}
-	if len(own) != 0 {
-		return failAfterMutation("migrated Lesson failed lint", fmt.Errorf("%s", strings.Join(own, "; ")))
-	}
-	if err := newLessonMutationCoordinator(nil, deps.durable).Fence(result.CanonicalPath, result.ManifestPath, indexPath, markerPath); err != nil {
-		return failAfterMutation("durably fencing flat migration", err)
+	if err := reconcileLockedLessons(root, []string{slug}, []string{result.ManifestPath, markerPath}, deps); err != nil {
+		return failAfterMutation("reconciling flat migration", err)
 	}
 	if err := afterFlatMigrationPhase(deps, "index-upsert"); err != nil {
 		return err

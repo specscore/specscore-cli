@@ -69,24 +69,28 @@ func setLessonCommandFlags(t *testing.T, cmd *cobra.Command, flags map[string]st
 
 func configureNoopLessonEvents(t *testing.T, root string) {
 	t.Helper()
-	path := filepath.Join(root, "specscore.yaml")
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	cfg, err := projectdef.ReadSpecConfig(root)
+	if errors.Is(err, os.ErrNotExist) {
 		requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
-		body, err = os.ReadFile(path)
+		cfg, err = projectdef.ReadSpecConfig(root)
 	}
 	requireCLISuccess(t, err)
-	body = append(body, []byte("\nevents:\n  subscribers:\n    - type: noop\n")...)
-	requireCLISuccess(t, os.WriteFile(path, body, 0o644))
+	if cfg.Extras == nil {
+		cfg.Extras = map[string]any{}
+	}
+	cfg.Extras["events"] = map[string]any{"subscribers": []any{map[string]any{"type": "noop"}}}
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, cfg))
 }
 
 func configureFailingLessonEvents(t *testing.T, root string) {
 	t.Helper()
-	path := filepath.Join(root, "specscore.yaml")
-	body, err := os.ReadFile(path)
+	cfg, err := projectdef.ReadSpecConfig(root)
 	requireCLISuccess(t, err)
-	body = append(body, []byte("\nevents:\n  subscribers:\n    - type: exec\n      command: [/bin/false]\n")...)
-	requireCLISuccess(t, os.WriteFile(path, body, 0o644))
+	if cfg.Extras == nil {
+		cfg.Extras = map[string]any{}
+	}
+	cfg.Extras["events"] = map[string]any{"subscribers": []any{map[string]any{"type": "exec", "command": []any{"/bin/false"}}}}
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, cfg))
 }
 
 func assertAbortedLessonEvent(t *testing.T, root, name string) {

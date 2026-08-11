@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
@@ -68,6 +70,7 @@ func TestLessonImportLegacy_UncertainRollbackRetainsPreparedEvent(t *testing.T) 
 	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
 	source := filepath.Join(root, "LESSONS-LEARNED.md")
 	if err := os.WriteFile(source, []byte("## L1 — use a reviewed rule\n\n**Status:** Recorded\n\nHistorical detail.\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -130,5 +133,138 @@ func TestLessonImportLegacy_UncertainRollbackRetainsPreparedEvent(t *testing.T) 
 	prepared, readErr := event.NewOutbox(root).Prepared()
 	if readErr != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.legacy-import-applied" {
 		t.Fatalf("serialized outbox must retain prepared legacy-import event: %#v err=%v", prepared, readErr)
+	}
+}
+
+func TestLessonImportLegacy_ApplyReconcilesIndexAndRetriesCleanly(t *testing.T) {
+	root := setupSpecRoot(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
+	configureNoopLessonEvents(t, root)
+	source := filepath.Join(root, "LESSONS-LEARNED.md")
+	requireCLISuccess(t, os.WriteFile(source, []byte("## L1 — use a reviewed rule\n\n**Status:** Recorded\n\nHistorical detail.\n"), 0o644))
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"config", "user.name", "SpecScore Test"}, {"config", "user.email", "test@example.invalid"}, {"remote", "add", "origin", "https://github.com/example/spec.git"}, {"add", "."}, {"commit", "-q", "-m", "fixture"}} {
+		runGitForFlatMigration(t, root, args...)
+	}
+	inv, err := lesson.InventoryLegacy(source)
+	requireCLISuccess(t, err)
+	mapping := lesson.LegacyMapping{Source: inv.Source, Entries: []lesson.LegacyMappingEntry{{
+		Key: "L1#1", Action: "new", Slug: "reviewed-rule", Status: "Recorded",
+		Lesson: "Apply the reviewed deterministic process control.", ProcessGap: "The workflow lacked a deterministic check.",
+		Classifications: []string{"process"},
+	}}}
+	mappingBody, err := json.Marshal(mapping)
+	requireCLISuccess(t, err)
+	mappingPath := filepath.Join(root, "mapping.json")
+	requireCLISuccess(t, os.WriteFile(mappingPath, mappingBody, 0o644))
+
+	for attempt := 0; attempt < 2; attempt++ {
+		_, stderr, runErr := runLesson(t, "import-legacy", "--source", source, "--apply", "--mapping", mappingPath, "--project", root, "--format", "json")
+		if runErr != nil {
+			t.Fatalf("apply attempt %d: %v\nstderr=%s", attempt+1, runErr, stderr)
+		}
+	}
+	indexBody, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	requireCLISuccess(t, err)
+	if got := bytes.Count(indexBody, []byte("[reviewed-rule](reviewed-rule/README.md)")); got != 1 {
+		t.Fatalf("legacy import index row count=%d\n%s", got, indexBody)
+	}
+	violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
+	requireCLISuccess(t, err)
+	for _, violation := range violations {
+		if violation.Severity == "error" && ownedLessonMutationViolation(violation, []string{"reviewed-rule"}) {
+			t.Fatalf("legacy import left owned lint drift: %#v", violation)
+		}
+	}
+}
+
+func TestLessonImportLegacy_SerializesPublishedLessonThroughReconciliation(t *testing.T) {
+	root := setupLintCleanProject(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
+	configureNoopLessonEvents(t, root)
+	source := filepath.Join(root, "LESSONS-LEARNED.md")
+	requireCLISuccess(t, os.WriteFile(source, []byte("## L1 — serialize import\n\n**Status:** Recorded\n\nHistorical detail.\n"), 0o644))
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"config", "user.name", "SpecScore Test"}, {"config", "user.email", "test@example.invalid"}, {"remote", "add", "origin", "https://github.com/example/spec.git"}, {"add", "."}, {"commit", "-q", "-m", "fixture"}} {
+		runGitForFlatMigration(t, root, args...)
+	}
+	inv, err := lesson.InventoryLegacy(source)
+	requireCLISuccess(t, err)
+	mapping := lesson.LegacyMapping{Source: inv.Source, Entries: []lesson.LegacyMappingEntry{{
+		Key: "L1#1", Action: "new", Slug: "serialized-import", Status: "Recorded",
+		Lesson: "Serialize the reviewed import transaction.", ProcessGap: "The import path lacked a shared mutation lock.",
+		Classifications: []string{"process"},
+	}}}
+	mappingBody, err := json.Marshal(mapping)
+	requireCLISuccess(t, err)
+	mappingPath := filepath.Join(root, "mapping.json")
+	requireCLISuccess(t, os.WriteFile(mappingPath, mappingBody, 0o644))
+
+	lifecycleCmd := lessonChangeStatusCommand()
+	setLessonCommandFlags(t, lifecycleCmd, map[string]string{"project": root, "to": "stated"})
+	started := make(chan struct{})
+	changed := make(chan error, 1)
+	deps := defaultLessonCLIDeps()
+	realApply := deps.applyLegacy
+	deps.applyLegacy = func(dir string, allowed []string, inventory lesson.LegacyInventory, reviewed lesson.LegacyMapping) (lesson.LegacyApplyResult, error) {
+		result, applyErr := realApply(dir, allowed, inventory, reviewed)
+		if applyErr != nil {
+			return result, applyErr
+		}
+		go func() {
+			close(started)
+			changed <- runLessonChangeStatusWithDeps(lifecycleCmd, []string{"serialized-import"}, defaultLessonCLIDeps())
+		}()
+		<-started
+		select {
+		case changeErr := <-changed:
+			return result, errors.New("lifecycle mutation escaped import lock before reconciliation: " + errorText(changeErr))
+		case <-time.After(100 * time.Millisecond):
+		}
+		return result, nil
+	}
+	cmd := lessonImportLegacyCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"source": source, "mapping": mappingPath, "project": root, "apply": "true"})
+	requireCLISuccess(t, runLessonImportLegacyWithDeps(cmd, deps))
+	select {
+	case changeErr := <-changed:
+		requireCLISuccess(t, changeErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("lifecycle mutation deadlocked after legacy import released its locks")
+	}
+	indexBody, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	requireCLISuccess(t, err)
+	if !strings.Contains(string(indexBody), "[serialized-import](serialized-import/README.md) | Stated |") {
+		t.Fatalf("serialized import/lifecycle row is stale:\n%s", indexBody)
+	}
+}
+
+func TestLessonImportLegacy_OwnerMarkerStatUncertaintyRetainsPreparedEvent(t *testing.T) {
+	root := setupSpecRoot(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
+	mapping := lesson.LegacyMapping{Entries: []lesson.LegacyMappingEntry{{Action: "new", Slug: "owner-stat"}}}
+	mappingBody, err := json.Marshal(mapping)
+	requireCLISuccess(t, err)
+	mappingPath := filepath.Join(root, "mapping.json")
+	requireCLISuccess(t, os.WriteFile(mappingPath, mappingBody, 0o644))
+	deps := defaultLessonCLIDeps()
+	deps.inventoryLegacy = func(string) (lesson.LegacyInventory, error) { return lesson.LegacyInventory{}, nil }
+	deps.preflightLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) error { return nil }
+	deps.applyLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyResult, error) {
+		return lesson.LegacyApplyResult{}, nil
+	}
+	realStat := deps.fs.stat
+	deps.fs.stat = func(path string) (os.FileInfo, error) {
+		if strings.HasSuffix(path, ".legacy-import-owner") {
+			return nil, errors.New("owner stat")
+		}
+		return realStat(path)
+	}
+	cmd := lessonImportLegacyCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"source": "source", "mapping": mappingPath, "project": root, "apply": "true"})
+	err = runLessonImportLegacyWithDeps(cmd, deps)
+	if err == nil || !strings.Contains(err.Error(), "owner stat") || !strings.Contains(err.Error(), "recovery required") {
+		t.Fatalf("owner-marker stat uncertainty = %v", err)
 	}
 }

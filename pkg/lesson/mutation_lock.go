@@ -67,6 +67,19 @@ func WithMutationLock(projectRoot, slug string, mutate func() error) error {
 	return withLessonMutationLock(projectRoot, slug, defaultLessonMutationLockDeps(), mutate)
 }
 
+// WithMutationLocks serializes a caller-owned transaction that spans more than
+// one Lesson. Locks are acquired in lexical slug order and duplicate slugs are
+// collapsed, preserving the package-wide lock order before the shared index
+// lock is acquired by mutate.
+func WithMutationLocks(projectRoot string, slugs []string, mutate func() error) error {
+	for _, slug := range slugs {
+		if err := ValidateSlug(slug); err != nil {
+			return mutationFailure(MutationPrePublication, fmt.Errorf("invalid Lesson mutation lock slug: %w", err))
+		}
+	}
+	return withLessonMutationLocks(projectRoot, slugs, defaultLessonMutationLockDeps(), mutate)
+}
+
 func withLessonMutationLocks(projectRoot string, slugs []string, deps lessonMutationLockDeps, mutate func() error) error {
 	ordered := append([]string(nil), slugs...)
 	sort.Strings(ordered)

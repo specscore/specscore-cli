@@ -34,7 +34,7 @@ func Migrate(specRoot string) ([]string, error) {
 			if bytes.Equal(updated, content) {
 				return
 			}
-			if err := writeLintFile(specRoot, path, updated, 0o644); err != nil {
+			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 				return
 			}

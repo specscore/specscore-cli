@@ -97,6 +97,17 @@ type absentCollisionLinkFS struct{ faultOutboxFS }
 
 func (absentCollisionLinkFS) Link(string, string) error { return fs.ErrExist }
 
+type existingMarkerFaultFS struct {
+	faultOutboxFS
+	existing outboxFile
+}
+
+func (f existingMarkerFaultFS) OpenFile(string, int, os.FileMode) (outboxFile, error) {
+	return nil, fs.ErrExist
+}
+
+func (f existingMarkerFaultFS) Open(string) (outboxFile, error) { return f.existing, nil }
+
 type faultLedgerCodec struct {
 	marshalErr   error
 	unmarshalErr error
@@ -374,6 +385,65 @@ func TestOutbox_DirectorySyncAndCloseFailuresAreDurabilityErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOutbox_IdenticalPublicationRetryRefencesParent(t *testing.T) {
+	t.Run("existing ledger", func(t *testing.T) {
+		base := NewOutbox(t.TempDir())
+		e := validEvent()
+		subscribers := []Subscriber{&outboxSub{name: "sink"}}
+		if err := base.Prepare(e, subscribers); err != nil {
+			t.Fatal(err)
+		}
+		faulty := outboxOperations{Outbox: base, fs: faultOutboxFS{fail: "open"}}
+		if err := faulty.prepare(e, subscribers); err == nil || !strings.Contains(err.Error(), "injected open") {
+			t.Fatalf("existing ledger retry skipped parent fence: %v", err)
+		}
+		if err := base.Prepare(e, subscribers); err != nil {
+			t.Fatalf("clean ledger retry did not re-fence: %v", err)
+		}
+	})
+
+	t.Run("existing marker", func(t *testing.T) {
+		root := t.TempDir()
+		path := filepath.Join(root, "ack", "existing")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		faulty := outboxOperations{Outbox: Outbox{Root: root}, fs: faultOutboxFS{fail: "open"}}
+		if err := faulty.touchExclusive(path); err == nil || !strings.Contains(err.Error(), "injected open") {
+			t.Fatalf("existing marker retry skipped parent fence: %v", err)
+		}
+		if err := (outboxOperations{Outbox: Outbox{Root: root}}).touchExclusive(path); err != nil {
+			t.Fatalf("clean marker retry did not re-fence: %v", err)
+		}
+		for name, file := range map[string]faultOutboxFile{
+			"file sync":  {name: path, syncError: errors.New("marker sync")},
+			"file close": {name: path, closeError: errors.New("marker close")},
+		} {
+			t.Run(name, func(t *testing.T) {
+				faulty := outboxOperations{Outbox: Outbox{Root: root}, fs: existingMarkerFaultFS{existing: file}}
+				if err := faulty.touchExclusive(path); err == nil || !strings.Contains(err.Error(), "marker") {
+					t.Fatalf("existing marker %s retry = %v", name, err)
+				}
+			})
+		}
+	})
+
+	t.Run("exclusive-link collision", func(t *testing.T) {
+		root := t.TempDir()
+		path := filepath.Join(root, "collision")
+		faulty := outboxOperations{Outbox: Outbox{Root: root}, fs: collisionLinkFS{faultOutboxFS: faultOutboxFS{fail: "open"}, data: []byte("same")}}
+		if err := faulty.writeNewAtomic(path, []byte("same")); err == nil || !strings.Contains(err.Error(), "injected open") {
+			t.Fatalf("link collision skipped parent fence: %v", err)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != "same" {
+			t.Fatalf("collision publication = %q, %v", got, err)
+		}
+	})
 }
 
 func TestOutbox_OperationsAreInstanceScopedUnderConcurrentFaultInjection(t *testing.T) {

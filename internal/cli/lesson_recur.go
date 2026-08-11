@@ -95,7 +95,6 @@ func runLessonRecurWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDep
 	if err != nil {
 		return exitcode.UnexpectedErrorf("parsing lesson %s: %v", slug, err)
 	}
-	warnIfLessonRetired(cmd.ErrOrStderr(), slug, before.Status)
 	if before.Canonical {
 		id := uuid.NewString()
 		now := time.Now().UTC()
@@ -103,6 +102,7 @@ func runLessonRecurWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDep
 		if failure != nil {
 			return failure.cliError(true)
 		}
+		warnIfLessonRetired(cmd.ErrOrStderr(), slug, result.status)
 		for _, failure := range result.delivery.Failed {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
 		}
@@ -113,7 +113,6 @@ func runLessonRecurWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDep
 	if err := lesson.ValidateSafeContent("legacy recurrence note", note); err != nil {
 		return exitcode.InvalidArgsErrorf("unsafe recurrence note: %v", err)
 	}
-	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
 	prepared, err := deps.prepareEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"kind": "legacy-recurrence"}, time.Now().UTC())
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing recurrence event: %v", err)
@@ -125,7 +124,7 @@ func runLessonRecurWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDep
 		if parseErr != nil {
 			return parseErr
 		}
-		return deps.indexUpsert(filepath.Join(root, "spec"), updated)
+		return reconcileLockedLessons(root, []string{slug}, nil, deps)
 	})
 	if err != nil {
 		if recovery, resolved := prepared.ResolveMutationFailure("recording legacy recurrence", err); recovery {
@@ -135,11 +134,7 @@ func runLessonRecurWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDep
 		}
 	}
 
-	if err := newLessonMutationCoordinator(nil, deps.durable).Fence(path, indexPath); err != nil {
-		failure := &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: err}
-		_, resolved := prepared.ResolveMutationFailure("durably fencing legacy recurrence", failure)
-		return exitcode.UnexpectedErrorf("%v", resolved)
-	}
+	warnIfLessonRetired(cmd.ErrOrStderr(), slug, updated.Status)
 	result, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
 		return exitcode.UnexpectedErrorf("recurrence recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)

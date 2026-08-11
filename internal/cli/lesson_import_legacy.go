@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -99,29 +100,71 @@ func runLessonImportLegacyWithDeps(cmd *cobra.Command, deps lessonCLIDeps) error
 		return exitcode.InvalidStateError("legacy apply requires non-empty lessons.classifications in specscore.yaml")
 	}
 	dir := filepath.Join(root, "spec", "lessons")
-	if err := deps.preflightLegacy(dir, allowedClassifications, inv, mapping); err != nil {
-		return exitcode.InvalidStateErrorf("legacy import preflight refused: %v", err)
-	}
-	prepared, err := deps.prepareEvent(root, "lesson.legacy-import-applied", "legacy-import", map[string]any{"source_sha256": inv.Source.SHA256, "source_revision": inv.Source.Revision, "mapping_count": len(mapping.Entries)}, time.Time{})
-	if err != nil {
-		return exitcode.UnexpectedErrorf("preparing import event: %v", err)
-	}
-	result, err := deps.applyLegacy(dir, allowedClassifications, inv, mapping)
-	if err != nil {
-		if recovery, resolved := prepared.ResolveMutationFailure("applying legacy import", err); recovery {
-			return exitcode.UnexpectedErrorf("%v", resolved)
-		} else {
+	affected := legacyMappingSlugs(mapping)
+	var result lesson.LegacyApplyResult
+	transactionErr := deps.withMutationLocks(root, affected, func() error {
+		if err := deps.preflightLegacy(dir, allowedClassifications, inv, mapping); err != nil {
+			return exitcode.InvalidStateErrorf("legacy import preflight refused: %v", err)
+		}
+		if err := preflightOccurrenceIndex(root); err != nil {
+			return exitcode.InvalidStateErrorf("legacy import requires a readable lessons index: %v", err)
+		}
+		prepared, err := deps.prepareEvent(root, "lesson.legacy-import-applied", "legacy-import", map[string]any{"source_sha256": inv.Source.SHA256, "source_revision": inv.Source.Revision, "mapping_count": len(mapping.Entries)}, time.Time{})
+		if err != nil {
+			return exitcode.UnexpectedErrorf("preparing import event: %v", err)
+		}
+		result, err = deps.applyLegacy(dir, allowedClassifications, inv, mapping)
+		if err != nil {
+			recovery, resolved := prepared.ResolveMutationFailure("applying legacy import", err)
+			if recovery {
+				return exitcode.UnexpectedErrorf("%v", resolved)
+			}
 			return exitcode.InvalidStateErrorf("legacy import refused: %v", resolved)
 		}
-	}
-	delivery, commitErr := prepared.Commit(cmd.Context())
-	if commitErr != nil {
-		return exitcode.UnexpectedErrorf("legacy import applied but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
-	}
-	for _, failure := range delivery.Failed {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
+		extraFence := []string{result.Manifest}
+		for _, slug := range affected {
+			owner := filepath.Join(dir, slug, ".legacy-import-owner")
+			if _, statErr := deps.fs.stat(owner); statErr == nil {
+				extraFence = append(extraFence, owner)
+			} else if !os.IsNotExist(statErr) {
+				failure := &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: fmt.Errorf("checking legacy owner marker for %s: %w", slug, statErr)}
+				_, resolved := prepared.ResolveMutationFailure("reconciling legacy import", failure)
+				return exitcode.UnexpectedErrorf("%v", resolved)
+			}
+		}
+		if err := reconcileLockedLessons(root, affected, extraFence, deps); err != nil {
+			failure := &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: err}
+			_, resolved := prepared.ResolveMutationFailure("reconciling legacy import", failure)
+			return exitcode.UnexpectedErrorf("%v", resolved)
+		}
+		delivery, commitErr := prepared.Commit(cmd.Context())
+		if commitErr != nil {
+			return exitcode.UnexpectedErrorf("legacy import applied but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
+		}
+		for _, failure := range delivery.Failed {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
+		}
+		return nil
+	})
+	if transactionErr != nil {
+		if _, ok := transactionErr.(interface{ ExitCode() int }); ok {
+			return transactionErr
+		}
+		return exitcode.UnexpectedErrorf("legacy import transaction: %v", transactionErr)
 	}
 	return writeLegacyOutput(cmd, format, result)
+}
+
+func legacyMappingSlugs(mapping lesson.LegacyMapping) []string {
+	seen := make(map[string]bool, len(mapping.Entries))
+	var slugs []string
+	for _, entry := range mapping.Entries {
+		if (entry.Action == "new" || entry.Action == "occurrence") && !seen[entry.Slug] {
+			seen[entry.Slug] = true
+			slugs = append(slugs, entry.Slug)
+		}
+	}
+	return slugs
 }
 func writeLegacyOutput(cmd *cobra.Command, format string, v any) error {
 	switch format {

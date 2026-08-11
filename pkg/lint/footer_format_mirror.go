@@ -77,7 +77,7 @@ func (c *footerFormatMirrorChecker) fix(specRoot string) error {
 				return
 			}
 			updated := replaceLastSpecURL(content, format)
-			if err := writeLintFile(specRoot, path, updated, 0o644); err != nil {
+			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 			}
 		})

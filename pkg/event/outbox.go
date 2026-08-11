@@ -164,7 +164,7 @@ func (o outboxOperations) prepare(e Event, subscribers []Subscriber) error {
 		if string(existing) != string(b) {
 			return fmt.Errorf("event UUID %s already has different ledger content", e.UUID)
 		}
-		return nil
+		return o.syncOutboxDirectory(filepath.Dir(path))
 	} else if !os.IsNotExist(readErr) {
 		return readErr
 	}
@@ -636,7 +636,7 @@ func (o outboxOperations) touchExclusive(path string) error {
 	}
 	f, err := o.operations().OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if os.IsExist(err) {
-		return nil
+		return o.syncOutboxFileAndParent(path)
 	}
 	if err != nil {
 		return err
@@ -650,6 +650,22 @@ func (o outboxOperations) touchExclusive(path string) error {
 	}
 	return o.syncOutboxDirectory(filepath.Dir(path))
 }
+
+func (o outboxOperations) syncOutboxFileAndParent(path string) error {
+	f, err := o.operations().Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return o.syncOutboxDirectory(filepath.Dir(path))
+}
+
 func (o outboxOperations) writeNewAtomic(path string, data []byte) error {
 	if err := o.ensureOutboxDirectory(filepath.Dir(path)); err != nil {
 		return err
@@ -672,6 +688,11 @@ func (o outboxOperations) writeNewAtomic(path string, data []byte) error {
 		return err
 	}
 	if err = o.operations().Link(tmp, path); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			if syncErr := o.syncOutboxDirectory(filepath.Dir(path)); syncErr != nil {
+				return syncErr
+			}
+		}
 		return err
 	}
 	return o.syncOutboxDirectory(filepath.Dir(path))

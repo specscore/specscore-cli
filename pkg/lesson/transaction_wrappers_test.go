@@ -17,6 +17,13 @@ func TestPublicTransactionWrappers(t *testing.T) {
 	if err := WithMutationLock(root, "Bad Slug", func() error { return nil }); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
 		t.Fatalf("invalid lock slug = %v, outcome=%v", err, MutationOutcomeOf(err))
 	}
+	called = false
+	if err := WithMutationLocks(root, []string{"wrapped-b", "wrapped-a", "wrapped-b"}, func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("WithMutationLocks = %v, called=%v", err, called)
+	}
+	if err := WithMutationLocks(root, []string{"wrapped", "Bad Slug"}, func() error { return nil }); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
+		t.Fatalf("invalid multi-lock slug = %v, outcome=%v", err, MutationOutcomeOf(err))
+	}
 	path := filepath.Join(root, "README.md")
 	if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
 		t.Fatal(err)

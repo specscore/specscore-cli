@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/lesson"
@@ -196,4 +197,98 @@ func TestPrepareRelationPostMutationFaultMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCanonicalOccurrenceSerializesWithLifecycleAndKeepsIndexCurrent(t *testing.T) {
+	root := setupLintCleanProject(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	configureNoopLessonEvents(t, root)
+	create := lessonNewCommand()
+	setLessonCommandFlags(t, create, map[string]string{"project": root})
+	requireCLISuccess(t, runLessonNewWithDeps(create, []string{"review-before-merge"}, defaultLessonCLIDeps()))
+	started := make(chan struct{})
+	changed := make(chan error, 1)
+	lifecycleCmd := lessonChangeStatusCommand()
+	setLessonCommandFlags(t, lifecycleCmd, map[string]string{"project": root, "to": "stated"})
+	deps := defaultLessonCLIDeps()
+	realAdd := deps.addOccurrence
+	deps.addOccurrence = func(opts lesson.AddOccurrenceOptions) (lesson.Occurrence, error) {
+		go func() {
+			close(started)
+			changed <- runLessonChangeStatusWithDeps(lifecycleCmd, []string{"review-before-merge"}, defaultLessonCLIDeps())
+		}()
+		<-started
+		select {
+		case err := <-changed:
+			return lesson.Occurrence{}, errors.New("lifecycle mutation escaped occurrence lock before publication: " + errorText(err))
+		case <-time.After(100 * time.Millisecond):
+		}
+		return realAdd(opts)
+	}
+	cmd := lessonOccurrenceAddCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "summary": "serialized", "context-json": `{}`})
+	requireCLISuccess(t, runLessonOccurrenceAddWithDeps(cmd, []string{"review-before-merge"}, deps))
+	select {
+	case err := <-changed:
+		requireCLISuccess(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("lifecycle mutation deadlocked after occurrence released its lock")
+	}
+	body, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "review-before-merge", "README.md"))
+	requireCLISuccess(t, err)
+	if !strings.Contains(string(body), "**Status:** Stated") {
+		t.Fatalf("serialized lifecycle status missing:\n%s", body)
+	}
+	index, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	requireCLISuccess(t, err)
+	if !strings.Contains(string(index), "[review-before-merge](review-before-merge/README.md) | Stated |") {
+		t.Fatalf("occurrence overwrote the serialized lifecycle row:\n%s", index)
+	}
+}
+
+func TestFlatMigrationSerializesWithLifecycleThroughFinalization(t *testing.T) {
+	root := setupFlatMigrationCLIProject(t, "serialized-flat")
+	configureNoopLessonEvents(t, root)
+	started := make(chan struct{})
+	changed := make(chan error, 1)
+	lifecycleCmd := lessonChangeStatusCommand()
+	setLessonCommandFlags(t, lifecycleCmd, map[string]string{"project": root, "to": "stated"})
+	deps := defaultLessonCLIDeps()
+	realMigrate := deps.migrateFlat
+	deps.migrateFlat = func(opts lesson.FlatMigrationOptions) (lesson.FlatMigrationResult, error) {
+		go func() {
+			close(started)
+			changed <- runLessonChangeStatusWithDeps(lifecycleCmd, []string{"serialized-flat"}, defaultLessonCLIDeps())
+		}()
+		<-started
+		select {
+		case err := <-changed:
+			return lesson.FlatMigrationResult{}, errors.New("lifecycle mutation escaped migration lock before publication: " + errorText(err))
+		case <-time.After(100 * time.Millisecond):
+		}
+		return realMigrate(opts)
+	}
+	_, _, err := runFlatMigrationWithDeps(t, root, "serialized-flat", deps)
+	requireCLISuccess(t, err)
+	select {
+	case err := <-changed:
+		requireCLISuccess(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("lifecycle mutation deadlocked after flat migration released its lock")
+	}
+	body, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "serialized-flat", "README.md"))
+	requireCLISuccess(t, err)
+	if !strings.Contains(string(body), "**Status:** Stated") {
+		t.Fatalf("post-migration lifecycle status missing:\n%s", body)
+	}
+	if _, err := os.Stat(filepath.Join(root, "spec", "lessons", "serialized-flat.md")); !os.IsNotExist(err) {
+		t.Fatalf("flat source was not finalized after serial transaction: %v", err)
+	}
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return "success"
+	}
+	return err.Error()
 }

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -344,18 +346,54 @@ func TestLessonOccurrenceAdapterAndValidationEdges(t *testing.T) {
 		t.Fatalf("active branch context = %#v", git)
 	}
 
-	requireCLISuccess(t, os.WriteFile(filepath.Join(root, "specscore.yaml"), []byte("events:\n  subscribers:\n    - type: exec\n      command: [/bin/false]\n"), 0o644))
+	configureFailingLessonEvents(t, root)
 	cmd = lessonOccurrenceAddCommand()
 	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "summary": "pending", "context-json": `{}`})
 	requireCLISuccess(t, runLessonOccurrenceAddWithDeps(cmd, []string{"review-before-merge"}, defaultLessonCLIDeps()))
 }
 
 func TestCanonicalOccurrenceFailureReportsIndexAndReadPhases(t *testing.T) {
-	for _, phase := range []string{"index", "read"} {
+	for _, phase := range []string{"index", "read", "lock"} {
 		err := (&canonicalOccurrenceFailure{phase: phase, err: errors.New("failure")}).cliError(false)
-		if err == nil || !strings.Contains(err.Error(), phase) {
+		want := phase
+		if phase == "lock" {
+			want = "coordinating"
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("phase %s err=%v", phase, err)
 		}
+	}
+}
+
+func TestPublishCanonicalOccurrenceLockAndRereadFailures(t *testing.T) {
+	root := t.TempDir()
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	requireCLISuccess(t, os.MkdirAll(lessonsDir, 0o755))
+	requireCLISuccess(t, os.WriteFile(filepath.Join(lessonsDir, "reread.md"), []byte("flat\n"), 0o644))
+	base := &lesson.Lesson{Slug: "reread"}
+	opts := lesson.AddOccurrenceOptions{ID: uuid.NewString()}
+
+	deps := defaultLessonCLIDeps()
+	deps.parse = func(string) (*lesson.Lesson, error) { return nil, errors.New("parse") }
+	if _, failure := publishCanonicalOccurrence(context.Background(), root, base, opts, false, deps); failure == nil || failure.phase != "snapshot" {
+		t.Fatalf("locked parse failure = %#v", failure)
+	}
+
+	deps = defaultLessonCLIDeps()
+	deps.parse = func(string) (*lesson.Lesson, error) { return &lesson.Lesson{Slug: "reread", Canonical: false}, nil }
+	if _, failure := publishCanonicalOccurrence(context.Background(), root, base, opts, false, deps); failure == nil || failure.phase != "record" {
+		t.Fatalf("locked canonical-shape failure = %#v", failure)
+	}
+
+	missing := &lesson.Lesson{Slug: "missing"}
+	if _, failure := publishCanonicalOccurrence(context.Background(), root, missing, opts, false, defaultLessonCLIDeps()); failure == nil || failure.phase != "snapshot" {
+		t.Fatalf("locked resolve failure = %#v", failure)
+	}
+
+	deps = defaultLessonCLIDeps()
+	deps.withMutationLock = func(string, string, func() error) error { return errors.New("lock") }
+	if _, failure := publishCanonicalOccurrence(context.Background(), root, base, opts, false, deps); failure == nil || failure.phase != "lock" {
+		t.Fatalf("lock acquisition failure = %#v", failure)
 	}
 }
 
@@ -598,6 +636,7 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 	base := func(t *testing.T) (*cobra.Command, lessonCLIDeps, string) {
 		root := setupSpecRoot(t)
 		_ = projectdef.WriteSpecConfig(root, lessonTestConfig())
+		requireCLISuccess(t, ensureLessonAncestorIndexes(root))
 		mapping := filepath.Join(root, "mapping.json")
 		_ = os.WriteFile(mapping, []byte(`{}`), 0o644)
 		cmd := lessonImportLegacyCommand()
@@ -610,7 +649,7 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 		}
 		return cmd, deps, root
 	}
-	for _, phase := range []string{"root", "mapping-required", "mapping-read", "mapping-parse", "mapping-trailing", "config", "vocabulary", "preflight", "prepare", "apply-compensated", "commit", "delivery", "output"} {
+	for _, phase := range []string{"root", "mapping-required", "mapping-read", "mapping-parse", "mapping-trailing", "config", "vocabulary", "preflight", "index-preflight", "lock", "prepare", "apply-compensated", "reconcile", "commit", "delivery", "output"} {
 		cmd, deps, root := base(t)
 		switch phase {
 		case "root":
@@ -631,6 +670,10 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 			deps.preflightLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) error {
 				return errors.New("preflight")
 			}
+		case "index-preflight":
+			_ = os.Remove(filepath.Join(root, "spec", "lessons", "README.md"))
+		case "lock":
+			deps.withMutationLocks = func(string, []string, func() error) error { return errors.New("lock") }
 		case "prepare":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")
@@ -639,6 +682,8 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 			deps.applyLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyResult, error) {
 				return lesson.LegacyApplyResult{}, &lesson.MutationError{Outcome: lesson.MutationCompensated, Err: errors.New("apply")}
 			}
+		case "reconcile":
+			deps.lint = func(lint.Options) ([]lint.Violation, error) { return nil, errors.New("reconcile") }
 		case "commit":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return &preparedLessonEvent{outbox: event.NewOutbox(root), event: event.Event{UUID: "missing"}}, nil
@@ -732,11 +777,16 @@ func TestLegacyRecurFilesystemAndPublicationEdges(t *testing.T) {
 		lessonsDir := setupLessonsSpec(t)
 		root := filepath.Dir(filepath.Dir(lessonsDir))
 		writeLessonInDir(t, lessonsDir, "legacy", "Recorded")
+		legacyPath := filepath.Join(lessonsDir, "legacy.md")
+		legacyBody, readErr := os.ReadFile(legacyPath)
+		requireCLISuccess(t, readErr)
+		legacyBody = bytes.Replace(legacyBody, []byte("**Status:** Recorded\n"), []byte("**Status:** Recorded\n\n**Date:** 2026-08-10\n\n**Owner:** codex\n"), 1)
+		requireCLISuccess(t, os.WriteFile(legacyPath, legacyBody, 0o644))
 		cmd := lessonRecurCommand()
 		flags := map[string]string{"project": root, "note": "seen again"}
 		deps := defaultLessonCLIDeps()
-		body, index := filepath.Join(lessonsDir, "legacy.md"), filepath.Join(lessonsDir, "README.md")
-		_ = os.WriteFile(index, []byte("# Lessons\n\n| Lesson | Status | Recurred | Date | Owner |\n|---|---|---|---|---|\n"), 0o644)
+		body, index := legacyPath, filepath.Join(lessonsDir, "README.md")
+		requireCLISuccess(t, os.WriteFile(index, []byte("# Lessons\n\n## Index\n\n| Lesson | Status | Recurred | Date | Owner |\n|---|---|---|---|---|\n"), 0o644))
 		switch phase {
 		case "unsafe":
 			flags["note"] = "owner@example.com"
@@ -780,7 +830,10 @@ func TestLegacyRecurFilesystemAndPublicationEdges(t *testing.T) {
 		setLessonCommandFlags(t, cmd, flags)
 		err := runLessonRecurWithDeps(cmd, []string{"legacy"}, deps)
 		if phase == "delivery" {
-			requireCLISuccess(t, err)
+			if err != nil {
+				indexBody, _ := os.ReadFile(index)
+				t.Fatalf("delivery recurrence: %v\nindex:\n%s", err, indexBody)
+			}
 		} else if err == nil {
 			t.Fatalf("%s recurrence failure was accepted", phase)
 		}

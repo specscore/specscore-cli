@@ -3,6 +3,7 @@ package lint
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestWriteLintFileCoordinatesLessonArtifactsAndIndex(t *testing.T) {
 		if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeLintFile(specRoot, path, []byte("after\n"), 0o600); err != nil {
+		if err := writeLintFile(specRoot, path, []byte("before\n"), []byte("after\n"), 0o600); err != nil {
 			t.Fatalf("rewrite %s: %v", path, err)
 		}
 		got, err := os.ReadFile(path)
@@ -44,7 +45,7 @@ func TestWriteLintFileCoordinatesLessonArtifactsAndIndex(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeLintFile(specRoot, other, []byte("new\n"), 0o600); err != nil {
+	if err := writeLintFile(specRoot, other, nil, []byte("new\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(other); err != nil || info.Mode().Perm() != 0o600 {
@@ -69,12 +70,12 @@ func TestWriteLintFileSharesLifecycleLock(t *testing.T) {
 		holder <- lesson.WithMutationLock(root, "locked", func() error {
 			close(locked)
 			<-release
-			return nil
+			return os.WriteFile(path, []byte("lifecycle\n"), 0o644)
 		})
 	}()
 	<-locked
 	writer := make(chan error, 1)
-	go func() { writer <- writeLintFile(specRoot, path, []byte("after\n"), 0o644) }()
+	go func() { writer <- writeLintFile(specRoot, path, []byte("before\n"), []byte("after\n"), 0o644) }()
 	select {
 	case err := <-writer:
 		t.Fatalf("lint writer escaped lifecycle lock: %v", err)
@@ -84,7 +85,10 @@ func TestWriteLintFileSharesLifecycleLock(t *testing.T) {
 	if err := <-holder; err != nil {
 		t.Fatal(err)
 	}
-	if err := <-writer; err != nil {
-		t.Fatal(err)
+	if err := <-writer; err == nil || !strings.Contains(err.Error(), "stale Lesson rewrite") {
+		t.Fatalf("stale lint rewrite = %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "lifecycle\n" {
+		t.Fatalf("lifecycle bytes after stale lint writer = %q, %v", got, err)
 	}
 }

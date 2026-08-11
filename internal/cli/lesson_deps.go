@@ -43,6 +43,7 @@ type lessonCLIDeps struct {
 	afterFlatPhase              func(string) error
 	publishExclusive            func(string, []byte, os.FileMode) error
 	withMutationLock            func(string, string, func() error) error
+	withMutationLocks           func(string, []string, func() error) error
 	rewriteAtomic               func(string, []byte) error
 	durable                     durableFileOps
 }
@@ -72,6 +73,7 @@ func defaultLessonCLIDeps() lessonCLIDeps {
 		afterFlatPhase:              func(string) error { return nil },
 		publishExclusive:            publishFileExclusive,
 		withMutationLock:            lesson.WithMutationLock,
+		withMutationLocks:           lesson.WithMutationLocks,
 		rewriteAtomic:               lesson.RewriteFileAtomic,
 		durable:                     defaultDurableFileOps(),
 	}

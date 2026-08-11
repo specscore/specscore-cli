@@ -97,6 +97,7 @@ type canonicalOccurrenceResult struct {
 	occurrence lesson.Occurrence
 	items      []lesson.Occurrence
 	delivery   event.ReplayResult
+	status     string
 }
 
 type canonicalOccurrenceFailure struct {
@@ -124,6 +125,8 @@ func (f *canonicalOccurrenceFailure) cliError(recur bool) error {
 		return exitcode.UnexpectedErrorf("upserting occurrence index row: %v", f.err)
 	case "read":
 		return exitcode.UnexpectedErrorf("reading occurrences: %v", f.err)
+	case "lock":
+		return exitcode.UnexpectedErrorf("coordinating Lesson occurrence mutation: %v", f.err)
 	default:
 		return exitcode.UnexpectedErrorf("occurrence recorded but event publication is pending for event %s: %v", f.eventID, f.err)
 	}
@@ -135,6 +138,34 @@ func (f *canonicalOccurrenceFailure) cliError(recur bool) error {
 // every failure retains state; path-based compensation could delete a foreign
 // replacement that appeared after publication.
 func publishCanonicalOccurrence(ctx context.Context, root string, l *lesson.Lesson, opts lesson.AddOccurrenceOptions, readBack bool, deps lessonCLIDeps) (canonicalOccurrenceResult, *canonicalOccurrenceFailure) {
+	var result canonicalOccurrenceResult
+	var failure *canonicalOccurrenceFailure
+	lockErr := deps.withMutationLock(root, l.Slug, func() error {
+		path, err := lesson.ResolveLessonFile(filepath.Join(root, "spec", "lessons"), l.Slug)
+		if err != nil {
+			failure = &canonicalOccurrenceFailure{phase: "snapshot", err: err}
+			return nil
+		}
+		current, err := deps.parse(path)
+		if err != nil {
+			failure = &canonicalOccurrenceFailure{phase: "snapshot", err: err}
+			return nil
+		}
+		if !current.Canonical {
+			failure = &canonicalOccurrenceFailure{phase: "record", err: fmt.Errorf("lesson %q is legacy flat form; `lesson recur` remains available until explicit migration", l.Slug)}
+			return nil
+		}
+		opts.LessonPath = path
+		result, failure = publishCanonicalOccurrenceLocked(ctx, root, current, opts, readBack, deps)
+		return nil
+	})
+	if lockErr != nil {
+		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "lock", recoveryRequired: lesson.MutationOutcomeOf(lockErr) == lesson.MutationUncertain, err: lockErr}
+	}
+	return result, failure
+}
+
+func publishCanonicalOccurrenceLocked(ctx context.Context, root string, l *lesson.Lesson, opts lesson.AddOccurrenceOptions, readBack bool, deps lessonCLIDeps) (canonicalOccurrenceResult, *canonicalOccurrenceFailure) {
 	if err := preflightOccurrenceIndex(root); err != nil {
 		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "snapshot", err: err}
 	}
@@ -151,8 +182,8 @@ func publishCanonicalOccurrence(ctx context.Context, root string, l *lesson.Less
 		failure := &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: cause}
 		return prepared.ResolveMutationFailure(operation, failure)
 	}
-	if err := deps.indexUpsert(filepath.Join(root, "spec"), l); err != nil {
-		recovery, resolved := retain("upserting occurrence index row", err)
+	if err := reconcileLockedLessons(root, []string{l.Slug}, []string{o.Path}, deps); err != nil {
+		recovery, resolved := retain("reconciling occurrence and index", err)
 		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "index", recoveryRequired: recovery, err: resolved}
 	}
 	var items []lesson.Occurrence
@@ -163,16 +194,11 @@ func publishCanonicalOccurrence(ctx context.Context, root string, l *lesson.Less
 			return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "read", recoveryRequired: recovery, err: resolved}
 		}
 	}
-	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
-	if err := newLessonMutationCoordinator(nil, deps.durable).Fence(o.Path, indexPath); err != nil {
-		recovery, resolved := retain("durably fencing occurrence and index", err)
-		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "fence", recoveryRequired: recovery, err: resolved}
-	}
 	delivery, err := prepared.Commit(ctx)
 	if err != nil {
 		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "commit", eventID: prepared.event.UUID, err: err}
 	}
-	return canonicalOccurrenceResult{occurrence: o, items: items, delivery: delivery}, nil
+	return canonicalOccurrenceResult{occurrence: o, items: items, delivery: delivery, status: l.Status}, nil
 }
 
 func preflightOccurrenceIndex(root string) error {
