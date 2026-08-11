@@ -76,9 +76,9 @@ changelog:
 # Modern binary-distribution path (migrated from the deprecated `brews:`
 # formula key, which `goreleaser check` hard-fails on). This publishes a
 # Homebrew *cask* that installs the prebuilt darwin binary from the release
-# archive, rather than a formula that builds/installs from source. Install with:
-#   brew install --cask specscore/tap/specscore
-# (the tap-qualified `brew install specscore/tap/specscore` also resolves it).
+# archive, rather than a formula that builds/installs from source. The cask is
+# dormant and must not be presented as an installation path until the release
+# contract's notarization and Gatekeeper conditions are explicitly verified.
 #
 # The cask manifest is pushed to specscore/homebrew-tap under Casks/specscore.rb
 # (GoReleaser's default cask `directory`), so the tap now carries a Casks/ tree
