@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,7 +30,9 @@ func canonicalLessonProject(t *testing.T) string {
 
 func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testing.T) {
 	root := canonicalLessonProject(t)
-	out, stderr, err := runLesson(t, "occurrence", "add", "review-before-merge", "--summary", "stale branch", "--context-json", `{"git":{"commit":"abcdef1","branch":"codex/test"},"execution":{"kind":"automation","id":"run-42"}}`)
+	contextJSON := `{"run":"42","files":["x.go"],"nested":{"attempt":2,"verified":true,"meta":null}}`
+	wantContext := map[string]any{"run": "42", "files": []any{"x.go"}, "nested": map[string]any{"attempt": float64(2), "verified": true, "meta": nil}}
+	out, stderr, err := runLesson(t, "occurrence", "add", "review-before-merge", "--summary", "stale branch", "--context-json", contextJSON)
 	if err != nil {
 		t.Fatalf("occurrence add: %v stderr=%s", err, stderr)
 	}
@@ -51,8 +54,24 @@ func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testin
 		t.Fatalf("summary = %#v", stored["summary"])
 	}
 	ctx := stored["context"].(map[string]any)
-	if ctx["git"].(map[string]any)["branch"] != "codex/test" {
+	if !reflect.DeepEqual(ctx, wantContext) {
 		t.Fatalf("context was not preserved: %#v", ctx)
+	}
+	listJSON, _, err := runLesson(t, "occurrence", "list", "review-before-merge", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []map[string]any
+	if err := json.Unmarshal([]byte(listJSON), &listed); err != nil || len(listed) != 1 || !reflect.DeepEqual(listed[0]["context"], wantContext) {
+		t.Fatalf("list did not round-trip opaque context: err=%v items=%#v", err, listed)
+	}
+	infoJSON, _, err := runLesson(t, "occurrence", "info", "review-before-merge", id, "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inspected map[string]any
+	if err := json.Unmarshal([]byte(infoJSON), &inspected); err != nil || !reflect.DeepEqual(inspected["context"], wantContext) {
+		t.Fatalf("info did not round-trip opaque context: err=%v item=%#v", err, inspected)
 	}
 	index, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
 	if err != nil || !strings.Contains(string(index), "| [review-before-merge](review-before-merge/README.md) | Recorded |") || !strings.Contains(string(index), "| 1 |") {

@@ -26,7 +26,7 @@ func lessonOccurrenceCommand() *cobra.Command {
 }
 
 func lessonOccurrenceAddCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "add <lesson>", Short: "Append one typed occurrence without rewriting the Lesson", Long: "Context is strict, bounded, recursively scanned, and secret/contact-free; original/user/agent prompts, raw logs/diffs, credentials, email addresses, absolute paths, traversal, unknown fields, and non-UTC timestamps are refused. Evidence paths and worktree path hints are normalized repository-relative forward-slash paths or redacted. Docs: docs/agent-lessons.md#create-and-record", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonOccurrenceAdd}
+	cmd := &cobra.Command{Use: "add <lesson>", Short: "Append one typed occurrence without rewriting the Lesson", Long: "Context is an opaque JSON object: unknown scalar, array, and nested members are preserved. It remains bounded, recursively scanned, and secret/contact-free; original/user/agent prompts, raw logs/diffs, credentials, email addresses, unsafe known paths, unsupported fields inside recognized semantic objects, and non-UTC timestamps are refused. Evidence paths and worktree path hints are normalized repository-relative forward-slash paths or redacted. Docs: docs/agent-lessons.md#create-and-record", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonOccurrenceAdd}
 	cmd.Flags().String("summary", "", "bounded factual summary (defaults to a neutral observation)")
 	cmd.Flags().String("context-json", "", "JSON object with safe generic context")
 	cmd.Flags().String("context-file", "", "path to a JSON context object")

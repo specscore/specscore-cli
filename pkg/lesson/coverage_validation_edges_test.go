@@ -56,7 +56,7 @@ func TestCoverageValidationAndMutationEdges(t *testing.T) {
 	}
 
 	for _, context := range []map[string]any{
-		{"prompt": "no"}, {"unknown": "no"}, {"git": "not-an-object"},
+		{"prompt": "no"}, {"git": "not-an-object"},
 		{"repository": "not/a"}, {"git": map[string]any{"commit": "BAD"}},
 		{"worktree": map[string]any{"path_hint": "../outside"}},
 		{"execution": map[string]any{"kind": "daemon"}},
@@ -71,8 +71,53 @@ func TestCoverageValidationAndMutationEdges(t *testing.T) {
 		"git":        map[string]any{"commit": "abcdef1", "branch": "main"},
 		"worktree":   map[string]any{"path_hint": "pkg/lesson", "id": "coverage"},
 		"execution":  map[string]any{"kind": "ci", "id": "run-1"},
+		"run":        "42",
+		"files":      []string{"x.go"},
+		"nested":     map[string]any{"attempt": 2, "verified": true, "missing": nil},
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if err := validateContext(map[string]any{"repository": ""}); err == nil {
+		t.Fatal("empty recognized repository accepted")
+	}
+	if err := validateContextWithRuntime(map[string]any{}, func(any) ([]byte, error) {
+		return nil, errors.New("marshal")
+	}, decodeNormalizedContext); err == nil {
+		t.Fatal("context marshal failure accepted")
+	}
+	if err := validateContextWithRuntime(map[string]any{}, json.Marshal, func([]byte) (map[string]any, error) {
+		return nil, errors.New("decode")
+	}); err == nil {
+		t.Fatal("context decode failure accepted")
+	}
+	tooMany := make([]any, 21)
+	if err := validateOpaqueContextValue("context.files", tooMany); err == nil {
+		t.Fatal("oversized context array accepted")
+	}
+	if err := validateOpaqueContextValue("context.files", []any{"line\nnext"}); err == nil {
+		t.Fatal("unsafe nested array value accepted")
+	}
+	tooManyProperties := make(map[string]any, 21)
+	for i := 0; i < 21; i++ {
+		tooManyProperties[fmt.Sprintf("key-%d", i)] = i
+	}
+	if err := validateOpaqueContextValue("context.extra", tooManyProperties); err == nil {
+		t.Fatal("oversized context object accepted")
+	}
+	if err := validateOpaqueContextValue("context.extra", map[string]any{"bad\nkey": true}); err == nil {
+		t.Fatal("unsafe context property name accepted")
+	}
+	if err := validateOpaqueContextValue("context.extra", map[string]any{"nested": strings.Repeat("x", 501)}); err == nil {
+		t.Fatal("unsafe nested context value accepted")
+	}
+	if err := validateOpaqueContextValue("context.extra", make(chan int)); err == nil {
+		t.Fatal("non-JSON context value accepted")
+	}
+	if err := validateContextText("context.empty", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateContextObject("git", map[string]any{"token": "safe"}); err == nil {
+		t.Fatal("forbidden recognized context property accepted")
 	}
 
 	ref := "spec/lessons/rule/README.md"

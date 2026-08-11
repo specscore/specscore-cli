@@ -91,8 +91,8 @@ func (f occurrenceTestFile) Close() error {
 func TestOccurrenceContractValidatesAgainstPinnedCoreSchema(t *testing.T) {
 	const (
 		schemaURL      = "https://specscore.md/new/lesson-occurrence.schema.json"
-		schemaRevision = "b16caad0d0693c407bfb4230b492bce5f2aa8458"
-		schemaSHA256   = "6d97a499ae0bf11d01395ebdd7921efc97e01840c3bf9388b32edbf933d522ee"
+		schemaRevision = "798c73ad1ebe09e135830b4651922d105b39acc1"
+		schemaSHA256   = "70e671cad14faaf54259e6ae9e12986e00a784d10ec26cbfef55073403ea4125"
 	)
 	type provenanceShape struct {
 		Repository string `json:"repository"`
@@ -156,6 +156,9 @@ func TestOccurrenceContractValidatesAgainstPinnedCoreSchema(t *testing.T) {
 			"git":        map[string]any{"commit": "abcdef1", "branch": "main"},
 			"worktree":   map[string]any{"path_hint": "redacted", "id": "sha256:abc"},
 			"execution":  map[string]any{"kind": "unknown", "id": "run-1"},
+			"run":        "42",
+			"files":      []any{"x.go"},
+			"extra":      map[string]any{"attempt": json.Number("2"), "verified": true},
 		},
 		"evidence":   map[string]any{"kind": "none", "ref": nil},
 		"redactions": []any{"prompt omitted"},
@@ -247,7 +250,7 @@ func TestValidateOccurrenceFile_RecursivePolicyLexicalUTCAndNoSecretEcho(t *test
 	path := filepath.Join(dir, id+".json")
 	secret := "ghp_" + "abcdefghijklmnopqrstuvwxyz123456"
 	cases := map[string]string{
-		"mixed-case forbidden property": `{"schema_version":1,"id":"` + id + `","occurred_at":"2026-08-10T10:00:00Z","summary":"x","context":{"execution":{"Original_Prompt":"hidden"}},"evidence":{"kind":"none","ref":null},"redactions":[]}`,
+		"mixed-case forbidden property": `{"schema_version":1,"id":"` + id + `","occurred_at":"2026-08-10T10:00:00Z","summary":"x","context":{"extra":{"Original_Prompt":"hidden"}},"evidence":{"kind":"none","ref":null},"redactions":[]}`,
 		"nested secret":                 `{"schema_version":1,"id":"` + id + `","occurred_at":"2026-08-10T10:00:00Z","summary":"x","context":{"execution":{"id":"` + secret + `"}},"evidence":{"kind":"none","ref":null},"redactions":[]}`,
 		"email":                         `{"schema_version":1,"id":"` + id + `","occurred_at":"2026-08-10T10:00:00Z","summary":"contact person` + "@" + `example.com","context":{},"evidence":{"kind":"none","ref":null},"redactions":[]}`,
 		"invalid calendar":              `{"schema_version":1,"id":"` + id + `","occurred_at":"2026-02-30T10:00:00Z","summary":"x","context":{},"evidence":{"kind":"none","ref":null},"redactions":[]}`,

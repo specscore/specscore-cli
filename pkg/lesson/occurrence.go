@@ -120,40 +120,109 @@ func validateBounded(field, s string) error {
 }
 
 func validateContext(c map[string]any) error {
-	allowed := map[string]bool{"repository": true, "git": true, "worktree": true, "execution": true}
-	for k := range c {
-		if _, forbidden := occurrenceForbiddenNames[strings.ToLower(k)]; forbidden {
-			return fmt.Errorf("context contains forbidden content field %q", k)
-		}
-		if !allowed[k] {
-			return fmt.Errorf("context has unsupported field %q", k)
-		}
+	return validateContextWithRuntime(c, json.Marshal, decodeNormalizedContext)
+}
+
+func decodeNormalizedContext(b []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(b)))
+	decoder.UseNumber()
+	var normalized map[string]any
+	err := decoder.Decode(&normalized)
+	return normalized, err
+}
+
+func validateContextWithRuntime(c map[string]any, marshal func(any) ([]byte, error), decode func([]byte) (map[string]any, error)) error {
+	// Normalize through JSON so library callers may use ordinary typed numeric
+	// and slice values while validation still reasons about the exact JSON
+	// shape that will be persisted.
+	b, err := marshal(c)
+	if err != nil {
+		return fmt.Errorf("context must contain only JSON values: %w", err)
+	}
+	normalized, err := decode(b)
+	if err != nil {
+		return fmt.Errorf("context must contain only JSON values: %w", err)
+	}
+	if err := validateOpaqueContextValue("context", normalized); err != nil {
+		return err
 	}
 	for _, key := range []string{"repository", "git", "worktree", "execution"} {
-		v, ok := c[key]
+		v, ok := normalized[key]
 		if !ok || v == nil {
 			continue
 		}
-		switch x := v.(type) {
-		case string:
-			if key != "repository" {
-				return fmt.Errorf("context.%s must be an object or null", key)
+		if key == "repository" {
+			x, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("context.repository must be a string or null")
 			}
 			if err := validateBounded("context."+key, x); err != nil {
 				return err
 			}
-			if key == "repository" && !repositoryID.MatchString(x) {
+			if !repositoryID.MatchString(x) {
 				return fmt.Errorf("context.repository must be host/org/repository")
 			}
-		case map[string]any:
-			if err := validateContextObject(key, x); err != nil {
-				return err
-			}
-		default:
+			continue
+		}
+		x, ok := v.(map[string]any)
+		if !ok {
 			return fmt.Errorf("context.%s must be an object or null", key)
+		}
+		if err := validateContextObject(key, x); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validateOpaqueContextValue(field string, value any) error {
+	switch x := value.(type) {
+	case nil, bool, json.Number:
+		return nil
+	case string:
+		return validateContextText(field, x)
+	case []any:
+		if len(x) > 20 {
+			return fmt.Errorf("%s has more than 20 entries", field)
+		}
+		for i, item := range x {
+			if err := validateOpaqueContextValue(fmt.Sprintf("%s[%d]", field, i), item); err != nil {
+				return err
+			}
+		}
+		return nil
+	case map[string]any:
+		if len(x) > 20 {
+			return fmt.Errorf("%s has more than 20 entries", field)
+		}
+		for key, item := range x {
+			if _, forbidden := occurrenceForbiddenNames[strings.ToLower(key)]; forbidden {
+				return fmt.Errorf("%s contains forbidden content field %q", field, key)
+			}
+			if err := validateContextText(field+" property name", key); err != nil {
+				return err
+			}
+			if err := validateOpaqueContextValue(field+"."+key, item); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s contains a non-JSON value", field)
+	}
+}
+
+func validateContextText(field, value string) error {
+	if utf8.RuneCountInString(value) > 500 {
+		return fmt.Errorf("%s must contain at most 500 Unicode code points", field)
+	}
+	if strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("%s must be a single line", field)
+	}
+	if value == "" {
+		return ValidateSafeContent(field, value)
+	}
+	return validateBounded(field, value)
 }
 
 func validateContextObject(kind string, values map[string]any) error {
