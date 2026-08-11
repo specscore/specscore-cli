@@ -176,6 +176,9 @@ func TestDiscoverAndResolveLessonFormsRemainDeterministic(t *testing.T) {
 	if _, err := ResolveLessonFile(lessonsDir, "rule"); err == nil {
 		t.Fatal("canonical/flat form collision resolved silently")
 	}
+	if _, err := Discover(lessonsDir); err == nil {
+		t.Fatal("discovery accepted duplicate canonical and flat lesson forms")
+	}
 	if err := os.RemoveAll(filepath.Join(lessonsDir, "rule")); err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +190,16 @@ func TestDiscoverAndResolveLessonFormsRemainDeterministic(t *testing.T) {
 	}
 	if _, err := ResolveLessonFile(lessonsDir, "Bad Slug"); err == nil {
 		t.Fatal("invalid lesson slug resolved")
+	}
+	if explicit, err := ScaffoldCanonical(ScaffoldOptions{Slug: "explicit", Title: "Explicit", Owner: "owner", Date: "2026-08-11"}, []string{"process", "validation"}); err != nil || !bytes.Contains(explicit, []byte("**Classifications:** process, validation")) {
+		t.Fatalf("explicit scaffold=%q err=%v", explicit, err)
+	}
+	oversized := filepath.Join(lessonsDir, "oversized.md")
+	if err := os.WriteFile(oversized, []byte("# Lesson: oversized\n"+strings.Repeat("x", 1<<20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(oversized); err == nil {
+		t.Fatal("oversized lesson line bypassed scanner limit")
 	}
 }
 
