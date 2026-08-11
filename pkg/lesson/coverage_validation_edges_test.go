@@ -367,6 +367,22 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 	if _, err := resolveLegacySourceIdentity(filepath.Join(t.TempDir(), "not-git.md"), []byte("x")); err == nil {
 		t.Fatal("non-Git source identity accepted")
 	}
+	gitLessons := filepath.Join(t.TempDir(), "spec", "lessons")
+	gitSource := writeFlatFixture(t, gitLessons, "identity", flatFixture("Recorded", 0, ""))
+	gitBytes, err := os.ReadFile(gitSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveLegacySourceIdentity(gitSource, gitBytes)
+	if err != nil || resolved.Repository != "github.com/example/process" || resolved.Path != "spec/lessons/identity.md" || resolved.SHA256 != shaString(gitBytes) {
+		t.Fatalf("resolved identity=%#v err=%v", resolved, err)
+	}
+	if err := os.WriteFile(gitSource, append(gitBytes, []byte("changed")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveLegacySourceIdentity(gitSource, append(gitBytes, []byte("changed")...)); err == nil {
+		t.Fatal("uncommitted legacy source bytes accepted as immutable")
+	}
 
 	for _, value := range []string{"", strings.Repeat("x", 2001), "<!-- TODO -->", "TODO: refine", "# heading", "person@example.test"} {
 		if err := validateReviewedCompactText("Lesson", value); err == nil {
