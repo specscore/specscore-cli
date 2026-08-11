@@ -591,6 +591,60 @@ func TestMigrateFlat_RefusesCanonicalSiblingAndRollsBackPublicationFailure(t *te
 	})
 }
 
+func TestMigrateFlatWithDeps_PublishAndDurabilityFailuresRestoreFreshTree(t *testing.T) {
+	for _, failLinkCall := range []int{1, 2, 3, 4} {
+		t.Run(fmt.Sprintf("link-%d", failLinkCall), func(t *testing.T) {
+			lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+			writeFlatFixture(t, lessonsDir, "rollback", flatFixture("Recorded", 0, ""))
+			before := snapshotTree(t, lessonsDir)
+			calls := 0
+			deps := defaultFlatMigrationDeps()
+			deps.fs = flatMigrationTestFS{lessonFS: osLessonFS{}, link: func(old, new string) error {
+				calls++
+				if calls == failLinkCall {
+					return errors.New("injected link boundary failure")
+				}
+				return os.Link(old, new)
+			}}
+			if _, err := migrateFlatWithDeps(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "rollback", Classifications: []string{"process"}}, deps); err == nil {
+				t.Fatal("expected injected link failure")
+			}
+			if calls != failLinkCall || !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
+				t.Fatalf("link calls=%d tree changed after rollback", calls)
+			}
+		})
+	}
+
+	for _, failSyncCall := range []int{1, 2, 3, 4} {
+		t.Run(fmt.Sprintf("sync-%d", failSyncCall), func(t *testing.T) {
+			lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+			writeFlatFixture(t, lessonsDir, "rollback", flatFixture("Recorded", 0, ""))
+			before := snapshotTree(t, lessonsDir)
+			calls := 0
+			deps := defaultFlatMigrationDeps()
+			deps.fs = flatMigrationTestFS{lessonFS: osLessonFS{}, open: func(path string) (lessonFile, error) {
+				file, err := osLessonFS{}.Open(path)
+				if err != nil {
+					return nil, err
+				}
+				return flatMigrationTestFile{lessonFile: file, sync: func() error {
+					calls++
+					if calls == failSyncCall {
+						return errors.New("injected directory sync failure")
+					}
+					return file.Sync()
+				}}, nil
+			}}
+			if _, err := migrateFlatWithDeps(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "rollback", Classifications: []string{"process"}}, deps); err == nil {
+				t.Fatal("expected injected sync failure")
+			}
+			if calls < failSyncCall || !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
+				t.Fatalf("sync calls=%d tree changed after rollback", calls)
+			}
+		})
+	}
+}
+
 func TestMigrateFlat_ResumesDurableMarkerWithoutOverwriting(t *testing.T) {
 	withFlatSourceIdentity(t)
 	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
