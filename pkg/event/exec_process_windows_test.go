@@ -232,31 +232,35 @@ func TestExecWindowsJobTerminationFailureFallsBackDuringDeliver(t *testing.T) {
 	}
 }
 
-// TestExecTimeoutKillsHungProcess verifies the Windows half of
-// AC:exec-timeout-kills-hung-process on a real Windows runner. The retained
-// child handle proves that timeout terminates the descendant, not only its
-// direct PowerShell parent.
-func TestExecTimeoutKillsHungProcess(t *testing.T) {
+// TestExecCancellationTerminatesHungProcessTree verifies Windows Job Object
+// cancellation on a real runner. A deadline and a parent cancellation both
+// invoke cmd.Cancel, so this test controls cancellation only after the
+// descendant is observable; the generic and Unix tests remain the authority
+// for ExecTimeoutError's deadline semantics.
+func TestExecCancellationTerminatesHungProcessTree(t *testing.T) {
+	const (
+		actionTimeout          = 30 * time.Second
+		fixtureReadinessBudget = 20 * time.Second
+		cancellationBound      = 2 * time.Second
+	)
 	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
-	script := `$child = Start-Process -FilePath "$env:SystemRoot\System32\ping.exe" ` +
-		`-ArgumentList '-n','31','127.0.0.1' ` +
-		`-PassThru; ` +
-		`[System.IO.File]::WriteAllText($env:SPECSCORE_CHILD_PID_FILE, [string]$child.Id); ` +
-		`Wait-Process -Id $child.Id`
-	timeout := 10 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	sub := NewExec(
-		[]string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script},
-		map[string]string{"SPECSCORE_CHILD_PID_FILE": childPIDFile},
-		timeout,
+		[]string{os.Args[0], "-test.run=^TestExecCancellationTerminatesHungProcessTreeHelper$"},
+		map[string]string{
+			"SPECSCORE_CHILD_PID_FILE":              childPIDFile,
+			"SPECSCORE_WINDOWS_PROCESS_TREE_HELPER": "1",
+		},
+		actionTimeout,
 	)
 
 	result := make(chan error, 1)
-	start := time.Now()
 	go func() {
-		result <- sub.Deliver(context.Background(), execSampleEvent(t))
+		result <- sub.Deliver(ctx, execSampleEvent(t))
 	}()
 
-	pid := waitForWindowsChildPID(t, childPIDFile, result, timeout)
+	pid := waitForWindowsChildPID(t, childPIDFile, result, fixtureReadinessBudget)
 	handle, err := windows.OpenProcess(
 		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE,
 		false,
@@ -270,20 +274,21 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 		_ = windows.CloseHandle(handle)
 	})
 
+	cancelledAt := time.Now()
+	cancel()
 	err = <-result
-	elapsed := time.Since(start)
-	var timeoutErr *ExecTimeoutError
-	if !errors.As(err, &timeoutErr) {
-		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
+	var exitErr *ExecExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("Deliver error type = %T (%v), want *ExecExitError after cancellation", err, err)
 	}
-	if elapsed < timeout {
-		t.Fatalf("elapsed = %v, want >= %v", elapsed, timeout)
+	if exitErr.ExitCode != windowsJobTimeoutExitCode {
+		t.Fatalf("Deliver exit code = %d, want Job Object termination code %d", exitErr.ExitCode, windowsJobTimeoutExitCode)
 	}
-	if elapsed > timeout+2*time.Second {
-		t.Fatalf("elapsed = %v, want <= %v", elapsed, timeout+2*time.Second)
+	if elapsed := time.Since(cancelledAt); elapsed > cancellationBound {
+		t.Fatalf("Deliver after cancellation = %v, want <= %v", elapsed, cancellationBound)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(cancellationBound)
 	for {
 		var exitCode uint32
 		if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
@@ -296,6 +301,35 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 			t.Fatalf("child process %d survived Windows Job Object timeout", pid)
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// TestExecCancellationTerminatesHungProcessTreeHelper is the Job-owned parent
+// for TestExecCancellationTerminatesHungProcessTree. It starts a direct ping
+// descendant, records its PID, then waits until Job Object cancellation kills
+// the entire tree. It is only entered by the separately executed test binary.
+func TestExecCancellationTerminatesHungProcessTreeHelper(t *testing.T) {
+	if os.Getenv("SPECSCORE_WINDOWS_PROCESS_TREE_HELPER") != "1" {
+		return
+	}
+
+	child := exec.Command(
+		filepath.Join(os.Getenv("SystemRoot"), "System32", "ping.exe"),
+		"-n", "31", "127.0.0.1",
+	)
+	if err := child.Start(); err != nil {
+		t.Fatalf("start ping child: %v", err)
+	}
+	if err := os.WriteFile(
+		os.Getenv("SPECSCORE_CHILD_PID_FILE"),
+		[]byte(strconv.Itoa(child.Process.Pid)),
+		0o600,
+	); err != nil {
+		_ = child.Process.Kill()
+		t.Fatalf("record child PID: %v", err)
+	}
+	if err := child.Wait(); err != nil {
+		t.Fatalf("wait for ping child: %v", err)
 	}
 }
 
