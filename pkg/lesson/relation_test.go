@@ -10,6 +10,38 @@ import (
 	"testing"
 )
 
+type relationTestFS struct {
+	lessonFS
+	rename func(string, string) error
+	open   func(string) (lessonFile, error)
+}
+
+func (fs relationTestFS) Rename(oldname, newname string) error {
+	if fs.rename != nil {
+		return fs.rename(oldname, newname)
+	}
+	return fs.lessonFS.Rename(oldname, newname)
+}
+
+func (fs relationTestFS) Open(path string) (lessonFile, error) {
+	if fs.open != nil {
+		return fs.open(path)
+	}
+	return fs.lessonFS.Open(path)
+}
+
+type relationTestFile struct {
+	lessonFile
+	sync func() error
+}
+
+func (f relationTestFile) Sync() error {
+	if f.sync != nil {
+		return f.sync()
+	}
+	return f.lessonFile.Sync()
+}
+
 func relationFixture(t *testing.T, slugs ...string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "spec", "lessons")
@@ -166,17 +198,16 @@ func TestAddRelation_SecondPublishFailureRollsBackFirstLesson(t *testing.T) {
 	to := filepath.Join(lessons, "prior", "README.md")
 	beforeFrom, _ := os.ReadFile(from)
 	beforeTo, _ := os.ReadFile(to)
-	orig := relationRename
 	calls := 0
-	relationRename = func(old, new string) error {
+	deps := defaultRelationDeps()
+	deps.fs = relationTestFS{lessonFS: osLessonFS{}, rename: func(old, new string) error {
 		calls++
 		if calls == 2 {
 			return errors.New("injected second publish failure")
 		}
 		return os.Rename(old, new)
-	}
-	t.Cleanup(func() { relationRename = orig })
-	if err := AddRelation(lessons, "successor", "supersedes", "prior"); err == nil {
+	}}
+	if err := addRelationWithDeps(lessons, "successor", "supersedes", "prior", deps); err == nil {
 		t.Fatal("expected injected failure")
 	}
 	afterFrom, _ := os.ReadFile(from)
@@ -190,18 +221,23 @@ func TestAddRelation_SecondPostRenameSyncFailureRemainsUncertain(t *testing.T) {
 	lessons := relationFixture(t, "successor", "prior")
 	from := filepath.Join(lessons, "successor", "README.md")
 	to := filepath.Join(lessons, "prior", "README.md")
-	original := relationSyncDirectory
 	calls := 0
-	relationSyncDirectory = func(path string) error {
-		calls++
-		if calls == 2 {
-			return errors.New("injected second post-rename directory sync failure")
+	deps := defaultRelationDeps()
+	deps.fs = relationTestFS{lessonFS: osLessonFS{}, open: func(path string) (lessonFile, error) {
+		file, err := osLessonFS{}.Open(path)
+		if err != nil {
+			return nil, err
 		}
-		return syncDirectory(path)
-	}
-	t.Cleanup(func() { relationSyncDirectory = original })
+		return relationTestFile{lessonFile: file, sync: func() error {
+			calls++
+			if calls == 2 {
+				return errors.New("injected second post-rename directory sync failure")
+			}
+			return file.Sync()
+		}}, nil
+	}}
 
-	err := AddRelation(lessons, "successor", "supersedes", "prior")
+	err := addRelationWithDeps(lessons, "successor", "supersedes", "prior", deps)
 	if MutationOutcomeOf(err) != MutationUncertain {
 		t.Fatalf("outcome=%v err=%v; second renamed file can remain", MutationOutcomeOf(err), err)
 	}
@@ -259,17 +295,16 @@ func TestAddRelation_AdversarialOverwriteRacesAreWriteFree(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			lessons := relationFixture(t, "a", "b")
 			beforeB, _ := os.ReadFile(filepath.Join(lessons, "b", "README.md"))
-			orig := relationBeforePublish
 			fired := false
-			relationBeforePublish = func(kind string) error {
+			deps := defaultRelationDeps()
+			deps.beforePublish = func(kind string) error {
 				if !fired && (kind == tc.typ || (tc.typ == "supersedes" && kind == "supersedes")) {
 					fired = true
 					tc.hook(t, lessons)
 				}
 				return nil
 			}
-			t.Cleanup(func() { relationBeforePublish = orig })
-			if err := AddRelation(lessons, tc.from, tc.typ, tc.to); err == nil {
+			if err := addRelationWithDeps(lessons, tc.from, tc.typ, tc.to, deps); err == nil {
 				t.Fatal("race must refuse publication")
 			}
 			if !fired {
@@ -305,14 +340,13 @@ func TestAddRelation_CrossProcessAdvisoryLockRefusesOverlappingWriter(t *testing
 	}
 	locked := make(chan struct{})
 	release := make(chan struct{})
-	original := relationLockAcquired
-	relationLockAcquired = func() {
+	deps := defaultRelationDeps()
+	deps.lockAcquired = func() {
 		close(locked)
 		<-release
 	}
-	t.Cleanup(func() { relationLockAcquired = original })
 	first := make(chan error, 1)
-	go func() { first <- AddRelation(lessons, "a", "duplicates", "b") }()
+	go func() { first <- addRelationWithDeps(lessons, "a", "duplicates", "b", deps) }()
 	<-locked
 
 	child := exec.Command(os.Args[0], "-test.run=^TestRelationLockHelper$")

@@ -252,6 +252,10 @@ func AddOccurrence(opts AddOccurrenceOptions) (Occurrence, error) {
 }
 
 func addOccurrenceWithFS(opts AddOccurrenceOptions, fs lessonFS) (Occurrence, error) {
+	return addOccurrenceWithRuntime(opts, fs, json.MarshalIndent)
+}
+
+func addOccurrenceWithRuntime(opts AddOccurrenceOptions, fs lessonFS, marshal func(any, string, string) ([]byte, error)) (Occurrence, error) {
 	l, err := Parse(opts.LessonPath)
 	if err != nil {
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
@@ -283,7 +287,7 @@ func addOccurrenceWithFS(opts AddOccurrenceOptions, fs lessonFS) (Occurrence, er
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	o.Path = filepath.Join(l.OccurrencesDir, o.ID+".json")
-	b, err := json.MarshalIndent(o, "", "  ")
+	b, err := marshal(o, "", "  ")
 	if err != nil {
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
@@ -411,6 +415,12 @@ func ValidateOccurrenceFile(path string) (Occurrence, error) {
 }
 
 func validateOccurrenceFileWithFS(path string, fs lessonFS) (Occurrence, error) {
+	return validateOccurrenceFileWithRuntime(path, fs, func(data string) *json.Decoder {
+		return json.NewDecoder(strings.NewReader(data))
+	})
+}
+
+func validateOccurrenceFileWithRuntime(path string, fs lessonFS, newDecoder func(string) *json.Decoder) (Occurrence, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return Occurrence{}, err
@@ -419,13 +429,12 @@ func validateOccurrenceFileWithFS(path string, fs lessonFS) (Occurrence, error) 
 	if err := validateOccurrenceRaw(data); err != nil {
 		return Occurrence{}, fmt.Errorf("invalid occurrence %s: %w", path, err)
 	}
-	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec := newDecoder(string(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&o); err != nil {
 		return Occurrence{}, fmt.Errorf("invalid occurrence %s: %w", path, err)
 	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
+	if err := requireOccurrenceJSONEOF(dec); err != nil {
 		return Occurrence{}, fmt.Errorf("invalid occurrence %s: trailing JSON", path)
 	}
 	o.Path = path
@@ -436,6 +445,14 @@ func validateOccurrenceFileWithFS(path string, fs lessonFS) (Occurrence, error) 
 		return Occurrence{}, fmt.Errorf("invalid occurrence %s: %w", path, err)
 	}
 	return o, nil
+}
+
+func requireOccurrenceJSONEOF(dec *json.Decoder) error {
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("trailing JSON")
+	}
+	return nil
 }
 
 func validateOccurrenceRaw(data []byte) error {

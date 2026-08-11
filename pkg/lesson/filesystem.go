@@ -27,6 +27,7 @@ type lessonFS interface {
 	Open(string) (lessonFile, error)
 	OpenFile(string, int, os.FileMode) (lessonFile, error)
 	Link(string, string) error
+	Rename(string, string) error
 }
 
 type osLessonFS struct{}
@@ -47,7 +48,8 @@ func (osLessonFS) Open(path string) (lessonFile, error) { return os.Open(path) }
 func (osLessonFS) OpenFile(path string, flag int, mode os.FileMode) (lessonFile, error) {
 	return os.OpenFile(path, flag, mode)
 }
-func (osLessonFS) Link(oldname, newname string) error { return os.Link(oldname, newname) }
+func (osLessonFS) Link(oldname, newname string) error   { return os.Link(oldname, newname) }
+func (osLessonFS) Rename(oldname, newname string) error { return os.Rename(oldname, newname) }
 
 func syncDirectoryWithFS(path string, fs lessonFS) error {
 	f, err := fs.Open(path)

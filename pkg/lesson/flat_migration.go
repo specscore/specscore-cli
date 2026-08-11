@@ -102,10 +102,11 @@ type flatSection struct {
 type flatMigrationDeps struct {
 	fs             lessonFS
 	sourceIdentity func(string, []byte) (LegacySourceRef, error)
+	marshal        func(string, any) ([]byte, error)
 }
 
 func defaultFlatMigrationDeps() flatMigrationDeps {
-	return flatMigrationDeps{fs: osLessonFS{}, sourceIdentity: resolveLegacySourceIdentity}
+	return flatMigrationDeps{fs: osLessonFS{}, sourceIdentity: resolveLegacySourceIdentity, marshal: marshalSafeJSON}
 }
 
 var flatStatus = map[string]bool{
@@ -178,7 +179,7 @@ func preflightFlatMigrationWithDeps(opts FlatMigrationOptions, deps flatMigratio
 	if err := validateLegacySourceRef(source); err != nil {
 		return FlatMigrationPreflight{}, err
 	}
-	stage, _, _, err := stageFlatMigrationWithDeps(opts, flatBytes, flatPath, source, deps.fs)
+	stage, _, _, err := stageFlatMigrationWithRuntime(opts, flatBytes, flatPath, source, deps.fs, deps.marshal)
 	if err != nil {
 		return FlatMigrationPreflight{}, err
 	}
@@ -287,7 +288,7 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		return result, fmt.Errorf("flat migration event UUID does not match the deterministic source transaction")
 	}
 
-	stageDir, manifest, redacted, err := stageFlatMigrationWithDeps(opts, flatBytes, flatPath, source, deps.fs)
+	stageDir, manifest, redacted, err := stageFlatMigrationWithRuntime(opts, flatBytes, flatPath, source, deps.fs, deps.marshal)
 	if err != nil {
 		return result, err
 	}
@@ -301,7 +302,7 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		return result, err
 	}
 	marker := flatMigrationMarker{SchemaVersion: 1, Source: source, Slug: opts.Slug, Classifications: append([]string(nil), opts.Classifications...), EventUUID: opts.EventUUID, Files: expected}
-	wantMarker, err := marshalSafeJSON("flat migration marker", marker)
+	wantMarker, err := deps.marshal("flat migration marker", marker)
 	if err != nil {
 		return result, err
 	}
@@ -529,6 +530,10 @@ func stageFlatMigration(opts FlatMigrationOptions, sourceBytes []byte, flatPath 
 }
 
 func stageFlatMigrationWithDeps(opts FlatMigrationOptions, sourceBytes []byte, flatPath string, source LegacySourceRef, fs lessonFS) (string, flatMigrationManifest, []string, error) {
+	return stageFlatMigrationWithRuntime(opts, sourceBytes, flatPath, source, fs, marshalSafeJSON)
+}
+
+func stageFlatMigrationWithRuntime(opts FlatMigrationOptions, sourceBytes []byte, flatPath string, source LegacySourceRef, fs lessonFS, marshal func(string, any) ([]byte, error)) (string, flatMigrationManifest, []string, error) {
 	legacy, err := Parse(flatPath)
 	if err != nil {
 		return "", flatMigrationManifest{}, nil, err
@@ -635,7 +640,7 @@ func stageFlatMigrationWithDeps(opts FlatMigrationOptions, sourceBytes []byte, f
 		id := legacyOccurrenceID(source.SHA256, fmt.Sprintf("flat#recurrence#%d", i+1), opts.Slug)
 		manifest.Observations = append(manifest.Observations, flatObservation{Key: fmt.Sprintf("recurrence#%d", i+1), Kind: "structured-recurrence", ID: id, StartByte: recurrence.start, EndByte: recurrence.end, BytesSHA256: shaString(sourceBytes[recurrence.start:recurrence.end])})
 	}
-	manifestBytes, err := marshalSafeJSON("flat migration manifest", manifest)
+	manifestBytes, err := marshal("flat migration manifest", manifest)
 	if err != nil {
 		return cleanupOnError(err)
 	}
@@ -657,7 +662,7 @@ func stageFlatMigrationWithDeps(opts FlatMigrationOptions, sourceBytes []byte, f
 			summary = fmt.Sprintf("Imported structured legacy recurrence %d.", i)
 		}
 		ref := manifestRef
-		_, err := AddOccurrence(AddOccurrenceOptions{
+		_, err := addOccurrenceWithFS(AddOccurrenceOptions{
 			LessonPath: filepath.Join(stageDir, "README.md"),
 			ID:         observation.ID,
 			Summary:    summary,
@@ -669,7 +674,7 @@ func stageFlatMigrationWithDeps(opts FlatMigrationOptions, sourceBytes []byte, f
 			Evidence:   Evidence{Kind: "path", Ref: &ref},
 			Redactions: []string{"legacy-unstructured-context"},
 			Now:        now,
-		})
+		}, fs)
 		if err != nil {
 			return cleanupOnError(err)
 		}
@@ -775,6 +780,10 @@ func collectFlatExpectedFiles(stageDir, lessonsDir, slug, manifestPath string) (
 }
 
 func collectFlatExpectedFilesWithFS(stageDir, lessonsDir, slug, manifestPath string, fs lessonFS) ([]flatExpectedFile, error) {
+	return collectFlatExpectedFilesWithRuntime(stageDir, lessonsDir, slug, manifestPath, fs, filepath.Rel)
+}
+
+func collectFlatExpectedFilesWithRuntime(stageDir, lessonsDir, slug, manifestPath string, fs lessonFS, relPath func(string, string) (string, error)) ([]flatExpectedFile, error) {
 	var out []flatExpectedFile
 	for _, path := range []string{filepath.Join(stageDir, "README.md"), filepath.Join(stageDir, "manifest.json")} {
 		b, err := fs.ReadFile(path)
@@ -783,7 +792,7 @@ func collectFlatExpectedFilesWithFS(stageDir, lessonsDir, slug, manifestPath str
 		}
 		rel := filepath.ToSlash(filepath.Join(slug, "README.md"))
 		if filepath.Base(path) == "manifest.json" {
-			rel, err = filepath.Rel(lessonsDir, manifestPath)
+			rel, err = relPath(lessonsDir, manifestPath)
 			if err != nil {
 				return nil, err
 			}
@@ -850,15 +859,22 @@ func ensureFreshMigrationTargetsAbsentWithFS(lessonsDir string, files []flatExpe
 }
 
 func validateCompletedFlatMigration(canonicalPath string) error {
+	_, err := parseCompletedFlatMigration(canonicalPath)
+	return err
+}
+
+func parseCompletedFlatMigration(canonicalPath string) (*Lesson, error) {
 	l, err := Parse(canonicalPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !l.Canonical || l.LegacyProvenance == "" || l.LegacyProvenance == "—" || len(l.MissingRequiredSectionsForLayout()) != 0 {
-		return fmt.Errorf("canonical Lesson is incomplete or lacks immutable legacy provenance")
+		return nil, fmt.Errorf("canonical Lesson is incomplete or lacks immutable legacy provenance")
 	}
-	_, err = DiscoverOccurrences(canonicalPath)
-	return err
+	if _, err := DiscoverOccurrences(canonicalPath); err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 // validateCompletedFlatMigrationProof is intentionally stronger than parsing
@@ -870,10 +886,7 @@ func validateCompletedFlatMigrationProof(lessonsDir, canonicalPath, slug string)
 }
 
 func validateCompletedFlatMigrationProofWithFS(lessonsDir, canonicalPath, slug string, fs lessonFS) error {
-	if err := validateCompletedFlatMigration(canonicalPath); err != nil {
-		return err
-	}
-	l, err := Parse(canonicalPath)
+	l, err := parseCompletedFlatMigration(canonicalPath)
 	if err != nil {
 		return err
 	}

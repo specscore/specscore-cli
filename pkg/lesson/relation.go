@@ -27,16 +27,35 @@ type Relation struct {
 
 const relatedRelationsFile = ".relations.json"
 
-var relationRename = os.Rename
-var relationSyncDirectory = syncDirectory
+type relationLocker interface {
+	TryLock() (bool, error)
+	Unlock() error
+}
 
-// relationBeforePublish is a package seam used to exercise a real competing
-// writer between snapshot and publication. Production leaves it nil.
-var relationBeforePublish func(string) error
+// relationDeps is private and created for every operation. Besides making
+// filesystem failures deterministic to test, this keeps concurrency tests
+// from mutating package globals shared by unrelated callers.
+type relationDeps struct {
+	fs            lessonFS
+	abs           func(string) (string, error)
+	evalSymlinks  func(string) (string, error)
+	newLock       func(string) relationLocker
+	marshal       func(any, string, string) ([]byte, error)
+	rewrite       func([]byte, string, map[string]string) ([]byte, error)
+	beforePublish func(string) error
+	lockAcquired  func()
+}
 
-// relationLockAcquired is a test seam that holds an advisory lock while a
-// second OS process attempts a competing AddRelation call.
-var relationLockAcquired func()
+func defaultRelationDeps() relationDeps {
+	return relationDeps{
+		fs:           osLessonFS{},
+		abs:          filepath.Abs,
+		evalSymlinks: filepath.EvalSymlinks,
+		newLock:      func(path string) relationLocker { return flock.New(path) },
+		marshal:      json.MarshalIndent,
+		rewrite:      rewriteRelationFields,
+	}
+}
 
 func RelationToken(from, typ, to string) string {
 	s := sha256.Sum256([]byte(from + "\x00" + typ + "\x00" + to))
@@ -62,11 +81,15 @@ func ValidateRelation(from, typ, to string) error {
 // ListRelations returns both metadata relations and directional fields. Its
 // stable ordering makes this also safe for scripting and snapshot tests.
 func ListRelations(lessonsDir, slug string) ([]Relation, error) {
+	return listRelationsWithDeps(lessonsDir, slug, defaultRelationDeps())
+}
+
+func listRelationsWithDeps(lessonsDir, slug string, deps relationDeps) ([]Relation, error) {
 	if _, err := ResolveLessonFile(lessonsDir, slug); err != nil {
 		return nil, err
 	}
 	var out []Relation
-	related, err := readRelatedRelations(lessonsDir)
+	related, err := readRelatedRelationsWithFS(lessonsDir, deps.fs)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +103,7 @@ func ListRelations(lessonsDir, slug string) ([]Relation, error) {
 		return nil, err
 	}
 	for _, l := range lessons {
-		fields, err := relationFields(l.Path)
+		fields, err := relationFields(l.Path, deps.fs)
 		if err != nil {
 			return nil, err
 		}
@@ -102,8 +125,8 @@ func ListRelations(lessonsDir, slug string) ([]Relation, error) {
 	return dedupeRelations(out), nil
 }
 
-func relationFields(path string) ([]Relation, error) {
-	b, err := os.ReadFile(path)
+func relationFields(path string, fs lessonFS) ([]Relation, error) {
+	b, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +153,12 @@ func relationFields(path string) ([]Relation, error) {
 }
 
 func AddRelation(lessonsDir, from, typ, to string) error {
-	return withRelationLock(lessonsDir, func() error {
-		return addRelationLocked(lessonsDir, from, typ, to)
+	return addRelationWithDeps(lessonsDir, from, typ, to, defaultRelationDeps())
+}
+
+func addRelationWithDeps(lessonsDir, from, typ, to string, deps relationDeps) error {
+	return withRelationLockWithDeps(lessonsDir, deps, func() error {
+		return addRelationLockedWithDeps(lessonsDir, from, typ, to, deps)
 	})
 }
 
@@ -141,15 +168,15 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 // snapshots below also refuse a non-cooperating external write observed
 // before publication; no advisory lock can make an arbitrary writer honor a
 // read-to-rename critical section after that final observation.
-func withRelationLock(lessonsDir string, fn func() error) error {
-	lockPath, err := relationLockPath(lessonsDir)
+func withRelationLockWithDeps(lessonsDir string, deps relationDeps, fn func() error) error {
+	lockPath, err := relationLockPathWithDeps(lessonsDir, deps)
 	if err != nil {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+	if err := deps.fs.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return mutationFailure(MutationPrePublication, fmt.Errorf("creating relation lock directory: %w", err))
 	}
-	lock := flock.New(lockPath)
+	lock := deps.newLock(lockPath)
 	locked, err := lock.TryLock()
 	if err != nil {
 		return mutationFailure(MutationPrePublication, fmt.Errorf("acquiring relation publication lock: %w", err))
@@ -158,25 +185,29 @@ func withRelationLock(lessonsDir string, fn func() error) error {
 		return mutationFailure(MutationPrePublication, fmt.Errorf("another SpecScore relation writer is active"))
 	}
 	defer func() { _ = lock.Unlock() }()
-	if relationLockAcquired != nil {
-		relationLockAcquired()
+	if deps.lockAcquired != nil {
+		deps.lockAcquired()
 	}
 	return fn()
 }
 
 func relationLockPath(lessonsDir string) (string, error) {
-	abs, err := filepath.Abs(lessonsDir)
+	return relationLockPathWithDeps(lessonsDir, defaultRelationDeps())
+}
+
+func relationLockPathWithDeps(lessonsDir string, deps relationDeps) (string, error) {
+	abs, err := deps.abs(lessonsDir)
 	if err != nil {
 		return "", fmt.Errorf("resolving relation lock root: %w", err)
 	}
-	root, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(abs)))
+	root, err := deps.evalSymlinks(filepath.Dir(filepath.Dir(abs)))
 	if err != nil {
 		return "", fmt.Errorf("resolving physical relation lock root: %w", err)
 	}
 	return filepath.Join(root, ".specscore", "locks", "lesson-relations.lock"), nil
 }
 
-func addRelationLocked(lessonsDir, from, typ, to string) error {
+func addRelationLockedWithDeps(lessonsDir, from, typ, to string, deps relationDeps) error {
 	if err := ValidateRelation(from, typ, to); err != nil {
 		return err
 	}
@@ -201,10 +232,10 @@ func addRelationLocked(lessonsDir, from, typ, to string) error {
 	}
 
 	if typ == "related" {
-		return appendRelatedRelation(lessonsDir, Relation{From: from, Type: typ, To: to})
+		return appendRelatedRelationWithDeps(lessonsDir, Relation{From: from, Type: typ, To: to}, deps)
 	}
 	if typ == "supersedes" {
-		cycle, err := wouldCycle(lessonsDir, from, to)
+		cycle, err := wouldCycleWithFS(lessonsDir, from, to, deps.fs)
 		if err != nil {
 			return err
 		}
@@ -219,20 +250,20 @@ func addRelationLocked(lessonsDir, from, typ, to string) error {
 		if fromLesson.Supersedes != "" && fromLesson.Supersedes != "—" {
 			return fmt.Errorf("Lesson %q cannot be both a retained duplicate and a superseding Lesson", from)
 		}
-		cycle, err := wouldCycle(lessonsDir, from, to)
+		cycle, err := wouldCycleWithFS(lessonsDir, from, to, deps.fs)
 		if err != nil {
 			return err
 		}
 		if cycle {
 			return fmt.Errorf("duplicate relation would form a cycle: %s -> %s", from, to)
 		}
-		if err := ensureRelationFieldAvailable(fromPath, "Duplicate Of", to); err != nil {
+		if err := ensureRelationFieldAvailableWithFS(fromPath, "Duplicate Of", to, deps.fs); err != nil {
 			return err
 		}
-		if err := ensureRelationFieldAvailable(fromPath, "Superseded By", to); err != nil {
+		if err := ensureRelationFieldAvailableWithFS(fromPath, "Superseded By", to, deps.fs); err != nil {
 			return err
 		}
-		before, err := os.ReadFile(fromPath)
+		before, err := deps.fs.ReadFile(fromPath)
 		if err != nil {
 			return err
 		}
@@ -242,26 +273,26 @@ func addRelationLocked(lessonsDir, from, typ, to string) error {
 		if relationField(before, "Status") == "Enforced" {
 			return fmt.Errorf("enforced Lesson %q cannot be retained as a duplicate", from)
 		}
-		after, err := rewriteRelationFields(before, fromPath, map[string]string{"Duplicate Of": to, "Superseded By": to, "Status": "Superseded"})
+		after, err := deps.rewrite(before, fromPath, map[string]string{"Duplicate Of": to, "Superseded By": to, "Status": "Superseded"})
 		if err != nil {
 			return err
 		}
-		return replaceRelationCAS(fromPath, before, after, "duplicates")
+		return replaceRelationCASWithDeps(fromPath, before, after, "duplicates", deps)
 	}
-	if err := ensureRelationFieldAvailable(fromPath, "Supersedes", to); err != nil {
+	if err := ensureRelationFieldAvailableWithFS(fromPath, "Supersedes", to, deps.fs); err != nil {
 		return err
 	}
-	if err := ensureRelationFieldAvailable(toPath, "Superseded By", from); err != nil {
+	if err := ensureRelationFieldAvailableWithFS(toPath, "Superseded By", from, deps.fs); err != nil {
 		return err
 	}
 	// A successor declares the forward relation; the predecessor gains the
 	// derived backwards pointer and status.  Snapshot both files so a partial
 	// I/O failure is restored, not left as an asymmetric edge.
-	a, err := os.ReadFile(fromPath)
+	a, err := deps.fs.ReadFile(fromPath)
 	if err != nil {
 		return err
 	}
-	b, err := os.ReadFile(toPath)
+	b, err := deps.fs.ReadFile(toPath)
 	if err != nil {
 		return err
 	}
@@ -271,35 +302,39 @@ func addRelationLocked(lessonsDir, from, typ, to string) error {
 	if err := ensureRelationFieldsAvailable(b, map[string]string{"Superseded By": from}); err != nil {
 		return err
 	}
-	newA, err := rewriteRelationFields(a, fromPath, map[string]string{"Supersedes": to})
+	newA, err := deps.rewrite(a, fromPath, map[string]string{"Supersedes": to})
 	if err != nil {
 		return err
 	}
-	newB, err := rewriteRelationFields(b, toPath, map[string]string{"Superseded By": from, "Status": "Superseded"})
+	newB, err := deps.rewrite(b, toPath, map[string]string{"Superseded By": from, "Status": "Superseded"})
 	if err != nil {
 		return err
 	}
-	if err := relationPublicationHook("supersedes"); err != nil {
+	if err := relationPublicationHookWithDeps("supersedes", deps); err != nil {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	if err := relationSnapshotsMatch(map[string][]byte{fromPath: a, toPath: b}); err != nil {
+	if err := relationSnapshotsMatchWithFS(map[string][]byte{fromPath: a, toPath: b}, deps.fs); err != nil {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	if err := atomicReplace(fromPath, newA); err != nil {
+	if err := atomicReplaceWithDeps(fromPath, newA, deps); err != nil {
 		return err
 	}
-	if err := atomicReplace(toPath, newB); err != nil {
+	if err := atomicReplaceWithDeps(toPath, newB, deps); err != nil {
 		if MutationOutcomeOf(err) == MutationUncertain {
 			// The second rename may already be visible. Do not call the first
 			// rollback "compensated" while the pair can be asymmetric.
 			return mutationFailure(MutationUncertain, fmt.Errorf("publishing superseding relation: %w", err))
 		}
-		return CompensatePublication(func() error { return replaceRelationCAS(fromPath, newA, a, "supersedes-rollback") }, err)
+		return CompensatePublication(func() error { return replaceRelationCASWithDeps(fromPath, newA, a, "supersedes-rollback", deps) }, err)
 	}
 	return nil
 }
 
 func wouldCycle(lessonsDir, from, to string) (bool, error) {
+	return wouldCycleWithFS(lessonsDir, from, to, osLessonFS{})
+}
+
+func wouldCycleWithFS(lessonsDir, from, to string, fs lessonFS) (bool, error) {
 	seen := map[string]bool{}
 	var visit func(string) (bool, error)
 	visit = func(cur string) (bool, error) {
@@ -314,7 +349,7 @@ func wouldCycle(lessonsDir, from, to string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		fields, err := relationFields(p)
+		fields, err := relationFields(p, fs)
 		if err != nil {
 			return false, err
 		}
@@ -334,8 +369,8 @@ func wouldCycle(lessonsDir, from, to string) (bool, error) {
 	return visit(to)
 }
 
-func ensureRelationFieldAvailable(path, name, want string) error {
-	b, err := os.ReadFile(path)
+func ensureRelationFieldAvailableWithFS(path, name, want string, fs lessonFS) error {
+	b, err := fs.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -403,7 +438,11 @@ func rewriteRelationFields(b []byte, path string, values map[string]string) ([]b
 }
 
 func readRelatedRelations(lessonsDir string) ([]Relation, error) {
-	b, err := os.ReadFile(filepath.Join(lessonsDir, relatedRelationsFile))
+	return readRelatedRelationsWithFS(lessonsDir, osLessonFS{})
+}
+
+func readRelatedRelationsWithFS(lessonsDir string, fs lessonFS) ([]Relation, error) {
+	b, err := fs.ReadFile(filepath.Join(lessonsDir, relatedRelationsFile))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -441,12 +480,12 @@ func decodeRelatedRelations(lessonsDir string, b []byte) ([]Relation, error) {
 	return r, nil
 }
 
-// appendRelatedRelation derives both the sidecar snapshot and replacement
+// appendRelatedRelationWithDeps derives both the sidecar snapshot and replacement
 // from the same bytes. In particular, it never computes an "after" value
 // from an older read and then overwrites a newer sidecar at the CAS boundary.
-func appendRelatedRelation(lessonsDir string, relation Relation) error {
+func appendRelatedRelationWithDeps(lessonsDir string, relation Relation, deps relationDeps) error {
 	path := filepath.Join(lessonsDir, relatedRelationsFile)
-	before, err := os.ReadFile(path)
+	before, err := deps.fs.ReadFile(path)
 	sidecarExists := err == nil
 	if os.IsNotExist(err) {
 		before = nil
@@ -468,31 +507,32 @@ func appendRelatedRelation(lessonsDir string, relation Relation) error {
 	relations = append(relations, relation)
 	relations = dedupeRelations(relations)
 	sort.Slice(relations, func(i, j int) bool {
-		if relations[i].Type != relations[j].Type {
-			return relations[i].Type < relations[j].Type
-		}
 		if relations[i].From != relations[j].From {
 			return relations[i].From < relations[j].From
 		}
 		return relations[i].To < relations[j].To
 	})
-	b, err := json.MarshalIndent(relations, "", "  ")
+	b, err := deps.marshal(relations, "", "  ")
 	if err != nil {
 		return err
 	}
-	return replaceRelationCAS(path, before, append(b, '\n'), "related")
+	return replaceRelationCASWithDeps(path, before, append(b, '\n'), "related", deps)
 }
 
-func relationPublicationHook(kind string) error {
-	if relationBeforePublish == nil {
+func relationPublicationHookWithDeps(kind string, deps relationDeps) error {
+	if deps.beforePublish == nil {
 		return nil
 	}
-	return relationBeforePublish(kind)
+	return deps.beforePublish(kind)
 }
 
 func relationSnapshotsMatch(expected map[string][]byte) error {
+	return relationSnapshotsMatchWithFS(expected, osLessonFS{})
+}
+
+func relationSnapshotsMatchWithFS(expected map[string][]byte, fs lessonFS) error {
 	for path, want := range expected {
-		got, err := os.ReadFile(path)
+		got, err := fs.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -504,10 +544,14 @@ func relationSnapshotsMatch(expected map[string][]byte) error {
 }
 
 func replaceRelationCAS(path string, before, after []byte, kind string) error {
-	if err := relationPublicationHook(kind); err != nil {
+	return replaceRelationCASWithDeps(path, before, after, kind, defaultRelationDeps())
+}
+
+func replaceRelationCASWithDeps(path string, before, after []byte, kind string, deps relationDeps) error {
+	if err := relationPublicationHookWithDeps(kind, deps); err != nil {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	current, err := os.ReadFile(path)
+	current, err := deps.fs.ReadFile(path)
 	if os.IsNotExist(err) && before == nil {
 		current = nil
 	} else if err != nil {
@@ -516,18 +560,22 @@ func replaceRelationCAS(path string, before, after []byte, kind string) error {
 	if !bytes.Equal(current, before) {
 		return mutationFailure(MutationPrePublication, fmt.Errorf("relation target changed during publication: %s", path))
 	}
-	return atomicReplace(path, after)
+	return atomicReplaceWithDeps(path, after, deps)
 }
 func atomicReplace(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	return atomicReplaceWithDeps(path, data, defaultRelationDeps())
+}
+
+func atomicReplaceWithDeps(path string, data []byte, deps relationDeps) error {
+	if err := deps.fs.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".relation-")
+	f, err := deps.fs.CreateTemp(filepath.Dir(path), ".relation-")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
-	defer func() { _ = os.Remove(tmp) }()
+	defer func() { _ = deps.fs.Remove(tmp) }()
 	if _, err = f.Write(data); err != nil {
 		_ = f.Close()
 		return err
@@ -539,10 +587,10 @@ func atomicReplace(path string, data []byte) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err := relationRename(tmp, path); err != nil {
+	if err := deps.fs.Rename(tmp, path); err != nil {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	if err := relationSyncDirectory(filepath.Dir(path)); err != nil {
+	if err := syncDirectoryWithFS(filepath.Dir(path), deps.fs); err != nil {
 		return mutationFailure(MutationUncertain, fmt.Errorf("durably publishing relation: %w", err))
 	}
 	return nil

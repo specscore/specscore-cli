@@ -568,13 +568,11 @@ func TestCoverageRelationHelpersAndStorageEdges(t *testing.T) {
 	if err := replaceRelationCAS(path, []byte("different"), []byte("second"), "coverage"); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
 		t.Fatalf("CAS conflict err=%v outcome=%v", err, MutationOutcomeOf(err))
 	}
-	origHook := relationBeforePublish
-	relationBeforePublish = func(string) error { return errors.New("injected prepublication") }
-	t.Cleanup(func() { relationBeforePublish = origHook })
-	if err := replaceRelationCAS(path, []byte("first\n"), []byte("second\n"), "coverage"); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
+	deps := defaultRelationDeps()
+	deps.beforePublish = func(string) error { return errors.New("injected prepublication") }
+	if err := replaceRelationCASWithDeps(path, []byte("first\n"), []byte("second\n"), "coverage", deps); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
 		t.Fatalf("hook err=%v", err)
 	}
-	relationBeforePublish = origHook
 	if err := relationSnapshotsMatch(map[string][]byte{path: []byte("different")}); err == nil {
 		t.Fatal("snapshot mismatch accepted")
 	}

@@ -115,11 +115,21 @@ var legacyRecurrenceCandidate = regexp.MustCompile(`(?i)^\*\*(?:recurred|recurre
 // cannot alter one another's durability or provenance boundary.
 type legacyImportDeps struct {
 	fs             lessonFS
+	abs            func(string) (string, error)
 	sourceIdentity func(string, []byte) (LegacySourceRef, error)
+	manifest       func(LegacyInventory, LegacyMapping) ([]byte, error)
+	findOccurrence func(string, string, lessonFS) (Occurrence, error)
+	afterPreflight func()
 }
 
 func defaultLegacyImportDeps() legacyImportDeps {
-	return legacyImportDeps{fs: osLessonFS{}, sourceIdentity: resolveLegacySourceIdentity}
+	return legacyImportDeps{
+		fs:             osLessonFS{},
+		abs:            filepath.Abs,
+		sourceIdentity: resolveLegacySourceIdentity,
+		manifest:       legacyManifestBytes,
+		findOccurrence: findOccurrenceWithFS,
+	}
 }
 
 func InventoryLegacy(source string) (LegacyInventory, error) {
@@ -127,7 +137,7 @@ func InventoryLegacy(source string) (LegacyInventory, error) {
 }
 
 func inventoryLegacyWithDeps(source string, deps legacyImportDeps) (LegacyInventory, error) {
-	absSource, err := filepath.Abs(source)
+	absSource, err := deps.abs(source)
 	if err != nil {
 		return LegacyInventory{}, err
 	}
@@ -250,29 +260,79 @@ func legacyEntryProjectionSHA256(entries []LegacyEntry) string {
 			BytesSHA256: entry.BytesSHA256, SuggestedSlug: entry.SuggestedSlug,
 		})
 	}
-	b, err := json.Marshal(projection)
-	if err != nil {
-		panic("fixed legacy inventory projection cannot fail JSON encoding: " + err.Error())
-	}
+	b := mustMarshalLegacyProjection(projection)
 	return shaString(b)
 }
 
+func mustMarshalLegacyProjection(value any) []byte {
+	b, err := json.Marshal(value)
+	if err != nil {
+		panic("fixed legacy inventory projection cannot fail JSON encoding: " + err.Error())
+	}
+	return b
+}
+
 func resolveLegacySourceIdentity(source string, workingBytes []byte) (LegacySourceRef, error) {
+	return resolveLegacySourceIdentityWithDeps(source, workingBytes, defaultLegacySourceIdentityDeps())
+}
+
+type legacySourceIdentityDeps struct {
+	evalSymlinks   func(string) (string, error)
+	root           func(string) (string, error)
+	rel            func(string, string) (string, error)
+	repository     func(string) (string, error)
+	revision       func(string) (string, error)
+	committedBytes func(string, string, string) ([]byte, error)
+	committedAt    func(string, string) (string, error)
+}
+
+func defaultLegacySourceIdentityDeps() legacySourceIdentityDeps {
+	return legacySourceIdentityDeps{
+		evalSymlinks: filepath.EvalSymlinks,
+		root: func(dir string) (string, error) {
+			b, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+			return strings.TrimSpace(string(b)), err
+		},
+		rel:        filepath.Rel,
+		repository: legacyRepositoryIdentity,
+		revision:   gitremote.HeadSHA,
+		committedBytes: func(root, revision, rel string) ([]byte, error) {
+			return exec.Command("git", "-C", root, "show", revision+":"+rel).Output()
+		},
+		committedAt: func(root, revision string) (string, error) {
+			b, err := exec.Command("git", "-C", root, "show", "-s", "--format=%cI", revision).Output()
+			return strings.TrimSpace(string(b)), err
+		},
+	}
+}
+
+func legacyRepositoryIdentity(root string) (string, error) {
+	origin, err := gitremote.OriginURL(root)
+	if err != nil {
+		return "", fmt.Errorf("source repository has no origin")
+	}
+	remote, ok := gitremote.Parse(origin)
+	if !ok {
+		return "", fmt.Errorf("source repository origin is not a supported immutable identifier")
+	}
+	return remote.Host + "/" + remote.Owner + "/" + remote.Repo, nil
+}
+
+func resolveLegacySourceIdentityWithDeps(source string, workingBytes []byte, deps legacySourceIdentityDeps) (LegacySourceRef, error) {
 	// Git reports the physical worktree root. Resolve a caller path first so
 	// macOS's /var -> /private/var alias does not manufacture a false
 	// repository-relative traversal.
-	physicalSource, err := filepath.EvalSymlinks(source)
+	physicalSource, err := deps.evalSymlinks(source)
 	if err != nil {
 		return LegacySourceRef{}, fmt.Errorf("resolving physical source path: %w", err)
 	}
 	source = physicalSource
 	dir := filepath.Dir(source)
-	rootBytes, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	root, err := deps.root(dir)
 	if err != nil {
 		return LegacySourceRef{}, fmt.Errorf("source is not in a Git worktree")
 	}
-	root := strings.TrimSpace(string(rootBytes))
-	rel, err := filepath.Rel(root, source)
+	rel, err := deps.rel(root, source)
 	if err != nil {
 		return LegacySourceRef{}, fmt.Errorf("resolving source path")
 	}
@@ -280,32 +340,28 @@ func resolveLegacySourceIdentity(source string, workingBytes []byte) (LegacySour
 	if err := validateRepoRelativePath(rel); err != nil {
 		return LegacySourceRef{}, fmt.Errorf("source path is not portable")
 	}
-	origin, err := gitremote.OriginURL(root)
+	repository, err := deps.repository(root)
 	if err != nil {
-		return LegacySourceRef{}, fmt.Errorf("source repository has no origin")
+		return LegacySourceRef{}, err
 	}
-	remote, ok := gitremote.Parse(origin)
-	if !ok {
-		return LegacySourceRef{}, fmt.Errorf("source repository origin is not a supported immutable identifier")
-	}
-	revision, err := gitremote.HeadSHA(root)
+	revision, err := deps.revision(root)
 	if err != nil || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(revision) {
 		return LegacySourceRef{}, fmt.Errorf("source revision is unavailable")
 	}
-	committedBytes, err := exec.Command("git", "-C", root, "show", revision+":"+rel).Output()
+	committedBytes, err := deps.committedBytes(root, revision, rel)
 	if err != nil || shaString(committedBytes) != shaString(workingBytes) {
 		return LegacySourceRef{}, fmt.Errorf("source bytes do not match the recorded revision")
 	}
-	committedAtBytes, err := exec.Command("git", "-C", root, "show", "-s", "--format=%cI", revision).Output()
+	committedAtText, err := deps.committedAt(root, revision)
 	if err != nil {
 		return LegacySourceRef{}, fmt.Errorf("source commit timestamp is unavailable")
 	}
-	committedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(string(committedAtBytes)))
+	committedAt, err := time.Parse(time.RFC3339, committedAtText)
 	if err != nil {
 		return LegacySourceRef{}, fmt.Errorf("source commit timestamp is invalid")
 	}
 	return LegacySourceRef{
-		Repository:  remote.Host + "/" + remote.Owner + "/" + remote.Repo,
+		Repository:  repository,
 		Path:        rel,
 		Revision:    revision,
 		CommittedAt: committedAt.UTC().Format(time.RFC3339),
@@ -422,6 +478,14 @@ func PreflightLegacyApply(lessonsDir string, allowedClassifications []string, in
 }
 
 func preflightLegacyApply(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping) (legacyApplyPlan, error) {
+	return preflightLegacyApplyWithFS(lessonsDir, allowedClassifications, inv, mapping, osLessonFS{})
+}
+
+func preflightLegacyApplyWithFS(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping, fs lessonFS) (legacyApplyPlan, error) {
+	return preflightLegacyApplyWithRuntime(lessonsDir, allowedClassifications, inv, mapping, fs, legacyManifestBytes)
+}
+
+func preflightLegacyApplyWithRuntime(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping, fs lessonFS, manifest func(LegacyInventory, LegacyMapping) ([]byte, error)) (legacyApplyPlan, error) {
 	plan := legacyApplyPlan{}
 	if err := validateLegacySourceRef(inv.Source); err != nil {
 		return plan, fmt.Errorf("immutable legacy source identity required before apply: %w", err)
@@ -531,20 +595,20 @@ func preflightLegacyApply(lessonsDir string, allowedClassifications []string, in
 				}
 				seenClassifications[classification] = true
 			}
-			if _, err := os.Lstat(filepath.Join(lessonsDir, mappingEntry.Slug+".md")); err == nil {
+			if _, err := fs.Lstat(filepath.Join(lessonsDir, mappingEntry.Slug+".md")); err == nil {
 				return plan, fmt.Errorf("mapping %s collides with legacy flat Lesson %q; migrate it first", key, mappingEntry.Slug)
 			} else if !os.IsNotExist(err) {
 				return plan, err
 			}
 			targetDir := filepath.Join(lessonsDir, mappingEntry.Slug)
 			target := filepath.Join(targetDir, "README.md")
-			if _, err := os.Stat(target); err == nil {
-				if err := validateImportedLesson(target, entry, inv); err != nil {
+			if _, err := fs.Stat(target); err == nil {
+				if err := validateImportedLessonWithFS(target, entry, inv, fs); err != nil {
 					return plan, fmt.Errorf("mapping %s target collision: %w", key, err)
 				}
 			} else if !os.IsNotExist(err) {
 				return plan, fmt.Errorf("mapping %s target stat: %w", key, err)
-			} else if _, dirErr := os.Stat(targetDir); dirErr == nil {
+			} else if _, dirErr := fs.Stat(targetDir); dirErr == nil {
 				return plan, fmt.Errorf("mapping %s target directory already exists without matching imported provenance", key)
 			} else if !os.IsNotExist(dirErr) {
 				return plan, fmt.Errorf("mapping %s target directory stat: %w", key, dirErr)
@@ -576,7 +640,7 @@ func preflightLegacyApply(lessonsDir string, allowedClassifications []string, in
 	if inv.localSource == "" {
 		return plan, fmt.Errorf("legacy inventory must be rebuilt from the local immutable source before apply")
 	}
-	source, err := os.ReadFile(inv.localSource)
+	source, err := fs.ReadFile(inv.localSource)
 	if err != nil {
 		return plan, err
 	}
@@ -584,11 +648,11 @@ func preflightLegacyApply(lessonsDir string, allowedClassifications []string, in
 		return plan, fmt.Errorf("legacy source changed after inventory")
 	}
 	plan.manifestPath = filepath.Join(lessonsDir, ".legacy-import", inv.Source.SHA256+".json")
-	plan.manifestBytes, err = legacyManifestBytes(inv, mapping)
+	plan.manifestBytes, err = manifest(inv, mapping)
 	if err != nil {
 		return plan, err
 	}
-	if existing, readErr := os.ReadFile(plan.manifestPath); readErr == nil {
+	if existing, readErr := fs.ReadFile(plan.manifestPath); readErr == nil {
 		plan.manifestExists = true
 		if !bytes.Equal(existing, plan.manifestBytes) {
 			return plan, fmt.Errorf("import manifest collision: existing bytes differ")
@@ -596,7 +660,7 @@ func preflightLegacyApply(lessonsDir string, allowedClassifications []string, in
 	} else if !os.IsNotExist(readErr) {
 		return plan, readErr
 	}
-	if info, statErr := os.Stat(filepath.Dir(plan.manifestPath)); statErr == nil && !info.IsDir() {
+	if info, statErr := fs.Stat(filepath.Dir(plan.manifestPath)); statErr == nil && !info.IsDir() {
 		return plan, fmt.Errorf("legacy manifest parent is not a directory")
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return plan, statErr
@@ -609,20 +673,23 @@ func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyI
 }
 
 func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping, deps legacyImportDeps) (LegacyApplyResult, error) {
-	plan, err := preflightLegacyApply(lessonsDir, allowedClassifications, inv, mapping)
+	plan, err := preflightLegacyApplyWithRuntime(lessonsDir, allowedClassifications, inv, mapping, deps.fs, deps.manifest)
 	if err != nil {
 		return LegacyApplyResult{}, err
+	}
+	if deps.afterPreflight != nil {
+		deps.afterPreflight()
 	}
 	byKey, byMap, keys, newTargets := plan.byKey, plan.byMap, plan.keys, plan.newTargets
 	result := LegacyApplyResult{}
 	manifestPath, manifestBytes, manifestExists := plan.manifestPath, plan.manifestBytes, plan.manifestExists
-	stageDir, err := os.MkdirTemp(lessonsDir, ".legacy-import-stage-")
+	stageDir, err := deps.fs.MkdirTemp(lessonsDir, ".legacy-import-stage-")
 	if err != nil {
 		return LegacyApplyResult{}, err
 	}
 	defer func() { _ = deps.fs.RemoveAll(stageDir) }()
 	if !manifestExists {
-		if err := writeDurableStageFile(filepath.Join(stageDir, "manifest.json"), manifestBytes); err != nil {
+		if err := writeDurableStageFileWithFS(filepath.Join(stageDir, "manifest.json"), manifestBytes, deps.fs); err != nil {
 			return result, err
 		}
 	}
@@ -634,20 +701,22 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 		switch m.Action {
 		case "new":
 			target := filepath.Join(lessonsDir, m.Slug, "README.md")
-			if _, err := os.Stat(target); err == nil {
+			if _, err := deps.fs.Stat(target); err == nil {
 				lessonAlready[key] = true
-			} else {
+			} else if os.IsNotExist(err) {
 				title := strings.TrimSpace(m.Title)
 				if title == "" {
 					title = strings.TrimSpace(e.Title)
 				}
-				if err := writeImportedLesson(filepath.Join(stageDir, m.Slug, "README.md"), m.Slug, title, m, e, inv); err != nil {
+				if err := writeImportedLessonWithFS(filepath.Join(stageDir, m.Slug, "README.md"), m.Slug, title, m, e, inv, deps.fs); err != nil {
 					return result, err
 				}
+			} else {
+				return result, err
 			}
 			if lessonAlready[key] {
 				id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
-				if existing, err := FindOccurrence(target, id); err == nil {
+				if existing, err := deps.findOccurrence(target, id, deps.fs); err == nil {
 					if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
 						return result, fmt.Errorf("mapping %s provider occurrence collision: %w", key, err)
 					}
@@ -665,7 +734,7 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 				}
 				return result, resolveErr
 			}
-			if existing, err := FindOccurrence(path, id); err == nil {
+			if existing, err := deps.findOccurrence(path, id, deps.fs); err == nil {
 				if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
 					return result, fmt.Errorf("mapping %s occurrence collision: %w", key, err)
 				}
@@ -674,13 +743,14 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 			} else if !os.IsNotExist(err) {
 				return result, err
 			}
-		default:
-			panic("validated mapping action")
 		}
 	}
 
 	var published []string
-	manifestDirExisted := pathIsDirectory(filepath.Dir(manifestPath))
+	manifestDirExisted, err := statDirectoryWithFS(filepath.Dir(manifestPath), deps.fs)
+	if err != nil {
+		return result, err
+	}
 	rollback := func() error {
 		var first error
 		for i := len(published) - 1; i >= 0; i-- {
@@ -754,7 +824,7 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 		}
 		path, _ := ResolveLessonFile(lessonsDir, m.Slug)
 		id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
-		o, err := AddOccurrence(legacyOccurrenceOptions(path, id, inv, e))
+		o, err := addOccurrenceWithFS(legacyOccurrenceOptions(path, id, inv, e), deps.fs)
 		if err != nil {
 			return failAfterPublication(err)
 		}
@@ -805,8 +875,19 @@ func validateReviewedCompactText(section, value string) error {
 
 func stringPtr(s string) *string { return &s }
 func pathIsDirectory(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	isDir, _ := statDirectoryWithFS(path, osLessonFS{})
+	return isDir
+}
+
+func statDirectoryWithFS(path string, fs lessonFS) (bool, error) {
+	info, err := fs.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 // publishStagedLesson reserves the target directory with mkdir's exclusive
@@ -886,17 +967,21 @@ func hasLegacyProvenance(path, provenance string) bool {
 	return err == nil && strings.Contains(string(b), "**Legacy Provenance:** "+provenance)
 }
 func validateImportedLesson(path string, e LegacyEntry, inv LegacyInventory) error {
-	lessonBytes, err := os.ReadFile(path)
+	return validateImportedLessonWithFS(path, e, inv, osLessonFS{})
+}
+
+func validateImportedLessonWithFS(path string, e LegacyEntry, inv LegacyInventory, fs lessonFS) error {
+	lessonBytes, err := fs.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("Lesson unreadable")
 	}
 	if err := ValidateSafeContent("imported Lesson", string(lessonBytes)); err != nil {
 		return err
 	}
-	if !hasLegacyProvenance(path, legacyProvenance(inv, e)) {
+	if !strings.Contains(string(lessonBytes), "**Legacy Provenance:** "+legacyProvenance(inv, e)) {
 		return fmt.Errorf("provenance differs")
 	}
-	if info, err := os.Stat(filepath.Join(filepath.Dir(path), "occurrences")); err != nil || !info.IsDir() {
+	if info, err := fs.Stat(filepath.Join(filepath.Dir(path), "occurrences")); err != nil || !info.IsDir() {
 		return fmt.Errorf("occurrence store missing")
 	}
 	return nil
@@ -917,7 +1002,11 @@ func containsString(values []string, want string) bool {
 	return false
 }
 func writeImportedLesson(target, slug, title string, mapping LegacyMappingEntry, e LegacyEntry, inv LegacyInventory) error {
-	if err := os.MkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
+	return writeImportedLessonWithFS(target, slug, title, mapping, e, inv, osLessonFS{})
+}
+
+func writeImportedLessonWithFS(target, slug, title string, mapping LegacyMappingEntry, e LegacyEntry, inv LegacyInventory, fs lessonFS) error {
+	if err := fs.MkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
 		return err
 	}
 	provenance := legacyProvenance(inv, e)
@@ -935,7 +1024,7 @@ func writeImportedLesson(target, slug, title string, mapping LegacyMappingEntry,
 	if err := ValidateSafeContent("imported Lesson", s); err != nil {
 		return err
 	}
-	return writeDurableStageFile(target, []byte(s))
+	return writeDurableStageFileWithFS(target, []byte(s), fs)
 }
 
 func legacyProvenance(inv LegacyInventory, e LegacyEntry) string {
@@ -992,7 +1081,11 @@ func legacyManifestBytes(inv LegacyInventory, mapping LegacyMapping) ([]byte, er
 		EntryCount            int                    `json:"entry_count"`
 		MappingCount          int                    `json:"mapping_count"`
 	}{1, inv.Source, inv.LessonCount, inv.RecurrenceMarkerCount, inv.EntryProjectionSHA256, entries, mapping, len(entries), len(mapping.Entries)}
-	b, err := json.MarshalIndent(payload, "", "  ")
+	return marshalLegacyManifest(payload)
+}
+
+func marshalLegacyManifest(value any) ([]byte, error) {
+	b, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
 	}
