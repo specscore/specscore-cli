@@ -256,7 +256,7 @@ func TestExecTimeoutKillsHungProcess(t *testing.T) {
 		result <- sub.Deliver(context.Background(), execSampleEvent(t))
 	}()
 
-	pid := waitForWindowsChildPID(t, childPIDFile, result, 8*time.Second)
+	pid := waitForWindowsChildPID(t, childPIDFile, result, timeout)
 	handle, err := windows.OpenProcess(
 		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE,
 		false,
