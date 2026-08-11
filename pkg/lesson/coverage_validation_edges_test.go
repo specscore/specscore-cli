@@ -138,6 +138,58 @@ func TestCoverageLayoutEdges(t *testing.T) {
 	}
 }
 
+func TestDiscoverAndResolveLessonFormsRemainDeterministic(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if lessons, err := Discover(missing); err != nil || lessons != nil {
+		t.Fatalf("missing discovery=%#v err=%v", lessons, err)
+	}
+
+	root := t.TempDir()
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	if err := os.MkdirAll(filepath.Join(lessonsDir, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lessonsDir, "not-a-lesson.md"), []byte("# Notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if discovered, err := Discover(lessonsDir); err != nil || len(discovered) != 0 {
+		t.Fatalf("non-lessons discovered=%#v err=%v", discovered, err)
+	}
+
+	canonical, err := ScaffoldCanonical(ScaffoldOptions{Slug: "rule", Title: "", Owner: "", Date: ""}, nil)
+	if err != nil || !bytes.Contains(canonical, []byte("# Lesson: Rule")) || !bytes.Contains(canonical, []byte("**Owner:** unknown")) || !bytes.Contains(canonical, []byte("**Classifications:** process")) {
+		t.Fatalf("canonical defaults=%q err=%v", canonical, err)
+	}
+	canonicalPath := filepath.Join(lessonsDir, "rule", "README.md")
+	if err := os.MkdirAll(filepath.Dir(canonicalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonicalPath, canonical, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := ResolveLessonFile(lessonsDir, "rule"); err != nil || resolved != canonicalPath {
+		t.Fatalf("canonical resolution=%q err=%v", resolved, err)
+	}
+	if err := os.WriteFile(filepath.Join(lessonsDir, "rule.md"), []byte("# Lesson: legacy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveLessonFile(lessonsDir, "rule"); err == nil {
+		t.Fatal("canonical/flat form collision resolved silently")
+	}
+	if err := os.RemoveAll(filepath.Join(lessonsDir, "rule")); err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := ResolveLessonFile(lessonsDir, "rule"); err != nil || resolved != filepath.Join(lessonsDir, "rule.md") {
+		t.Fatalf("flat resolution=%q err=%v", resolved, err)
+	}
+	if _, err := ResolveLessonFile(lessonsDir, "missing"); err == nil {
+		t.Fatal("missing lesson resolved")
+	}
+	if _, err := ResolveLessonFile(lessonsDir, "Bad Slug"); err == nil {
+		t.Fatal("invalid lesson slug resolved")
+	}
+}
+
 func TestCoverageFlatMigrationHelperEdges(t *testing.T) {
 	for _, opts := range []FlatMigrationOptions{
 		{}, {Slug: "Rule", Classifications: []string{"process"}},
