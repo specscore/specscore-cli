@@ -1,0 +1,30 @@
+name: Validate published SpecScore CLI artifact
+
+# This is intentionally validation-only: it re-executes the published archive
+# smoke checks for one existing release tag without creating a tag or release.
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact SpecScore CLI release tag to validate (for example, v0.33.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-published-artifact-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: strongo/cicd/.github/workflows/release.yml@v1
+    permissions:
+      contents: read
+    with:
+      existing_artifact_tag: ${{ inputs.release_tag }}
+      artifact_smoke_test: true
+      artifact_smoke_test_binary: specscore
+      artifact_smoke_test_command: --version
+      artifact_smoke_test_homebrew_cask: false
