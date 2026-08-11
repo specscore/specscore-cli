@@ -318,6 +318,24 @@ func TestAddRelation_AdversarialOverwriteRacesAreWriteFree(t *testing.T) {
 	}
 }
 
+func TestAddRelation_ValidationFailuresAreClassifiedPrePublication(t *testing.T) {
+	lessons := relationFixture(t, "a", "b")
+	if err := AddRelation(lessons, "a", "duplicates", "missing"); err == nil {
+		t.Fatal("missing endpoint was accepted")
+	} else if got := MutationOutcomeOf(err); got != MutationPrePublication {
+		t.Fatalf("missing endpoint outcome = %v, want pre-publication: %v", got, err)
+	}
+
+	if err := AddRelation(lessons, "a", "supersedes", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddRelation(lessons, "b", "supersedes", "a"); err == nil {
+		t.Fatal("cycle was accepted")
+	} else if got := MutationOutcomeOf(err); got != MutationPrePublication {
+		t.Fatalf("cycle outcome = %v, want pre-publication: %v", got, err)
+	}
+}
+
 // TestRelationLockHelper is run in a subprocess by the overlapping-writer
 // test below. The process must observe the parent command's advisory lock and
 // refuse before writing any relation.

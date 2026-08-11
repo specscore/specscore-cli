@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -158,7 +159,19 @@ func AddRelation(lessonsDir, from, typ, to string) error {
 
 func addRelationWithDeps(lessonsDir, from, typ, to string, deps relationDeps) error {
 	return withRelationLockWithDeps(lessonsDir, deps, func() error {
-		return addRelationLockedWithDeps(lessonsDir, from, typ, to, deps)
+		err := addRelationLockedWithDeps(lessonsDir, from, typ, to, deps)
+		if err == nil {
+			return nil
+		}
+		// Every untyped failure returned by the locked implementation occurs
+		// before its first rename/link publication. Preserve explicit outcomes
+		// from the atomic writers, but classify validation and preparation
+		// failures so a caller can safely abort its prepared event.
+		var mutation *MutationError
+		if errors.As(err, &mutation) {
+			return err
+		}
+		return mutationFailure(MutationPrePublication, err)
 	})
 }
 

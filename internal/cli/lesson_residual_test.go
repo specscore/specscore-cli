@@ -269,6 +269,34 @@ func TestLessonRelationAdapterFailures(t *testing.T) {
 	requireCLIError(t, runLessonRelationListWithDeps(cmd, []string{from}, defaultLessonCLIDeps()))
 }
 
+func TestLessonRelationCycleValidationLeavesNoPreparedEvent(t *testing.T) {
+	root := setupSpecRoot(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	configureNoopLessonEvents(t, root)
+	for _, slug := range []string{"first", "second"} {
+		if _, stderr, err := runLesson(t, "new", slug, "--project", root); err != nil {
+			t.Fatalf("lesson new %s: %v stderr=%s", slug, err, stderr)
+		}
+	}
+	add := func(from, to string) error {
+		_, _, err := runLesson(t, "relation", "add", from, to, "--type", "supersedes", "--confirm", lesson.RelationToken(from, "supersedes", to), "--project", root)
+		return err
+	}
+	if err := add("first", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := add("second", "first"); err == nil {
+		t.Fatal("supersession cycle was accepted")
+	}
+	prepared, err := event.NewOutbox(root).Prepared()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared) != 0 {
+		t.Fatalf("cycle validation left a misleading prepared event: %#v", prepared)
+	}
+}
+
 func TestLessonOccurrenceAdapterAndValidationEdges(t *testing.T) {
 	for _, tc := range []struct{ slug, project string }{{"Bad_Slug", ""}, {"missing", filepath.Join(t.TempDir(), "missing")}} {
 		cmd := lessonOccurrenceAddCommand()
