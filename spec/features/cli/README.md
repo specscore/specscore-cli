@@ -42,7 +42,7 @@ Commands that grew inside the codebase without written specs accrete inconsisten
 | [lesson](lesson/README.md) | Record and query process-gap lessons and advance them through their enforcement lifecycle. |
 | [plan](plan/README.md) | Query Plan artifacts, including plan metadata and task rollups. |
 | [publication-policy](publication-policy/README.md) | Mutate publication policy, resolve effective policy, validate branch guards, and support manifest-based publication. |
-| [release-distribution](release-distribution/README.md) | Publish release artifacts and maintain the Homebrew cask distribution safety contract. |
+| [release-distribution](release-distribution/README.md) | Publish release artifacts while fail-closing blocked distribution channels, including the dormant Homebrew cask. |
 | [rehearse](rehearse/README.md) | Rehearse acceptance-evidence command group. |
 | [rules](rules/README.md) | Discover lint rules, generate the lint-rule catalog, and check it for drift. |
 | [self-update](self-update/README.md) | Detect the install method and perform verified CLI updates or redirect package-managed installs. |

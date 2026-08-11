@@ -68,3 +68,48 @@ func TestReleaseCallerDefersCaskInstallSmokeUntilNotarization(t *testing.T) {
 		t.Fatal("GoReleaser must retain Homebrew cask packaging while its install smoke is deferred")
 	}
 }
+
+func TestMacOSInstallGuidanceFailsClosedUntilCaskVerification(t *testing.T) {
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(readme)
+	for _, required := range []string{
+		"### macOS — source build (current channel)",
+		"go install github.com/specscore/specscore-cli/cmd/specscore@latest",
+		"pin an exact released tag or merged commit SHA",
+		"never use `@main`",
+		"Homebrew cask is blocked",
+		"bypass Gatekeeper",
+		"remove quarantine attributes.",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("macOS installation guidance is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"brew install --cask", "brew upgrade specscore", "xattr", "cmd/specscore@main"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("macOS installation guidance recommends blocked cask behavior %q", forbidden)
+		}
+	}
+
+	feature, err := os.ReadFile("spec/features/cli/release-distribution/README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	featureText := string(feature)
+	for _, required := range []string{
+		"REQ: block-homebrew-cask-until-verified",
+		"**Cask distribution status:** Blocked.",
+		"MUST NOT recommend, install,\nupgrade, or collect runtime evidence",
+		"artifact_smoke_test_homebrew_cask: false",
+		"temporary current\nsource-built channel",
+		"pin an exact released tag or merged\ncommit SHA",
+		"**Blocked** to **Verified**",
+	} {
+		if !strings.Contains(featureText, required) {
+			t.Fatalf("release distribution contract is missing %q", required)
+		}
+	}
+}

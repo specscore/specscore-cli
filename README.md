@@ -21,7 +21,20 @@ We build with our own tooling:
 
 ## Install
 
-### macOS / Linux — curl
+### macOS — source build (current channel)
+
+```bash
+go install github.com/specscore/specscore-cli/cmd/specscore@latest
+```
+
+This compiles the latest published source release locally. Automated or agent
+evidence MUST instead pin an exact released tag or merged commit SHA, then
+verify the resulting build identity; never use `@main`. Until the macOS
+release path has fail-closed signing, notarization, and Gatekeeper validation,
+the Homebrew cask is blocked and is not an installation or upgrade path. Do not
+bypass Gatekeeper or remove quarantine attributes.
+
+### Linux — curl
 
 ```bash
 curl -fsSL https://specscore.md/install/get-cli | sh
@@ -31,12 +44,6 @@ curl -fsSL https://specscore.md/install/get-cli | sh
 
 ```powershell
 powershell -c "irm https://specscore.md/install/get-cli.ps1 | iex"
-```
-
-### macOS — Homebrew
-
-```bash
-brew install --cask specscore/tap/specscore
 ```
 
 ### Windows — Scoop / WinGet
@@ -164,7 +171,7 @@ specscore self-update --yes      # skip the confirmation prompt (non-interactive
 specscore self-update --dry-run  # show what would happen (target version, download URL) without changing anything
 ```
 
-`self-update` detects how `specscore` was installed. **Package-managed installs** (Homebrew, Scoop, WinGet) are never overwritten — it prints the right manager command to run instead (e.g. `brew upgrade specscore`). **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified.
+`self-update` detects how `specscore` was installed. **Package-managed installs** are never overwritten; the command reports the manager-owned next step. **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified. On macOS, keep using the current source-build channel above while the cask remains blocked.
 
 The detection, download, verification, and replacement logic all live in the shared [`github.com/strongo/selfupdate`](https://github.com/strongo/selfupdate) module — specscore only supplies its own release identity (binary name, repository, managers) and exit-code contract. See [`spec/features/cli/self-update/`](spec/features/cli/self-update/) for what's specscore's own versus inherited from the library.
 
