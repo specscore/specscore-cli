@@ -100,13 +100,14 @@ type flatSection struct {
 // flatMigrationDeps is private and per operation. It replaces the old
 // process-global test hooks without changing the exported lifecycle surface.
 type flatMigrationDeps struct {
-	fs             lessonFS
-	sourceIdentity func(string, []byte) (LegacySourceRef, error)
-	marshal        func(string, any) ([]byte, error)
+	fs              lessonFS
+	sourceIdentity  func(string, []byte) (LegacySourceRef, error)
+	marshal         func(string, any) ([]byte, error)
+	renameNoReplace func(string, string) error
 }
 
 func defaultFlatMigrationDeps() flatMigrationDeps {
-	return flatMigrationDeps{fs: osLessonFS{}, sourceIdentity: resolveLegacySourceIdentity, marshal: marshalSafeJSON}
+	return flatMigrationDeps{fs: osLessonFS{}, sourceIdentity: resolveLegacySourceIdentity, marshal: marshalSafeJSON, renameNoReplace: renameNoReplace}
 }
 
 var flatStatus = map[string]bool{
@@ -253,6 +254,9 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		if err := validateCompletedFlatMigration(canonicalPath); err != nil {
 			return result, err
 		}
+		if err := verifyFlatMigrationRecoverySourceWithFS(opts.LessonsDir, marker.Source, marker.EventUUID, deps.fs); err != nil {
+			return result, fmt.Errorf("interrupted migration source recovery is not verifiable: %w", err)
+		}
 		result.ManifestPath = flatManifestPath(opts.LessonsDir, marker.Source, opts.Slug)
 		for _, expected := range marker.Files {
 			if strings.HasPrefix(expected.Path, opts.Slug+"/occurrences/") {
@@ -327,20 +331,8 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		return result, err
 	}
 
-	createdMarker := false
-	createdCanonical := false
-	createdManifest := false
-	rollback := func() {
-		if createdCanonical {
-			_ = deps.fs.RemoveAll(canonicalDir)
-		}
-		if createdManifest {
-			_ = deps.fs.Remove(manifestPath)
-		}
-		if createdMarker {
-			_ = deps.fs.Remove(markerPath)
-		}
-		_ = syncDirectoryWithFS(opts.LessonsDir, deps.fs)
+	fail := func(cause error) (FlatMigrationResult, error) {
+		return result, mutationFailure(MutationUncertain, fmt.Errorf("flat migration state retained for durable retry: %w", cause))
 	}
 	if os.IsNotExist(markerErr) {
 		markerStage := filepath.Join(stageDir, "transaction.json")
@@ -350,26 +342,20 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		if err := deps.fs.Link(markerStage, markerPath); err != nil {
 			return result, err
 		}
-		createdMarker = true
 		if err := syncDirectoryWithFS(opts.LessonsDir, deps.fs); err != nil {
-			rollback()
-			return result, err
+			return fail(err)
 		}
 	}
 
 	if _, err := deps.fs.Stat(canonicalDir); os.IsNotExist(err) {
 		if err := deps.fs.Mkdir(canonicalDir, 0o755); err != nil {
-			rollback()
-			return result, err
+			return fail(err)
 		}
-		createdCanonical = true
 		if err := deps.fs.Mkdir(filepath.Join(canonicalDir, "occurrences"), 0o755); err != nil {
-			rollback()
-			return result, err
+			return fail(err)
 		}
 	} else if err != nil {
-		rollback()
-		return result, err
+		return fail(err)
 	}
 
 	for _, expectedFile := range expected {
@@ -380,58 +366,70 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		if _, err := deps.fs.Stat(final); err == nil {
 			continue
 		} else if !os.IsNotExist(err) {
-			rollback()
-			return result, err
+			return fail(err)
 		}
 		stage := filepath.Join(stageDir, filepath.FromSlash(strings.TrimPrefix(expectedFile.Path, opts.Slug+"/")))
 		if err := deps.fs.Link(stage, final); err != nil {
-			rollback()
-			return result, err
+			return fail(err)
 		}
 	}
 	if err := syncDirectoryWithFS(filepath.Join(canonicalDir, "occurrences"), deps.fs); err != nil {
-		rollback()
-		return result, err
+		return fail(err)
 	}
 	if err := syncDirectoryWithFS(canonicalDir, deps.fs); err != nil {
-		rollback()
-		return result, err
+		return fail(err)
 	}
 
 	if _, err := deps.fs.Stat(manifestPath); os.IsNotExist(err) {
 		if err := deps.fs.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
-			rollback()
-			return result, err
+			return fail(err)
 		}
 		if err := deps.fs.Link(filepath.Join(stageDir, "manifest.json"), manifestPath); err != nil {
-			rollback()
-			return result, err
+			return fail(err)
 		}
-		createdManifest = true
 		if err := syncDirectoryWithFS(filepath.Dir(manifestPath), deps.fs); err != nil {
-			rollback()
-			return result, err
+			return fail(err)
 		}
 	} else if err != nil {
-		rollback()
-		return result, err
+		return fail(err)
 	}
 
 	if err := validateCompletedFlatMigration(canonicalPath); err != nil {
-		rollback()
-		return result, err
+		return fail(err)
 	}
 	current, err := deps.fs.ReadFile(flatPath)
 	if err != nil || !bytes.Equal(current, flatBytes) {
-		rollback()
-		return result, fmt.Errorf("legacy flat Lesson changed during migration")
+		return fail(fmt.Errorf("legacy flat Lesson changed during migration"))
 	}
-	if err := deps.fs.Remove(flatPath); err != nil {
-		rollback()
-		return result, err
+	recoveryDir := flatMigrationRecoveryDir(opts.LessonsDir, opts.EventUUID)
+	recoverySource := filepath.Join(recoveryDir, "source.md")
+	if err := deps.fs.MkdirAll(recoveryDir, 0o700); err != nil {
+		return fail(err)
+	}
+	if _, err := deps.fs.Lstat(recoverySource); err == nil {
+		return fail(fmt.Errorf("flat migration recovery source already exists"))
+	} else if !os.IsNotExist(err) {
+		return fail(err)
+	}
+	// Move rather than unlink: a concurrent replacement at flatPath is retained
+	// in the private ignored recovery namespace and detected by its hash. No
+	// path is deleted after a separate ownership check.
+	if err := deps.renameNoReplace(flatPath, recoverySource); err != nil {
+		return fail(err)
+	}
+	if err := verifyFlatMigrationRecoverySourceWithFS(opts.LessonsDir, source, opts.EventUUID, deps.fs); err != nil {
+		return fail(err)
+	}
+	if _, err := deps.fs.Lstat(flatPath); err == nil {
+		return fail(fmt.Errorf("legacy flat Lesson reappeared during source retirement"))
+	} else if !os.IsNotExist(err) {
+		return fail(err)
+	}
+	if err := syncDirectoryWithFS(recoveryDir, deps.fs); err != nil {
+		return fail(err)
 	}
 	if err := syncDirectoryWithFS(opts.LessonsDir, deps.fs); err != nil {
-		return result, err
+		return fail(err)
 	}
 	result.PendingFinalize = true
 	for _, observation := range manifest.Observations {
@@ -474,6 +472,9 @@ func finalizeFlatMigrationWithDeps(opts FlatMigrationOptions, eventUUID string, 
 		}
 		return err
 	}
+	if err := verifyFlatMigrationRecoverySourceWithFS(opts.LessonsDir, marker.Source, marker.EventUUID, deps.fs); err != nil {
+		return err
+	}
 	if err := verifyExpectedFilesWithFS(opts.LessonsDir, marker.Files, false, deps.fs); err != nil {
 		return err
 	}
@@ -481,10 +482,47 @@ func finalizeFlatMigrationWithDeps(opts FlatMigrationOptions, eventUUID string, 
 	if err := validateCompletedFlatMigrationProofWithFS(opts.LessonsDir, canonicalPath, opts.Slug, deps.fs); err != nil {
 		return err
 	}
-	if err := deps.fs.Remove(markerPath); err != nil {
+	recoveryDir := flatMigrationRecoveryDir(opts.LessonsDir, marker.EventUUID)
+	completedMarker := filepath.Join(recoveryDir, "transaction.complete.json")
+	if _, err := deps.fs.Lstat(completedMarker); err == nil {
+		return fmt.Errorf("completed migration marker already exists while active marker remains")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	// Retire by moving into the private recovery namespace, never by unlinking
+	// a path after validation. A concurrent replacement is preserved at the
+	// completed path and detected before finalization can report success.
+	if err := deps.renameNoReplace(markerPath, completedMarker); err != nil {
+		return err
+	}
+	moved, err := deps.fs.ReadFile(completedMarker)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(moved, b) {
+		return fmt.Errorf("migration marker changed during finalization; replacement retained at %s", completedMarker)
+	}
+	if err := syncDirectoryWithFS(recoveryDir, deps.fs); err != nil {
 		return err
 	}
 	return syncDirectoryWithFS(opts.LessonsDir, deps.fs)
+}
+
+func flatMigrationRecoveryDir(lessonsDir, eventUUID string) string {
+	projectRoot := filepath.Dir(filepath.Dir(lessonsDir))
+	return filepath.Join(projectRoot, ".specscore", "recovery", "flat-migration", eventUUID)
+}
+
+func verifyFlatMigrationRecoverySourceWithFS(lessonsDir string, source LegacySourceRef, eventUUID string, fs lessonFS) error {
+	path := filepath.Join(flatMigrationRecoveryDir(lessonsDir, eventUUID), "source.md")
+	b, err := fs.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("private recovery source is unavailable: %w", err)
+	}
+	if len(b) != source.ByteCount || shaString(b) != source.SHA256 {
+		return fmt.Errorf("private recovery source differs from the immutable source identity")
+	}
+	return nil
 }
 
 func validateFlatMigrationIndexRowWithFS(lessonsDir, canonicalPath string, fs lessonFS) error {

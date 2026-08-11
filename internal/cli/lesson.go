@@ -124,15 +124,19 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 	} else if !os.IsNotExist(err) {
 		return exitcode.UnexpectedErrorf("preflighting %s: %v", legacy, err)
 	}
+	targetExisted := false
 	if _, statErr := deps.fs.stat(target); statErr == nil && !force {
 		return exitcode.ConflictErrorf("lesson already exists: %s (pass --force to overwrite)", target)
+	} else if statErr == nil {
+		targetExisted = true
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return exitcode.UnexpectedErrorf("preflighting %s: %v", target, statErr)
 	}
 
-	// ValidateSlug and the non-empty classifications preflight satisfy every
-	// ScaffoldCanonical error precondition.
-	body, _ := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, classifications)
+	body, err := deps.scaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, classifications)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("scaffolding Lesson: %v", err)
+	}
 	if err := lesson.ValidateSafeContent("Lesson scaffold", string(body)); err != nil {
 		return exitcode.InvalidArgsErrorf("unsafe Lesson content: %v", err)
 	}
@@ -167,8 +171,16 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 	if err := deps.fs.mkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
 		return fail("creating occurrences directory", err)
 	}
-	if err := deps.fs.write(target, body, 0o644); err != nil {
-		return fail("writing Lesson", err)
+	var publishErr error
+	if targetExisted {
+		// --force is an explicit update of the already-resolved artifact. New
+		// artifact creation always uses the exclusive durable primitive below.
+		publishErr = deps.fs.write(target, body, 0o644)
+	} else {
+		publishErr = deps.publishExclusive(target, body, 0o644)
+	}
+	if publishErr != nil {
+		return fail("writing Lesson", publishErr)
 	}
 
 	specSub := filepath.Join(root, "spec")

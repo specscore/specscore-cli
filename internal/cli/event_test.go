@@ -724,6 +724,53 @@ func TestEventEmit_ExplicitEmptySubscribersCreatesNoRecipientlessLedger(t *testi
 	}
 }
 
+func TestEventEmit_ExplicitEmptySubscribersStillValidateEnvelope(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+	writeSpecscoreYAML(t, root, "events:\n  subscribers: []\n")
+	_, _, err := runEvent(t,
+		"emit",
+		"--name", "INVALID",
+		"--actor-kind", "robot",
+		"--actor-id", "robot:t",
+		"--artifact-type", "idea",
+		"--artifact-id", "x",
+		"--artifact-path", "spec/ideas/x.md",
+		"--payload-json", "{}",
+	)
+	if err == nil {
+		t.Fatal("invalid envelope bypassed validation for explicit event opt-out")
+	}
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 2 || !strings.Contains(err.Error(), "envelope validation failed: field=name") {
+		t.Fatalf("invalid envelope error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".specscore", "event-outbox")); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid opted-out event wrote an outbox: %v", statErr)
+	}
+}
+
+func TestEventEmit_InvalidEnvelopeDoesNotLoadSubscriberConfiguration(t *testing.T) {
+	root := t.TempDir()
+	called := false
+	deps := defaultEventCLIDeps()
+	deps.getwd = func() (string, error) { return root, nil }
+	deps.findRoot = func(string) (string, error) { return root, nil }
+	deps.load = func(string) ([]event.Subscriber, error) {
+		called = true
+		return nil, errors.New("subscriber configuration should not be read")
+	}
+	cmd := eventEmitCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{
+		"name": "INVALID", "actor-kind": "robot", "actor-id": "robot:t",
+		"artifact-type": "idea", "artifact-id": "x", "artifact-path": "spec/ideas/x.md", "payload-json": "{}",
+	})
+	err := runEventEmitWithDeps(cmd, deps)
+	if err == nil || called || !strings.Contains(err.Error(), "envelope validation failed: field=name") {
+		t.Fatalf("invalid envelope = %v, subscriber load called=%v", err, called)
+	}
+}
+
 func TestEventReplaySurfacesPreparedArtifactEvidenceAndReconcileRequiresToken(t *testing.T) {
 	root := t.TempDir()
 	withCwd(t, root)

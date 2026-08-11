@@ -15,11 +15,12 @@ import (
 )
 
 type testLessonIndexLock struct {
-	lockErr error
+	lockErr   error
+	unlockErr error
 }
 
-func (l testLessonIndexLock) Lock() error { return l.lockErr }
-func (testLessonIndexLock) Unlock() error { return errors.New("ignored unlock") }
+func (l testLessonIndexLock) Lock() error   { return l.lockErr }
+func (l testLessonIndexLock) Unlock() error { return l.unlockErr }
 
 func TestUpsertLessonIndexRowSerializesConcurrentRowsAndLockFailures(t *testing.T) {
 	specRoot := t.TempDir()
@@ -89,6 +90,10 @@ func TestUpsertLessonIndexRowSerializesConcurrentRowsAndLockFailures(t *testing.
 	deps.newLock = func(string) lessonIndexLocker { return testLessonIndexLock{lockErr: boom} }
 	if err := upsertLessonIndexRowWithLock(specRoot, parsed[0], deps); !errors.Is(err, boom) {
 		t.Fatalf("acquire lock error = %v", err)
+	}
+	deps.newLock = func(string) lessonIndexLocker { return testLessonIndexLock{unlockErr: boom} }
+	if err := upsertLessonIndexRowWithLock(specRoot, parsed[0], deps); !errors.Is(err, boom) || lesson.MutationOutcomeOf(err) != lesson.MutationUncertain {
+		t.Fatalf("release lock error = %v", err)
 	}
 }
 

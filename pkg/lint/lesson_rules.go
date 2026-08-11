@@ -9,6 +9,7 @@ package lint
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,32 @@ type lessonIndexLocker interface {
 type lessonIndexLockDeps struct {
 	mkdirAll func(string, os.FileMode) error
 	newLock  func(string) lessonIndexLocker
+}
+
+type lessonIndexFile interface {
+	Name() string
+	Chmod(os.FileMode) error
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type lessonIndexWriteOps struct {
+	stat       func(string) (os.FileInfo, error)
+	createTemp func(string, string) (lessonIndexFile, error)
+	rename     func(string, string) error
+	remove     func(string) error
+	open       func(string) (lessonIndexFile, error)
+}
+
+func defaultLessonIndexWriteOps() lessonIndexWriteOps {
+	return lessonIndexWriteOps{
+		stat:       os.Stat,
+		createTemp: func(dir, pattern string) (lessonIndexFile, error) { return os.CreateTemp(dir, pattern) },
+		rename:     os.Rename,
+		remove:     os.Remove,
+		open:       func(path string) (lessonIndexFile, error) { return os.Open(path) },
+	}
 }
 
 func defaultLessonIndexLockDeps() lessonIndexLockDeps {
@@ -617,6 +644,13 @@ func parseMarkdownLink(cell string) (label, link string, ok bool) {
 // prologue before "## Index" and everything from the next H2 heading onward
 // (typically "## Open Questions"), replacing only the table body in between.
 func rewriteLessonIndex(path string, slugs []string, parsed map[string]*lesson.Lesson) error {
+	specRoot := filepath.Dir(filepath.Dir(path))
+	return withLessonIndexLock(specRoot, defaultLessonIndexLockDeps(), func() error {
+		return rewriteLessonIndexUnlocked(path, slugs, parsed)
+	})
+}
+
+func rewriteLessonIndexUnlocked(path string, slugs []string, parsed map[string]*lesson.Lesson) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -663,7 +697,7 @@ func rewriteLessonIndex(path string, slugs []string, parsed map[string]*lesson.L
 	if nextH2 != -1 {
 		newLines = append(newLines, lines[nextH2:]...)
 	}
-	return os.WriteFile(path, []byte(strings.Join(newLines, "\n")), 0o644)
+	return writeLessonIndexAtomic(path, []byte(strings.Join(newLines, "\n")))
 }
 
 // UpsertLessonIndexRow mutates only the one canonical row owned by l. It is
@@ -677,6 +711,12 @@ func UpsertLessonIndexRow(specRoot string, l *lesson.Lesson) error {
 }
 
 func upsertLessonIndexRowWithLock(specRoot string, l *lesson.Lesson, deps lessonIndexLockDeps) error {
+	return withLessonIndexLock(specRoot, deps, func() error {
+		return upsertLessonIndexRowUnlocked(specRoot, l)
+	})
+}
+
+func withLessonIndexLock(specRoot string, deps lessonIndexLockDeps, mutate func() error) error {
 	lockDir := filepath.Join(filepath.Dir(specRoot), ".specscore", "locks")
 	if err := deps.mkdirAll(lockDir, 0o700); err != nil {
 		return fmt.Errorf("creating Lesson index lock directory: %w", err)
@@ -685,8 +725,20 @@ func upsertLessonIndexRowWithLock(specRoot string, l *lesson.Lesson, deps lesson
 	if err := lock.Lock(); err != nil {
 		return fmt.Errorf("acquiring Lesson index lock: %w", err)
 	}
-	defer func() { _ = lock.Unlock() }()
-	return upsertLessonIndexRowUnlocked(specRoot, l)
+	locked := true
+	defer func() {
+		if locked {
+			_ = lock.Unlock()
+		}
+	}()
+	if err := mutate(); err != nil {
+		return err
+	}
+	if err := lock.Unlock(); err != nil {
+		return &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: fmt.Errorf("releasing Lesson index lock: %w", err)}
+	}
+	locked = false
+	return nil
 }
 
 func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
@@ -723,7 +775,7 @@ func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 			parsed[found.Slug] = found
 			slugs = append(slugs, found.Slug)
 		}
-		return rewriteLessonIndex(path, slugs, parsed)
+		return rewriteLessonIndexUnlocked(path, slugs, parsed)
 	}
 	line := fmt.Sprintf("| [%s](%s) | %s | %s | %s | %s | %s |", row.slug, row.link, row.status, row.classifications, row.occurrences, row.lastOccurred, row.enforcement)
 	lines := strings.Split(string(b), "\n")
@@ -761,7 +813,7 @@ func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 		copy(lines[insert+1:], lines[insert:])
 		lines[insert] = line
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return writeLessonIndexAtomic(path, []byte(strings.Join(lines, "\n")))
 }
 
 func upsertLegacyLessonIndexRow(path string, b []byte, row lessonIndexRow) error {
@@ -800,7 +852,57 @@ func upsertLegacyLessonIndexRow(path string, b []byte, row lessonIndexRow) error
 		copy(lines[insert+1:], lines[insert:])
 		lines[insert] = line
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return writeLessonIndexAtomic(path, []byte(strings.Join(lines, "\n")))
+}
+
+func writeLessonIndexAtomic(path string, data []byte) error {
+	return writeLessonIndexAtomicWithOps(path, data, defaultLessonIndexWriteOps())
+}
+
+func writeLessonIndexAtomicWithOps(path string, data []byte, ops lessonIndexWriteOps) error {
+	info, err := ops.stat(path)
+	if err != nil {
+		return err
+	}
+	tmp, err := ops.createTemp(filepath.Dir(path), ".lesson-index-")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = ops.remove(tmpPath) }()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if n, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	} else if n != len(data) {
+		_ = tmp.Close()
+		return io.ErrShortWrite
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := ops.rename(tmpPath, path); err != nil {
+		return err
+	}
+	dir, err := ops.open(filepath.Dir(path))
+	if err != nil {
+		return &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: fmt.Errorf("opening Lesson index directory after publication: %w", err)}
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: fmt.Errorf("syncing Lesson index directory after publication: %w", err)}
+	}
+	if err := dir.Close(); err != nil {
+		return &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: fmt.Errorf("closing Lesson index directory after publication: %w", err)}
+	}
+	return nil
 }
 
 func firstMarkdownCell(line string) string {

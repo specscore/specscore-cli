@@ -552,6 +552,59 @@ func TestLegacyArtifactValidationAndMarshalResiduals(t *testing.T) {
 	}
 }
 
+func TestValidateImportedLessonRequiresCompleteOwnerProof(t *testing.T) {
+	for _, name := range []string{"nonregular marker", "unreadable marker", "marker mismatch", "missing occurrence store"} {
+		t.Run(name, func(t *testing.T) {
+			lessons, inv, _ := legacyMatrixFixture(t)
+			entry := inv.Entries[0]
+			path := filepath.Join(lessons, "rule", "README.md")
+			if err := os.MkdirAll(filepath.Join(filepath.Dir(path), "occurrences"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			body, err := ScaffoldCanonical(ScaffoldOptions{Slug: "rule"}, []string{"process"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body = bytes.Replace(body, []byte("**Legacy Provenance:** —"), []byte("**Legacy Provenance:** "+legacyProvenance(inv, entry)), 1)
+			if err := os.WriteFile(path, body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			markerPath := filepath.Join(filepath.Dir(path), ".legacy-import-owner")
+			if err := os.WriteFile(markerPath, legacyImportOwnerMarker(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var fs lessonFS = osLessonFS{}
+			switch name {
+			case "nonregular marker":
+				if err := os.Remove(markerPath); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(markerPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "unreadable marker":
+				fs = legacyOwnershipTestFS{lessonFS: osLessonFS{}, read: func(got string) ([]byte, error) {
+					if got == markerPath {
+						return nil, errors.New("read")
+					}
+					return os.ReadFile(got)
+				}}
+			case "marker mismatch":
+				if err := os.WriteFile(markerPath, []byte("wrong\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "missing occurrence store":
+				if err := os.Remove(filepath.Join(filepath.Dir(path), "occurrences")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := validateImportedLessonWithFS(path, entry, inv, fs); err == nil {
+				t.Fatal("incomplete ownership proof accepted")
+			}
+		})
+	}
+}
+
 func TestOccurrenceResidualFilesystemAndParsingFailures(t *testing.T) {
 	if err := validateContext(map[string]any{"repository": 7}); err == nil {
 		t.Fatal("non-object context accepted")
@@ -810,7 +863,6 @@ func TestFlatMigrationResidualStateMachineAndProofFailures(t *testing.T) {
 	}
 
 	lessons, opts, deps = flatMatrixFixture(t, "rule")
-	before := snapshotTree(t, lessons)
 	base := osLessonFS{}
 	deps.fs = residualFS{lessonFS: base, link: func(oldname, newname string) error {
 		if err := base.Link(oldname, newname); err != nil {
@@ -824,8 +876,103 @@ func TestFlatMigrationResidualStateMachineAndProofFailures(t *testing.T) {
 	if _, err := migrateFlatWithDeps(opts, deps); err == nil {
 		t.Fatal("corrupt post-publication canonical accepted")
 	}
-	if !bytes.Equal(before, snapshotTree(t, lessons)) {
-		t.Fatal("post-publication validation failure did not restore complete tree")
+	if _, err := os.Stat(filepath.Join(lessons, ".flat-migration-rule.json")); err != nil {
+		t.Fatalf("post-publication validation failure lost recovery marker: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(lessons, "rule", "README.md")); err != nil || string(got) != "corrupt" {
+		t.Fatalf("foreign/corrupt visible bytes were destructively replaced: %q, %v", got, err)
+	}
+}
+
+func TestFlatMigrationDurableRecoveryResiduals(t *testing.T) {
+	t.Run("resume requires private recovery source", func(t *testing.T) {
+		lessons, opts, deps, source := pendingFlatFixture(t)
+		eventUUID := FlatMigrationEventUUID(shaString(source), opts.Slug)
+		if err := os.Remove(filepath.Join(flatMigrationRecoveryDir(lessons, eventUUID), "source.md")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := migrateFlatWithDeps(opts, deps); err == nil || !strings.Contains(err.Error(), "source recovery") {
+			t.Fatalf("missing recovery source err=%v", err)
+		}
+	})
+
+	t.Run("fresh migration rejects occupied recovery target", func(t *testing.T) {
+		lessons, opts, deps := flatMatrixFixture(t, "rule")
+		body, err := os.ReadFile(filepath.Join(lessons, "rule.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		recoveryDir := flatMigrationRecoveryDir(lessons, FlatMigrationEventUUID(shaString(body), opts.Slug))
+		if err := os.MkdirAll(recoveryDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		foreign := []byte("foreign recovery bytes\n")
+		target := filepath.Join(recoveryDir, "source.md")
+		if err := os.WriteFile(target, foreign, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := migrateFlatWithDeps(opts, deps); err == nil || MutationOutcomeOf(err) != MutationUncertain {
+			t.Fatalf("occupied recovery target err=%v outcome=%v", err, MutationOutcomeOf(err))
+		}
+		got, err := os.ReadFile(target)
+		if err != nil || !bytes.Equal(got, foreign) {
+			t.Fatalf("foreign recovery bytes changed: %q err=%v", got, err)
+		}
+	})
+
+	t.Run("source reappearing after atomic retirement is retained", func(t *testing.T) {
+		lessons, opts, deps := flatMatrixFixture(t, "rule")
+		flatPath := filepath.Join(lessons, "rule.md")
+		baseRename := deps.renameNoReplace
+		foreign := []byte("foreign replacement\n")
+		deps.renameNoReplace = func(oldname, newname string) error {
+			if err := baseRename(oldname, newname); err != nil {
+				return err
+			}
+			return os.WriteFile(oldname, foreign, 0o644)
+		}
+		if _, err := migrateFlatWithDeps(opts, deps); err == nil || MutationOutcomeOf(err) != MutationUncertain {
+			t.Fatalf("reappeared source err=%v outcome=%v", err, MutationOutcomeOf(err))
+		}
+		got, err := os.ReadFile(flatPath)
+		if err != nil || !bytes.Equal(got, foreign) {
+			t.Fatalf("foreign replacement changed: %q err=%v", got, err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name  string
+		setup func(string)
+		deps  func(flatMigrationDeps) flatMigrationDeps
+	}{
+		{
+			name: "completed marker collision",
+			setup: func(path string) {
+				if err := os.WriteFile(path, []byte("foreign completed marker\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			deps: func(deps flatMigrationDeps) flatMigrationDeps { return deps },
+		},
+		{
+			name:  "atomic marker retirement failure",
+			setup: func(string) {},
+			deps: func(deps flatMigrationDeps) flatMigrationDeps {
+				deps.renameNoReplace = func(string, string) error { return errors.New("rename") }
+				return deps
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lessons, opts, deps, source := pendingFlatFixture(t)
+			eventUUID := FlatMigrationEventUUID(shaString(source), opts.Slug)
+			writeFlatMigrationIndex(t, lessons, filepath.Join(lessons, opts.Slug, "README.md"))
+			completed := filepath.Join(flatMigrationRecoveryDir(lessons, eventUUID), "transaction.complete.json")
+			tc.setup(completed)
+			if err := finalizeFlatMigrationWithDeps(opts, eventUUID, tc.deps(deps)); err == nil {
+				t.Fatal("unsafe finalization succeeded")
+			}
+		})
 	}
 }
 

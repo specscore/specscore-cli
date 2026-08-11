@@ -572,12 +572,9 @@ func TestMigrateFlat_RefusesCanonicalSiblingAndRollsBackPublicationFailure(t *te
 	t.Run("publish rollback", func(t *testing.T) {
 		lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
 		writeFlatFixture(t, lessonsDir, "rollback", flatFixture("Recorded", 0, ""))
-		before := snapshotTree(t, lessonsDir)
-		calls := 0
 		deps := defaultFlatMigrationDeps()
 		deps.fs = flatMigrationTestFS{lessonFS: osLessonFS{}, link: func(old, new string) error {
-			calls++
-			if calls == 2 {
+			if strings.HasSuffix(new, filepath.Join("rollback", "README.md")) {
 				return errors.New("injected publication failure")
 			}
 			return os.Link(old, new)
@@ -585,8 +582,8 @@ func TestMigrateFlat_RefusesCanonicalSiblingAndRollsBackPublicationFailure(t *te
 		if _, err := migrateFlatWithDeps(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "rollback", Classifications: []string{"process"}}, deps); err == nil {
 			t.Fatal("expected injected failure")
 		}
-		if !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
-			t.Fatal("failed publication did not roll back exactly")
+		if _, err := os.Stat(filepath.Join(lessonsDir, ".flat-migration-rollback.json")); err != nil {
+			t.Fatalf("post-marker failure did not retain recovery marker: %v", err)
 		}
 	})
 }
@@ -596,12 +593,13 @@ func TestMigrateFlatWithDeps_PublishAndDurabilityFailuresRestoreFreshTree(t *tes
 		t.Run(fmt.Sprintf("link-%d", failLinkCall), func(t *testing.T) {
 			lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
 			writeFlatFixture(t, lessonsDir, "rollback", flatFixture("Recorded", 0, ""))
-			before := snapshotTree(t, lessonsDir)
 			calls := 0
+			failedTarget := ""
 			deps := defaultFlatMigrationDeps()
 			deps.fs = flatMigrationTestFS{lessonFS: osLessonFS{}, link: func(old, new string) error {
 				calls++
 				if calls == failLinkCall {
+					failedTarget = new
 					return errors.New("injected link boundary failure")
 				}
 				return os.Link(old, new)
@@ -609,8 +607,16 @@ func TestMigrateFlatWithDeps_PublishAndDurabilityFailuresRestoreFreshTree(t *tes
 			if _, err := migrateFlatWithDeps(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "rollback", Classifications: []string{"process"}}, deps); err == nil {
 				t.Fatal("expected injected link failure")
 			}
-			if calls != failLinkCall || !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
-				t.Fatalf("link calls=%d tree changed after rollback", calls)
+			if calls != failLinkCall {
+				t.Fatalf("link calls=%d, want %d", calls, failLinkCall)
+			}
+			marker := filepath.Join(lessonsDir, ".flat-migration-rollback.json")
+			if failedTarget == marker {
+				if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+					t.Fatalf("pre-publication failure retained marker: %v", statErr)
+				}
+			} else if _, statErr := os.Stat(marker); statErr != nil && !strings.Contains(failedTarget, ".flat-migration-stage-") {
+				t.Fatalf("post-publication failure lost marker: %v", statErr)
 			}
 		})
 	}
@@ -619,7 +625,6 @@ func TestMigrateFlatWithDeps_PublishAndDurabilityFailuresRestoreFreshTree(t *tes
 		t.Run(fmt.Sprintf("sync-%d", failSyncCall), func(t *testing.T) {
 			lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
 			writeFlatFixture(t, lessonsDir, "rollback", flatFixture("Recorded", 0, ""))
-			before := snapshotTree(t, lessonsDir)
 			calls := 0
 			deps := defaultFlatMigrationDeps()
 			deps.fs = flatMigrationTestFS{lessonFS: osLessonFS{}, open: func(path string) (lessonFile, error) {
@@ -638,10 +643,179 @@ func TestMigrateFlatWithDeps_PublishAndDurabilityFailuresRestoreFreshTree(t *tes
 			if _, err := migrateFlatWithDeps(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "rollback", Classifications: []string{"process"}}, deps); err == nil {
 				t.Fatal("expected injected sync failure")
 			}
-			if calls < failSyncCall || !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
-				t.Fatalf("sync calls=%d tree changed after rollback", calls)
+			if calls < failSyncCall {
+				t.Fatalf("sync calls=%d, want at least %d", calls, failSyncCall)
+			}
+			marker := filepath.Join(lessonsDir, ".flat-migration-rollback.json")
+			if _, statErr := os.Stat(marker); statErr != nil && failSyncCall > 1 {
+				t.Fatalf("post-publication sync failure lost marker: %v", statErr)
 			}
 		})
+	}
+}
+
+func TestMigrateFlatRetainsConcurrentForeignChildrenAndCleanRetry(t *testing.T) {
+	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+	writeFlatFixture(t, lessonsDir, "foreign-child", flatFixture("Recorded", 0, ""))
+	foreignID := "f1234567-89ab-4def-8123-456789abcdef"
+	foreignPath := filepath.Join(lessonsDir, "foreign-child", "occurrences", foreignID+".json")
+	var foreign []byte
+	deps := defaultFlatMigrationDeps()
+	base := osLessonFS{}
+	deps.fs = flatMigrationTestFS{lessonFS: base, link: func(old, new string) error {
+		if strings.Contains(new, filepath.Join(".legacy-import", "flat-")) {
+			if _, err := AddOccurrence(AddOccurrenceOptions{
+				LessonPath: filepath.Join(lessonsDir, "foreign-child", "README.md"),
+				ID:         foreignID, Summary: "Concurrent independently owned occurrence.",
+				Context: map[string]any{"writer": "foreign"}, Evidence: Evidence{Kind: "none"}, Now: time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC),
+			}); err != nil {
+				return err
+			}
+			foreign, _ = os.ReadFile(foreignPath)
+			return errors.New("manifest publication failed after foreign child appeared")
+		}
+		return base.Link(old, new)
+	}}
+	opts := FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "foreign-child", Classifications: []string{"process"}}
+	if _, err := migrateFlatWithDeps(opts, deps); err == nil || MutationOutcomeOf(err) != MutationUncertain {
+		t.Fatalf("post-visible failure = %v, outcome=%v", err, MutationOutcomeOf(err))
+	}
+	if got, err := os.ReadFile(foreignPath); err != nil || !bytes.Equal(got, foreign) {
+		t.Fatalf("foreign child was deleted or changed: %q, %v", got, err)
+	}
+	result, err := MigrateFlat(opts)
+	if err != nil {
+		t.Fatalf("clean retry: %v", err)
+	}
+	writeFlatMigrationIndex(t, lessonsDir, result.CanonicalPath)
+	if err := FinalizeFlatMigration(opts, FlatMigrationEventUUID(resultSourceSHA(t, lessonsDir, opts.Slug), opts.Slug)); err != nil {
+		t.Fatalf("finalize retry: %v", err)
+	}
+	if got, err := os.ReadFile(foreignPath); err != nil || !bytes.Equal(got, foreign) {
+		t.Fatalf("clean retry changed foreign child: %q, %v", got, err)
+	}
+}
+
+func resultSourceSHA(t *testing.T, lessonsDir, slug string) string {
+	t.Helper()
+	markerBytes, err := os.ReadFile(filepath.Join(lessonsDir, ".flat-migration-"+slug+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marker flatMigrationMarker
+	if err := decodeStrictJSON(markerBytes, &marker); err != nil {
+		t.Fatal(err)
+	}
+	return marker.Source.SHA256
+}
+
+func TestMigrateFlatNoReplaceMovesPreserveConcurrentSourceAndRecoveryTarget(t *testing.T) {
+	t.Run("source replacement", func(t *testing.T) {
+		lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+		flatPath := writeFlatFixture(t, lessonsDir, "source-race", flatFixture("Recorded", 0, ""))
+		foreign := []byte("foreign replacement\n")
+		deps := defaultFlatMigrationDeps()
+		realMove := deps.renameNoReplace
+		deps.renameNoReplace = func(old, new string) error {
+			if old == flatPath {
+				if err := os.WriteFile(old, foreign, 0o600); err != nil {
+					return err
+				}
+			}
+			return realMove(old, new)
+		}
+		opts := FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "source-race", Classifications: []string{"process"}}
+		_, err := migrateFlatWithDeps(opts, deps)
+		if err == nil || MutationOutcomeOf(err) != MutationUncertain {
+			t.Fatalf("source race = %v", err)
+		}
+		markerBytes, readErr := os.ReadFile(filepath.Join(lessonsDir, ".flat-migration-source-race.json"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var marker flatMigrationMarker
+		if err := decodeStrictJSON(markerBytes, &marker); err != nil {
+			t.Fatal(err)
+		}
+		got, readErr := os.ReadFile(filepath.Join(flatMigrationRecoveryDir(lessonsDir, marker.EventUUID), "source.md"))
+		if readErr != nil || !bytes.Equal(got, foreign) {
+			t.Fatalf("foreign source replacement was not retained: %q, %v", got, readErr)
+		}
+	})
+
+	t.Run("recovery target", func(t *testing.T) {
+		lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+		flatPath := writeFlatFixture(t, lessonsDir, "target-race", flatFixture("Recorded", 0, ""))
+		foreign := []byte("foreign recovery target\n")
+		deps := defaultFlatMigrationDeps()
+		realMove := deps.renameNoReplace
+		deps.renameNoReplace = func(old, new string) error {
+			if old == flatPath {
+				if err := os.WriteFile(new, foreign, 0o600); err != nil {
+					return err
+				}
+			}
+			return realMove(old, new)
+		}
+		opts := FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "target-race", Classifications: []string{"process"}}
+		_, err := migrateFlatWithDeps(opts, deps)
+		if err == nil || MutationOutcomeOf(err) != MutationUncertain {
+			t.Fatalf("target race = %v", err)
+		}
+		if got, readErr := os.ReadFile(flatPath); readErr != nil || bytes.Equal(got, foreign) {
+			t.Fatalf("owned source was lost: %q, %v", got, readErr)
+		}
+		markerBytes, readErr := os.ReadFile(filepath.Join(lessonsDir, ".flat-migration-target-race.json"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var marker flatMigrationMarker
+		if err := decodeStrictJSON(markerBytes, &marker); err != nil {
+			t.Fatal(err)
+		}
+		got, readErr := os.ReadFile(filepath.Join(flatMigrationRecoveryDir(lessonsDir, marker.EventUUID), "source.md"))
+		if readErr != nil || !bytes.Equal(got, foreign) {
+			t.Fatalf("foreign recovery target was overwritten: %q, %v", got, readErr)
+		}
+	})
+}
+
+func TestFinalizeFlatMigrationPreservesConcurrentMarkerReplacement(t *testing.T) {
+	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
+	writeFlatFixture(t, lessonsDir, "marker-race", flatFixture("Recorded", 0, ""))
+	opts := FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "marker-race", Classifications: []string{"process"}}
+	result, err := MigrateFlat(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFlatMigrationIndex(t, lessonsDir, result.CanonicalPath)
+	markerPath := filepath.Join(lessonsDir, ".flat-migration-marker-race.json")
+	markerBytes, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marker flatMigrationMarker
+	if err := decodeStrictJSON(markerBytes, &marker); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte("foreign marker replacement\n")
+	deps := defaultFlatMigrationDeps()
+	realMove := deps.renameNoReplace
+	deps.renameNoReplace = func(old, new string) error {
+		if old == markerPath {
+			if err := os.WriteFile(old, foreign, 0o600); err != nil {
+				return err
+			}
+		}
+		return realMove(old, new)
+	}
+	err = finalizeFlatMigrationWithDeps(opts, marker.EventUUID, deps)
+	if err == nil || !strings.Contains(err.Error(), "marker changed") {
+		t.Fatalf("marker race = %v", err)
+	}
+	completed := filepath.Join(flatMigrationRecoveryDir(lessonsDir, marker.EventUUID), "transaction.complete.json")
+	if got, readErr := os.ReadFile(completed); readErr != nil || !bytes.Equal(got, foreign) {
+		t.Fatalf("foreign marker replacement was deleted: %q, %v", got, readErr)
 	}
 }
 

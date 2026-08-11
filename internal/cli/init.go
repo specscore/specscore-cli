@@ -245,16 +245,21 @@ func buildSpecConfig(root, title, host, org, repo string) projectdef.SpecConfig 
 // writeMissingIndex writes content to root/relPath only if no file already
 // exists at that path. Existing files are preserved untouched.
 func writeMissingIndex(root, relPath, content string) error {
+	return writeMissingIndexWithPublisher(root, relPath, content, publishFileExclusive)
+}
+
+func writeMissingIndexWithPublisher(root, relPath, content string, publish func(string, []byte, os.FileMode) error) error {
 	abs := filepath.Join(root, relPath)
 	if _, err := os.Stat(abs); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return err
+	err := publish(abs, []byte(content), 0o644)
+	if isExclusivePublishCollision(err) {
+		return nil
 	}
-	return os.WriteFile(abs, []byte(content), 0o644)
+	return err
 }
 
 // specReadmeContent / ideasIndexContent / featuresIndexContent render the

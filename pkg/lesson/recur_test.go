@@ -1,6 +1,9 @@
 package lesson
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,16 +154,86 @@ func TestRecur_WriteFileError(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := writeLesson(t, dir, "kinder-fake", lessonBody("Stated"))
-	// os.WriteFile truncates an EXISTING file in place, which is gated by the
-	// file's own write permission — not the containing directory's — so the
-	// file itself (not the directory) must be made read-only to force the
-	// write to fail.
-	if err := os.Chmod(path, 0o444); err != nil {
+	// Recurrence publication is same-directory temp+rename, so make the
+	// containing directory read-only to fail before publication.
+	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
 	if _, err := Recur(path, "note"); err == nil {
-		t.Fatal("expected write error against a read-only file")
+		t.Fatal("expected write error in a read-only directory")
+	}
+	if _, err := recurUnlocked(path, "note"); err == nil {
+		t.Fatal("expected atomic writer error in a read-only directory")
+	}
+}
+
+func TestRecurWithPostMutationCanonicalPathAndHook(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "spec", "lessons", "rule")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(path, []byte(lessonBody("Recorded")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	count, err := RecurWithPostMutation(path, "again", func(got int) error {
+		called++
+		if got != 1 {
+			t.Fatalf("hook count=%d want 1", got)
+		}
+		return nil
+	})
+	if err != nil || count != 1 || called != 1 {
+		t.Fatalf("count=%d called=%d err=%v", count, called, err)
+	}
+	boom := fmt.Errorf("post mutation")
+	count, err = RecurWithPostMutation(path, "again", func(int) error { return boom })
+	if !errors.Is(err, boom) || count != 2 {
+		t.Fatalf("hook failure count=%d err=%v", count, err)
+	}
+}
+
+func TestRecurAtomicWriterFilesystemBoundariesRetainPublishedState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lesson.md")
+	original := []byte("original\n")
+	updated := []byte("updated\n")
+	if err := os.WriteFile(path, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	baseline := &faultMatrixFS{lessonFS: osLessonFS{}}
+	if err := writeRecurFileAtomicWithFS(path, updated, baseline); err != nil {
+		t.Fatal(err)
+	}
+	for failAt, op := range baseline.trace {
+		failAt, op := failAt+1, op
+		t.Run(fmt.Sprintf("%03d-%s", failAt, op), func(t *testing.T) {
+			if err := os.WriteFile(path, original, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			fs := &faultMatrixFS{lessonFS: osLessonFS{}, failAt: failAt}
+			err := writeRecurFileAtomicWithFS(path, updated, fs)
+			got, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if err == nil {
+				// Best-effort cleanup errors occur only on the now-unlinked temp.
+				if op != "Remove" {
+					t.Fatalf("injected %s failure was ignored", op)
+				}
+				return
+			}
+			if bytes.Equal(got, original) {
+				return
+			}
+			if !bytes.Equal(got, updated) || MutationOutcomeOf(err) != MutationUncertain {
+				t.Fatalf("post-publication %s: bytes=%q outcome=%v err=%v", op, got, MutationOutcomeOf(err), err)
+			}
+		})
 	}
 }

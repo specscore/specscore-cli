@@ -206,9 +206,9 @@ func TestMigrateFlatEveryFilesystemFailureHasACompleteOutcome(t *testing.T) {
 			if bytes.Equal(before, after) {
 				return
 			}
-			// The only non-compensated migration boundary is after the source
-			// removal: the durable marker must describe every canonical file so
-			// an exact retry can resume without inventing an event or artifact.
+			// Once the marker is visible, every later failure retains durable
+			// partial state. Every visible owned file must match the marker; an
+			// absent file remains resumable and no path is rolled back.
 			markerBytes, readErr := os.ReadFile(filepath.Join(lessons, ".flat-migration-rule.json"))
 			if readErr != nil {
 				t.Fatalf("changed tree lacks durable marker: %v; err=%v", readErr, err)
@@ -217,11 +217,13 @@ func TestMigrateFlatEveryFilesystemFailureHasACompleteOutcome(t *testing.T) {
 			if decodeErr := decodeStrictJSON(markerBytes, &marker); decodeErr != nil {
 				t.Fatalf("changed tree has malformed marker: %v", decodeErr)
 			}
-			if verifyErr := verifyExpectedFiles(lessons, marker.Files, false); verifyErr != nil {
-				t.Fatalf("marker does not prove complete tree: %v", verifyErr)
+			if verifyErr := verifyExpectedFiles(lessons, marker.Files, true); verifyErr != nil {
+				t.Fatalf("marker does not prove retained tree: %v", verifyErr)
 			}
-			if _, statErr := os.Stat(filepath.Join(lessons, "rule.md")); !os.IsNotExist(statErr) {
-				t.Fatalf("non-rollback state did not cross source-removal boundary: %v", statErr)
+			if _, statErr := os.Stat(filepath.Join(lessons, "rule.md")); os.IsNotExist(statErr) {
+				if verifyErr := verifyFlatMigrationRecoverySourceWithFS(lessons, marker.Source, marker.EventUUID, osLessonFS{}); verifyErr != nil {
+					t.Fatalf("retired source lacks private recovery proof: %v", verifyErr)
+				}
 			}
 		})
 	}

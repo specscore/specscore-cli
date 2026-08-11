@@ -14,6 +14,7 @@ import (
 	"testing/iotest"
 
 	"github.com/specscore/specscore-cli/internal/telemetry"
+	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/idea"
@@ -2769,7 +2770,7 @@ func TestEventEmit_NoProjectRoot(t *testing.T) {
 	dir := t.TempDir()
 	withCwd(t, dir)
 	_, _, err := runEvent(t, "emit",
-		"--name=e", "--actor-kind=user", "--actor-id=a",
+		"--name=idea.drafted", "--actor-kind=user", "--actor-id=a",
 		"--artifact-type=idea", "--artifact-id=x",
 		"--artifact-path=spec/ideas/x.md",
 		"--payload-json", `{"k":"v"}`,
@@ -4024,29 +4025,19 @@ func TestEventEmit_BothPayloadFlagsReject(t *testing.T) {
 
 func TestEventEmit_LoadSubscribersError(t *testing.T) {
 	root := t.TempDir()
-	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{}); err != nil {
-		t.Fatal(err)
+	deps := eventTestDeps(&fakeEventOutbox{})
+	deps.getwd = func() (string, error) { return root, nil }
+	deps.findRoot = func(string) (string, error) { return root, nil }
+	deps.load = func(string) ([]event.Subscriber, error) { return nil, errors.New("malformed subscribers") }
+	cmd := eventEmitCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{
+		"name": "idea.drafted", "actor-kind": "user", "actor-id": "a",
+		"artifact-type": "idea", "artifact-id": "x", "artifact-path": "spec/ideas/x.md", "payload-json": `{"k":"v"}`,
+	})
+	err := runEventEmitWithDeps(cmd, deps)
+	if err == nil || exitCodeOfErr(err) != exitcode.InvalidArgs {
+		t.Fatalf("malformed subscriber configuration err=%v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Create a malformed .specscore/events.yaml to trigger subscriber load error.
-	evtDir := filepath.Join(root, ".specscore")
-	if err := os.MkdirAll(evtDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(evtDir, "events.yaml"), []byte("not: [valid: yaml list"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	withCwd(t, root)
-	_, _, err := runEvent(t, "emit",
-		"--name=e", "--actor-kind=user", "--actor-id=a",
-		"--artifact-type=idea", "--artifact-id=x",
-		"--artifact-path=spec/ideas/x.md",
-		"--payload-json", `{"k":"v"}`,
-	)
-	// May or may not error depending on LoadSubscribers behavior.
-	_ = err
 }
 
 // ---------------------------------------------------------------------------

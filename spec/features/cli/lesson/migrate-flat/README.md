@@ -23,7 +23,7 @@ The user selects one committed flat Lesson and reviewed classifications. Before 
 
 The command publishes the canonical README, a provider Occurrence for the source Lesson, one Occurrence for every structured recurrence bullet, immutable provenance, and the exact index row. The observable middle result is that a second process can see one durable transaction marker and resume the same event UUID rather than starting competing work.
 
-The command commits the prepared event and retires the marker only after artifact and index evidence verify. The observable end result is one lint-valid directory Lesson, no sibling flat file, one exact index row, and no unrelated changed file. A repeat invocation is read-only. If the process stops at any durable boundary, the same command resumes; if preflight fails, nothing is prepared or written.
+The command commits the prepared event and retires the marker only after artifact and index evidence verify. Retirement is an atomic no-replace move into the private gitignored `.specscore/recovery/flat-migration/<event-uuid>/` namespace, beside the exact flat source bytes; no post-publication path is unlinked. The observable end result is one lint-valid directory Lesson, no sibling flat file, one exact index row, and no unrelated repository artifact changed. A repeat invocation is read-only. If the process stops at any durable boundary, the same command resumes; if preflight fails, nothing is prepared or written.
 
 ## Behavior
 
@@ -33,7 +33,7 @@ specscore lesson migrate-flat <slug> --classification <value> [--classification 
 
 #### REQ: immutable-source-and-bounded-publication
 
-The flat bytes MUST match the current immutable Git revision. Provenance records repository, full revision, repository-relative path, commit time, byte count, whole-source hash, and exact observation ranges and hashes. Migration metadata MUST NOT copy raw source prose. Every final path MUST be preflighted before publication; the command MUST change only the selected Lesson layout, its migration manifest, its exact index row, its prepared event/outbox records, and its short-lived transaction marker.
+The flat bytes MUST match the current immutable Git revision. Provenance records repository, full revision, repository-relative path, commit time, byte count, whole-source hash, and exact observation ranges and hashes. Migration metadata MUST NOT copy raw source prose. Every final path MUST be preflighted before publication; the command MUST change only the selected Lesson layout, its migration manifest, its exact index row, its prepared event/outbox records, its transaction marker, and the private gitignored recovery directory holding the source and completed marker.
 
 #### REQ: every-structured-observation-survives
 
@@ -45,7 +45,7 @@ Recorded, Stated, Withdrawn, and Superseded source statuses remain provenance-ba
 
 #### REQ: one-resumable-transaction
 
-Canonical artifacts, manifest, exact index row, and prepared event/outbox MUST share one deterministic transaction identity. A durable marker MUST remain until all four are verifiable. A retry after source removal MUST reuse the marker's classifications, source identity, occurrence IDs, timestamp, and event UUID. Malformed, conflicting, or incomplete state MUST fail visibly without overwriting it.
+Canonical artifacts, manifest, exact index row, and prepared event/outbox MUST share one deterministic transaction identity. A durable marker MUST remain until all four are verifiable. The flat source MUST be retired with an atomic no-replace move into the transaction's private recovery directory, and finalization MUST move the marker the same way; a competing replacement at either source or destination MUST be retained and reported as uncertain. A retry after source retirement MUST reuse the marker's classifications, source identity, occurrence IDs, timestamp, and event UUID. Malformed, conflicting, incomplete, or concurrently extended state MUST fail visibly without deleting or overwriting it.
 
 #### REQ: explicit-migration-only
 
@@ -78,7 +78,13 @@ Readers and lint MUST continue to support a flat Lesson until this command runs.
 
 **Given** the process stops after artifact publication, index upsert, or event commit
 **When** the same command runs again
-**Then** it resumes the same marker and event UUID, verifies or completes each remaining phase exactly once, removes the marker only after success, and never duplicates the index row or an Occurrence.
+**Then** it resumes the same marker and event UUID, verifies or completes each remaining phase exactly once, atomically moves the marker to private completed recovery only after success, and never duplicates the index row or an Occurrence.
+
+### AC: concurrent-foreign-writes-are-never-deleted
+
+**Given** a concurrent writer adds a valid foreign occurrence, replaces the flat source path, or creates the private recovery target after publication begins
+**When** a later migration boundary fails
+**Then** the command exits `10`, retains the marker and prepared event, preserves every foreign byte at its visible or private recovery path, and only a byte-verifiable clean retry is allowed to finish.
 
 ### AC: repeated-complete-migration-is-read-only
 

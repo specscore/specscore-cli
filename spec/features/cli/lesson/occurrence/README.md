@@ -33,6 +33,8 @@ specscore lesson occurrence info <lesson> <occurrence-id> [--format text|yaml|js
 
 `add` persists a lowercase hyphenated UUID v4, RFC-3339 UTC time, optional summary, and opaque JSON-object context. The occurrence schema has no top-level `actor` field; an optional safe execution identifier may appear inside `context.execution`. Explicit JSON inputs are mutually exclusive; malformed/non-object JSON exits `2` before a write. If none is supplied, `--capture-context` defaults on and *lazily* collects only safe local facts (project root and git revision/branch if available). It MUST NOT touch Synchestra, browser state, credentials, remote APIs, or git when explicit context is present. `--capture-context=false` writes `{}`. `list` is chronological and `info` is read-only; structured output preserves unknown JSON keys.
 
+After exclusive child publication, the command upserts the one derived index row and durably fences the child, index, and their parent directories before committing its prepared event. Any post-publication index, read-back, or fence failure retains the immutable child, current index state, and prepared event for explicit reconciliation. It MUST NOT unlink the child as compensation because a path is not an ownership token and may have been replaced by a concurrent writer.
+
 ### `recur` compatibility
 
 For directory Lessons, `lesson recur <slug> --note` delegates to `occurrence add`, maps `--note` to summary, updates the denormalized count, emits the historical success line, and never changes status. For flat files it retains the existing rewrite until explicit migration.
@@ -56,6 +58,12 @@ For directory Lessons, `lesson recur <slug> --note` delegates to `occurrence add
 **Given** a directory Lesson in `Stated`
 **When** an existing script runs `lesson recur <slug> --note "seen again"`
 **Then** it exits `0` with historical output, records exactly one occurrence with that summary, increments the rollup, and leaves `Stated` unchanged.
+
+### AC: post-publication-failure-retains-foreign-state
+
+**Given** an occurrence child is visible and a concurrent writer changes the index or replaces the child path
+**When** index reconciliation, read-back, or a durability fence fails
+**Then** the command exits `10`, retains the child path and every concurrent index row byte-for-byte, leaves the prepared event inspectable, and performs no compensating unlink or whole-index restore.
 
 ## Open Questions
 

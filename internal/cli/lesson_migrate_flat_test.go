@@ -192,6 +192,19 @@ func TestLessonMigrateFlat_ResumesEveryDurableBoundary(t *testing.T) {
 	}
 }
 
+func TestLessonMigrateFlat_DurabilityFenceFailureRetainsRecovery(t *testing.T) {
+	root := setupFlatMigrationCLIProject(t, "fence-boundary")
+	deps := defaultLessonCLIDeps()
+	deps.durable = faultDurableOps("open-dir")
+	if _, _, err := runFlatMigrationWithDeps(t, root, "fence-boundary", deps); err == nil || !strings.Contains(err.Error(), "durably fencing flat migration") {
+		t.Fatalf("durability fence err=%v", err)
+	}
+	marker := filepath.Join(root, "spec", "lessons", ".flat-migration-fence-boundary.json")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("fence failure lost durable recovery marker: %v", err)
+	}
+}
+
 func setupFlatMigrationCLIProject(t *testing.T, slug string) string {
 	t.Helper()
 	root := setupLintCleanProject(t)

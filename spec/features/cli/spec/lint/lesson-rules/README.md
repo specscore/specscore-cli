@@ -55,6 +55,10 @@ A file is recognized as a Lesson when its first H1 heading matches `# Lesson: <t
 
 `L-004` MUST report a violation naming every index row whose `Status`/`Recurred`/`Date`/`Owner` cells do not match the corresponding Lesson file. `--fix` MUST regenerate drifted rows. A missing `spec/lessons/README.md` emits neither `L-003` nor `L-004` — that gap is the generic `readme-exists` rule's job.
 
+#### REQ: lesson-index-writer-is-locked-and-durable
+
+Every full rewrite and bounded row upsert MUST use the same project-private shared index lock and the same same-directory atomic writer: preserve mode, write the complete temp file, fsync the file, close it, rename atomically, then fsync and close the parent directory. A failure before rename MUST leave the previous index parseable and byte-identical. A file/parent fence failure after rename MUST retain the new index and report mutation uncertainty so a retry never restores a whole snapshot.
+
 ### Required ownership, evidence, and graph integrity
 
 #### REQ: extended-lesson-rules
@@ -84,6 +88,12 @@ Flat and directory Lesson READMEs MUST join the generic status-bearing document 
 | [cli/spec/lint/plan-rules](../plan-rules/README.md) | Closest structural sibling — `L-003`/`L-004` mirror `idea-index-completeness`/`idea-index-row-sync` rather than Plan's (Plan currently has no equivalent index-sync rule). |
 
 ## Acceptance Criteria
+
+### AC: index-write-faults-remain-parseable-and-retryable (verifies REQ:lesson-index-writer-is-locked-and-durable)
+
+**Given** a parseable Lessons index and a valid replacement projection
+**When** any temp-write, file-fsync, close, rename, parent-open, parent-fsync, or parent-close boundary fails
+**Then** failures before rename preserve the original bytes; failures after rename retain the complete replacement as uncertain; and a clean retry finishes under the same shared lock without losing a concurrent row.
 
 ### AC: l001-missing-section-flagged (verifies REQ:rule-l-001-presence-only)
 

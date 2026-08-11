@@ -55,7 +55,7 @@ When the target lesson's `**Status:**` is a terminal disposition (`Withdrawn` or
 
 #### REQ: recur-index-sync
 
-Canonical index recurrence metadata is derived from child Occurrences. A canonical recurrence MUST leave the README byte-identical and upsert only that Lesson's derived index row. After a flat rewrite, the verb MUST upsert only that Lesson's compatibility index row; it MUST NOT run a repository-wide fixer.
+Canonical index recurrence metadata is derived from child Occurrences. A canonical recurrence MUST leave the README byte-identical and upsert only that Lesson's derived index row. After a flat rewrite, the verb MUST hold the per-Lesson lifecycle lock from validation through the body rewrite and bounded index reconciliation, then upsert only that Lesson's compatibility index row under the shared index lock. The total lock order is always per-Lesson first, shared index second. It MUST NOT run a repository-wide fixer. A post-rewrite failure retains the rewritten body, current index bytes, and prepared event; it MUST NOT restore either whole-file snapshot over a concurrent writer.
 
 ## Parameters / Flags
 
@@ -95,6 +95,12 @@ Canonical index recurrence metadata is derived from child Occurrences. A canonic
 **Given** a compatibility flat Lesson with an existing `## Recurrences` section carrying one entry
 **When** the user runs `specscore lesson recur <slug> --note "second occurrence"`
 **Then** the existing entry is preserved and a new dated entry containing "second occurrence" is appended after it.
+
+### AC: flat-recur-concurrency-is-serialized-and-fail-closed (verifies REQ:recur-index-sync)
+
+**Given** two writers target the same flat Lesson and one reaches index reconciliation after its body rewrite
+**When** the second writer attempts a recurrence and the first reconciliation fails after a concurrent index mutation
+**Then** the per-Lesson lock serializes their validate/write/index order, the first exits `10` with its prepared event retained, and no body or index snapshot overwrites the concurrent bytes.
 
 ### AC: recur-does-not-change-status (verifies REQ:recur-does-not-change-status)
 

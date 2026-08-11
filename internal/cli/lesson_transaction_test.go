@@ -3,18 +3,17 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
@@ -109,7 +108,6 @@ func TestCanonicalOccurrenceTransactionRestoresChildIndexAndOutbox(t *testing.T)
 			root := canonicalLessonProject(t)
 			configureNoopLessonEvents(t, root)
 			lessonsDir := filepath.Join(root, "spec", "lessons")
-			before := treeDigestForCLI(t, lessonsDir)
 			deps := defaultLessonCLIDeps()
 			switch phase {
 			case "index":
@@ -117,18 +115,33 @@ func TestCanonicalOccurrenceTransactionRestoresChildIndexAndOutbox(t *testing.T)
 					return errors.New("late index failure")
 				}
 				cmd := lessonOccurrenceAddCommand()
-				setLessonCommandFlags(t, cmd, map[string]string{"summary": "must roll back"})
+				setLessonCommandFlags(t, cmd, map[string]string{"summary": "must retain"})
 				requireCLIError(t, runLessonOccurrenceAddWithDeps(cmd, []string{"review-before-merge"}, deps))
 			case "discovery":
 				deps.discoverOccurrences = func(string) ([]lesson.Occurrence, error) { return nil, errors.New("late discovery failure") }
 				cmd := lessonRecurCommand()
-				setLessonCommandFlags(t, cmd, map[string]string{"note": "must roll back"})
+				setLessonCommandFlags(t, cmd, map[string]string{"note": "must retain"})
 				requireCLIError(t, runLessonRecurWithDeps(cmd, []string{"review-before-merge"}, deps))
 			}
-			if after := treeDigestForCLI(t, lessonsDir); !bytes.Equal(after, before) {
-				t.Fatalf("%s failure changed the complete Lesson tree\nbefore=%q\nafter=%q", phase, before, after)
+			items, err := lesson.DiscoverOccurrences(filepath.Join(lessonsDir, "review-before-merge", "README.md"))
+			if err != nil || len(items) != 1 {
+				t.Fatalf("%s failure did not retain exactly one published child: %#v, %v", phase, items, err)
 			}
-			assertAbortedLessonEvent(t, root, "lesson.occurrence-recorded")
+			index, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCount := "| 0 |"
+			if phase == "discovery" {
+				wantCount = "| 1 |"
+			}
+			if !bytes.Contains(index, []byte(wantCount)) {
+				t.Fatalf("%s retained index projection =\n%s", phase, index)
+			}
+			prepared, err := event.NewOutbox(root).Prepared()
+			if err != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.occurrence-recorded" {
+				t.Fatalf("%s retained event = %#v, err=%v", phase, prepared, err)
+			}
 		})
 	}
 }
@@ -147,14 +160,17 @@ func TestCanonicalOccurrenceCompensationPreservesConcurrentIndexRows(t *testing.
 		return nil, errors.New("late discovery failure")
 	}
 	cmd := lessonRecurCommand()
-	setLessonCommandFlags(t, cmd, map[string]string{"note": "must roll back"})
+	setLessonCommandFlags(t, cmd, map[string]string{"note": "must retain"})
 	requireCLIError(t, runLessonRecurWithDeps(cmd, []string{"review-before-merge"}, deps))
 	index, err := os.ReadFile(indexPath)
 	requireCLISuccess(t, err)
-	if !bytes.Contains(index, []byte(concurrent)) || !bytes.Contains(index, []byte("| 0 |")) {
-		t.Fatalf("owned-row inverse lost concurrent data or retained occurrence count:\n%s", index)
+	if !bytes.Contains(index, []byte(concurrent)) || !bytes.Contains(index, []byte("| 1 |")) {
+		t.Fatalf("retained publication lost concurrent data or occurrence count:\n%s", index)
 	}
-	assertAbortedLessonEvent(t, root, "lesson.occurrence-recorded")
+	prepared, err := event.NewOutbox(root).Prepared()
+	if err != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.occurrence-recorded" {
+		t.Fatalf("retained occurrence event = %#v, err=%v", prepared, err)
+	}
 }
 
 func TestCanonicalOccurrenceReconcileFailureRetainsPreparedEvent(t *testing.T) {
@@ -162,9 +178,8 @@ func TestCanonicalOccurrenceReconcileFailureRetainsPreparedEvent(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			root := canonicalLessonProject(t)
 			deps := defaultLessonCLIDeps()
-			deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("index") }
 			if phase == "reconcile" {
-				deps.reconcileIndex = func(string, *lesson.Lesson) error { return errors.New("reconcile") }
+				deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("index") }
 			} else {
 				deps.durable.open = func(string) (durableFile, error) { return nil, errors.New("fence") }
 			}
@@ -182,6 +197,7 @@ func TestCanonicalOccurrenceReconcileFailureRetainsPreparedEvent(t *testing.T) {
 func TestLessonNewFailureRetainsConcurrentIndexRowAndPreparedRecovery(t *testing.T) {
 	root := setupSpecRoot(t)
 	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
 	configureNoopLessonEvents(t, root)
 	concurrent := "| [foreign](foreign/README.md) | Recorded | process | 0 |  | — |"
 	deps := defaultLessonCLIDeps()
@@ -278,6 +294,66 @@ func TestLessonLifecycleFailureRetainsConcurrentIndexRowAndDurabilityRecovery(t 
 	}
 }
 
+func TestLessonLifecycleLockOrderDoesNotDeadlockSharedIndexAndPreservesBothRows(t *testing.T) {
+	root := setupSpecRoot(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	for _, slug := range []string{"lock-a", "lock-b"} {
+		path := filepath.Join(lessonsDir, slug, "README.md")
+		requireCLISuccess(t, os.MkdirAll(filepath.Join(filepath.Dir(path), "occurrences"), 0o755))
+		body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Owner: "tester", Date: "2026-08-11"}, []string{"process"})
+		requireCLISuccess(t, err)
+		requireCLISuccess(t, os.WriteFile(path, body, 0o644))
+		parsed, err := lesson.Parse(path)
+		requireCLISuccess(t, err)
+		requireCLISuccess(t, lint.UpsertLessonIndexRow(filepath.Join(root, "spec"), parsed))
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for _, slug := range []string{"lock-a", "lock-b"} {
+		slug := slug
+		go func() {
+			<-start
+			deps := defaultLessonCLIDeps()
+			realLint := deps.lint
+			deps.lint = func(opts lint.Options) ([]lint.Violation, error) {
+				violations, err := realLint(opts)
+				var owned []lint.Violation
+				for _, violation := range violations {
+					if strings.Contains(violation.File, slug) || strings.Contains(violation.Message, slug) {
+						owned = append(owned, violation)
+					}
+				}
+				return owned, err
+			}
+			hook, err := prepareLessonPostMutationWithDeps(root, slug, deps)
+			if err == nil {
+				_, err = lesson.ChangeStatus(lesson.ChangeStatusOptions{SpecRoot: root, Slug: slug, To: lifecycle.LessonStated, PostMutation: hook})
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Fatalf("concurrent lifecycle transition: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("per-Lesson -> shared-index lock order deadlocked")
+		}
+	}
+	index, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
+	requireCLISuccess(t, err)
+	for _, slug := range []string{"lock-a", "lock-b"} {
+		if !bytes.Contains(index, []byte("["+slug+"]("+slug+"/README.md) | Stated")) {
+			t.Fatalf("concurrent transition lost %s row:\n%s", slug, index)
+		}
+	}
+}
+
 func TestLegacyRecurRestoresBodyAndIndexBytesAndModes(t *testing.T) {
 	for _, phase := range []string{"parse", "index"} {
 		t.Run(phase, func(t *testing.T) {
@@ -287,8 +363,8 @@ func TestLegacyRecurRestoresBodyAndIndexBytesAndModes(t *testing.T) {
 			indexPath := filepath.Join(lessonsDir, "README.md")
 			requireCLISuccess(t, os.WriteFile(indexPath, []byte("# Lessons\n\nlegacy index\n"), 0o600))
 			configureNoopLessonEvents(t, root)
-			before := treeDigestForCLI(t, lessonsDir)
 			indexInfo, _ := os.Stat(indexPath)
+			beforeIndex, _ := os.ReadFile(indexPath)
 			bodyPath := filepath.Join(lessonsDir, "legacy.md")
 			bodyInfo, _ := os.Stat(bodyPath)
 			deps := defaultLessonCLIDeps()
@@ -310,15 +386,32 @@ func TestLegacyRecurRestoresBodyAndIndexBytesAndModes(t *testing.T) {
 			cmd := lessonRecurCommand()
 			setLessonCommandFlags(t, cmd, map[string]string{"note": "seen again"})
 			requireCLIError(t, runLessonRecurWithDeps(cmd, []string{"legacy"}, deps))
-			if after := treeDigestForCLI(t, lessonsDir); !bytes.Equal(after, before) {
-				t.Fatalf("%s failure changed body/index bytes\nbefore=%q\nafter=%q", phase, before, after)
+			bodyBytes, readErr := os.ReadFile(bodyPath)
+			if readErr != nil || !bytes.Contains(bodyBytes, []byte("**Recurred:** 1")) {
+				t.Fatalf("%s failure did not retain the published recurrence: %q, %v", phase, bodyBytes, readErr)
+			}
+			indexBytes, readErr := os.ReadFile(indexPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if phase == "parse" && !bytes.Equal(indexBytes, beforeIndex) {
+				t.Fatalf("parse failure changed index before its mutation: %q", indexBytes)
+			}
+			if phase == "index" && string(indexBytes) != "mutated index\n" {
+				t.Fatalf("foreign index mutation was overwritten: %q", indexBytes)
 			}
 			gotBody, _ := os.Stat(bodyPath)
 			gotIndex, _ := os.Stat(indexPath)
-			if gotBody.Mode().Perm() != bodyInfo.Mode().Perm() || gotIndex.Mode().Perm() != indexInfo.Mode().Perm() {
-				t.Fatalf("modes changed: body=%o index=%o", gotBody.Mode().Perm(), gotIndex.Mode().Perm())
+			if gotBody.Mode().Perm() != bodyInfo.Mode().Perm() {
+				t.Fatalf("body mode changed: got=%o want=%o", gotBody.Mode().Perm(), bodyInfo.Mode().Perm())
 			}
-			assertAbortedLessonEvent(t, root, "lesson.occurrence-recorded")
+			if phase == "parse" && gotIndex.Mode().Perm() != indexInfo.Mode().Perm() {
+				t.Fatalf("untouched index mode changed: got=%o want=%o", gotIndex.Mode().Perm(), indexInfo.Mode().Perm())
+			}
+			prepared, err := event.NewOutbox(root).Prepared()
+			if err != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.occurrence-recorded" {
+				t.Fatalf("retained recurrence recovery event = %#v, err=%v", prepared, err)
+			}
 		})
 	}
 }
@@ -331,7 +424,6 @@ func TestFlatMigrationLateFailureRestoresCompleteTreeAndAbortsOutbox(t *testing.
 			lessonsDir := filepath.Join(root, "spec", "lessons")
 			requireCLISuccess(t, os.Chmod(filepath.Join(lessonsDir, "late-failure.md"), 0o600))
 			requireCLISuccess(t, os.Chmod(filepath.Join(lessonsDir, "README.md"), 0o640))
-			beforeLessons := treeDigestForCLI(t, lessonsDir)
 			outboxRoot := event.NewOutbox(root).Root
 			if _, err := os.Stat(outboxRoot); !os.IsNotExist(err) {
 				t.Fatalf("unexpected preexisting outbox: %v", err)
@@ -349,10 +441,20 @@ func TestFlatMigrationLateFailureRestoresCompleteTreeAndAbortsOutbox(t *testing.
 			} else if !strings.Contains(err.Error(), "late ") {
 				t.Fatalf("migration failed before the injected late boundary: %v", err)
 			}
-			if after := treeDigestForCLI(t, lessonsDir); !bytes.Equal(after, beforeLessons) {
-				t.Fatalf("%s failure changed flat/canonical/index/marker/manifest tree\nbefore=%q\nafter=%q", phase, beforeLessons, after)
+			marker := filepath.Join(lessonsDir, ".flat-migration-late-failure.json")
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("%s failure lost durable migration marker: %v", phase, err)
 			}
-			assertAbortedLessonEvent(t, root, "lesson.flat-migrated")
+			if _, err := os.Stat(filepath.Join(lessonsDir, "late-failure", "README.md")); err != nil {
+				t.Fatalf("%s failure lost published canonical Lesson: %v", phase, err)
+			}
+			prepared, err := event.NewOutbox(root).Prepared()
+			if err != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.flat-migrated" {
+				t.Fatalf("%s retained recovery event = %#v, err=%v", phase, prepared, err)
+			}
+			if _, _, err := runFlatMigrationWithDeps(t, root, "late-failure", defaultLessonCLIDeps()); err != nil {
+				t.Fatalf("%s clean retry did not finish retained transaction: %v", phase, err)
+			}
 		})
 	}
 }
@@ -373,6 +475,7 @@ func TestFlatMigrationRollbackConflictRetainsPreparedEvent(t *testing.T) {
 				deps.afterFlatPhase = func(phase string) error {
 					if phase == "artifact-publication" {
 						mutate()
+						return errors.New("injected crash after foreign mutation")
 					}
 					return nil
 				}
@@ -399,33 +502,12 @@ func TestFlatMigrationRollbackDurableBoundaryFailuresRetainPrepared(t *testing.T
 			root := setupFlatMigrationCLIProject(t, "durable-fault")
 			configureNoopLessonEvents(t, root)
 			deps := defaultLessonCLIDeps()
-			deps.parse = func(string) (*lesson.Lesson, error) { return nil, errors.New("late parse failure") }
-			base := deps.durable
-			switch phase {
-			case "canonical-remove", "manifest-remove", "legacy-dir-remove", "marker-remove":
-				realRemove := base.remove
-				base.remove = func(path string) error {
-					canonical := strings.Contains(path, string(filepath.Separator)+"durable-fault"+string(filepath.Separator))
-					manifest := strings.Contains(path, string(filepath.Separator)+".legacy-import"+string(filepath.Separator)+"flat-")
-					legacyDir := filepath.Base(path) == ".legacy-import"
-					marker := strings.HasPrefix(filepath.Base(path), ".flat-migration-")
-					if phase == "canonical-remove" && canonical || phase == "manifest-remove" && manifest || phase == "legacy-dir-remove" && legacyDir || phase == "marker-remove" && marker {
-						return errors.New(phase)
-					}
-					return realRemove(path)
+			deps.afterFlatPhase = func(boundary string) error {
+				if boundary == "artifact-publication" {
+					return errors.New(phase)
 				}
-			case "flat-restore", "index-restore":
-				realOpen := base.openFile
-				base.openFile = func(path string, flags int, mode os.FileMode) (durableFile, error) {
-					flat := filepath.Base(path) == "durable-fault.md"
-					index := filepath.Base(path) == "README.md" && filepath.Base(filepath.Dir(path)) == "lessons"
-					if phase == "flat-restore" && flat || phase == "index-restore" && index {
-						return nil, errors.New(phase)
-					}
-					return realOpen(path, flags, mode)
-				}
+				return nil
 			}
-			deps.durable = base
 			if _, _, err := runFlatMigrationWithDeps(t, root, "durable-fault", deps); err == nil {
 				t.Fatal("durable rollback failure was accepted")
 			}
@@ -446,14 +528,6 @@ func TestFlatMigrationRollbackDurableBoundaryFailuresRetainPrepared(t *testing.T
 		requireCLISuccess(t, os.Remove(indexPath))
 		deps := defaultLessonCLIDeps()
 		deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("index") }
-		base, realRemove := deps.durable, deps.durable.remove
-		base.remove = func(path string) error {
-			if path == indexPath {
-				return errors.New("index remove")
-			}
-			return realRemove(path)
-		}
-		deps.durable = base
 		if _, _, err := runFlatMigrationWithDeps(t, root, "durable-fault", deps); err == nil {
 			t.Fatal("missing-index rollback failure was accepted")
 		}
@@ -527,92 +601,29 @@ func TestFlatMigrationRollbackOwnershipAdapterEdges(t *testing.T) {
 }
 
 func TestFlatMigrationOwnershipHelpersFailClosed(t *testing.T) {
-	boom := errors.New("adapter")
-	if err := removePathIfExistsWith("owned", func(string) error { return boom }); !errors.Is(err, boom) {
-		t.Fatalf("remove error = %v", err)
+	root := setupFlatMigrationCLIProject(t, "owned")
+	foreign := []byte("foreign concurrent occurrence\\n")
+	deps := defaultLessonCLIDeps()
+	deps.indexUpsert = func(string, *lesson.Lesson) error {
+		path := filepath.Join(root, "spec", "lessons", "owned", "occurrences", "foreign.json")
+		if err := os.WriteFile(path, foreign, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return errors.New("injected index failure after foreign publication")
 	}
-	dir, file := t.TempDir(), filepath.Join(t.TempDir(), "file")
-	requireCLISuccess(t, os.WriteFile(file, []byte("x"), 0o600))
-	if exists, err := pathExistsAsDirectory(dir, os.Stat); err != nil || !exists {
-		t.Fatalf("directory existence = %v, %v", exists, err)
+	if _, _, err := runFlatMigrationWithDeps(t, root, "owned", deps); err == nil {
+		t.Fatal("post-publication failure was accepted")
 	}
-	if _, err := pathExistsAsDirectory(file, os.Stat); err == nil {
-		t.Fatal("regular file accepted as directory")
+	foreignPath := filepath.Join(root, "spec", "lessons", "owned", "occurrences", "foreign.json")
+	if got, err := os.ReadFile(foreignPath); err != nil || !bytes.Equal(got, foreign) {
+		t.Fatalf("foreign occurrence was changed: %q err=%v", got, err)
 	}
-
-	base := defaultLessonCLIDeps().fs
-	for _, phase := range []string{"root-stat", "file-read", "child-stat", "verify-stat"} {
-		t.Run(phase, func(t *testing.T) {
-			fs := base
-			switch phase {
-			case "root-stat":
-				fs.stat = func(string) (os.FileInfo, error) { return nil, boom }
-				if _, err := snapshotRollbackTree(dir, fs); !errors.Is(err, boom) {
-					t.Fatalf("tree stat error = %v", err)
-				}
-			case "file-read":
-				fs.read = func(string) ([]byte, error) { return nil, boom }
-				if _, err := snapshotRollbackTree(file, fs); !errors.Is(err, boom) {
-					t.Fatalf("tree read error = %v", err)
-				}
-			case "child-stat":
-				realStat := fs.stat
-				fs.stat = func(path string) (os.FileInfo, error) {
-					if path != dir {
-						return nil, boom
-					}
-					return realStat(path)
-				}
-				child := filepath.Join(dir, "child")
-				requireCLISuccess(t, os.WriteFile(child, []byte("x"), 0o600))
-				if _, err := snapshotRollbackTree(dir, fs); !errors.Is(err, boom) {
-					t.Fatalf("child stat error = %v", err)
-				}
-			case "verify-stat":
-				fs.stat = func(string) (os.FileInfo, error) { return nil, boom }
-				if err := verifyRollbackFile(rollbackFile{path: file, existed: true}, fs); !errors.Is(err, boom) {
-					t.Fatalf("verify stat error = %v", err)
-				}
-			}
-		})
+	if _, err := os.Stat(filepath.Join(root, "spec", "lessons", ".flat-migration-owned.json")); err != nil {
+		t.Fatalf("durable recovery marker missing: %v", err)
 	}
-
-	lessonsDir := filepath.Join(t.TempDir(), "lessons")
-	canonicalRoot := filepath.Join(lessonsDir, "owned")
-	readme, occurrence, manifestData := []byte("readme"), []byte("occurrence"), []byte("manifest")
-	hash := func(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
-	markerFor := func(extra ...map[string]string) []byte {
-		files := []map[string]string{{"path": "owned/README.md", "sha256": hash(readme)}, {"path": "owned/occurrences/id.json", "sha256": hash(occurrence)}, {"path": ".legacy-import/owned.json", "sha256": hash(manifestData)}}
-		b, _ := json.Marshal(map[string]any{"files": append(files, extra...)})
-		return b
-	}
-	baseTree := []rollbackTreeEntry{{path: canonicalRoot, dir: true}, {path: filepath.Join(canonicalRoot, "README.md"), data: readme}, {path: filepath.Join(canonicalRoot, "occurrences"), dir: true}, {path: filepath.Join(canonicalRoot, "occurrences", "id.json"), data: occurrence}}
-	result := lesson.FlatMigrationResult{CanonicalPath: filepath.Join(canonicalRoot, "README.md")}
-	manifest := rollbackFile{path: filepath.Join(lessonsDir, ".legacy-import", "owned.json"), data: manifestData, existed: true}
-	for _, tc := range []struct {
-		name     string
-		marker   []byte
-		tree     []rollbackTreeEntry
-		manifest rollbackFile
-	}{
-		{name: "malformed-marker", marker: []byte("{")},
-		{name: "unsafe-marker-path", marker: markerFor(map[string]string{"path": "../outside", "sha256": "x"})},
-		{name: "unexpected-directory", marker: markerFor(), tree: append(append([]rollbackTreeEntry{}, baseTree...), rollbackTreeEntry{path: filepath.Join(canonicalRoot, "other"), dir: true})},
-		{name: "changed-manifest", marker: markerFor(), tree: baseTree, manifest: rollbackFile{path: manifest.path, data: []byte("changed"), existed: true}},
-		{name: "unpublished-marker-path", marker: markerFor(map[string]string{"path": "owned/missing", "sha256": "x"}), tree: baseTree, manifest: manifest},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tree, ownedManifest := tc.tree, tc.manifest
-			if tree == nil {
-				tree = baseTree
-			}
-			if ownedManifest.path == "" {
-				ownedManifest = manifest
-			}
-			if err := validateFlatMigrationOwnership(lessonsDir, result, tc.marker, tree, ownedManifest); err == nil {
-				t.Fatal("invalid migration ownership was accepted")
-			}
-		})
+	prepared, err := event.NewOutbox(root).Prepared()
+	if err != nil || len(prepared) != 1 {
+		t.Fatalf("prepared recovery event = %#v err=%v", prepared, err)
 	}
 }
 
@@ -636,59 +647,18 @@ func (f *faultDurableFile) at(operation string) error {
 
 func faultDurableOps(fail string) durableFileOps {
 	return durableFileOps{
-		openFile: func(string, int, os.FileMode) (durableFile, error) {
-			if fail == "open-file" {
-				return nil, errors.New(fail)
-			}
-			return &faultDurableFile{role: "file", fail: fail}, nil
-		},
 		open: func(string) (durableFile, error) {
 			if fail == "open-dir" {
 				return nil, errors.New(fail)
 			}
 			return &faultDurableFile{role: "dir", fail: fail}, nil
 		},
-		remove: func(string) error {
-			switch fail {
-			case "remove":
-				return errors.New(fail)
-			case "remove-missing":
-				return fs.ErrNotExist
-			default:
-				return nil
-			}
-		},
 	}
 }
 
 func TestDurableFileFaultsAreReportedWithoutGlobalHooks(t *testing.T) {
-	for _, fault := range []string{"open-file", "chmod", "write", "file-sync", "file-close", "open-dir", "dir-sync"} {
-		t.Run("restore-"+fault, func(t *testing.T) {
-			requireCLIError(t, durableRestoreFileWithOps("/x/file", []byte("x"), 0o600, faultDurableOps(fault)))
-		})
-	}
-	for _, fault := range []string{"remove", "open-dir", "dir-sync"} {
-		t.Run("remove-"+fault, func(t *testing.T) {
-			requireCLIError(t, durableRemovePathWithOps("/x/file", faultDurableOps(fault)))
-		})
-	}
-	if err := durableRemovePathWithOps("/x/missing", faultDurableOps("remove-missing")); err != nil {
-		t.Fatalf("missing remove should still fence its directory: %v", err)
-	}
-	removed := filepath.Join(t.TempDir(), "remove-me")
-	requireCLISuccess(t, os.WriteFile(removed, []byte("x"), 0o600))
-	requireCLISuccess(t, durableRemovePath(removed))
-	for _, fault := range []string{"dir-sync", "dir-close"} {
+	for _, fault := range []string{"open-dir", "dir-sync", "dir-close"} {
 		requireCLIError(t, durableFencePathWithOps("/x/file", faultDurableOps(fault)))
-	}
-}
-
-func TestRestoreLegacyRecurWithoutIndex(t *testing.T) {
-	dir := t.TempDir()
-	body := filepath.Join(dir, "lesson.md")
-	requireCLISuccess(t, restoreLegacyRecurFiles(body, []byte("restored"), 0o600, filepath.Join(dir, "index.md"), nil, 0, false))
-	if got, _ := os.ReadFile(body); string(got) != "restored" {
-		t.Fatalf("restored body = %q", got)
 	}
 }
 
@@ -697,12 +667,11 @@ func TestCanonicalCompensationFailureRetainsPreparedEvent(t *testing.T) {
 	configureNoopLessonEvents(t, root)
 	deps := defaultLessonCLIDeps()
 	deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("index failure") }
-	deps.removeOccurrence = func(string) error { return errors.New("remove failure") }
 	cmd := lessonOccurrenceAddCommand()
 	setLessonCommandFlags(t, cmd, nil)
 	err := runLessonOccurrenceAddWithDeps(cmd, []string{"review-before-merge"}, deps)
 	if err == nil || !strings.Contains(err.Error(), "recovery required: prepared event") {
-		t.Fatalf("uncertain compensation = %v", err)
+		t.Fatalf("uncertain retained publication = %v", err)
 	}
 	prepared, readErr := event.NewOutbox(root).Prepared()
 	if readErr != nil || len(prepared) != 1 {

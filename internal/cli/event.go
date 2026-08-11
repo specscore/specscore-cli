@@ -458,6 +458,13 @@ func runEventEmitWithDeps(cmd *cobra.Command, deps eventCLIDeps) error {
 	}
 	autofillEnvelope(&e, projectRoot, flagArtifactRevision)
 
+	// An explicit empty subscriber set opts out of persistence and delivery,
+	// not out of the public envelope contract. Validate after auto-fill and
+	// before configuration loading or any no-op branch so invalid caller input
+	// remains deterministically exit 2 and write-free.
+	if err := event.Validate(e); err != nil {
+		return exitcode.InvalidArgsErrorf("%v", err)
+	}
 	subscribers, err := deps.load(projectRoot)
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("%v", err)

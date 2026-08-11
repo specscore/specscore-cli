@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -336,6 +338,88 @@ func TestChangeStatus_GuardErrors(t *testing.T) {
 	}
 }
 
+func TestChangeStatusSerializesMutuallyExclusiveTerminalTransitionsThroughPostMutation(t *testing.T) {
+	root, _ := stageLesson(t, "kinder-fake", "Recorded")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	var once sync.Once
+	go func() {
+		_, err := ChangeStatus(ChangeStatusOptions{
+			SpecRoot: root, Slug: "kinder-fake", To: lifecycle.LessonWithdrawn,
+			PostMutation: func() error {
+				once.Do(func() { close(entered) })
+				<-release
+				return nil
+			},
+		})
+		first <- err
+	}()
+	<-entered
+	secondStarted := make(chan struct{})
+	go func() {
+		close(secondStarted)
+		_, err := ChangeStatus(ChangeStatusOptions{
+			SpecRoot: root, Slug: "kinder-fake", To: lifecycle.LessonSuperseded,
+			PostMutation: func() error { return errors.New("second transition reached publication hook") },
+		})
+		second <- err
+	}()
+	<-secondStarted
+	select {
+	case err := <-second:
+		t.Fatalf("second transition escaped lifecycle lock before first reconciliation: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first terminal transition: %v", err)
+	}
+	select {
+	case err := <-second:
+		if got := codeOf(t, err); got != exitcode.InvalidState {
+			t.Fatalf("second transition exit = %d", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second transition deadlocked after lifecycle lock release")
+	}
+}
+
+type lessonMutationTestLocker struct {
+	lockErr   error
+	unlockErr error
+}
+
+func (l lessonMutationTestLocker) Lock() error   { return l.lockErr }
+func (l lessonMutationTestLocker) Unlock() error { return l.unlockErr }
+
+func TestLessonMutationLockBoundariesAndUncertainRelease(t *testing.T) {
+	boom := errors.New("lock boundary")
+	called := false
+	deps := lessonMutationLockDeps{
+		mkdirAll: func(string, os.FileMode) error { return boom },
+		newLock:  func(string) lessonMutationLocker { return lessonMutationTestLocker{} },
+	}
+	if err := withLessonMutationLock(t.TempDir(), "rule", deps, func() error { called = true; return nil }); !errors.Is(err, boom) || called {
+		t.Fatalf("mkdir lock boundary = %v, called=%v", err, called)
+	}
+	deps.mkdirAll = func(string, os.FileMode) error { return nil }
+	deps.newLock = func(string) lessonMutationLocker { return lessonMutationTestLocker{lockErr: boom} }
+	if err := withLessonMutationLock(t.TempDir(), "rule", deps, func() error { called = true; return nil }); !errors.Is(err, boom) || called {
+		t.Fatalf("acquire lock boundary = %v, called=%v", err, called)
+	}
+	deps.newLock = func(string) lessonMutationLocker { return lessonMutationTestLocker{unlockErr: boom} }
+	err := withLessonMutationLock(t.TempDir(), "rule", deps, func() error { return nil })
+	if !errors.Is(err, boom) || MutationOutcomeOf(err) != MutationUncertain {
+		t.Fatalf("release lock boundary = %v, outcome=%v", err, MutationOutcomeOf(err))
+	}
+	deps.newLock = func(string) lessonMutationLocker { return lessonMutationTestLocker{} }
+	if err := withLessonMutationLock(t.TempDir(), "rule", deps, func() error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("mutation error = %v", err)
+	}
+}
+
 // TestResolveLessonFile_StatError covers the non-ENOENT stat branch: making
 // spec/lessons itself a regular file makes a stat of
 // spec/lessons/kinder-fake.md fail with ENOTDIR (not IsNotExist).
@@ -388,5 +472,35 @@ func TestLegalTransitionMatrix_Rendering(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("matrix missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestChangeStatusUnlockedRejectsIncompleteInternalOptions(t *testing.T) {
+	hook := func() error { return nil }
+	for name, opts := range map[string]ChangeStatusOptions{
+		"root":   {},
+		"slug":   {SpecRoot: t.TempDir()},
+		"target": {SpecRoot: t.TempDir(), Slug: "rule", PostMutation: hook},
+		"hook":   {SpecRoot: t.TempDir(), Slug: "rule", To: lifecycle.LessonStated},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := changeStatusUnlocked(opts); err == nil {
+				t.Fatal("incomplete internal options accepted")
+			}
+		})
+	}
+}
+
+func TestProjectRootForCanonicalAndFlatLessonPaths(t *testing.T) {
+	root := t.TempDir()
+	for name, path := range map[string]string{
+		"canonical": filepath.Join(root, "spec", "lessons", "rule", "README.md"),
+		"flat":      filepath.Join(root, "spec", "lessons", "rule.md"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := projectRootForLessonPath(path); got != root {
+				t.Fatalf("project root=%q want %q", got, root)
+			}
+		})
 	}
 }

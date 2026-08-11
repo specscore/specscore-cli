@@ -1,14 +1,8 @@
 package cli
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -39,8 +33,10 @@ The source Lesson itself becomes one provider occurrence. Each structured
 Recurrences bullet becomes one further occurrence; the command refuses a
 Recurred/bullet mismatch rather than inventing history. Publication is
 exclusive and crash-resumable across canonical artifacts, the exact index row,
-and one deterministic prepared event; it removes only the exact verified flat
-source. A source at Enforced requires explicit reviewed --control,
+and one deterministic prepared event. It atomically moves the flat source and
+completed marker without replacement into the private gitignored
+.specscore/recovery/flat-migration/<event-uuid>/ namespace; it never unlinks a
+post-publication path. A source at Enforced requires explicit reviewed --control,
 --verification, and --evidence values. Git provenance alone never certifies
 enforcement. The command never runs a repository-wide fixer.
 
@@ -124,28 +120,8 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 	// PreflightFlatMigration already validates canonical UTC RFC3339 source
 	// identity; parsing cannot fail after that contract succeeds.
 	eventAt, _ := time.Parse(time.RFC3339, preflight.Source.CommittedAt)
-	resuming := preflight.PendingTransaction
-	flatPath := filepath.Join(lessonsDir, slug+".md")
 	markerPath := filepath.Join(lessonsDir, ".flat-migration-"+slug+".json")
 	indexPath := filepath.Join(lessonsDir, "README.md")
-	legacyImportDir := filepath.Join(lessonsDir, ".legacy-import")
-	var before flatMigrationRollback
-	if !resuming {
-		before.flat, err = snapshotRollbackFile(flatPath, deps.fs)
-		if err != nil {
-			return exitcode.UnexpectedErrorf("reading flat Lesson: %v", err)
-		}
-		before.index, err = snapshotOptionalRollbackFile(indexPath, deps.fs)
-		if err != nil {
-			return exitcode.UnexpectedErrorf("reading lessons index: %v", err)
-		}
-		before.legacyImportDirExisted, err = pathExistsAsDirectory(legacyImportDir, deps.fs.stat)
-		if err != nil {
-			return exitcode.UnexpectedErrorf("inspecting legacy manifest directory: %v", err)
-		}
-		before.markerPath = markerPath
-		before.legacyImportDir = legacyImportDir
-	}
 
 	prepared, err := deps.prepareEventWithID(root, "lesson.flat-migrated", slug, map[string]any{
 		"classifications": selected,
@@ -164,43 +140,15 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 			return exitcode.InvalidStateErrorf("flat migration refused: %v", resolved)
 		}
 	}
-	if err := afterFlatMigrationPhase(deps, "artifact-publication"); err != nil {
-		return err
-	}
-	if !resuming {
-		before.marker, err = snapshotRollbackFile(markerPath, deps.fs)
-		if err == nil {
-			before.canonical, err = snapshotRollbackTree(filepath.Dir(result.CanonicalPath), deps.fs)
-		}
-		if err == nil {
-			before.manifest, err = snapshotRollbackFile(result.ManifestPath, deps.fs)
-		}
-		if err == nil {
-			err = validateFlatMigrationOwnership(lessonsDir, result, before.marker.data, before.canonical, before.manifest)
-		}
-		if err != nil {
-			_, resolved := prepared.ResolveMutationFailure("snapshotting published flat migration", &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: err})
-			return exitcode.UnexpectedErrorf("%v", resolved)
-		}
-		before.expectedIndex = before.index
-	}
-
-	rollbackFresh := func() error {
-		return before.restore(flatPath, indexPath, deps)
-	}
 	failAfterMutation := func(message string, cause error) error {
-		if resuming {
-			// A resumed transaction already crossed artifact publication; no
-			// downstream adapter error can prove it safe to abort the prepared event.
-			_, resolved := prepared.ResolveMutationFailure(message, &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: cause})
-			return exitcode.UnexpectedErrorf("%v", resolved)
-		}
-		failure := lesson.CompensatePublication(rollbackFresh, cause)
-		if recovery, resolved := prepared.ResolveMutationFailure(message, failure); recovery {
-			return exitcode.UnexpectedErrorf("%v", resolved)
-		} else {
-			return exitcode.UnexpectedErrorf(message+": %v", resolved)
-		}
+		// MigrateFlat returning success means its durable marker and at least one
+		// artifact path are visible. No later CLI adapter may restore snapshots or
+		// delete paths: a concurrent occurrence/index row may already exist.
+		_, resolved := prepared.ResolveMutationFailure(message, &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: cause})
+		return exitcode.UnexpectedErrorf("%v", resolved)
+	}
+	if err := afterFlatMigrationPhase(deps, "artifact-publication"); err != nil {
+		return failAfterMutation("continuing after flat artifact publication", err)
 	}
 
 	parsed, err := deps.parse(result.CanonicalPath)
@@ -209,12 +157,6 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 	}
 	if err := deps.indexUpsert(filepath.Join(root, "spec"), parsed); err != nil {
 		return failAfterMutation("upserting migrated Lesson index row", err)
-	}
-	if !resuming {
-		before.expectedIndex, err = snapshotOptionalRollbackFile(indexPath, deps.fs)
-		if err != nil {
-			return failAfterMutation("snapshotting migrated Lesson index row", err)
-		}
 	}
 	violations, err := deps.lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
 	if err != nil {
@@ -230,6 +172,9 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 	}
 	if len(own) != 0 {
 		return failAfterMutation("migrated Lesson failed lint", fmt.Errorf("%s", strings.Join(own, "; ")))
+	}
+	if err := newLessonMutationCoordinator(nil, deps.durable).Fence(result.CanonicalPath, result.ManifestPath, indexPath, markerPath); err != nil {
+		return failAfterMutation("durably fencing flat migration", err)
 	}
 	if err := afterFlatMigrationPhase(deps, "index-upsert"); err != nil {
 		return err
@@ -249,226 +194,4 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 	}
 	result.PendingFinalize = false
 	return writeLegacyOutput(cmd, format, result)
-}
-
-func removePathIfExists(path string) error {
-	return removePathIfExistsWith(path, os.Remove)
-}
-
-func removePathIfExistsWith(path string, remove func(string) error) error {
-	err := remove(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
-type rollbackFile struct {
-	path    string
-	data    []byte
-	mode    os.FileMode
-	existed bool
-}
-
-type rollbackTreeEntry struct {
-	path string
-	mode os.FileMode
-	dir  bool
-	data []byte
-}
-
-type flatMigrationRollback struct {
-	flat                   rollbackFile
-	index                  rollbackFile
-	expectedIndex          rollbackFile
-	manifest               rollbackFile
-	marker                 rollbackFile
-	canonical              []rollbackTreeEntry
-	markerPath             string
-	legacyImportDir        string
-	legacyImportDirExisted bool
-}
-
-func snapshotRollbackFile(path string, fs lessonFileOps) (rollbackFile, error) {
-	info, err := fs.stat(path)
-	if err != nil {
-		return rollbackFile{}, err
-	}
-	b, err := fs.read(path)
-	if err != nil {
-		return rollbackFile{}, err
-	}
-	return rollbackFile{path: path, data: b, mode: info.Mode().Perm(), existed: true}, nil
-}
-
-func snapshotOptionalRollbackFile(path string, fs lessonFileOps) (rollbackFile, error) {
-	snapshot, err := snapshotRollbackFile(path, fs)
-	if os.IsNotExist(err) {
-		return rollbackFile{path: path}, nil
-	}
-	return snapshot, err
-}
-
-func pathExistsAsDirectory(path string, stat func(string) (os.FileInfo, error)) (bool, error) {
-	info, err := stat(path)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if !info.IsDir() {
-		return false, fmt.Errorf("%s is not a directory", path)
-	}
-	return true, nil
-}
-
-func snapshotRollbackTree(root string, fs lessonFileOps) ([]rollbackTreeEntry, error) {
-	var entries []rollbackTreeEntry
-	var visit func(string) error
-	visit = func(path string) error {
-		info, err := fs.stat(path)
-		if err != nil {
-			return err
-		}
-		entry := rollbackTreeEntry{path: path, mode: info.Mode().Perm(), dir: info.IsDir()}
-		if !entry.dir {
-			entry.data, err = fs.read(path)
-			if err != nil {
-				return err
-			}
-		}
-		entries = append(entries, entry)
-		if !entry.dir {
-			return nil
-		}
-		children, err := fs.readDir(path)
-		if err != nil {
-			return err
-		}
-		for _, child := range children {
-			if err := visit(filepath.Join(path, child.Name())); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := visit(root); err != nil {
-		return nil, err
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].path < entries[j].path })
-	return entries, nil
-}
-
-func verifyRollbackFile(expected rollbackFile, fs lessonFileOps) error {
-	actual, err := snapshotOptionalRollbackFile(expected.path, fs)
-	if err != nil {
-		return err
-	}
-	if actual.existed != expected.existed || actual.mode != expected.mode || !bytes.Equal(actual.data, expected.data) {
-		return fmt.Errorf("rollback ownership conflict at %s", expected.path)
-	}
-	return nil
-}
-
-func validateFlatMigrationOwnership(lessonsDir string, result lesson.FlatMigrationResult, markerBytes []byte, canonical []rollbackTreeEntry, manifest rollbackFile) error {
-	var marker struct {
-		Files []struct {
-			Path   string `json:"path"`
-			SHA256 string `json:"sha256"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(markerBytes, &marker); err != nil {
-		return fmt.Errorf("decoding migration ownership marker: %w", err)
-	}
-	expected := make(map[string]string, len(marker.Files))
-	for _, file := range marker.Files {
-		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(file.Path)))
-		_, duplicate := expected[clean]
-		if clean != file.Path || filepath.IsAbs(filepath.FromSlash(clean)) || strings.HasPrefix(clean, "../") || duplicate {
-			return fmt.Errorf("migration ownership marker has an unsafe or duplicate path")
-		}
-		expected[clean] = file.SHA256
-	}
-	checkFile := func(path string, data []byte) error {
-		// Published paths were produced beneath lessonsDir by MigrateFlat, so
-		// filepath.Rel cannot cross a volume boundary here.
-		rel, _ := filepath.Rel(lessonsDir, path)
-		rel = filepath.ToSlash(rel)
-		want, ok := expected[rel]
-		actual := fmt.Sprintf("%x", sha256.Sum256(data))
-		if !ok || want != actual {
-			return fmt.Errorf("published migration path is outside the marker or changed: %s", rel)
-		}
-		delete(expected, rel)
-		return nil
-	}
-	canonicalRoot := filepath.Dir(result.CanonicalPath)
-	for _, entry := range canonical {
-		if entry.dir {
-			if entry.path != canonicalRoot && entry.path != filepath.Join(canonicalRoot, "occurrences") {
-				return fmt.Errorf("published migration has an unexpected directory: %s", entry.path)
-			}
-			continue
-		}
-		if err := checkFile(entry.path, entry.data); err != nil {
-			return err
-		}
-	}
-	if err := checkFile(manifest.path, manifest.data); err != nil {
-		return err
-	}
-	if len(expected) != 0 {
-		return fmt.Errorf("migration marker contains unpublished paths")
-	}
-	return nil
-}
-
-func (s flatMigrationRollback) restore(flatPath, indexPath string, deps lessonCLIDeps) error {
-	canonical, err := snapshotRollbackTree(s.canonical[0].path, deps.fs)
-	if err != nil {
-		return fmt.Errorf("reading canonical migration tree before rollback: %w", err)
-	}
-	if !reflect.DeepEqual(canonical, s.canonical) {
-		return fmt.Errorf("canonical migration tree changed before rollback")
-	}
-	for _, expected := range []rollbackFile{s.manifest, s.marker, s.expectedIndex} {
-		if err := verifyRollbackFile(expected, deps.fs); err != nil {
-			return err
-		}
-	}
-	if _, err := deps.fs.stat(flatPath); !os.IsNotExist(err) {
-		if err == nil {
-			return fmt.Errorf("flat Lesson reappeared before rollback")
-		}
-		return err
-	}
-	// Restore the durable retry source and index before deleting any published
-	// artifact. If a later exact removal fails, the marker can replay missing
-	// paths from the original committed source instead of stranding a partial
-	// canonical-only tree.
-	if err := durableRestoreFileWithOps(flatPath, s.flat.data, s.flat.mode, deps.durable); err != nil {
-		return err
-	}
-	if s.index.existed {
-		if err := durableRestoreFileWithOps(indexPath, s.index.data, s.index.mode, deps.durable); err != nil {
-			return err
-		}
-	} else if err := durableRemovePathWithOps(indexPath, deps.durable); err != nil {
-		return err
-	}
-	for i := len(s.canonical) - 1; i >= 0; i-- {
-		if err := durableRemovePathWithOps(s.canonical[i].path, deps.durable); err != nil {
-			return err
-		}
-	}
-	if err := durableRemovePathWithOps(s.manifest.path, deps.durable); err != nil {
-		return err
-	}
-	if !s.legacyImportDirExisted {
-		if err := durableRemovePathWithOps(s.legacyImportDir, deps.durable); err != nil {
-			return err
-		}
-	}
-	return durableRemovePathWithOps(s.markerPath, deps.durable)
 }

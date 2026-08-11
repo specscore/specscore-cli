@@ -347,6 +347,15 @@ func TestLessonOccurrenceAdapterAndValidationEdges(t *testing.T) {
 	requireCLISuccess(t, runLessonOccurrenceAddWithDeps(cmd, []string{"review-before-merge"}, defaultLessonCLIDeps()))
 }
 
+func TestCanonicalOccurrenceFailureReportsIndexAndReadPhases(t *testing.T) {
+	for _, phase := range []string{"index", "read"} {
+		err := (&canonicalOccurrenceFailure{phase: phase, err: errors.New("failure")}).cliError(false)
+		if err == nil || !strings.Contains(err.Error(), phase) {
+			t.Fatalf("phase %s err=%v", phase, err)
+		}
+	}
+}
+
 func TestLessonReadAdaptersRejectBrokenInputs(t *testing.T) {
 	for _, project := range []string{filepath.Join(t.TempDir(), "missing"), setupSpecRoot(t)} {
 		cmd := lessonAgentsCommand()
@@ -491,13 +500,7 @@ func TestLessonNewFilesystemAndDeliveryEdges(t *testing.T) {
 		case "lesson-mkdir":
 			deps.fs.mkdirAll = func(string, os.FileMode) error { return errors.New("mkdir") }
 		case "write":
-			real := deps.fs.write
-			deps.fs.write = func(p string, b []byte, m os.FileMode) error {
-				if p == target {
-					return errors.New("write")
-				}
-				return real(p, b, m)
-			}
+			deps.publishExclusive = func(string, []byte, os.FileMode) error { return errors.New("write") }
 		}
 		setLessonCommandFlags(t, cmd, flags)
 		requireCLIError(t, runLessonNewWithDeps(cmd, []string{slug}, deps))
@@ -672,15 +675,11 @@ func TestFlatMigrationAdapterAndResumeEdges(t *testing.T) {
 				return lesson.FlatMigrationResult{}, errors.New("migrate")
 			}
 		case "flat-read":
-			deps.fs.read = func(string) ([]byte, error) { return nil, errors.New("read") }
-		case "index-read":
-			real := deps.fs.read
-			deps.fs.read = func(p string) ([]byte, error) {
-				if filepath.Base(p) == "README.md" {
-					return nil, errors.New("read")
-				}
-				return real(p)
+			deps.migrateFlat = func(lesson.FlatMigrationOptions) (lesson.FlatMigrationResult, error) {
+				return lesson.FlatMigrationResult{}, errors.New("read")
 			}
+		case "index-read":
+			deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("read") }
 		case "migrate-compensated":
 			deps.migrateFlat = func(lesson.FlatMigrationOptions) (lesson.FlatMigrationResult, error) {
 				return lesson.FlatMigrationResult{}, &lesson.MutationError{Outcome: lesson.MutationCompensated, Err: errors.New("migrate")}
@@ -723,11 +722,10 @@ func TestFlatMigrationAdapterAndResumeEdges(t *testing.T) {
 	if _, _, err := runFlatMigrationWithDeps(t, root, "resume-edge", deps); err == nil {
 		t.Fatal("resumed index failure was accepted")
 	}
-	requireCLISuccess(t, removePathIfExists(filepath.Join(t.TempDir(), "missing")))
 }
 
 func TestLegacyRecurFilesystemAndPublicationEdges(t *testing.T) {
-	for _, phase := range []string{"unsafe", "body-stat", "body-read", "index-stat", "index-read", "prepare", "recur-compensated", "recur-uncertain", "parse", "parse-rollback", "index", "index-rollback", "commit", "delivery"} {
+	for _, phase := range []string{"unsafe", "prepare", "recur-compensated", "recur-uncertain", "parse", "index", "index-foreign", "fence", "commit", "delivery"} {
 		lessonsDir := setupLessonsSpec(t)
 		root := filepath.Dir(filepath.Dir(lessonsDir))
 		writeLessonInDir(t, lessonsDir, "legacy", "Recorded")
@@ -739,43 +737,16 @@ func TestLegacyRecurFilesystemAndPublicationEdges(t *testing.T) {
 		switch phase {
 		case "unsafe":
 			flags["note"] = "owner@example.com"
-		case "body-stat":
-			deps.fs.stat = func(string) (os.FileInfo, error) { return nil, errors.New("stat") }
-		case "body-read":
-			real := deps.fs.read
-			deps.fs.read = func(p string) ([]byte, error) {
-				if p == body {
-					return nil, errors.New("read")
-				}
-				return real(p)
-			}
-		case "index-stat":
-			real := deps.fs.stat
-			deps.fs.stat = func(p string) (os.FileInfo, error) {
-				if p == index {
-					return nil, errors.New("stat")
-				}
-				return real(p)
-			}
-		case "index-read":
-			_ = os.WriteFile(index, []byte("index"), 0o644)
-			real := deps.fs.read
-			deps.fs.read = func(p string) ([]byte, error) {
-				if p == index {
-					return nil, errors.New("read")
-				}
-				return real(p)
-			}
 		case "prepare":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")
 			}
 		case "recur-compensated":
-			deps.recur = func(string, string) (int, error) {
+			deps.recurWithPostMutation = func(string, string, func(int) error) (int, error) {
 				return 0, &lesson.MutationError{Outcome: lesson.MutationCompensated, Err: errors.New("recur")}
 			}
 		case "recur-uncertain":
-			deps.recur = func(string, string) (int, error) { return 0, errors.New("recur") }
+			deps.recurWithPostMutation = func(string, string, func(int) error) (int, error) { return 0, errors.New("recur") }
 		case "parse":
 			real, calls := deps.parse, 0
 			deps.parse = func(p string) (*lesson.Lesson, error) {
@@ -785,25 +756,16 @@ func TestLegacyRecurFilesystemAndPublicationEdges(t *testing.T) {
 				}
 				return real(p)
 			}
-		case "parse-rollback":
-			real, calls := deps.parse, 0
-			deps.parse = func(p string) (*lesson.Lesson, error) {
-				calls++
-				if calls == 2 {
-					_ = os.Remove(body)
-					_ = os.Mkdir(body, 0o755)
-					return nil, errors.New("parse")
-				}
-				return real(p)
-			}
 		case "index":
 			deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("index") }
-		case "index-rollback":
+		case "index-foreign":
 			deps.indexUpsert = func(string, *lesson.Lesson) error {
-				_ = os.Remove(body)
-				_ = os.Mkdir(body, 0o755)
+				_ = os.WriteFile(body, []byte("foreign body\n"), 0o644)
+				_ = os.WriteFile(index, []byte("foreign index\n"), 0o644)
 				return errors.New("index")
 			}
+		case "fence":
+			deps.durable = faultDurableOps("open-dir")
 		case "commit":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return &preparedLessonEvent{outbox: event.NewOutbox(root), event: event.Event{UUID: "missing"}}, nil
@@ -819,9 +781,15 @@ func TestLegacyRecurFilesystemAndPublicationEdges(t *testing.T) {
 		} else if err == nil {
 			t.Fatalf("%s recurrence failure was accepted", phase)
 		}
+		if phase == "index-foreign" {
+			if got, _ := os.ReadFile(body); string(got) != "foreign body\n" {
+				t.Fatalf("foreign body was overwritten: %q", got)
+			}
+			if got, _ := os.ReadFile(index); string(got) != "foreign index\n" {
+				t.Fatalf("foreign index was overwritten: %q", got)
+			}
+		}
 	}
-	dir := t.TempDir()
-	requireCLIError(t, restoreLegacyRecurFiles(dir, []byte("x"), 0o644, "", nil, 0, false))
 	root := canonicalLessonProject(t)
 	configureFailingLessonEvents(t, root)
 	cmd := lessonRecurCommand()

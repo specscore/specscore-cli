@@ -682,8 +682,11 @@ func (o outboxOperations) syncOutboxDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func (o outboxOperations) ensureOutboxDirectory(path string) error {

@@ -63,7 +63,7 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: lessons-index-sync
 
-After the rewrite, the verb MUST upsert only the resolved Lesson's exact row in `spec/lessons/README.md` under the project-private Lesson-index writer lock, then run lint read-only and durably fence both artifact/index files and parent directories before event commit. It MUST NOT invoke a repository-wide fixer or migrate an unrelated `## Outstanding Questions` heading. Exit `0` depends on every step succeeding. A post-rewrite failure exits `10`, retains the prepared event, and MUST preserve the published state and concurrent index rows rather than restoring whole-file snapshots.
+The verb MUST hold the resolved Lesson's private lifecycle lock continuously from transition validation through rewrite, exact-row reconciliation, read-only lint, and durability fences. Inside that scope it acquires the shared Lesson-index writer lock only for the index mutation; the total lock order is always per-Lesson first, shared index second. It then durably fences both artifact/index files and parent directories before event commit. It MUST NOT invoke a repository-wide fixer or migrate an unrelated `## Outstanding Questions` heading. Exit `0` depends on every step succeeding. A post-rewrite failure exits `10`, retains the prepared event, and MUST preserve the published state and concurrent index rows rather than restoring whole-file snapshots.
 
 ## Flags
 

@@ -1307,7 +1307,7 @@
               "contains": [
                 "provider occurrence",
                 "crash-resumable across canonical artifacts",
-                "removes only the exact verified flat",
+                ".specscore/recovery/flat-migration/\u003cevent-uuid\u003e/",
                 "Git provenance alone never certifies"
               ]
             }

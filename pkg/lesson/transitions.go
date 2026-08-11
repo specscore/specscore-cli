@@ -93,6 +93,28 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	if opts.SpecRoot == "" {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
 	}
+	if err := ValidateSlug(opts.Slug); err != nil {
+		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: invalid slug: %v", err)
+	}
+	if opts.To == "" {
+		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: target status required")
+	}
+	if opts.PostMutation == nil {
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: PostMutation hook required")
+	}
+	var result ChangeStatusResult
+	err := withLessonMutationLock(opts.SpecRoot, opts.Slug, defaultLessonMutationLockDeps(), func() error {
+		var err error
+		result, err = changeStatusUnlocked(opts)
+		return err
+	})
+	return result, err
+}
+
+func changeStatusUnlocked(opts ChangeStatusOptions) (ChangeStatusResult, error) {
+	if opts.SpecRoot == "" {
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
+	}
 	if opts.Slug == "" {
 		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: slug required")
 	}

@@ -224,6 +224,51 @@ func TestApplyLegacy_ReviewedMappingIdempotent(t *testing.T) {
 	}
 }
 
+func TestApplyLegacy_RejectsMissingOwnerMarkerAndForeignREADMEMutation(t *testing.T) {
+	dir := t.TempDir()
+	lessonsDir := filepath.Join(dir, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "legacy.md")
+	if err := os.WriteFile(source, []byte("## L1 — use a check\n\n**Status:** Recorded\n\ntext\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventoryLegacyForApply(t, source)
+	mapping := legacyMapping(inv, reviewedNew("L1#1", "use-a-check"))
+	if _, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := filepath.Join(lessonsDir, "use-a-check")
+	markerPath := filepath.Join(targetDir, ".legacy-import-owner")
+	readmePath := filepath.Join(targetDir, "README.md")
+	if err := os.Remove(markerPath); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(readmePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\nForeign safe edit.\n"); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, lessonsDir)
+	result, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	if err == nil || !strings.Contains(err.Error(), "ownership marker") {
+		t.Fatalf("marker loss and foreign mutation result=%#v err=%v", result, err)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("foreign mutation was reported as an owned skip: %#v", result)
+	}
+	if after := snapshotTree(t, lessonsDir); !bytes.Equal(after, before) {
+		t.Fatal("failed ownership check mutated the foreign tree")
+	}
+}
+
 func TestApplyLegacy_NewRequiresSafeReviewedCompactContentAndConfiguredClassification(t *testing.T) {
 	tests := map[string]struct {
 		allowed []string

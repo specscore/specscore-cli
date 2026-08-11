@@ -150,7 +150,7 @@ func TestLessonRecur_RecurFnFails(t *testing.T) {
 	}
 	writeLessonInDir(t, filepath.Join(root, "spec", "lessons"), "kinder-fake", "Stated")
 	deps := defaultLessonCLIDeps()
-	deps.recur = func(string, string) (int, error) {
+	deps.recurWithPostMutation = func(string, string, func(int) error) (int, error) {
 		return 0, errors.New("boom")
 	}
 	cmd := lessonRecurCommand()
@@ -159,6 +159,31 @@ func TestLessonRecur_RecurFnFails(t *testing.T) {
 	err := runLessonRecurWithDeps(cmd, []string{"kinder-fake"}, deps)
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	}
+}
+
+// Historical test symbol retained: legacy recurrence no longer invokes a
+// repository-wide lint fixer. Its bounded index callback failing after the
+// body rewrite must retain the visible recurrence and prepared recovery event.
+func TestLessonRecur_LintFixFails(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Stated")
+	canonicalDir := filepath.Join(root, "spec", "lessons", "kinder-fake")
+	if err := os.RemoveAll(canonicalDir); err != nil {
+		t.Fatal(err)
+	}
+	flatPath := filepath.Join(root, "spec", "lessons", "kinder-fake.md")
+	writeLessonInDir(t, filepath.Join(root, "spec", "lessons"), "kinder-fake", "Stated")
+	deps := defaultLessonCLIDeps()
+	deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("bounded index failure") }
+	cmd := lessonRecurCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
+	err := runLessonRecurWithDeps(cmd, []string{"kinder-fake"}, deps)
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	}
+	body, readErr := os.ReadFile(flatPath)
+	if readErr != nil || !strings.Contains(string(body), "**Recurred:** 1") {
+		t.Fatalf("post-publication index failure lost recurrence: %q, %v", body, readErr)
 	}
 }
 

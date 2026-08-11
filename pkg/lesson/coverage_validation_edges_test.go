@@ -522,6 +522,13 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 	if err := writeImportedLesson(imported, "imported", "Imported rule", mapping, entry, LegacyInventory{Source: validSource}); err != nil {
 		t.Fatal(err)
 	}
+	importedBytes, err := os.ReadFile(imported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(imported), ".legacy-import-owner"), legacyImportOwnerMarker(importedBytes), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := validateImportedLesson(imported, entry, LegacyInventory{Source: validSource}); err != nil {
 		t.Fatal(err)
 	}

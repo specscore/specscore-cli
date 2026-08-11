@@ -21,55 +21,55 @@ type lessonFileOps struct {
 // fault injection local to one test and command instead of changing package
 // state that concurrent commands can observe.
 type lessonCLIDeps struct {
-	fs                  lessonFileOps
-	readConfig          func(string) (projectdef.SpecConfig, error)
-	parse               func(string) (*lesson.Lesson, error)
-	addOccurrence       func(lesson.AddOccurrenceOptions) (lesson.Occurrence, error)
-	discoverOccurrences func(string) ([]lesson.Occurrence, error)
-	removeOccurrence    func(string) error
-	addRelation         func(string, string, string, string) error
-	listRelations       func(string, string) ([]lesson.Relation, error)
-	recur               func(string, string) (int, error)
-	inventoryLegacy     func(string) (lesson.LegacyInventory, error)
-	applyLegacy         func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyResult, error)
-	indexUpsert         func(string, *lesson.Lesson) error
-	reconcileIndex      func(string, *lesson.Lesson) error
-	lint                func(lint.Options) ([]lint.Violation, error)
-	prepareEvent        func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error)
-	prepareEventWithID  func(string, string, string, map[string]any, time.Time, string) (*preparedLessonEvent, error)
-	finalizeFlat        func(lesson.FlatMigrationOptions, string) error
-	preflightFlat       func(lesson.FlatMigrationOptions) (lesson.FlatMigrationPreflight, error)
-	migrateFlat         func(lesson.FlatMigrationOptions) (lesson.FlatMigrationResult, error)
-	preflightLegacy     func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) error
-	changeStatus        func(lesson.ChangeStatusOptions) (lesson.ChangeStatusResult, error)
-	afterFlatPhase      func(string) error
-	durable             durableFileOps
+	fs                    lessonFileOps
+	readConfig            func(string) (projectdef.SpecConfig, error)
+	scaffoldCanonical     func(lesson.ScaffoldOptions, []string) ([]byte, error)
+	parse                 func(string) (*lesson.Lesson, error)
+	addOccurrence         func(lesson.AddOccurrenceOptions) (lesson.Occurrence, error)
+	discoverOccurrences   func(string) ([]lesson.Occurrence, error)
+	addRelation           func(string, string, string, string) error
+	listRelations         func(string, string) ([]lesson.Relation, error)
+	recurWithPostMutation func(string, string, func(int) error) (int, error)
+	inventoryLegacy       func(string) (lesson.LegacyInventory, error)
+	applyLegacy           func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyResult, error)
+	indexUpsert           func(string, *lesson.Lesson) error
+	lint                  func(lint.Options) ([]lint.Violation, error)
+	prepareEvent          func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error)
+	prepareEventWithID    func(string, string, string, map[string]any, time.Time, string) (*preparedLessonEvent, error)
+	finalizeFlat          func(lesson.FlatMigrationOptions, string) error
+	preflightFlat         func(lesson.FlatMigrationOptions) (lesson.FlatMigrationPreflight, error)
+	migrateFlat           func(lesson.FlatMigrationOptions) (lesson.FlatMigrationResult, error)
+	preflightLegacy       func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) error
+	changeStatus          func(lesson.ChangeStatusOptions) (lesson.ChangeStatusResult, error)
+	afterFlatPhase        func(string) error
+	publishExclusive      func(string, []byte, os.FileMode) error
+	durable               durableFileOps
 }
 
 func defaultLessonCLIDeps() lessonCLIDeps {
 	return lessonCLIDeps{
-		fs:                  lessonFileOps{os.Stat, os.ReadFile, os.ReadDir, os.WriteFile, os.MkdirAll},
-		readConfig:          projectdef.ReadSpecConfig,
-		parse:               lesson.Parse,
-		addOccurrence:       lesson.AddOccurrence,
-		discoverOccurrences: lesson.DiscoverOccurrences,
-		removeOccurrence:    lesson.RemoveOccurrence,
-		addRelation:         lesson.AddRelation,
-		listRelations:       lesson.ListRelations,
-		recur:               lesson.Recur,
-		inventoryLegacy:     lesson.InventoryLegacy,
-		applyLegacy:         lesson.ApplyLegacy,
-		indexUpsert:         lint.UpsertLessonIndexRow,
-		reconcileIndex:      lint.UpsertLessonIndexRow,
-		lint:                lint.Lint,
-		prepareEvent:        prepareLessonEvent,
-		prepareEventWithID:  prepareLessonEventWithID,
-		finalizeFlat:        lesson.FinalizeFlatMigration,
-		preflightFlat:       lesson.PreflightFlatMigration,
-		migrateFlat:         lesson.MigrateFlat,
-		preflightLegacy:     lesson.PreflightLegacyApply,
-		changeStatus:        lesson.ChangeStatus,
-		afterFlatPhase:      func(string) error { return nil },
-		durable:             defaultDurableFileOps(),
+		fs:                    lessonFileOps{os.Stat, os.ReadFile, os.ReadDir, os.WriteFile, os.MkdirAll},
+		readConfig:            projectdef.ReadSpecConfig,
+		scaffoldCanonical:     lesson.ScaffoldCanonical,
+		parse:                 lesson.Parse,
+		addOccurrence:         lesson.AddOccurrence,
+		discoverOccurrences:   lesson.DiscoverOccurrences,
+		addRelation:           lesson.AddRelation,
+		listRelations:         lesson.ListRelations,
+		recurWithPostMutation: lesson.RecurWithPostMutation,
+		inventoryLegacy:       lesson.InventoryLegacy,
+		applyLegacy:           lesson.ApplyLegacy,
+		indexUpsert:           lint.UpsertLessonIndexRow,
+		lint:                  lint.Lint,
+		prepareEvent:          prepareLessonEvent,
+		prepareEventWithID:    prepareLessonEventWithID,
+		finalizeFlat:          lesson.FinalizeFlatMigration,
+		preflightFlat:         lesson.PreflightFlatMigration,
+		migrateFlat:           lesson.MigrateFlat,
+		preflightLegacy:       lesson.PreflightLegacyApply,
+		changeStatus:          lesson.ChangeStatus,
+		afterFlatPhase:        func(string) error { return nil },
+		publishExclusive:      publishFileExclusive,
+		durable:               defaultDurableFileOps(),
 	}
 }

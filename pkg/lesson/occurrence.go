@@ -387,19 +387,19 @@ func addOccurrenceWithRuntime(opts AddOccurrenceOptions, fs lessonFS, marshal fu
 		return Occurrence{}, mutationFailure(MutationPrePublication, err)
 	}
 	if err := syncDirectoryWithFS(l.OccurrencesDir, fs); err != nil {
-		return Occurrence{}, CompensatePublication(func() error {
-			if removeErr := fs.Remove(o.Path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-				return removeErr
-			}
-			return syncDirectoryWithFS(l.OccurrencesDir, fs)
-		}, fmt.Errorf("durably publishing occurrence: %w", err))
+		// The exclusive link made the child visible. A path check followed by
+		// Remove cannot prove that the same inode still occupies the UUID path;
+		// a concurrent replacement could otherwise be deleted. Retain the child
+		// and classify the durability boundary as uncertain for explicit retry.
+		return o, mutationFailure(MutationUncertain, fmt.Errorf("occurrence retained after durability fence failure: %w", err))
 	}
 	return o, nil
 }
 
-// RemoveOccurrence is the exact inverse used only when a caller must
-// compensate a just-published immutable child. It does not infer ownership
-// from path existence: callers pass the path returned by AddOccurrence.
+// RemoveOccurrence performs an explicit caller-requested deletion and fences
+// its parent directory. It is never safe as automatic post-publication
+// compensation: a path returned by AddOccurrence is not an ownership token,
+// because another writer can replace that path before a later unlink.
 func RemoveOccurrence(path string) error {
 	return removeOccurrenceWithFS(path, osLessonFS{})
 }

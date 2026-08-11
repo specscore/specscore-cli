@@ -313,6 +313,51 @@ func TestLessonNew_WriteError(t *testing.T) {
 	}
 }
 
+func TestLessonNew_ScaffoldError(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	deps := defaultLessonCLIDeps()
+	deps.scaffoldCanonical = func(lesson.ScaffoldOptions, []string) ([]byte, error) {
+		return nil, errors.New("forced scaffold failure")
+	}
+	err := runLessonNewWithTestDeps(t, "boom", deps)
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom", "README.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("scaffold failure changed target: %v", statErr)
+	}
+}
+
+// Historical test symbol retained: Lesson creation no longer runs a global
+// lint fixer. A read-only lint failure after exclusive publication is retained
+// for recovery with its prepared event rather than deleting visible state.
+func TestLessonNew_LintFixFails(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	configureNoopLessonEvents(t, root)
+	deps := defaultLessonCLIDeps()
+	deps.lint = func(opts lint.Options) ([]lint.Violation, error) {
+		if opts.Fix {
+			t.Fatal("Lesson new invoked a repository-wide lint fixer")
+		}
+		return nil, errors.New("read-only lint failure")
+	}
+	err := runLessonNewWithTestDeps(t, "boom", deps)
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom", "README.md")); statErr != nil {
+		t.Fatalf("post-publication lint failure lost recoverable Lesson: %v", statErr)
+	}
+}
+
 // AC: narrow-index-upsert-failure — the lint-owned bounded row writer fails
 // transactionally without invoking a whole-tree lint fixer.
 func TestLessonNew_IndexUpsertFails(t *testing.T) {

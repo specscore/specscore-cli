@@ -887,7 +887,7 @@ func publishStagedLessonWithFS(stageDir, finalDir string, fs lessonFS) error {
 	if err != nil {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	markerBytes := []byte("specscore-legacy-import:" + shaString(readmeBytes) + "\n")
+	markerBytes := legacyImportOwnerMarker(readmeBytes)
 	stageMarker := filepath.Join(stageDir, ".legacy-import-owner")
 	if err := writeDurableStageFileWithFS(stageMarker, markerBytes, fs); err != nil && !os.IsExist(err) {
 		return mutationFailure(MutationPrePublication, err)
@@ -1016,10 +1016,29 @@ func validateImportedLessonWithFS(path string, e LegacyEntry, inv LegacyInventor
 	if !strings.Contains(string(lessonBytes), "**Legacy Provenance:** "+legacyProvenance(inv, e)) {
 		return fmt.Errorf("provenance differs")
 	}
+	markerPath := filepath.Join(filepath.Dir(path), ".legacy-import-owner")
+	markerInfo, err := fs.Lstat(markerPath)
+	if err != nil {
+		return fmt.Errorf("legacy import ownership marker missing or unreadable: %w", err)
+	}
+	if !markerInfo.Mode().IsRegular() {
+		return fmt.Errorf("legacy import ownership marker is not a regular file")
+	}
+	markerBytes, err := fs.ReadFile(markerPath)
+	if err != nil {
+		return fmt.Errorf("legacy import ownership marker unreadable: %w", err)
+	}
+	if !bytes.Equal(markerBytes, legacyImportOwnerMarker(lessonBytes)) {
+		return fmt.Errorf("legacy import ownership marker does not match the reviewed Lesson bytes")
+	}
 	if info, err := fs.Stat(filepath.Join(filepath.Dir(path), "occurrences")); err != nil || !info.IsDir() {
 		return fmt.Errorf("occurrence store missing")
 	}
 	return nil
+}
+
+func legacyImportOwnerMarker(readmeBytes []byte) []byte {
+	return []byte("specscore-legacy-import:" + shaString(readmeBytes) + "\n")
 }
 func legacyOccurrenceID(sourceHash, key, slug string) string {
 	sum := sha256.Sum256([]byte(sourceHash + "\x00" + key + "\x00" + slug))

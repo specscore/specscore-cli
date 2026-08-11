@@ -130,8 +130,10 @@ func (f *canonicalOccurrenceFailure) cliError(recur bool) error {
 }
 
 // publishCanonicalOccurrence owns the one canonical occurrence transaction:
-// snapshot index, prepare event, publish child, refresh/read the derived row,
-// compensate child+index together, then commit the event.
+// preflight the index, prepare the event, publish the immutable child, refresh
+// and fence the derived row, then commit the event. Once the child is visible,
+// every failure retains state; path-based compensation could delete a foreign
+// replacement that appeared after publication.
 func publishCanonicalOccurrence(ctx context.Context, root string, l *lesson.Lesson, opts lesson.AddOccurrenceOptions, readBack bool, deps lessonCLIDeps) (canonicalOccurrenceResult, *canonicalOccurrenceFailure) {
 	if err := preflightOccurrenceIndex(root); err != nil {
 		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "snapshot", err: err}
@@ -145,33 +147,26 @@ func publishCanonicalOccurrence(ctx context.Context, root string, l *lesson.Less
 		recovery, resolved := prepared.ResolveMutationFailure("recording occurrence", err)
 		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "record", recoveryRequired: recovery, err: resolved}
 	}
-	compensate := func(operation string, cause error) (bool, error) {
-		failure := lesson.CompensatePublication(func() error {
-			if err := deps.removeOccurrence(o.Path); err != nil {
-				return err
-			}
-			// Recompute only this Lesson's derived row from the surviving
-			// immutable children. Restoring a whole-file snapshot could erase a
-			// concurrently committed row owned by another command.
-			indexPath := filepath.Join(root, "spec", "lessons", "README.md")
-			if err := deps.reconcileIndex(filepath.Join(root, "spec"), l); err != nil {
-				return err
-			}
-			return durableFencePathWithOps(indexPath, deps.durable)
-		}, cause)
+	retain := func(operation string, cause error) (bool, error) {
+		failure := &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: cause}
 		return prepared.ResolveMutationFailure(operation, failure)
 	}
 	if err := deps.indexUpsert(filepath.Join(root, "spec"), l); err != nil {
-		recovery, resolved := compensate("upserting occurrence index row", err)
+		recovery, resolved := retain("upserting occurrence index row", err)
 		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "index", recoveryRequired: recovery, err: resolved}
 	}
 	var items []lesson.Occurrence
 	if readBack {
 		items, err = deps.discoverOccurrences(opts.LessonPath)
 		if err != nil {
-			recovery, resolved := compensate("reading occurrences after publication", err)
+			recovery, resolved := retain("reading occurrences after publication", err)
 			return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "read", recoveryRequired: recovery, err: resolved}
 		}
+	}
+	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+	if err := newLessonMutationCoordinator(nil, deps.durable).Fence(o.Path, indexPath); err != nil {
+		recovery, resolved := retain("durably fencing occurrence and index", err)
+		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "fence", recoveryRequired: recovery, err: resolved}
 	}
 	delivery, err := prepared.Commit(ctx)
 	if err != nil {

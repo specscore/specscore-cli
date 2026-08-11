@@ -57,6 +57,7 @@ type occurrenceTestFile struct {
 	chmodErr error
 	writeErr error
 	syncErr  error
+	syncFn   func() error
 	closeErr error
 }
 
@@ -75,6 +76,9 @@ func (f occurrenceTestFile) Write(data []byte) (int, error) {
 }
 
 func (f occurrenceTestFile) Sync() error {
+	if f.syncFn != nil {
+		return f.syncFn()
+	}
 	if f.syncErr != nil {
 		return f.syncErr
 	}
@@ -287,7 +291,7 @@ func TestValidateOccurrenceFile_FilenameMustEqualID(t *testing.T) {
 	}
 }
 
-func TestAddOccurrence_PublicationFsyncAndRollbackFaultsCarryTriState(t *testing.T) {
+func TestAddOccurrence_PublicationFsyncFailureRetainsForeignReplacement(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spec", "lessons", "x", "README.md")
 	if err := os.MkdirAll(filepath.Join(filepath.Dir(path), "occurrences"), 0o755); err != nil {
 		t.Fatal(err)
@@ -301,43 +305,33 @@ func TestAddOccurrence_PublicationFsyncAndRollbackFaultsCarryTriState(t *testing
 	}
 	base := AddOccurrenceOptions{LessonPath: path, ID: "01234567-89ab-4def-8123-456789abcdef", Summary: "boundary", Context: map[string]any{}, Evidence: Evidence{Kind: "none"}, Now: time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)}
 
-	t.Run("rollback-durably-completes", func(t *testing.T) {
-		baseFS := osLessonFS{}
-		calls := 0
-		fs := occurrenceTestFS{lessonFS: baseFS}
-		fs.openFn = func(dir string) (lessonFile, error) {
-			calls++
-			file, err := baseFS.Open(dir)
-			if err != nil {
-				return nil, err
+	baseFS := osLessonFS{}
+	foreign := []byte("foreign concurrent replacement\n")
+	fs := occurrenceTestFS{lessonFS: baseFS}
+	fs.openFn = func(dir string) (lessonFile, error) {
+		file, err := baseFS.Open(dir)
+		if err != nil {
+			return nil, err
+		}
+		return occurrenceTestFile{lessonFile: file, syncFn: func() error {
+			published := filepath.Join(dir, base.ID+".json")
+			if err := os.Remove(published); err != nil {
+				return err
 			}
-			if calls == 1 {
-				return occurrenceTestFile{lessonFile: file, syncErr: errors.New("injected post-link fsync failure")}, nil
+			if err := os.WriteFile(published, foreign, 0o644); err != nil {
+				return err
 			}
-			return file, nil
-		}
-		_, err := addOccurrenceWithFS(base, fs)
-		if MutationOutcomeOf(err) != MutationCompensated {
-			t.Fatalf("outcome=%v err=%v", MutationOutcomeOf(err), err)
-		}
-	})
-
-	t.Run("rollback-removal-uncertain", func(t *testing.T) {
-		baseFS := osLessonFS{}
-		fs := occurrenceTestFS{lessonFS: baseFS}
-		fs.openFn = func(dir string) (lessonFile, error) {
-			file, err := baseFS.Open(dir)
-			if err != nil {
-				return nil, err
-			}
-			return occurrenceTestFile{lessonFile: file, syncErr: errors.New("injected post-link fsync failure")}, nil
-		}
-		fs.removeFn = func(string) error { return errors.New("injected rollback removal failure") }
-		_, err := addOccurrenceWithFS(base, fs)
-		if MutationOutcomeOf(err) != MutationUncertain {
-			t.Fatalf("outcome=%v err=%v", MutationOutcomeOf(err), err)
-		}
-	})
+			return errors.New("injected post-link fsync failure")
+		}}, nil
+	}
+	o, err := addOccurrenceWithFS(base, fs)
+	if MutationOutcomeOf(err) != MutationUncertain || o.Path == "" {
+		t.Fatalf("outcome=%v occurrence=%#v err=%v", MutationOutcomeOf(err), o, err)
+	}
+	got, readErr := os.ReadFile(o.Path)
+	if readErr != nil || !bytes.Equal(got, foreign) {
+		t.Fatalf("foreign replacement was changed: %q err=%v", got, readErr)
+	}
 }
 
 func TestAddOccurrenceWithFS_FileBoundaryFaultsAreIsolated(t *testing.T) {

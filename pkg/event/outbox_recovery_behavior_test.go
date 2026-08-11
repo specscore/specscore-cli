@@ -361,6 +361,21 @@ func TestOutbox_InstanceScopedFilesystemFailuresAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestOutbox_DirectorySyncAndCloseFailuresAreDurabilityErrors(t *testing.T) {
+	root := t.TempDir()
+	for name, file := range map[string]faultOutboxFile{
+		"sync":  {name: root, syncError: errors.New("injected directory sync failure")},
+		"close": {name: root, closeError: errors.New("injected directory close failure")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := outboxOperations{Outbox: Outbox{Root: root}, fs: faultOutboxFS{file: file}}
+			if err := o.syncOutboxDirectory(root); err == nil || !strings.Contains(err.Error(), "injected") {
+				t.Fatalf("directory %s failure = %v", name, err)
+			}
+		})
+	}
+}
+
 func TestOutbox_OperationsAreInstanceScopedUnderConcurrentFaultInjection(t *testing.T) {
 	root := t.TempDir()
 	failing := outboxOperations{Outbox: Outbox{Root: filepath.Join(root, "failing")}, fs: faultOutboxFS{fail: "link"}}
