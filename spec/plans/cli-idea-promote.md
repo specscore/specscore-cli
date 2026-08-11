@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Implemented
+---
+
 # Plan: Idea Promote (CLI) — internal/cli idea promote
 
 **Status:** Implemented

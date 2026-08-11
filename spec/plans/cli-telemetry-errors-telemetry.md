@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Approved
+---
+
 # Plan: CLI Telemetry — Crash Reports Channel
 
 **Status:** Approved

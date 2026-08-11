@@ -1,6 +1,6 @@
 ---
 format: https://specscore.md/plan-specification
-status: Approved
+status: Implemented
 ---
 # Plan: studio index — Phase-0 ecosystem indexer + facts query
 

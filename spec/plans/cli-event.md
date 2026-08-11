@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Implemented
+---
+
 # Plan: Events (CLI) — pkg/event Library + Dispatcher
 
 **Status:** Implemented

@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Implemented
+---
+
 # Plan: Consilium Engine (CLI) — pkg/consilium
 
 **Status:** Implemented

@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Implemented
+---
+
 # Plan: Lint fixed-files report
 
 **Status:** Implemented

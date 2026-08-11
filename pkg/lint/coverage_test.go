@@ -101,6 +101,8 @@ func TestWalkPlanReadmes_SkipsReservedDirsAndTasks(t *testing.T) {
 	writeFile(t, filepath.Join(plansDir, "my-plan", "README.md"), "# Plan: My Plan\n")
 	// Plans index (should be skipped)
 	writeFile(t, filepath.Join(plansDir, "README.md"), "# Plans Index\n")
+	// Compatibility flat Plan (should be visited).
+	writeFile(t, filepath.Join(plansDir, "flat-plan.md"), "# Plan: Flat Plan\n")
 	// Task README inside a plan (should be skipped by walkPlanReadmes)
 	mkdir(t, filepath.Join(plansDir, "my-plan", "tasks", "task-1"))
 	writeFile(t, filepath.Join(plansDir, "my-plan", "tasks", "task-1", "README.md"), "# Task 1\n")
@@ -115,11 +117,11 @@ func TestWalkPlanReadmes_SkipsReservedDirsAndTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 1 {
-		t.Fatalf("expected 1 plan readme, got %d: %v", len(paths), paths)
+	if len(paths) != 2 {
+		t.Fatalf("expected directory and flat plans, got %d: %v", len(paths), paths)
 	}
-	if !strings.Contains(paths[0], "my-plan") {
-		t.Errorf("expected my-plan readme, got %s", paths[0])
+	if !strings.Contains(strings.Join(paths, "\n"), "my-plan") || !strings.Contains(strings.Join(paths, "\n"), "flat-plan.md") {
+		t.Errorf("expected directory and flat plans, got %v", paths)
 	}
 }
 

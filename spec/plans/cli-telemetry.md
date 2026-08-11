@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Approved
+---
+
 # Plan: CLI Telemetry (Parent — Shared Plumbing)
 
 **Status:** Approved

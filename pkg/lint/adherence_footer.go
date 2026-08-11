@@ -341,9 +341,10 @@ func walkFeatureReadmesExcludingIndex(specRoot string, fn func(path string, cont
 	})
 }
 
-// walkPlanReadmes invokes fn for every Plan README under specRoot/plans/**/README.md,
-// excluding specRoot/plans/README.md (which is the plans-index, walked separately)
-// and any README.md inside a reserved _-prefixed directory.
+// walkPlanReadmes invokes fn for every directory-form Plan README under
+// specRoot/plans/**/README.md and every compatibility flat Plan at
+// specRoot/plans/*.md. It excludes specRoot/plans/README.md (the plans-index,
+// walked separately) and any README.md inside a reserved _-prefixed directory.
 func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) error {
 	plansDir := filepath.Join(specRoot, "plans")
 	info, err := os.Stat(plansDir)
@@ -360,7 +361,8 @@ func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) erro
 			}
 			return nil
 		}
-		if info.Name() != "README.md" {
+		isFlatPlan := filepath.Dir(path) == plansDir && info.Name() != "README.md" && strings.EqualFold(filepath.Ext(info.Name()), ".md")
+		if info.Name() != "README.md" && !isFlatPlan {
 			return nil
 		}
 		// Skip the plans-index itself (handled by walkPlansIndex).

@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Deprecated
+---
+
 # Plan: CLI Self-Update
 
 **Status:** Deprecated
