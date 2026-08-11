@@ -146,7 +146,7 @@ func preflightFlatMigrationWithDeps(opts FlatMigrationOptions, deps flatMigratio
 	flatPath := filepath.Join(opts.LessonsDir, opts.Slug+".md")
 	canonicalPath := filepath.Join(opts.LessonsDir, opts.Slug, "README.md")
 	markerPath := filepath.Join(opts.LessonsDir, ".flat-migration-"+opts.Slug+".json")
-	if markerBytes, err := os.ReadFile(markerPath); err == nil {
+	if markerBytes, err := deps.fs.ReadFile(markerPath); err == nil {
 		var marker flatMigrationMarker
 		if err := decodeStrictJSON(markerBytes, &marker); err != nil {
 			return FlatMigrationPreflight{}, fmt.Errorf("migration marker is malformed: %w", err)
@@ -161,9 +161,9 @@ func preflightFlatMigrationWithDeps(opts FlatMigrationOptions, deps flatMigratio
 	} else if !os.IsNotExist(err) {
 		return FlatMigrationPreflight{}, err
 	}
-	flatBytes, err := os.ReadFile(flatPath)
+	flatBytes, err := deps.fs.ReadFile(flatPath)
 	if os.IsNotExist(err) {
-		if err := validateCompletedFlatMigrationProof(opts.LessonsDir, canonicalPath, opts.Slug); err != nil {
+		if err := validateCompletedFlatMigrationProofWithFS(opts.LessonsDir, canonicalPath, opts.Slug, deps.fs); err != nil {
 			return FlatMigrationPreflight{}, fmt.Errorf("legacy flat Lesson is absent and canonical migration is not verifiable: %w", err)
 		}
 		return FlatMigrationPreflight{AlreadyMigrated: true}, nil
@@ -184,11 +184,11 @@ func preflightFlatMigrationWithDeps(opts FlatMigrationOptions, deps flatMigratio
 	}
 	defer func() { _ = deps.fs.RemoveAll(stage) }()
 	manifestPath := flatManifestPath(opts.LessonsDir, source, opts.Slug)
-	expected, err := collectFlatExpectedFiles(stage, opts.LessonsDir, opts.Slug, manifestPath)
+	expected, err := collectFlatExpectedFilesWithFS(stage, opts.LessonsDir, opts.Slug, manifestPath, deps.fs)
 	if err != nil {
 		return FlatMigrationPreflight{}, err
 	}
-	if err := ensureFreshMigrationTargetsAbsent(opts.LessonsDir, expected); err != nil {
+	if err := ensureFreshMigrationTargetsAbsentWithFS(opts.LessonsDir, expected, deps.fs); err != nil {
 		return FlatMigrationPreflight{}, err
 	}
 	return FlatMigrationPreflight{Source: source, EventUUID: FlatMigrationEventUUID(source.SHA256, opts.Slug), Classifications: append([]string(nil), opts.Classifications...)}, nil
@@ -217,17 +217,17 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 	markerPath := filepath.Join(opts.LessonsDir, ".flat-migration-"+opts.Slug+".json")
 	result := FlatMigrationResult{CanonicalPath: canonicalPath}
 
-	flatBytes, flatErr := os.ReadFile(flatPath)
+	flatBytes, flatErr := deps.fs.ReadFile(flatPath)
 	if flatErr != nil && !os.IsNotExist(flatErr) {
 		return result, flatErr
 	}
-	markerBytes, markerErr := os.ReadFile(markerPath)
+	markerBytes, markerErr := deps.fs.ReadFile(markerPath)
 	if markerErr != nil && !os.IsNotExist(markerErr) {
 		return result, markerErr
 	}
 	if os.IsNotExist(flatErr) {
 		if os.IsNotExist(markerErr) {
-			if err := validateCompletedFlatMigrationProof(opts.LessonsDir, canonicalPath, opts.Slug); err != nil {
+			if err := validateCompletedFlatMigrationProofWithFS(opts.LessonsDir, canonicalPath, opts.Slug, deps.fs); err != nil {
 				return result, fmt.Errorf("legacy flat Lesson is absent and canonical migration is not verifiable: %w", err)
 			}
 			result.AlreadyMigrated = true
@@ -246,7 +246,7 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		if opts.EventUUID != "" && opts.EventUUID != marker.EventUUID {
 			return result, fmt.Errorf("migration retry event UUID differs from the durable transaction")
 		}
-		if err := verifyExpectedFiles(opts.LessonsDir, marker.Files, false); err != nil {
+		if err := verifyExpectedFilesWithFS(opts.LessonsDir, marker.Files, false, deps.fs); err != nil {
 			return result, fmt.Errorf("interrupted migration cannot be finalized: %w", err)
 		}
 		if err := validateCompletedFlatMigration(canonicalPath); err != nil {
@@ -262,7 +262,7 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		return result, nil
 	}
 
-	if info, err := os.Stat(canonicalDir); err == nil && !info.IsDir() {
+	if info, err := deps.fs.Stat(canonicalDir); err == nil && !info.IsDir() {
 		return result, fmt.Errorf("canonical target is not a directory")
 	} else if err == nil && os.IsNotExist(markerErr) {
 		return result, fmt.Errorf("both legacy flat and canonical directory forms exist for %q", opts.Slug)
@@ -296,7 +296,7 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 	manifestPath := flatManifestPath(opts.LessonsDir, source, opts.Slug)
 	result.ManifestPath = manifestPath
 
-	expected, err := collectFlatExpectedFiles(stageDir, opts.LessonsDir, opts.Slug, manifestPath)
+	expected, err := collectFlatExpectedFilesWithFS(stageDir, opts.LessonsDir, opts.Slug, manifestPath, deps.fs)
 	if err != nil {
 		return result, err
 	}
@@ -309,7 +309,7 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		if !bytes.Equal(markerBytes, wantMarker) {
 			return result, fmt.Errorf("migration marker collision: existing transaction differs")
 		}
-	} else if _, statErr := os.Stat(markerPath); statErr == nil {
+	} else if _, statErr := deps.fs.Stat(markerPath); statErr == nil {
 		return result, fmt.Errorf("migration marker appeared during preflight")
 	} else if !os.IsNotExist(statErr) {
 		return result, statErr
@@ -319,10 +319,10 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 	// missing one. A fresh migration permits no target at all; only a durable
 	// marker authorizes byte-identical partial files from an interrupted write.
 	if os.IsNotExist(markerErr) {
-		if err := ensureFreshMigrationTargetsAbsent(opts.LessonsDir, expected); err != nil {
+		if err := ensureFreshMigrationTargetsAbsentWithFS(opts.LessonsDir, expected, deps.fs); err != nil {
 			return result, err
 		}
-	} else if err := verifyExpectedFiles(opts.LessonsDir, expected, true); err != nil {
+	} else if err := verifyExpectedFilesWithFS(opts.LessonsDir, expected, true, deps.fs); err != nil {
 		return result, err
 	}
 
@@ -334,16 +334,16 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 			_ = deps.fs.RemoveAll(canonicalDir)
 		}
 		if createdManifest {
-			_ = os.Remove(manifestPath)
+			_ = deps.fs.Remove(manifestPath)
 		}
 		if createdMarker {
-			_ = os.Remove(markerPath)
+			_ = deps.fs.Remove(markerPath)
 		}
 		_ = syncDirectoryWithFS(opts.LessonsDir, deps.fs)
 	}
 	if os.IsNotExist(markerErr) {
 		markerStage := filepath.Join(stageDir, "transaction.json")
-		if err := writeDurableStageFile(markerStage, wantMarker); err != nil {
+		if err := writeDurableStageFileWithFS(markerStage, wantMarker, deps.fs); err != nil {
 			return result, err
 		}
 		if err := deps.fs.Link(markerStage, markerPath); err != nil {
@@ -356,13 +356,13 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		}
 	}
 
-	if _, err := os.Stat(canonicalDir); os.IsNotExist(err) {
-		if err := os.Mkdir(canonicalDir, 0o755); err != nil {
+	if _, err := deps.fs.Stat(canonicalDir); os.IsNotExist(err) {
+		if err := deps.fs.Mkdir(canonicalDir, 0o755); err != nil {
 			rollback()
 			return result, err
 		}
 		createdCanonical = true
-		if err := os.Mkdir(filepath.Join(canonicalDir, "occurrences"), 0o755); err != nil {
+		if err := deps.fs.Mkdir(filepath.Join(canonicalDir, "occurrences"), 0o755); err != nil {
 			rollback()
 			return result, err
 		}
@@ -376,7 +376,7 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 			continue
 		}
 		final := filepath.Join(opts.LessonsDir, filepath.FromSlash(expectedFile.Path))
-		if _, err := os.Stat(final); err == nil {
+		if _, err := deps.fs.Stat(final); err == nil {
 			continue
 		} else if !os.IsNotExist(err) {
 			rollback()
@@ -397,8 +397,8 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		return result, err
 	}
 
-	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+	if _, err := deps.fs.Stat(manifestPath); os.IsNotExist(err) {
+		if err := deps.fs.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
 			rollback()
 			return result, err
 		}
@@ -420,12 +420,12 @@ func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (Fla
 		rollback()
 		return result, err
 	}
-	current, err := os.ReadFile(flatPath)
+	current, err := deps.fs.ReadFile(flatPath)
 	if err != nil || !bytes.Equal(current, flatBytes) {
 		rollback()
 		return result, fmt.Errorf("legacy flat Lesson changed during migration")
 	}
-	if err := os.Remove(flatPath); err != nil {
+	if err := deps.fs.Remove(flatPath); err != nil {
 		rollback()
 		return result, err
 	}
@@ -453,7 +453,7 @@ func finalizeFlatMigrationWithDeps(opts FlatMigrationOptions, eventUUID string, 
 		return err
 	}
 	markerPath := filepath.Join(opts.LessonsDir, ".flat-migration-"+opts.Slug+".json")
-	b, err := os.ReadFile(markerPath)
+	b, err := deps.fs.ReadFile(markerPath)
 	if err != nil {
 		return err
 	}
@@ -467,26 +467,30 @@ func finalizeFlatMigrationWithDeps(opts FlatMigrationOptions, eventUUID string, 
 	if strings.Join(marker.Classifications, "\x00") != strings.Join(opts.Classifications, "\x00") {
 		return fmt.Errorf("migration finalization classifications differ")
 	}
-	if _, err := os.Stat(filepath.Join(opts.LessonsDir, opts.Slug+".md")); !os.IsNotExist(err) {
+	if _, err := deps.fs.Stat(filepath.Join(opts.LessonsDir, opts.Slug+".md")); !os.IsNotExist(err) {
 		if err == nil {
 			return fmt.Errorf("legacy flat Lesson still exists")
 		}
 		return err
 	}
-	if err := verifyExpectedFiles(opts.LessonsDir, marker.Files, false); err != nil {
+	if err := verifyExpectedFilesWithFS(opts.LessonsDir, marker.Files, false, deps.fs); err != nil {
 		return err
 	}
 	canonicalPath := filepath.Join(opts.LessonsDir, opts.Slug, "README.md")
-	if err := validateCompletedFlatMigrationProof(opts.LessonsDir, canonicalPath, opts.Slug); err != nil {
+	if err := validateCompletedFlatMigrationProofWithFS(opts.LessonsDir, canonicalPath, opts.Slug, deps.fs); err != nil {
 		return err
 	}
-	if err := os.Remove(markerPath); err != nil {
+	if err := deps.fs.Remove(markerPath); err != nil {
 		return err
 	}
 	return syncDirectoryWithFS(opts.LessonsDir, deps.fs)
 }
 
 func validateFlatMigrationIndexRow(lessonsDir, canonicalPath string) error {
+	return validateFlatMigrationIndexRowWithFS(lessonsDir, canonicalPath, osLessonFS{})
+}
+
+func validateFlatMigrationIndexRowWithFS(lessonsDir, canonicalPath string, fs lessonFS) error {
 	l, err := Parse(canonicalPath)
 	if err != nil {
 		return err
@@ -504,7 +508,7 @@ func validateFlatMigrationIndexRow(lessonsDir, canonicalPath string) error {
 		enforcement = "—"
 	}
 	want := fmt.Sprintf("| [%s](%s/README.md) | %s | %s | %d | %s | %s |", l.Slug, l.Slug, l.Status, strings.Join(l.Classifications, ", "), len(occurrences), last, enforcement)
-	indexBytes, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
+	indexBytes, err := fs.ReadFile(filepath.Join(lessonsDir, "README.md"))
 	if err != nil {
 		return err
 	}
@@ -600,7 +604,7 @@ func stageFlatMigrationWithDeps(opts FlatMigrationOptions, sourceBytes []byte, f
 		return "", flatMigrationManifest{}, nil, err
 	}
 
-	stageDir, err := os.MkdirTemp(opts.LessonsDir, ".flat-migration-stage-")
+	stageDir, err := fs.MkdirTemp(opts.LessonsDir, ".flat-migration-stage-")
 	if err != nil {
 		return "", flatMigrationManifest{}, nil, err
 	}
@@ -767,9 +771,13 @@ func flatManifestPath(lessonsDir string, source LegacySourceRef, slug string) st
 }
 
 func collectFlatExpectedFiles(stageDir, lessonsDir, slug, manifestPath string) ([]flatExpectedFile, error) {
+	return collectFlatExpectedFilesWithFS(stageDir, lessonsDir, slug, manifestPath, osLessonFS{})
+}
+
+func collectFlatExpectedFilesWithFS(stageDir, lessonsDir, slug, manifestPath string, fs lessonFS) ([]flatExpectedFile, error) {
 	var out []flatExpectedFile
 	for _, path := range []string{filepath.Join(stageDir, "README.md"), filepath.Join(stageDir, "manifest.json")} {
-		b, err := os.ReadFile(path)
+		b, err := fs.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
@@ -783,7 +791,7 @@ func collectFlatExpectedFiles(stageDir, lessonsDir, slug, manifestPath string) (
 		}
 		out = append(out, flatExpectedFile{Path: rel, SHA256: shaString(b)})
 	}
-	entries, err := os.ReadDir(filepath.Join(stageDir, "occurrences"))
+	entries, err := fs.ReadDir(filepath.Join(stageDir, "occurrences"))
 	if err != nil {
 		return nil, err
 	}
@@ -791,7 +799,7 @@ func collectFlatExpectedFiles(stageDir, lessonsDir, slug, manifestPath string) (
 		if entry.IsDir() {
 			return nil, fmt.Errorf("staged occurrence is a directory")
 		}
-		b, err := os.ReadFile(filepath.Join(stageDir, "occurrences", entry.Name()))
+		b, err := fs.ReadFile(filepath.Join(stageDir, "occurrences", entry.Name()))
 		if err != nil {
 			return nil, err
 		}
@@ -802,12 +810,16 @@ func collectFlatExpectedFiles(stageDir, lessonsDir, slug, manifestPath string) (
 }
 
 func verifyExpectedFiles(lessonsDir string, files []flatExpectedFile, allowMissing bool) error {
+	return verifyExpectedFilesWithFS(lessonsDir, files, allowMissing, osLessonFS{})
+}
+
+func verifyExpectedFilesWithFS(lessonsDir string, files []flatExpectedFile, allowMissing bool, fs lessonFS) error {
 	for _, expected := range files {
 		if err := validateRepoRelativePath(expected.Path); err != nil || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(expected.SHA256) {
 			return fmt.Errorf("migration marker contains invalid expected-file metadata")
 		}
 		path := filepath.Join(lessonsDir, filepath.FromSlash(expected.Path))
-		b, err := os.ReadFile(path)
+		b, err := fs.ReadFile(path)
 		if os.IsNotExist(err) && allowMissing {
 			continue
 		}
@@ -822,9 +834,13 @@ func verifyExpectedFiles(lessonsDir string, files []flatExpectedFile, allowMissi
 }
 
 func ensureFreshMigrationTargetsAbsent(lessonsDir string, files []flatExpectedFile) error {
+	return ensureFreshMigrationTargetsAbsentWithFS(lessonsDir, files, osLessonFS{})
+}
+
+func ensureFreshMigrationTargetsAbsentWithFS(lessonsDir string, files []flatExpectedFile, fs lessonFS) error {
 	for _, expected := range files {
 		path := filepath.Join(lessonsDir, filepath.FromSlash(expected.Path))
-		if _, err := os.Lstat(path); err == nil {
+		if _, err := fs.Lstat(path); err == nil {
 			return fmt.Errorf("migration target collision at %s", expected.Path)
 		} else if !os.IsNotExist(err) {
 			return err
@@ -850,6 +866,10 @@ func validateCompletedFlatMigration(canonicalPath string) error {
 // gone, declaring a migration already complete is safe only when the immutable
 // manifest/source proof and the exact denormalized index row still agree.
 func validateCompletedFlatMigrationProof(lessonsDir, canonicalPath, slug string) error {
+	return validateCompletedFlatMigrationProofWithFS(lessonsDir, canonicalPath, slug, osLessonFS{})
+}
+
+func validateCompletedFlatMigrationProofWithFS(lessonsDir, canonicalPath, slug string, fs lessonFS) error {
 	if err := validateCompletedFlatMigration(canonicalPath); err != nil {
 		return err
 	}
@@ -862,7 +882,7 @@ func validateCompletedFlatMigrationProof(lessonsDir, canonicalPath, slug string)
 		return fmt.Errorf("canonical Lesson has malformed immutable legacy provenance")
 	}
 	manifestPath := filepath.Join(lessonsDir, ".legacy-import", "flat-"+match[3]+"-"+slug+".json")
-	b, err := os.ReadFile(manifestPath)
+	b, err := fs.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("immutable migration manifest is unavailable: %w", err)
 	}
@@ -880,7 +900,7 @@ func validateCompletedFlatMigrationProof(lessonsDir, canonicalPath, slug string)
 	if l.LegacyProvenance != wantProvenance || l.Status != manifest.SourceStatus {
 		return fmt.Errorf("canonical Lesson and immutable migration manifest disagree")
 	}
-	return validateFlatMigrationIndexRow(lessonsDir, canonicalPath)
+	return validateFlatMigrationIndexRowWithFS(lessonsDir, canonicalPath, fs)
 }
 
 func marshalSafeJSON(field string, value any) ([]byte, error) {
