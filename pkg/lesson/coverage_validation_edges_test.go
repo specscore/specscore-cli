@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,6 +105,21 @@ func TestCoverageValidationAndMutationEdges(t *testing.T) {
 	}
 	if err := ValidateOccurrence(base); err != nil {
 		t.Fatal(err)
+	}
+	tooManyRedactions := base
+	tooManyRedactions.Redactions = make([]string, 21)
+	for i := range tooManyRedactions.Redactions {
+		tooManyRedactions.Redactions[i] = fmt.Sprintf("r%d", i)
+	}
+	if err := ValidateOccurrence(tooManyRedactions); err == nil {
+		t.Fatal("occurrence accepted too many redactions")
+	}
+	if err := validateContextObject("unknown", map[string]any{"value": "safe"}); err == nil {
+		t.Fatal("unknown context object accepted")
+	}
+	command := "go test ./pkg/lesson"
+	if err := validateEvidence(Evidence{Kind: "command", Ref: &command}); err != nil {
+		t.Fatalf("command evidence=%v", err)
 	}
 
 	cause := errors.New("cause")
