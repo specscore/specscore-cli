@@ -122,8 +122,27 @@ jobs:
       # or runtime evidence until notarization and Gatekeeper validation are
       # fail-closed. The raw release artifact smoke remains enabled.
       artifact_smoke_test_homebrew_cask: false
+      # specscore: cli/release-distribution#req:fail-closed-macos-release-gate
+      # Target end state (see spec/features/cli/release-distribution/README.md):
+      # flip the notarization-gate input to true, once an operator has
+      # confirmed all five named Apple secrets below exist as real repository
+      # secrets. Deliberately not flipped here yet — doing so before that
+      # confirmation would either no-op (secrets absent so GoReleaser's
+      # notarize.macos step never enables) or, worse, look like a real
+      # fail-closed gate while never actually having been exercised.
+      # TestReleaseCallerDefersCaskInstallSmokeUntilNotarization
+      # (workflow_contract_test.go) enforces this input stays absent until
+      # that operator step lands as its own change.
     secrets:
       # Cross-repo PAT (classic, public_repo) for the Homebrew tap, Scoop
       # bucket, and WinGet fork. Forwarded to GoReleaser as
       # $GORELEASER_GITHUB_TOKEN and referenced by .goreleaser.yml.
       GORELEASER_GITHUB_TOKEN: ${{ secrets.SPECSCORE_GORELEASER_GITHUB_TOKEN }}
+      # specscore: cli/release-distribution#req:release-secret-forwarding
+      # GoReleaser consumes these only through its notarize.macos block. Do
+      # not print, transform, or otherwise persist any value in this workflow.
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      NOTARIZE_ISSUER_ID: ${{ secrets.NOTARIZE_ISSUER_ID }}
+      NOTARIZE_KEY_ID: ${{ secrets.NOTARIZE_KEY_ID }}
+      NOTARIZE_KEY: ${{ secrets.NOTARIZE_KEY }}
