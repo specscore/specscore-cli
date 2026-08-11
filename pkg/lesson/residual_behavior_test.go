@@ -29,7 +29,7 @@ type legacyRollbackFS struct {
 func (fs *legacyRollbackFS) Link(oldname, newname string) error {
 	if fs.mode != "occurrence-remove-all" && strings.Contains(newname, string(filepath.Separator)+".legacy-import"+string(filepath.Separator)) {
 		fs.rollback = true
-		return errors.New("manifest publication")
+		return mutationFailure(MutationPrePublication, errors.New("manifest publication"))
 	}
 	return fs.lessonFS.Link(oldname, newname)
 }
@@ -1397,13 +1397,16 @@ func TestLegacyResidualApplyRacesAndRollbackFailures(t *testing.T) {
 			}
 		})
 	}
-	for _, mode := range []string{"remove-all", "remove", "sync"} {
-		t.Run("rollback-"+mode, func(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want MutationOutcome
+	}{{"remove-all", MutationCompensated}, {"remove", MutationUncertain}, {"sync", MutationUncertain}} {
+		t.Run("rollback-"+tc.mode, func(t *testing.T) {
 			lessons, inv, mapping := legacyMatrixFixture(t)
 			deps := defaultLegacyImportDeps()
-			deps.fs = &legacyRollbackFS{lessonFS: osLessonFS{}, mode: mode}
+			deps.fs = &legacyRollbackFS{lessonFS: osLessonFS{}, mode: tc.mode}
 			_, err := applyLegacyWithDeps(lessons, []string{"process"}, inv, mapping, deps)
-			if err == nil || MutationOutcomeOf(err) != MutationUncertain {
+			if err == nil || MutationOutcomeOf(err) != tc.want {
 				t.Fatalf("rollback err=%v outcome=%v", err, MutationOutcomeOf(err))
 			}
 		})
@@ -1413,7 +1416,7 @@ func TestLegacyResidualApplyRacesAndRollbackFailures(t *testing.T) {
 		deps := defaultLegacyImportDeps()
 		deps.fs = &legacyRollbackFS{lessonFS: osLessonFS{}, mode: "occurrence-remove-all"}
 		_, err := applyLegacyWithDeps(lessons, []string{"process"}, inv, mapping, deps)
-		if err == nil || MutationOutcomeOf(err) != MutationUncertain {
+		if err == nil || MutationOutcomeOf(err) != MutationCompensated {
 			t.Fatalf("rollback err=%v outcome=%v", err, MutationOutcomeOf(err))
 		}
 	})
