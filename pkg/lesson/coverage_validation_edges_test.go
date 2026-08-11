@@ -413,6 +413,10 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 	if inv.EntryProjectionSHA256 == "" || legacyEntryProjectionSHA256(inv.Entries) != inv.EntryProjectionSHA256 {
 		t.Fatal("inventory projection is not stable")
 	}
+	publicInv, err := InventoryLegacy(source)
+	if err != nil || publicInv.LessonCount != inv.LessonCount || len(publicInv.Warnings) != 1 {
+		t.Fatalf("public inventory=%#v err=%v", publicInv, err)
+	}
 	if got := legacySlug("L1", "Title — punctuation!"); got != "l1-title-punctuation" {
 		t.Fatalf("legacy slug=%q", got)
 	}
@@ -449,6 +453,9 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 	if err := writeDurableStageFile(file, []byte("safe")); err != nil {
 		t.Fatal(err)
 	}
+	if err := syncDirectory(stage); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeDurableStageFile(file, []byte("again")); err == nil {
 		t.Fatal("exclusive stage write overwrote existing file")
 	}
@@ -475,6 +482,20 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 	}
 	if err := writeImportedLesson(filepath.Join(root, "unsafe", "README.md"), "unsafe", "Unsafe", LegacyMappingEntry{Slug: "unsafe", Lesson: "<!-- TODO: unsafe -->", ProcessGap: "Reviewed gap.", Classifications: []string{"process"}}, entry, LegacyInventory{Source: validSource}); err == nil {
 		t.Fatal("placeholder imported lesson accepted")
+	}
+	publishStage := filepath.Join(root, "publish-stage")
+	publishTarget := filepath.Join(root, "published")
+	if err := os.MkdirAll(publishStage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(publishStage, "README.md"), []byte("published"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishStagedLesson(publishStage, publishTarget); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(publishTarget, "README.md")); err != nil || string(got) != "published" {
+		t.Fatalf("published Lesson=%q err=%v", got, err)
 	}
 
 	manifest, err := legacyManifestBytes(LegacyInventory{Source: validSource, Entries: []LegacyEntry{entry}, LessonCount: 1, EntryProjectionSHA256: "projection"}, LegacyMapping{Source: validSource})
