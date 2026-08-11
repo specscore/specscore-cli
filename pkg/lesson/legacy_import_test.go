@@ -15,8 +15,8 @@ import (
 
 func inventoryLegacyForApply(t *testing.T, source string) LegacyInventory {
 	t.Helper()
-	original := legacySourceIdentityFn
-	legacySourceIdentityFn = func(path string, b []byte) (LegacySourceRef, error) {
+	deps := defaultLegacyImportDeps()
+	deps.sourceIdentity = func(path string, b []byte) (LegacySourceRef, error) {
 		return LegacySourceRef{
 			Repository:  "github.com/example/process",
 			Path:        filepath.Base(path),
@@ -26,12 +26,43 @@ func inventoryLegacyForApply(t *testing.T, source string) LegacyInventory {
 			ByteCount:   len(b),
 		}, nil
 	}
-	t.Cleanup(func() { legacySourceIdentityFn = original })
-	inv, err := InventoryLegacy(source)
+	inv, err := inventoryLegacyWithDeps(source, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return inv
+}
+
+type legacyImportTestFS struct {
+	lessonFS
+	link func(string, string) error
+	open func(string) (lessonFile, error)
+}
+
+func (fs legacyImportTestFS) Link(oldname, newname string) error {
+	if fs.link != nil {
+		return fs.link(oldname, newname)
+	}
+	return fs.lessonFS.Link(oldname, newname)
+}
+
+func (fs legacyImportTestFS) Open(path string) (lessonFile, error) {
+	if fs.open != nil {
+		return fs.open(path)
+	}
+	return fs.lessonFS.Open(path)
+}
+
+type legacyImportTestFile struct {
+	lessonFile
+	sync func() error
+}
+
+func (f legacyImportTestFile) Sync() error {
+	if f.sync != nil {
+		return f.sync()
+	}
+	return f.lessonFile.Sync()
 }
 
 func legacyMapping(inv LegacyInventory, entries ...LegacyMappingEntry) LegacyMapping {
@@ -522,17 +553,16 @@ func TestApplyLegacy_PublicationFailureRollsBackEveryArtifact(t *testing.T) {
 	}
 	inv := inventoryLegacyForApply(t, source)
 	mapping := legacyMapping(inv, reviewedNew("L1#1", "one"), reviewedNew("L2#1", "two"))
-	orig := legacyPublishLink
 	calls := 0
-	legacyPublishLink = func(old, new string) error {
+	deps := defaultLegacyImportDeps()
+	deps.fs = legacyImportTestFS{lessonFS: osLessonFS{}, link: func(old, new string) error {
 		calls++
 		if calls == 2 {
 			return errors.New("injected publish failure")
 		}
 		return os.Link(old, new)
-	}
-	t.Cleanup(func() { legacyPublishLink = orig })
-	if _, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping); err == nil {
+	}}
+	if _, err := applyLegacyWithDeps(lessonsDir, []string{"process"}, inv, mapping, deps); err == nil {
 		t.Fatal("expected injected failure")
 	}
 	entries, err := os.ReadDir(lessonsDir)
@@ -559,18 +589,23 @@ func TestApplyLegacy_PostLinkDurabilityFailureRollsBackOwnedArtifacts(t *testing
 			inv := inventoryLegacyForApply(t, source)
 			mapping := legacyMapping(inv, reviewedNew("L1#1", "one"))
 			before := snapshotTree(t, lessonsDir)
-			original := legacySyncDirectory
 			calls := 0
-			legacySyncDirectory = func(path string) error {
-				calls++
-				if calls == failCall {
-					return errors.New("injected post-link sync failure")
+			deps := defaultLegacyImportDeps()
+			deps.fs = legacyImportTestFS{lessonFS: osLessonFS{}, open: func(path string) (lessonFile, error) {
+				file, err := osLessonFS{}.Open(path)
+				if err != nil {
+					return nil, err
 				}
-				return syncDirectory(path)
-			}
-			t.Cleanup(func() { legacySyncDirectory = original })
+				return legacyImportTestFile{lessonFile: file, sync: func() error {
+					calls++
+					if calls == failCall {
+						return errors.New("injected post-link sync failure")
+					}
+					return file.Sync()
+				}}, nil
+			}}
 
-			if _, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping); err == nil {
+			if _, err := applyLegacyWithDeps(lessonsDir, []string{"process"}, inv, mapping, deps); err == nil {
 				t.Fatal("expected injected durability failure")
 			}
 			if !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
@@ -592,21 +627,26 @@ func TestApplyLegacy_CompensationFailureAfterPublicationRemainsUncertain(t *test
 	}
 	inv := inventoryLegacyForApply(t, source)
 	mapping := legacyMapping(inv, reviewedNew("L1#1", "one"), reviewedNew("L2#1", "two"))
-	original := legacySyncDirectory
 	calls := 0
-	legacySyncDirectory = func(path string) error {
-		calls++
-		// Call four is the second Lesson's parent-directory durability
-		// fence, after its README link is visible. Calls five and six make
-		// the inner and outer removals respectively non-durable.
-		if calls == 4 || calls == 5 || calls == 6 {
-			return errors.New("injected rollback directory sync failure")
+	deps := defaultLegacyImportDeps()
+	deps.fs = legacyImportTestFS{lessonFS: osLessonFS{}, open: func(path string) (lessonFile, error) {
+		file, openErr := osLessonFS{}.Open(path)
+		if openErr != nil {
+			return nil, openErr
 		}
-		return syncDirectory(path)
-	}
-	t.Cleanup(func() { legacySyncDirectory = original })
+		return legacyImportTestFile{lessonFile: file, sync: func() error {
+			calls++
+			// Call four is the second Lesson's parent-directory durability
+			// fence, after its README link is visible. Calls five and six make
+			// the inner and outer removals respectively non-durable.
+			if calls == 4 || calls == 5 || calls == 6 {
+				return errors.New("injected rollback directory sync failure")
+			}
+			return file.Sync()
+		}}, nil
+	}}
 
-	_, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	_, err := applyLegacyWithDeps(lessonsDir, []string{"process"}, inv, mapping, deps)
 	if MutationOutcomeOf(err) != MutationUncertain {
 		t.Fatalf("outcome=%v err=%v; post-publication compensation was not proven durable", MutationOutcomeOf(err), err)
 	}

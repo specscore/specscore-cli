@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,18 +15,41 @@ import (
 
 func withFlatSourceIdentity(t *testing.T) {
 	t.Helper()
-	original := legacySourceIdentityFn
-	legacySourceIdentityFn = func(path string, b []byte) (LegacySourceRef, error) {
-		return LegacySourceRef{
-			Repository:  "github.com/example/process",
-			Path:        filepath.ToSlash(filepath.Join("spec", "lessons", filepath.Base(path))),
-			Revision:    strings.Repeat("b", 40),
-			CommittedAt: "2026-08-10T12:00:00Z",
-			SHA256:      shaString(b),
-			ByteCount:   len(b),
-		}, nil
+	// Fixtures are committed by writeFlatFixture. This deliberately leaves the
+	// public lifecycle on its production immutable-Git identity path instead of
+	// installing a process-global source-identity hook.
+}
+
+type flatMigrationTestFS struct {
+	lessonFS
+	link func(string, string) error
+	open func(string) (lessonFile, error)
+}
+
+func (fs flatMigrationTestFS) Link(oldname, newname string) error {
+	if fs.link != nil {
+		return fs.link(oldname, newname)
 	}
-	t.Cleanup(func() { legacySourceIdentityFn = original })
+	return fs.lessonFS.Link(oldname, newname)
+}
+
+func (fs flatMigrationTestFS) Open(path string) (lessonFile, error) {
+	if fs.open != nil {
+		return fs.open(path)
+	}
+	return fs.lessonFS.Open(path)
+}
+
+type flatMigrationTestFile struct {
+	lessonFile
+	sync func() error
+}
+
+func (f flatMigrationTestFile) Sync() error {
+	if f.sync != nil {
+		return f.sync()
+	}
+	return f.lessonFile.Sync()
 }
 
 func flatFixture(status string, recurred int, recurrences string) string {
@@ -85,6 +109,20 @@ func writeFlatFixture(t *testing.T, lessonsDir, slug, body string) string {
 	path := filepath.Join(lessonsDir, slug+".md")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(lessonsDir))
+	if _, err := os.Stat(filepath.Join(root, ".git")); os.IsNotExist(err) {
+		for _, args := range [][]string{{"init"}, {"config", "user.email", "test@example.invalid"}, {"config", "user.name", "SpecScore test"}, {"remote", "add", "origin", "https://github.com/example/process.git"}} {
+			if output, commandErr := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); commandErr != nil {
+				t.Fatalf("git %v: %v: %s", args, commandErr, output)
+			}
+		}
+	}
+	if output, err := exec.Command("git", "-C", root, "add", ".").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "commit", "-m", "fixture").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, output)
 	}
 	return path
 }
@@ -358,19 +396,24 @@ func TestMigrateFlat_SourceRemoveDirectorySyncFailureResumesSameTransaction(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	orig := flatSyncDirectory
 	injected := false
-	flatSyncDirectory = func(path string) error {
-		if path == lessonsDir {
-			if _, statErr := os.Stat(flatPath); os.IsNotExist(statErr) && !injected {
-				injected = true
-				return errors.New("injected source-remove directory sync failure")
-			}
+	deps := defaultFlatMigrationDeps()
+	deps.fs = flatMigrationTestFS{lessonFS: osLessonFS{}, open: func(path string) (lessonFile, error) {
+		file, err := osLessonFS{}.Open(path)
+		if err != nil {
+			return nil, err
 		}
-		return orig(path)
-	}
-	t.Cleanup(func() { flatSyncDirectory = orig })
-	if _, err := MigrateFlat(opts); err == nil {
+		return flatMigrationTestFile{lessonFile: file, sync: func() error {
+			if path == lessonsDir {
+				if _, statErr := os.Stat(flatPath); os.IsNotExist(statErr) && !injected {
+					injected = true
+					return errors.New("injected source-remove directory sync failure")
+				}
+			}
+			return file.Sync()
+		}}, nil
+	}}
+	if _, err := migrateFlatWithDeps(opts, deps); err == nil {
 		t.Fatal("expected source-remove directory sync failure")
 	}
 	if !injected {
@@ -384,7 +427,6 @@ func TestMigrateFlat_SourceRemoveDirectorySyncFailureResumesSameTransaction(t *t
 		t.Fatalf("resume marker missing: %v", err)
 	}
 
-	flatSyncDirectory = orig
 	retryPreflight, err := PreflightFlatMigration(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -531,17 +573,16 @@ func TestMigrateFlat_RefusesCanonicalSiblingAndRollsBackPublicationFailure(t *te
 		lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
 		writeFlatFixture(t, lessonsDir, "rollback", flatFixture("Recorded", 0, ""))
 		before := snapshotTree(t, lessonsDir)
-		original := flatPublishLink
 		calls := 0
-		flatPublishLink = func(old, new string) error {
+		deps := defaultFlatMigrationDeps()
+		deps.fs = flatMigrationTestFS{lessonFS: osLessonFS{}, link: func(old, new string) error {
 			calls++
 			if calls == 2 {
 				return errors.New("injected publication failure")
 			}
 			return os.Link(old, new)
-		}
-		t.Cleanup(func() { flatPublishLink = original })
-		if _, err := MigrateFlat(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "rollback", Classifications: []string{"process"}}); err == nil {
+		}}
+		if _, err := migrateFlatWithDeps(FlatMigrationOptions{LessonsDir: lessonsDir, Slug: "rollback", Classifications: []string{"process"}}, deps); err == nil {
 			t.Fatal("expected injected failure")
 		}
 		if !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
@@ -555,7 +596,7 @@ func TestMigrateFlat_ResumesDurableMarkerWithoutOverwriting(t *testing.T) {
 	lessonsDir := filepath.Join(t.TempDir(), "spec", "lessons")
 	flatPath := writeFlatFixture(t, lessonsDir, "resume", flatFixture("Recorded", 1, "## Recurrences\n\n- 2026-08-02 — Again.\n"))
 	sourceBytes, _ := os.ReadFile(flatPath)
-	source, err := legacySourceIdentityFn(flatPath, sourceBytes)
+	source, err := resolveLegacySourceIdentity(flatPath, sourceBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -302,12 +302,11 @@ func TestCoverageLegacyHelpersAndInventoryEdges(t *testing.T) {
 	if err := os.WriteFile(source, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldIdentity := legacySourceIdentityFn
-	legacySourceIdentityFn = func(string, []byte) (LegacySourceRef, error) {
+	deps := defaultLegacyImportDeps()
+	deps.sourceIdentity = func(string, []byte) (LegacySourceRef, error) {
 		return LegacySourceRef{}, errors.New("identity unavailable")
 	}
-	t.Cleanup(func() { legacySourceIdentityFn = oldIdentity })
-	inv, err := InventoryLegacy(source)
+	inv, err := inventoryLegacyWithDeps(source, deps)
 	if err != nil {
 		t.Fatal(err)
 	}

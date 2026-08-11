@@ -110,23 +110,35 @@ var legacyStatus = regexp.MustCompile(`(?m)^\*\*Status:\*\*\s*(.+?)\s*$`)
 var legacyRecurrenceMarker = regexp.MustCompile(`(?i)^\*\*(?:recurred|recurrence|occurrence)\b[^*]*\*\*`)
 var legacyRecurrenceCandidate = regexp.MustCompile(`(?i)^\*\*(?:recurred|recurrence|occurrence)\b`)
 
-var legacyPublishLink = os.Link
-var legacySyncDirectory = syncDirectory
-var legacySourceIdentityFn = resolveLegacySourceIdentity
+// legacyImportDeps is private and scoped to one inventory or application. It
+// deliberately replaces the old mutable package hooks so parallel callers
+// cannot alter one another's durability or provenance boundary.
+type legacyImportDeps struct {
+	fs             lessonFS
+	sourceIdentity func(string, []byte) (LegacySourceRef, error)
+}
+
+func defaultLegacyImportDeps() legacyImportDeps {
+	return legacyImportDeps{fs: osLessonFS{}, sourceIdentity: resolveLegacySourceIdentity}
+}
 
 func InventoryLegacy(source string) (LegacyInventory, error) {
+	return inventoryLegacyWithDeps(source, defaultLegacyImportDeps())
+}
+
+func inventoryLegacyWithDeps(source string, deps legacyImportDeps) (LegacyInventory, error) {
 	absSource, err := filepath.Abs(source)
 	if err != nil {
 		return LegacyInventory{}, err
 	}
-	b, err := os.ReadFile(absSource)
+	b, err := deps.fs.ReadFile(absSource)
 	if err != nil {
 		return LegacyInventory{}, err
 	}
 	sum := sha256.Sum256(b)
 	ref := LegacySourceRef{SHA256: hex.EncodeToString(sum[:]), ByteCount: len(b)}
 	inv := LegacyInventory{Source: ref, localSource: absSource}
-	if resolved, identityErr := legacySourceIdentityFn(absSource, b); identityErr == nil {
+	if resolved, identityErr := deps.sourceIdentity(absSource, b); identityErr == nil {
 		inv.Source = resolved
 	} else {
 		inv.Warnings = append(inv.Warnings, "immutable-source-identity-unavailable")
@@ -246,6 +258,14 @@ func legacyEntryProjectionSHA256(entries []LegacyEntry) string {
 }
 
 func resolveLegacySourceIdentity(source string, workingBytes []byte) (LegacySourceRef, error) {
+	// Git reports the physical worktree root. Resolve a caller path first so
+	// macOS's /var -> /private/var alias does not manufacture a false
+	// repository-relative traversal.
+	physicalSource, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return LegacySourceRef{}, fmt.Errorf("resolving physical source path: %w", err)
+	}
+	source = physicalSource
 	dir := filepath.Dir(source)
 	rootBytes, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
@@ -585,6 +605,10 @@ func preflightLegacyApply(lessonsDir string, allowedClassifications []string, in
 }
 
 func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping) (LegacyApplyResult, error) {
+	return applyLegacyWithDeps(lessonsDir, allowedClassifications, inv, mapping, defaultLegacyImportDeps())
+}
+
+func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping, deps legacyImportDeps) (LegacyApplyResult, error) {
 	plan, err := preflightLegacyApply(lessonsDir, allowedClassifications, inv, mapping)
 	if err != nil {
 		return LegacyApplyResult{}, err
@@ -596,7 +620,7 @@ func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyI
 	if err != nil {
 		return LegacyApplyResult{}, err
 	}
-	defer func() { _ = os.RemoveAll(stageDir) }()
+	defer func() { _ = deps.fs.RemoveAll(stageDir) }()
 	if !manifestExists {
 		if err := writeDurableStageFile(filepath.Join(stageDir, "manifest.json"), manifestBytes); err != nil {
 			return result, err
@@ -660,18 +684,18 @@ func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyI
 	rollback := func() error {
 		var first error
 		for i := len(published) - 1; i >= 0; i-- {
-			if err := os.RemoveAll(published[i]); err != nil && first == nil {
+			if err := deps.fs.RemoveAll(published[i]); err != nil && first == nil {
 				first = err
 			}
-			if err := legacySyncDirectory(filepath.Dir(published[i])); err != nil && first == nil {
+			if err := syncDirectoryWithFS(filepath.Dir(published[i]), deps.fs); err != nil && first == nil {
 				first = err
 			}
 		}
 		if !manifestDirExisted {
-			if err := os.Remove(filepath.Dir(manifestPath)); err != nil && !os.IsNotExist(err) && first == nil {
+			if err := deps.fs.Remove(filepath.Dir(manifestPath)); err != nil && !os.IsNotExist(err) && first == nil {
 				first = err
 			}
-			if err := legacySyncDirectory(filepath.Dir(filepath.Dir(manifestPath))); err != nil && first == nil {
+			if err := syncDirectoryWithFS(filepath.Dir(filepath.Dir(manifestPath)), deps.fs); err != nil && first == nil {
 				first = err
 			}
 		}
@@ -703,23 +727,23 @@ func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyI
 			continue
 		}
 		finalDir := filepath.Join(lessonsDir, m.Slug)
-		if err := publishStagedLesson(filepath.Join(stageDir, m.Slug), finalDir); err != nil {
+		if err := publishStagedLessonWithFS(filepath.Join(stageDir, m.Slug), finalDir, deps.fs); err != nil {
 			return failAfterPublication(err)
 		}
 		published = append(published, finalDir)
 		result.CreatedLessons = append(result.CreatedLessons, m.Slug)
 	}
 	if !manifestExists {
-		if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		if err := deps.fs.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
 			return failAfterPublication(err)
 		}
-		if err := legacyPublishLink(filepath.Join(stageDir, "manifest.json"), manifestPath); err != nil {
+		if err := deps.fs.Link(filepath.Join(stageDir, "manifest.json"), manifestPath); err != nil {
 			return failAfterPublication(err)
 		}
 		// Ownership begins when the exclusive link succeeds, not after fsync.
 		// Recording it first guarantees a post-link durability failure removes it.
 		published = append(published, manifestPath)
-		if err := legacySyncDirectory(filepath.Dir(manifestPath)); err != nil {
+		if err := syncDirectoryWithFS(filepath.Dir(manifestPath), deps.fs); err != nil {
 			return failAfterPublication(err)
 		}
 	}
@@ -789,26 +813,30 @@ func pathIsDirectory(path string) bool {
 // create, then atomically links the fully-written staged README into it. A
 // racing importer cannot replace another writer's Lesson directory.
 func publishStagedLesson(stageDir, finalDir string) error {
-	if err := os.Mkdir(finalDir, 0o755); err != nil {
+	return publishStagedLessonWithFS(stageDir, finalDir, osLessonFS{})
+}
+
+func publishStagedLessonWithFS(stageDir, finalDir string, fs lessonFS) error {
+	if err := fs.Mkdir(finalDir, 0o755); err != nil {
 		return err
 	}
 	rollback := func() {
-		_ = os.RemoveAll(finalDir)
-		_ = legacySyncDirectory(filepath.Dir(finalDir))
+		_ = fs.RemoveAll(finalDir)
+		_ = syncDirectoryWithFS(filepath.Dir(finalDir), fs)
 	}
-	if err := os.Mkdir(filepath.Join(finalDir, "occurrences"), 0o755); err != nil {
+	if err := fs.Mkdir(filepath.Join(finalDir, "occurrences"), 0o755); err != nil {
 		rollback()
 		return err
 	}
-	if err := legacyPublishLink(filepath.Join(stageDir, "README.md"), filepath.Join(finalDir, "README.md")); err != nil {
+	if err := fs.Link(filepath.Join(stageDir, "README.md"), filepath.Join(finalDir, "README.md")); err != nil {
 		rollback()
 		return err
 	}
-	if err := legacySyncDirectory(finalDir); err != nil {
+	if err := syncDirectoryWithFS(finalDir, fs); err != nil {
 		rollback()
 		return err
 	}
-	if err := legacySyncDirectory(filepath.Dir(finalDir)); err != nil {
+	if err := syncDirectoryWithFS(filepath.Dir(finalDir), fs); err != nil {
 		rollback()
 		return err
 	}

@@ -18,7 +18,9 @@ type lessonFS interface {
 	ReadDir(string) ([]os.DirEntry, error)
 	Stat(string) (os.FileInfo, error)
 	Mkdir(string, os.FileMode) error
+	MkdirAll(string, os.FileMode) error
 	Remove(string) error
+	RemoveAll(string) error
 	CreateTemp(string, string) (lessonFile, error)
 	Open(string) (lessonFile, error)
 	OpenFile(string, int, os.FileMode) (lessonFile, error)
@@ -27,11 +29,13 @@ type lessonFS interface {
 
 type osLessonFS struct{}
 
-func (osLessonFS) ReadFile(path string) ([]byte, error)       { return os.ReadFile(path) }
-func (osLessonFS) ReadDir(path string) ([]os.DirEntry, error) { return os.ReadDir(path) }
-func (osLessonFS) Stat(path string) (os.FileInfo, error)      { return os.Stat(path) }
-func (osLessonFS) Mkdir(path string, mode os.FileMode) error  { return os.Mkdir(path, mode) }
-func (osLessonFS) Remove(path string) error                   { return os.Remove(path) }
+func (osLessonFS) ReadFile(path string) ([]byte, error)         { return os.ReadFile(path) }
+func (osLessonFS) ReadDir(path string) ([]os.DirEntry, error)   { return os.ReadDir(path) }
+func (osLessonFS) Stat(path string) (os.FileInfo, error)        { return os.Stat(path) }
+func (osLessonFS) Mkdir(path string, mode os.FileMode) error    { return os.Mkdir(path, mode) }
+func (osLessonFS) MkdirAll(path string, mode os.FileMode) error { return os.MkdirAll(path, mode) }
+func (osLessonFS) Remove(path string) error                     { return os.Remove(path) }
+func (osLessonFS) RemoveAll(path string) error                  { return os.RemoveAll(path) }
 func (osLessonFS) CreateTemp(dir, pattern string) (lessonFile, error) {
 	return os.CreateTemp(dir, pattern)
 }

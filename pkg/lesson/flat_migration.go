@@ -97,8 +97,16 @@ type flatSection struct {
 	text  string
 }
 
-var flatPublishLink = os.Link
-var flatSyncDirectory = syncDirectory
+// flatMigrationDeps is private and per operation. It replaces the old
+// process-global test hooks without changing the exported lifecycle surface.
+type flatMigrationDeps struct {
+	fs             lessonFS
+	sourceIdentity func(string, []byte) (LegacySourceRef, error)
+}
+
+func defaultFlatMigrationDeps() flatMigrationDeps {
+	return flatMigrationDeps{fs: osLessonFS{}, sourceIdentity: resolveLegacySourceIdentity}
+}
 
 var flatStatus = map[string]bool{
 	"Recorded": true, "Stated": true, "Enforced": true,
@@ -128,6 +136,10 @@ func validateFlatMigrationOptions(opts FlatMigrationOptions) error {
 // transaction without publishing committed artifacts. A retry reads the
 // durable marker so the CLI reuses the original event UUID and timestamp.
 func PreflightFlatMigration(opts FlatMigrationOptions) (FlatMigrationPreflight, error) {
+	return preflightFlatMigrationWithDeps(opts, defaultFlatMigrationDeps())
+}
+
+func preflightFlatMigrationWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (FlatMigrationPreflight, error) {
 	if err := validateFlatMigrationOptions(opts); err != nil {
 		return FlatMigrationPreflight{}, err
 	}
@@ -159,18 +171,18 @@ func PreflightFlatMigration(opts FlatMigrationOptions) (FlatMigrationPreflight, 
 	if err != nil {
 		return FlatMigrationPreflight{}, err
 	}
-	source, err := legacySourceIdentityFn(flatPath, flatBytes)
+	source, err := deps.sourceIdentity(flatPath, flatBytes)
 	if err != nil {
 		return FlatMigrationPreflight{}, fmt.Errorf("flat migration requires bytes committed at the current immutable Git revision: %w", err)
 	}
 	if err := validateLegacySourceRef(source); err != nil {
 		return FlatMigrationPreflight{}, err
 	}
-	stage, _, _, err := stageFlatMigration(opts, flatBytes, flatPath, source)
+	stage, _, _, err := stageFlatMigrationWithDeps(opts, flatBytes, flatPath, source, deps.fs)
 	if err != nil {
 		return FlatMigrationPreflight{}, err
 	}
-	defer func() { _ = os.RemoveAll(stage) }()
+	defer func() { _ = deps.fs.RemoveAll(stage) }()
 	manifestPath := flatManifestPath(opts.LessonsDir, source, opts.Slug)
 	expected, err := collectFlatExpectedFiles(stage, opts.LessonsDir, opts.Slug, manifestPath)
 	if err != nil {
@@ -191,6 +203,10 @@ func FlatMigrationEventUUID(sourceSHA, slug string) string {
 // resumable. All writes are exclusive and every existing path must be either
 // absent or byte-identical before any missing path is published.
 func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
+	return migrateFlatWithDeps(opts, defaultFlatMigrationDeps())
+}
+
+func migrateFlatWithDeps(opts FlatMigrationOptions, deps flatMigrationDeps) (FlatMigrationResult, error) {
 	if err := validateFlatMigrationOptions(opts); err != nil {
 		return FlatMigrationResult{}, err
 	}
@@ -254,7 +270,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 		return result, err
 	}
 
-	source, err := legacySourceIdentityFn(flatPath, flatBytes)
+	source, err := deps.sourceIdentity(flatPath, flatBytes)
 	if err != nil {
 		return result, fmt.Errorf("flat migration requires bytes committed at the current immutable Git revision: %w", err)
 	}
@@ -271,11 +287,11 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 		return result, fmt.Errorf("flat migration event UUID does not match the deterministic source transaction")
 	}
 
-	stageDir, manifest, redacted, err := stageFlatMigration(opts, flatBytes, flatPath, source)
+	stageDir, manifest, redacted, err := stageFlatMigrationWithDeps(opts, flatBytes, flatPath, source, deps.fs)
 	if err != nil {
 		return result, err
 	}
-	defer func() { _ = os.RemoveAll(stageDir) }()
+	defer func() { _ = deps.fs.RemoveAll(stageDir) }()
 	result.RedactedSections = redacted
 	manifestPath := flatManifestPath(opts.LessonsDir, source, opts.Slug)
 	result.ManifestPath = manifestPath
@@ -315,7 +331,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 	createdManifest := false
 	rollback := func() {
 		if createdCanonical {
-			_ = os.RemoveAll(canonicalDir)
+			_ = deps.fs.RemoveAll(canonicalDir)
 		}
 		if createdManifest {
 			_ = os.Remove(manifestPath)
@@ -323,18 +339,18 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 		if createdMarker {
 			_ = os.Remove(markerPath)
 		}
-		_ = flatSyncDirectory(opts.LessonsDir)
+		_ = syncDirectoryWithFS(opts.LessonsDir, deps.fs)
 	}
 	if os.IsNotExist(markerErr) {
 		markerStage := filepath.Join(stageDir, "transaction.json")
 		if err := writeDurableStageFile(markerStage, wantMarker); err != nil {
 			return result, err
 		}
-		if err := flatPublishLink(markerStage, markerPath); err != nil {
+		if err := deps.fs.Link(markerStage, markerPath); err != nil {
 			return result, err
 		}
 		createdMarker = true
-		if err := flatSyncDirectory(opts.LessonsDir); err != nil {
+		if err := syncDirectoryWithFS(opts.LessonsDir, deps.fs); err != nil {
 			rollback()
 			return result, err
 		}
@@ -367,16 +383,16 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 			return result, err
 		}
 		stage := filepath.Join(stageDir, filepath.FromSlash(strings.TrimPrefix(expectedFile.Path, opts.Slug+"/")))
-		if err := flatPublishLink(stage, final); err != nil {
+		if err := deps.fs.Link(stage, final); err != nil {
 			rollback()
 			return result, err
 		}
 	}
-	if err := flatSyncDirectory(filepath.Join(canonicalDir, "occurrences")); err != nil {
+	if err := syncDirectoryWithFS(filepath.Join(canonicalDir, "occurrences"), deps.fs); err != nil {
 		rollback()
 		return result, err
 	}
-	if err := flatSyncDirectory(canonicalDir); err != nil {
+	if err := syncDirectoryWithFS(canonicalDir, deps.fs); err != nil {
 		rollback()
 		return result, err
 	}
@@ -386,12 +402,12 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 			rollback()
 			return result, err
 		}
-		if err := flatPublishLink(filepath.Join(stageDir, "manifest.json"), manifestPath); err != nil {
+		if err := deps.fs.Link(filepath.Join(stageDir, "manifest.json"), manifestPath); err != nil {
 			rollback()
 			return result, err
 		}
 		createdManifest = true
-		if err := flatSyncDirectory(filepath.Dir(manifestPath)); err != nil {
+		if err := syncDirectoryWithFS(filepath.Dir(manifestPath), deps.fs); err != nil {
 			rollback()
 			return result, err
 		}
@@ -413,7 +429,7 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 		rollback()
 		return result, err
 	}
-	if err := flatSyncDirectory(opts.LessonsDir); err != nil {
+	if err := syncDirectoryWithFS(opts.LessonsDir, deps.fs); err != nil {
 		return result, err
 	}
 	result.PendingFinalize = true
@@ -429,6 +445,10 @@ func MigrateFlat(opts FlatMigrationOptions) (FlatMigrationResult, error) {
 // the flat source. A crash before this call leaves a marker that makes the CLI
 // replay the same deterministic event and narrow index upsert.
 func FinalizeFlatMigration(opts FlatMigrationOptions, eventUUID string) error {
+	return finalizeFlatMigrationWithDeps(opts, eventUUID, defaultFlatMigrationDeps())
+}
+
+func finalizeFlatMigrationWithDeps(opts FlatMigrationOptions, eventUUID string, deps flatMigrationDeps) error {
 	if err := validateFlatMigrationOptions(opts); err != nil {
 		return err
 	}
@@ -463,7 +483,7 @@ func FinalizeFlatMigration(opts FlatMigrationOptions, eventUUID string) error {
 	if err := os.Remove(markerPath); err != nil {
 		return err
 	}
-	return flatSyncDirectory(opts.LessonsDir)
+	return syncDirectoryWithFS(opts.LessonsDir, deps.fs)
 }
 
 func validateFlatMigrationIndexRow(lessonsDir, canonicalPath string) error {
@@ -501,6 +521,10 @@ func validateFlatMigrationIndexRow(lessonsDir, canonicalPath string) error {
 }
 
 func stageFlatMigration(opts FlatMigrationOptions, sourceBytes []byte, flatPath string, source LegacySourceRef) (string, flatMigrationManifest, []string, error) {
+	return stageFlatMigrationWithDeps(opts, sourceBytes, flatPath, source, osLessonFS{})
+}
+
+func stageFlatMigrationWithDeps(opts FlatMigrationOptions, sourceBytes []byte, flatPath string, source LegacySourceRef, fs lessonFS) (string, flatMigrationManifest, []string, error) {
 	legacy, err := Parse(flatPath)
 	if err != nil {
 		return "", flatMigrationManifest{}, nil, err
@@ -581,13 +605,13 @@ func stageFlatMigration(opts FlatMigrationOptions, sourceBytes []byte, flatPath 
 		return "", flatMigrationManifest{}, nil, err
 	}
 	cleanupOnError := func(cause error) (string, flatMigrationManifest, []string, error) {
-		_ = os.RemoveAll(stageDir)
+		_ = fs.RemoveAll(stageDir)
 		return "", flatMigrationManifest{}, nil, cause
 	}
-	if err := os.Mkdir(filepath.Join(stageDir, "occurrences"), 0o755); err != nil {
+	if err := fs.Mkdir(filepath.Join(stageDir, "occurrences"), 0o755); err != nil {
 		return cleanupOnError(err)
 	}
-	if err := writeDurableStageFile(filepath.Join(stageDir, "README.md"), []byte(text)); err != nil {
+	if err := writeDurableStageFileWithFS(filepath.Join(stageDir, "README.md"), []byte(text), fs); err != nil {
 		return cleanupOnError(err)
 	}
 
@@ -611,7 +635,7 @@ func stageFlatMigration(opts FlatMigrationOptions, sourceBytes []byte, flatPath 
 	if err != nil {
 		return cleanupOnError(err)
 	}
-	if err := writeDurableStageFile(filepath.Join(stageDir, "manifest.json"), manifestBytes); err != nil {
+	if err := writeDurableStageFileWithFS(filepath.Join(stageDir, "manifest.json"), manifestBytes, fs); err != nil {
 		return cleanupOnError(err)
 	}
 	manifestRef := filepath.ToSlash(filepath.Join("spec", "lessons", ".legacy-import", "flat-"+source.SHA256+"-"+opts.Slug+".json"))
