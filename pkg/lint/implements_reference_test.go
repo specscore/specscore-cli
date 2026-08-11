@@ -1,7 +1,9 @@
 package lint
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,17 +90,117 @@ func TestImplementsReference_SameRepoResolvesToCapability_NoViolation(t *testing
 	}
 }
 
-// Task 2 — a well-formed cross-repo Implements reference is accepted without
-// attempting to fetch the remote repo (capability-and-platform-implementations#
-// ac:implements-cross-repo-suffix).
-func TestImplementsReference_CrossRepoAuthority_NoViolation(t *testing.T) {
+// An unconfigured cross-repo authority fails closed instead of silently being
+// accepted. Lint remains fully offline and asks callers to configure a mirror.
+func TestImplementsReference_CrossRepoAuthority_UnavailableErrors(t *testing.T) {
 	tmp := t.TempDir()
 	writeFeatureReadme(t, tmp, "dashboards-cli",
 		"# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** specscore://github.com/datatug/datatug/feature/dashboards\n\n## Summary\n")
 
 	violations := runImplementsReferenceCheck(t, tmp)
-	if len(violations) != 0 {
-		t.Fatalf("expected 0 violations for well-formed cross-repo authority reference, got %d: %+v", len(violations), violations)
+	if len(violations) != 1 || !strings.Contains(violations[0].Message, "unavailable") {
+		t.Fatalf("expected one unavailable-repository violation, got %+v", violations)
+	}
+}
+
+func TestImplementsReference_RequirementAnchors(t *testing.T) {
+	tmp := t.TempDir()
+	capability := "# Feature: Dashboards\n\n**Status:** Approved\n\n## Implementation Matrix\n\n#### REQ: listed\n\nworks\n"
+	writeFeatureReadme(t, tmp, "dashboards", capability)
+	for _, tc := range []struct {
+		name    string
+		ref     string
+		content string
+		want    string
+	}{
+		{"exact heading resolves", "specscore:feature/dashboards#REQ:listed", capability, ""},
+		{"renamed requirement fails", "specscore:feature/dashboards#REQ:deleted", capability, "missing exact heading"},
+		{"duplicate exact heading fails", "specscore:feature/dashboards#REQ:listed", capability + "\n#### REQ: listed\n", "ambiguous requirement anchor"},
+		{"malformed requirement anchor fails", "specscore:feature/dashboards#REQ:", capability, "malformed #REQ anchor"},
+		{"non requirement fragment fails", "specscore:feature/dashboards#section", capability, "only #REQ:<id>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeFeatureReadme(t, tmp, "dashboards", tc.content)
+			writeFeatureReadme(t, tmp, "dashboards-cli", "# Feature: Dashboards (CLI)\n\n**Status:** Approved\n**Implements:** "+tc.ref+"\n\n## Summary\n")
+			violations := runImplementsReferenceCheck(t, tmp)
+			if tc.want == "" {
+				if len(violations) != 0 {
+					t.Fatalf("expected no violations, got %+v", violations)
+				}
+				return
+			}
+			if len(violations) != 1 || !strings.Contains(violations[0].Message, tc.want) {
+				t.Fatalf("expected %q, got %+v", tc.want, violations)
+			}
+		})
+	}
+}
+
+func TestImplementsReference_CrossRepoRequirementResolution(t *testing.T) {
+	root := t.TempDir()
+	localSpec := filepath.Join(root, "spec")
+	mirror := filepath.Join(root, "mirror")
+	writeProjectConfig(t, root, "github.com", "acme", "consumer", "./mirror")
+	writeProjectConfig(t, mirror, "github.com", "acme", "provider")
+	writeFeatureReadme(t, mirror+"/spec", "capability", "# Feature: Capability\n\n## Implementation Matrix\n\n#### REQ: retained\n")
+	gitCommitAll(t, mirror)
+	writeFeatureReadme(t, localSpec, "implementation", "# Feature: Implementation\n\n**Implements:** specscore://github.com/acme/provider/feature/capability#REQ:deleted\n")
+	violations := runImplementsReferenceCheck(t, localSpec)
+	if len(violations) != 1 || !strings.Contains(violations[0].Message, "missing exact heading") {
+		t.Fatalf("expected deleted cross-repo REQ to fail, got %+v", violations)
+	}
+
+	writeFeatureReadme(t, localSpec, "implementation", "# Feature: Implementation\n\n**Implements:** specscore://github.com/acme/provider/feature/capability#REQ:retained\n")
+	if got := runImplementsReferenceCheck(t, localSpec); len(got) != 0 {
+		t.Fatalf("expected configured exact-identity mirror to resolve, got %+v", got)
+	}
+
+	writeProjectConfig(t, mirror, "github.com", "acme", "renamed-provider")
+	violations = runImplementsReferenceCheck(t, localSpec)
+	if len(violations) != 1 || !strings.Contains(violations[0].Message, "unavailable") {
+		t.Fatalf("expected identity mismatch to fail closed, got %+v", violations)
+	}
+}
+
+func TestImplementsReference_CrossRepoAmbiguousMirrorErrors(t *testing.T) {
+	root := t.TempDir()
+	first, second := filepath.Join(root, "first"), filepath.Join(root, "second")
+	writeProjectConfig(t, root, "github.com", "acme", "consumer", "./first", "./second")
+	writeProjectConfig(t, first, "github.com", "acme", "provider")
+	writeProjectConfig(t, second, "github.com", "acme", "provider")
+	writeFeatureReadme(t, filepath.Join(root, "spec"), "implementation", "# Feature: Implementation\n\n**Implements:** specscore://github.com/acme/provider/feature/capability\n")
+	got := runImplementsReferenceCheck(t, filepath.Join(root, "spec"))
+	if len(got) != 1 || !strings.Contains(got[0].Message, "ambiguous") {
+		t.Fatalf("expected ambiguous mirror violation, got %+v", got)
+	}
+}
+
+func writeProjectConfig(t *testing.T, dir, host, org, repo string, projects ...string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("# SpecScore Repo Config Schema: https://specscore.md/repo-config\n\nproject:\n")
+	fmt.Fprintf(&b, "  host: %s\n  org: %s\n  repo: %s\n", host, org, repo)
+	if len(projects) > 0 {
+		b.WriteString("projects:\n")
+		for _, project := range projects {
+			fmt.Fprintf(&b, "  - %s\n", project)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "specscore.yaml"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func gitCommitAll(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "lint@example.test"}, {"config", "user.name", "lint test"}, {"add", "."}, {"commit", "-m", "fixture"}} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
 	}
 }
 

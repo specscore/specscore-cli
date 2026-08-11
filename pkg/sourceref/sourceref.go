@@ -2,6 +2,7 @@ package sourceref
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -12,10 +13,31 @@ type Reference struct {
 	ResolvedPath    string
 	CrossRepoSuffix string
 	Type            string
-	// Ref carries an advisory ?ref=<git-ref> pin (branch, tag, or commit) when
-	// present on the reference; it is preserved through canonical expansion and
-	// does not change resolution (decision 0010).
+	// Fragment is the decoded address fragment, without its leading '#'. It is
+	// deliberately opaque to this package: consumers such as spec lint decide
+	// which resource-specific fragments they can resolve.
+	Fragment string
+	// Ref preserves a ?ref=<git-ref> pin (branch, tag, or commit) through
+	// parsing and canonicalization. Parsers do not fetch it; an explicit local
+	// resolver may require an exact checked-out revision before validating it.
 	Ref string
+}
+
+// Canonical returns a parseable, authority-form source reference. It preserves
+// both the optional revision pin and the resource fragment so consumers can
+// round-trip a parsed citation without dropping its addressing semantics.
+func (r Reference) Canonical() string {
+	base := "specscore:" + r.ResolvedPath
+	if r.CrossRepoSuffix != "" {
+		base = "specscore://" + strings.TrimPrefix(r.CrossRepoSuffix, "@") + "/" + r.ResolvedPath
+	}
+	if r.Ref != "" {
+		base += "?ref=" + r.Ref
+	}
+	if r.Fragment != "" {
+		base += "#" + encodeFragment(r.Fragment)
+	}
+	return base
 }
 
 // LegacySuffixError is returned by ParseReference when a reference uses the
@@ -139,7 +161,10 @@ func ParseReference(extracted string) (*Reference, error) {
 
 func parseExpandedURL(url, urlPrefix string) (*Reference, error) {
 	path := strings.TrimPrefix(url, urlPrefix)
-	path, gitRef := splitGitRefQuery(path)
+	path, gitRef, fragment, err := splitReferenceParts(path)
+	if err != nil {
+		return nil, err
+	}
 	parts := strings.Split(path, "/")
 	if len(parts) < 4 {
 		return nil, fmt.Errorf("invalid expanded URL format: too few path segments")
@@ -147,6 +172,11 @@ func parseExpandedURL(url, urlPrefix string) (*Reference, error) {
 	host := parts[0]
 	org := parts[1]
 	repo := parts[2]
+	for _, segment := range []string{host, org, repo} {
+		if !isSafePathSegment(segment) {
+			return nil, fmt.Errorf("invalid expanded URL format: unsafe authority segment")
+		}
+	}
 	resolvedPath := strings.Join(parts[3:], "/")
 	crossRepoSuffix := fmt.Sprintf("@%s/%s/%s", host, org, repo)
 	refType := inferType(resolvedPath)
@@ -155,27 +185,42 @@ func parseExpandedURL(url, urlPrefix string) (*Reference, error) {
 		CrossRepoSuffix: crossRepoSuffix,
 		Type:            refType,
 		Ref:             gitRef,
+		Fragment:        fragment,
 	}, nil
 }
 
-// splitGitRefQuery splits an advisory `?ref=<git-ref>` pin off a reference body.
-// Only the exact `?ref=` marker is recognized (decision 0010); anything else is
-// left untouched in the body.
-func splitGitRefQuery(s string) (body, gitRef string) {
-	const marker = "?ref="
-	if i := strings.Index(s, marker); i >= 0 {
-		return s[:i], s[i+len(marker):]
+// splitGitRefQuery splits an optional `?ref=<git-ref>` pin off a reference
+// body. The query contract is deliberately narrow: an explicit pin must be
+// non-empty, and no other or additional query parameter is supported.
+func splitGitRefQuery(s string) (body, gitRef string, err error) {
+	i := strings.IndexByte(s, '?')
+	if i < 0 {
+		return s, "", nil
 	}
-	return s, ""
+	query := s[i+1:]
+	if !strings.HasPrefix(query, "ref=") {
+		return "", "", fmt.Errorf("unsupported reference query %q; expected ?ref=<git-ref>", query)
+	}
+	gitRef = strings.TrimPrefix(query, "ref=")
+	if gitRef == "" {
+		return "", "", fmt.Errorf("empty ?ref= pin is not allowed")
+	}
+	if strings.ContainsAny(gitRef, "&?") {
+		return "", "", fmt.Errorf("unsupported reference query %q; only one ?ref=<git-ref> parameter is allowed", query)
+	}
+	return s[:i], gitRef, nil
 }
 
 func parseShortNotation(notation, prefix string) (*Reference, error) {
 	body := strings.TrimPrefix(notation, prefix)
-	body, gitRef := splitGitRefQuery(body)
+	body, gitRef, fragment, err := splitReferenceParts(body)
+	if err != nil {
+		return nil, err
+	}
 
 	// Cross-repo authority form: specscore://{host}/{org}/{repo}/{reference}.
 	if strings.HasPrefix(body, "//") {
-		return parseAuthorityForm(strings.TrimPrefix(body, "//"), gitRef)
+		return parseAuthorityForm(strings.TrimPrefix(body, "//"), gitRef, fragment)
 	}
 
 	// Legacy suffix form: specscore:{reference}@{host}/{org}/{repo} — removed by
@@ -186,6 +231,9 @@ func parseShortNotation(notation, prefix string) (*Reference, error) {
 		rewrite := prefix + "//" + repoPath + "/" + reference
 		if gitRef != "" {
 			rewrite += "?ref=" + gitRef
+		}
+		if fragment != "" {
+			rewrite += "#" + encodeFragment(fragment)
 		}
 		return nil, &LegacySuffixError{Rewrite: rewrite}
 	}
@@ -198,18 +246,24 @@ func parseShortNotation(notation, prefix string) (*Reference, error) {
 		ResolvedPath: resolvedPath,
 		Type:         inferType(resolvedPath),
 		Ref:          gitRef,
+		Fragment:     fragment,
 	}, nil
 }
 
 // parseAuthorityForm parses the "{host}/{org}/{repo}/{reference}" path of a
 // cross-repo authority reference. The first three segments are host/org/repo;
 // the remainder is the reference (which may itself be type-prefixed).
-func parseAuthorityForm(path, gitRef string) (*Reference, error) {
+func parseAuthorityForm(path, gitRef, fragment string) (*Reference, error) {
 	parts := strings.Split(path, "/")
 	if len(parts) < 4 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return nil, fmt.Errorf("invalid cross-repo authority form: expected specscore://{host}/{org}/{repo}/{reference}")
 	}
 	host, org, repo := parts[0], parts[1], parts[2]
+	for _, segment := range []string{host, org, repo} {
+		if !isSafePathSegment(segment) {
+			return nil, fmt.Errorf("invalid cross-repo authority form: unsafe authority segment")
+		}
+	}
 	resolvedPath, err := resolveReference(strings.Join(parts[3:], "/"))
 	if err != nil {
 		return nil, err
@@ -219,12 +273,53 @@ func parseAuthorityForm(path, gitRef string) (*Reference, error) {
 		CrossRepoSuffix: fmt.Sprintf("@%s/%s/%s", host, org, repo),
 		Type:            inferType(resolvedPath),
 		Ref:             gitRef,
+		Fragment:        fragment,
 	}, nil
+}
+
+// splitReferenceParts separates the optional URL fragment and optional
+// ?ref= pin from a source reference. Fragments are parsed before the query so
+// standard URL order (`...?ref=main#REQ:id`) works as expected. Parsing
+// preserves the pin; a resolver decides whether it can validate that pin. The old
+// splitGitRefQuery behavior remains intentionally permissive for compatibility.
+func splitReferenceParts(s string) (body, gitRef, fragment string, err error) {
+	if i := strings.IndexByte(s, '#'); i >= 0 {
+		fragment, err = decodeFragment(s[i+1:])
+		if err != nil {
+			return "", "", "", err
+		}
+		s = s[:i]
+	}
+	body, gitRef, err = splitGitRefQuery(s)
+	return body, gitRef, fragment, err
+}
+
+func decodeFragment(raw string) (string, error) {
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid reference fragment encoding: %w", err)
+	}
+	if strings.ContainsRune(decoded, '\x00') {
+		return "", fmt.Errorf("invalid reference fragment encoding: NUL is not allowed")
+	}
+	return decoded, nil
+}
+
+func encodeFragment(fragment string) string {
+	encoded := url.PathEscape(fragment)
+	// Colon is the required `REQ:<id>` delimiter and is legal unescaped in a
+	// URI fragment. Retaining it keeps canonical citations readable.
+	return strings.ReplaceAll(encoded, "%3A", ":")
 }
 
 func resolveReference(ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("empty reference")
+	}
+	for _, segment := range strings.Split(ref, "/") {
+		if !isSafePathSegment(segment) {
+			return "", fmt.Errorf("invalid reference path: unsafe path segment")
+		}
 	}
 	if strings.HasPrefix(ref, "feature/") {
 		return "spec/features/" + strings.TrimPrefix(ref, "feature/"), nil
@@ -236,6 +331,10 @@ func resolveReference(ref string) (string, error) {
 		return "docs/" + strings.TrimPrefix(ref, "doc/"), nil
 	}
 	return ref, nil
+}
+
+func isSafePathSegment(segment string) bool {
+	return segment != "" && segment != "." && segment != ".." && !strings.Contains(segment, "%")
 }
 
 func inferType(resolvedPath string) string {

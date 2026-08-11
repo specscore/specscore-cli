@@ -3,10 +3,258 @@ package sourceref
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLocalResolver_OfflineRequirementCitations(t *testing.T) {
+	root, mirror := t.TempDir(), t.TempDir()
+	writeResolverConfig(t, root, "github.com", "acme", "consumer", mirror)
+	writeResolverConfig(t, mirror, "github.com", "acme", "provider")
+	writeResolverFeature(t, root, "local", "#### REQ: ok\n")
+	writeResolverFeature(t, mirror, "remote", "#### REQ: ok\n")
+	gitFixtureCommit(t, mirror)
+	r := NewLocalResolver(filepath.Join(root, "spec"))
+	for _, raw := range []string{
+		"specscore:feature/local#REQ:ok",
+		"specscore://github.com/acme/provider/feature/remote#REQ:ok",
+		"specscore://github.com/acme/provider/feature/remote?ref=main#REQ:ok",
+	} {
+		ref, err := ParseReference(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.ValidateRequirementCitation(ref); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+	}
+	writeResolverFeature(t, mirror, "remote", "#### REQ: changed\n")
+	ref, _ := ParseReference("specscore://github.com/acme/provider/feature/remote#REQ:ok")
+	if _, err := r.ValidateRequirementCitation(ref); err == nil || !strings.Contains(err.Error(), "uncommitted") {
+		t.Fatalf("dirty mirror must fail: %v", err)
+	}
+	missing, _ := ParseReference("specscore://github.com/acme/missing/feature/remote#REQ:ok")
+	if _, err := r.ValidateRequirementCitation(missing); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("missing mirror: %v", err)
+	}
+	unsupported, _ := ParseReference("specscore:plan/x")
+	if _, err := r.ValidateRequirementCitation(unsupported); err == nil {
+		t.Fatal("non-feature must fail resolver")
+	}
+}
+
+func writeResolverConfig(t *testing.T, dir, host, org, repo string, projects ...string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "# SpecScore Repo Config Schema: https://specscore.md/repo-config\nproject:\n  host: " + host + "\n  org: " + org + "\n  repo: " + repo + "\n"
+	if len(projects) > 0 {
+		body += "projects:\n"
+		for _, p := range projects {
+			body += "  - " + p + "\n"
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "specscore.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+func writeResolverFeature(t *testing.T, root, slug, req string) {
+	t.Helper()
+	dir := filepath.Join(root, "spec", "features", slug)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Feature\n\n"+req), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+func gitFixtureCommit(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "source@example.test"}, {"config", "user.name", "source test"}, {"add", "."}, {"commit", "-m", "fixture"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+}
+
+func TestResolverCoverageBranches(t *testing.T) {
+	// Construction and identity paths fail closed without silently accepting a
+	// malformed configured project.
+	if got := NewLocalResolver(filepath.Join(t.TempDir(), "missing", "spec")); got == nil {
+		t.Fatal("resolver must always be returned")
+	}
+	for _, dir := range []string{t.TempDir(), filepath.Join(t.TempDir(), "missing")} {
+		if _, ok := configuredProjectIdentity(dir); ok {
+			t.Fatalf("unexpected identity for %s", dir)
+		}
+	}
+	incomplete := t.TempDir()
+	writeResolverConfig(t, incomplete, "", "", "")
+	if _, ok := configuredProjectIdentity(incomplete); ok {
+		t.Fatal("incomplete identity accepted")
+	}
+	if got := repoRootForSpecRoot(t.TempDir()); got == "" {
+		t.Fatal("fallback root must be non-empty")
+	}
+
+	root := t.TempDir()
+	writeResolverConfig(t, root, "github.com", "acme", "consumer")
+	if got := repoRootForSpecRoot(root); got != root {
+		t.Fatalf("config root = %q", got)
+	}
+	if got := repoRootForSpecRoot(filepath.Join(root, "spec")); got != root {
+		t.Fatalf("parent config root = %q", got)
+	}
+	writeResolverFeature(t, root, "one", "#### REQ: ok\n\n#### REQ: ok\n")
+	writeResolverFeature(t, root, "self", "#### REQ: working-tree\n")
+	writeResolverConfig(t, root, "github.com", "acme", "consumer", "./not-present")
+	r := NewLocalResolver(filepath.Join(root, "spec"))
+	self := &Reference{Type: "feature", ResolvedPath: "spec/features/self", CrossRepoSuffix: "@github.com/acme/consumer", Fragment: "REQ:working-tree"}
+	if _, err := r.ValidateRequirementCitation(self); err != nil {
+		t.Fatalf("self authority must read uncommitted current project: %v", err)
+	}
+	for _, tc := range []struct {
+		ref  *Reference
+		want string
+	}{
+		{nil, "not a Feature"},
+		{&Reference{Type: "plan"}, "not a Feature"},
+		{&Reference{Type: "feature", ResolvedPath: "spec/features/missing"}, "does not resolve"},
+		{&Reference{Type: "feature", ResolvedPath: "spec/features/../../escape"}, "escapes"},
+		{&Reference{Type: "feature", ResolvedPath: "spec/features/one", Fragment: "REQ:ok"}, "ambiguous"},
+		{&Reference{Type: "feature", ResolvedPath: "spec/features/one", Fragment: "REQ:"}, "malformed"},
+		{&Reference{Type: "feature", ResolvedPath: "spec/features/one", Fragment: "section"}, "unsupported"},
+	} {
+		if _, err := r.ValidateRequirementCitation(tc.ref); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%+v: %v", tc.ref, err)
+		}
+	}
+	if err := requirementAnchorExists("#### REQ: ignored", ""); err != nil {
+		t.Fatalf("empty fragment: %v", err)
+	}
+
+	first, second := t.TempDir(), t.TempDir()
+	writeResolverConfig(t, first, "github.com", "acme", "provider")
+	writeResolverConfig(t, second, "github.com", "acme", "provider")
+	writeResolverConfig(t, root, "github.com", "acme", "consumer", first, second)
+	ref := &Reference{Type: "feature", ResolvedPath: "spec/features/x", CrossRepoSuffix: "@github.com/acme/provider"}
+	if _, err := NewLocalResolver(filepath.Join(root, "spec")).ValidateRequirementCitation(ref); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous mirrors: %v", err)
+	}
+
+	gitDir := t.TempDir()
+	writeResolverConfig(t, gitDir, "github.com", "acme", "git")
+	writeResolverFeature(t, gitDir, "x", "#### REQ: ok\n")
+	gitFixtureCommit(t, gitDir)
+	if err := verifyTrackedClean(gitDir, "spec/features/x/README.md"); err != nil {
+		t.Fatalf("clean tracked: %v", err)
+	}
+	if _, err := verifyCheckedOutRef(gitDir, "main"); err != nil {
+		t.Fatalf("main ref: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", gitDir, "tag", "old").CombinedOutput(); err != nil {
+		t.Fatalf("tag: %v %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "later"), []byte("later"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", gitDir, "add", ".").CombinedOutput(); err != nil {
+		t.Fatalf("add: %v %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", gitDir, "commit", "-m", "later").CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	if _, err := verifyCheckedOutRef(gitDir, "old"); err == nil {
+		t.Fatal("stale ref accepted")
+	}
+	if _, err := gitShowFile(gitDir, "HEAD", "missing"); err == nil {
+		t.Fatal("missing git blob accepted")
+	}
+	if _, err := verifyCheckedOutRef(gitDir, "missing"); err == nil {
+		t.Fatal("missing ref accepted")
+	}
+	badPinned := &Reference{Type: "feature", ResolvedPath: "spec/features/x", Ref: "missing"}
+	if _, err := NewLocalResolver(filepath.Join(gitDir, "spec")).ValidateRequirementCitation(badPinned); err == nil {
+		t.Fatal("unverified pinned citation accepted")
+	}
+	missingPinned := &Reference{Type: "feature", ResolvedPath: "spec/features/missing", Ref: "main"}
+	if _, err := NewLocalResolver(filepath.Join(gitDir, "spec")).ValidateRequirementCitation(missingPinned); err == nil {
+		t.Fatal("missing pinned target accepted")
+	}
+	if _, err := verifyCheckedOutRef(t.TempDir(), "main"); err == nil {
+		t.Fatal("non-git ref accepted")
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "spec", "features", "x", "README.md"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyTrackedClean(gitDir, "spec/features/x/README.md"); err == nil {
+		t.Fatal("dirty target accepted")
+	}
+	if err := verifyTrackedClean(gitDir, "missing"); err == nil {
+		t.Fatal("untracked target accepted")
+	}
+}
+
+func TestReferenceCoverageBranches(t *testing.T) {
+	for _, ref := range []Reference{
+		{ResolvedPath: "spec/features/local"},
+		{ResolvedPath: "spec/features/local", Ref: "main"},
+		{ResolvedPath: "spec/features/local", Fragment: "REQ:ok"},
+		{ResolvedPath: "spec/features/local", CrossRepoSuffix: "@github.com/acme/repo"},
+	} {
+		if _, err := ParseReference(ref.Canonical()); err != nil {
+			t.Fatalf("canonical %q: %v", ref.Canonical(), err)
+		}
+		_ = ref.display()
+	}
+	for _, input := range []string{
+		"https://specscore.org/%2e/org/repo/feature/x",
+		"specscore://github.com/org/repo/feature/../x",
+		"specscore://github.com/org/repo/feature/x#REQ:%ZZ",
+		"https://specscore.org/github.com/org/repo/feature/x#REQ:%ZZ",
+		"specscore://../org/repo/feature/x",
+	} {
+		if _, err := ParseReference(input); err == nil {
+			t.Fatalf("expected parse failure: %s", input)
+		}
+	}
+	if _, err := ParseReference("specscore:feature/x@github.com/org/repo#REQ:ok"); err == nil {
+		t.Fatal("legacy fragment should require rewrite")
+	}
+	if marker, length := fenceMarker("xx"); marker != 0 || length != 0 {
+		t.Fatal("non-fence parsed")
+	}
+	if marker, length := fenceMarker("``"); marker != 0 || length != 0 {
+		t.Fatal("short fence parsed")
+	}
+	if err := requirementAnchorExists("<!-- same line -->\n#### REQ: ok\n", "REQ:ok"); err != nil {
+		t.Fatalf("closed comment must not hide heading: %v", err)
+	}
+}
+
+func TestLocalResolver_CrossRepoReadsGitBlobNotSymlinkTarget(t *testing.T) {
+	root, mirror := t.TempDir(), t.TempDir()
+	writeResolverConfig(t, root, "github.com", "acme", "consumer", mirror)
+	writeResolverConfig(t, mirror, "github.com", "acme", "provider")
+	dir := filepath.Join(mirror, "spec", "features", "contract")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mirror, "actual.md"), []byte("#### REQ: live\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../actual.md", filepath.Join(dir, "README.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	gitFixtureCommit(t, mirror)
+	ref, _ := ParseReference("specscore://github.com/acme/provider/feature/contract#REQ:live")
+	if _, err := NewLocalResolver(filepath.Join(root, "spec")).ValidateRequirementCitation(ref); err == nil || !strings.Contains(err.Error(), "missing exact") {
+		t.Fatalf("tracked symlink must be read as its HEAD blob, not followed: %v", err)
+	}
+}
 
 // Reused from independently validated coverage commit ca3e46c.
 func TestDoubleStarRegexp_QuestionAndQuotedLiteral(t *testing.T) {
@@ -421,6 +669,93 @@ func TestParseReference_RefPinRecorded(t *testing.T) {
 	}
 }
 
+func TestParseReference_RejectsEmptyAndUnsupportedRefQueries(t *testing.T) {
+	for _, input := range []string{
+		"specscore:feature/auth?ref=#REQ:login",
+		"specscore://github.com/org/repo/feature/auth?ref=#REQ:login",
+		"https://specscore.org/github.com/org/repo/spec/features/auth?ref=#REQ:login",
+		"specscore:feature/auth?other=main#REQ:login",
+		"specscore:feature/auth?ref=main&ref=dev#REQ:login",
+		"specscore:feature/auth?ref=main?ref=dev#REQ:login",
+	} {
+		if _, err := ParseReference(input); err == nil {
+			t.Fatalf("unsupported or empty query accepted: %q", input)
+		}
+	}
+}
+
+func TestParseReference_RequirementFragmentRecorded(t *testing.T) {
+	ref, err := ParseReference("specscore:feature/auth#REQ:login")
+	if err != nil || ref.ResolvedPath != "spec/features/auth" || ref.Fragment != "REQ:login" {
+		t.Fatalf("same-repo fragment: %+v %v", ref, err)
+	}
+	ref, err = ParseReference("specscore://github.com/org/repo/feature/auth?ref=main#REQ:login")
+	if err != nil || ref.CrossRepoSuffix != "@github.com/org/repo" || ref.Ref != "main" || ref.Fragment != "REQ:login" {
+		t.Fatalf("cross-repo fragment: %+v %v", ref, err)
+	}
+}
+
+func TestParseReference_FragmentCanonicalRoundTripAndSafety(t *testing.T) {
+	for _, input := range []string{
+		"specscore://github.com/org/repo/feature/auth#REQ:login",
+		"https://specscore.org/github.com/org/repo/spec/features/auth#REQ:login",
+	} {
+		ref, err := ParseReference(input)
+		if err != nil {
+			t.Fatalf("ParseReference(%q): %v", input, err)
+		}
+		canonical := ref.Canonical()
+		if !strings.Contains(canonical, "#REQ:login") {
+			t.Fatalf("canonical drops readable requirement fragment: %q", canonical)
+		}
+		again, err := ParseReference(canonical)
+		if err != nil || again.Fragment != "REQ:login" || again.ResolvedPath != ref.ResolvedPath {
+			t.Fatalf("canonical round trip %q: %+v %v", canonical, again, err)
+		}
+	}
+	for _, input := range []string{
+		"specscore:feature/../secret#REQ:x",
+		"specscore:feature/%2e%2e/secret#REQ:x",
+		"specscore:feature/auth#REQ:%ZZ",
+		"specscore:feature/auth#REQ:bad%00id",
+		"https://specscore.org/%2e%2e/org/repo/feature/auth#REQ:x",
+	} {
+		if _, err := ParseReference(input); err == nil {
+			t.Fatalf("unsafe encoding/path accepted: %q", input)
+		}
+	}
+	ref, err := ParseReference("specscore:feature/auth#REQ:bad%2Fpath")
+	if err != nil || ref.Fragment != "REQ:bad/path" {
+		t.Fatalf("fragment must decode once for resolver validation: %+v %v", ref, err)
+	}
+}
+
+func TestRequirementAnchorExistsIgnoresFencedCode(t *testing.T) {
+	for _, content := range []string{
+		"```md\n#### REQ: cited\n```\n",
+		"~~~\n#### REQ: cited\n~~~\n",
+		"```\n#### REQ: cited\n", // an unclosed fence remains code through EOF
+		"```md\n```not-a-close\n#### REQ: cited\n```\n",
+		"~~~go\n~~~~not-a-close\n#### REQ: cited\n~~~\n",
+	} {
+		if err := requirementAnchorExists(content, "REQ:cited"); err == nil || !strings.Contains(err.Error(), "missing exact") {
+			t.Fatalf("fenced pseudo-heading must not resolve: %v", err)
+		}
+	}
+	if err := requirementAnchorExists("```\n#### REQ: cited\n```\n\n#### REQ: cited\n", "REQ:cited"); err != nil {
+		t.Fatalf("real heading after fence should resolve: %v", err)
+	}
+	if err := requirementAnchorExists("<!--\n#### REQ: cited\n-->\n", "REQ:cited"); err == nil {
+		t.Fatal("HTML-comment pseudo-heading must not resolve")
+	}
+	if err := requirementAnchorExists("````\n#### REQ: cited\n```\n#### REQ: cited\n````\n", "REQ:cited"); err == nil {
+		t.Fatal("shorter fence must not close a longer fence")
+	}
+	if err := requirementAnchorExists("```\n<!--\n#### REQ: cited\n```\n\n#### REQ: cited\n", "REQ:cited"); err != nil {
+		t.Fatalf("comment marker inside fence must not hide real heading after fence: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ParseReference — doc type
 // ---------------------------------------------------------------------------
@@ -523,6 +858,27 @@ func TestScanFile_FileNotFound(t *testing.T) {
 	_, err := scanFile("/nonexistent/path/file.go")
 	if err == nil {
 		t.Error("expected error for nonexistent file")
+	}
+}
+
+func TestScanFile_OversizedLineReturnsScannerError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.go")
+	if err := os.WriteFile(path, []byte("// "+strings.Repeat("x", 70_000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanFile(path); err == nil {
+		t.Fatal("oversized scanner token must fail")
+	}
+}
+
+func TestScanFiles_RetainsDetectedParseErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.go")
+	if err := os.WriteFile(path, []byte("// specscore:feature/x@github.com/acme/provider\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ScanFiles([]string{path})
+	if err != nil || len(result.ParseErrors[path]) != 1 || result.ParseErrors[path][0].Line != 1 {
+		t.Fatalf("parse diagnostics: %#v %v", result, err)
 	}
 }
 

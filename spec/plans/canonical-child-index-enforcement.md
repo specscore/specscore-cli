@@ -70,6 +70,7 @@ single-write composition used for phantom deletion and orphan insertion.
 - cli/spec/lint#ac:fix-json-envelope-only-under-fix — Existing shipped behavior outside this canonical-index increment.
 - cli/spec/lint#ac:fix-text-summary-on-stderr — Existing shipped behavior outside this canonical-index increment.
 - cli/spec/lint#ac:fix-report-needs-no-flag — Existing shipped behavior outside this canonical-index increment.
+- cli/spec/lint#ac:implements-reference-requirement-liveness — Added by the later offline requirement-reference increment; outside this canonical-index scope.
 
 ## Open Questions
 

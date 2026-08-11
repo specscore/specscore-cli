@@ -19,7 +19,7 @@ status: Stable
 ## Synopsis
 
 ```
-specscore code deps [--path <glob>] [--type <feature|plan|doc>]
+specscore code deps [--path <glob>] [--type <feature|plan|doc>] [--check]
 ```
 
 ## Problem
@@ -39,6 +39,10 @@ The command operates on the working tree under the project root. It reads files 
 #### REQ: type-filter
 
 `--type` MAY be one of `feature`, `plan`, or `doc`. When set, results MUST be filtered to the given resource type. When omitted, results include all types. Any other value is a `2` (InvalidArgs) error.
+
+#### REQ: offline-requirement-citation-check
+
+`--check` validates Feature citations only from the current project or explicit local `projects:` mirrors. A `#REQ:<id>` fragment resolves to exactly one non-fenced `#### REQ: <id>` heading; authority identity must match the mirror's `project.host`, `project.org`, and `project.repo`. Missing, renamed, duplicate, malformed, unavailable, or mismatched targets fail. No network fetch occurs. A `?ref=` pin is accepted only when the local checkout HEAD is that revision, and is read from that commit. Feature citations without fragments check resource existence; Plan and doc citations remain listed but have no REQ-anchor check.
 
 ### Sources matched
 
@@ -75,6 +79,7 @@ Standard CLI exit codes (see [parent](../../README.md#shared-exit-code-contract)
 |---|---|
 | `0` | Scan completed (zero or more references reported) |
 | `2` | `--type` or `--path` is invalid |
+| `4` | `--check` found one or more invalid Feature citations; diagnostics are sorted by source file and canonical reference. |
 | `10` | Unexpected I/O failure while scanning |
 
 ## Interaction with Other Features
@@ -108,6 +113,16 @@ A file containing both a `specscore:` annotation and a bare `https://specscore.m
 **Requirements:** cli/code/deps#req:prefix-body-whitespace
 
 A comment `// specscore: feature/column-validation` (a space between the colon and the body) reports `spec/features/column-validation`, identical to the no-space `// specscore:feature/column-validation` form. The dependency is listed even when the feature resolves to another repo's spec tree.
+
+### AC: offline-requirement-citations-checked
+
+**Requirements:** cli/code/deps#req:offline-requirement-citation-check
+
+**Given** source code cites same-repo or configured local cross-repo Features with `#REQ:<id>`
+
+**When** `specscore code deps --check` runs
+
+**Then** exact headings pass; renamed/deleted, duplicate, malformed, missing-mirror, and identity-mismatched citations exit `4` with deterministic file-and-reference diagnostics, without a network request.
 
 ## Open Questions
 
