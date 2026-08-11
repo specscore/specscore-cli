@@ -37,6 +37,7 @@
             {
               "path": "specscore code deps",
               "flags": [
+                "--check",
                 "--path",
                 "--type"
               ],
