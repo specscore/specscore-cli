@@ -82,6 +82,10 @@ The three values MUST be injected via Go linker flags against package-level `var
 
 A release build MUST supply all three. The release workflow (goreleaser / equivalent) is the canonical producer of these values.
 
+#### REQ: published-artifact-revalidation
+
+The repository MUST provide a manually dispatched, validation-only workflow that accepts one exact existing release tag and executes the published archive's `specscore --version` command. It MUST use that requested tag for both the release asset and the GoReleaser configuration used to resolve it; it MUST NOT create a tag, run GoReleaser, publish a release, or install a Homebrew cask. This preserves a safe way to revalidate an already published SpecScore CLI artifact after a shared CI repair without creating a new release.
+
 #### REQ: default-placeholders
 
 When the binary is built without `-ldflags` (typical of `go run`, `go build` during development, or `go install` from a consumer), the three fields MUST fall back to literal placeholders: `version="dev"`, `commit="none"`, `date="unknown"`. The CLI MUST NOT error on missing version information — placeholders are a valid state.
@@ -146,6 +150,12 @@ A `specscore` binary built without `-ldflags` (e.g., `go run ./cmd/specscore --v
 **Requirements:** cli/version#req:no-v-prefix
 
 Version output follows Go-ecosystem convention: no `v` prefix on the printed number, even though the underlying git tag is `v`-prefixed. Any CLI output containing `v0.` or `v1.` at the start of the version field is a regression.
+
+### AC: published-artifact-revalidation
+
+**Requirements:** cli/version#req:flag-output, cli/version#req:published-artifact-revalidation
+
+Dispatching the validation-only workflow with an existing SpecScore CLI release tag downloads that exact published archive and runs `specscore --version` successfully. The workflow does not create a tag or release, run GoReleaser, or execute the Homebrew-cask layer.
 
 ## Open Questions
 
