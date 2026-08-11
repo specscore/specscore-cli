@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -24,51 +25,29 @@ func TestLessonImportLegacy_ConfigurationAndMappingPreflightBeforePreparedEvent(
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
-			if err := projectdef.WriteSpecConfig(root, fixture.config); err != nil {
-				t.Fatal(err)
-			}
+			requireCLISuccess(t, projectdef.WriteSpecConfig(root, fixture.config))
 			lessonsDir := filepath.Join(root, "spec", "lessons")
-			if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			requireCLISuccess(t, os.MkdirAll(lessonsDir, 0o755))
 			source := filepath.Join(root, "LESSONS-LEARNED.md")
-			if err := os.WriteFile(source, []byte("## L1 — use a reviewed rule\n\n**Status:** Enforced\n\nHistorical detail.\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			for _, args := range [][]string{
-				{"init", "-q", "-b", "main"},
-				{"config", "user.name", "SpecScore Test"},
-				{"config", "user.email", "test@example.invalid"},
-				{"remote", "add", "origin", "https://github.com/example/spec.git"},
-				{"add", "."},
-				{"commit", "-q", "-m", "fixture"},
-			} {
+			requireCLISuccess(t, os.WriteFile(source, []byte("## L1 — use a reviewed rule\n\n**Status:** Enforced\n\nHistorical detail.\n"), 0o644))
+			for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"config", "user.name", "SpecScore Test"}, {"config", "user.email", "test@example.invalid"}, {"remote", "add", "origin", "https://github.com/example/spec.git"}, {"add", "."}, {"commit", "-q", "-m", "fixture"}} {
 				runGitForFlatMigration(t, root, args...)
 			}
 			inventory, err := lesson.InventoryLegacy(source)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireCLISuccess(t, err)
 			mapping := lesson.LegacyMapping{Source: inventory.Source, Entries: []lesson.LegacyMappingEntry{{
 				Key: "L1#1", Action: "new", Slug: "reviewed-rule", Status: "Recorded",
-				Lesson:          "Apply the reviewed deterministic process control.",
-				ProcessGap:      "The workflow lacked a deterministic check.",
+				Lesson: "Apply the reviewed deterministic process control.", ProcessGap: "The workflow lacked a deterministic check.",
 				Classifications: []string{fixture.classification},
 			}}}
 			mappingBytes, err := json.Marshal(mapping)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireCLISuccess(t, err)
 			mappingPath := filepath.Join(root, "mapping.json")
-			if err := os.WriteFile(mappingPath, mappingBytes, 0o644); err != nil {
-				t.Fatal(err)
-			}
+			requireCLISuccess(t, os.WriteFile(mappingPath, mappingBytes, 0o644))
 			before := treeDigestForCLI(t, lessonsDir)
-
-			if _, _, err := runLesson(t, "import-legacy", "--source", source, "--apply", "--mapping", mappingPath, "--project", root); err == nil {
-				t.Fatal("invalid classification preflight was accepted")
-			}
-			if after := treeDigestForCLI(t, lessonsDir); string(after) != string(before) {
+			_, _, err = runLesson(t, "import-legacy", "--source", source, "--apply", "--mapping", mappingPath, "--project", root)
+			requireCLIError(t, err)
+			if after := treeDigestForCLI(t, lessonsDir); !bytes.Equal(after, before) {
 				t.Fatal("failed import preflight changed Lesson artifacts")
 			}
 			if _, err := os.Stat(filepath.Join(root, ".specscore", "event-outbox")); !os.IsNotExist(err) {
@@ -76,6 +55,8 @@ func TestLessonImportLegacy_ConfigurationAndMappingPreflightBeforePreparedEvent(
 			}
 		})
 	}
+	requireCLIError(t, runLessonImportLegacy(lessonImportLegacyCommand(), nil))
+	exerciseLegacyImportApplyAdapterEdges(t)
 }
 
 func TestLessonImportLegacy_UncertainRollbackRetainsPreparedEvent(t *testing.T) {
@@ -123,21 +104,28 @@ func TestLessonImportLegacy_UncertainRollbackRetainsPreparedEvent(t *testing.T) 
 	if err := os.WriteFile(mappingPath, mappingBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	originalInventory := lessonInventoryLegacyFn
-	lessonInventoryLegacyFn = func(string) (lesson.LegacyInventory, error) { return inventory, nil }
-	t.Cleanup(func() { lessonInventoryLegacyFn = originalInventory })
-	original := lessonApplyLegacyFn
-	lessonApplyLegacyFn = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyResult, error) {
+	deps := defaultLessonCLIDeps()
+	deps.inventoryLegacy = func(string) (lesson.LegacyInventory, error) { return inventory, nil }
+	deps.applyLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyResult, error) {
 		return lesson.LegacyApplyResult{}, &lesson.MutationError{Outcome: lesson.MutationUncertain, Err: errors.New("injected post-publication rollback uncertainty")}
 	}
-	t.Cleanup(func() { lessonApplyLegacyFn = original })
-
-	_, stderr, err := runLesson(t, "import-legacy", "--source", source, "--apply", "--mapping", mappingPath, "--project", root)
+	cmd := lessonImportLegacyCommand()
+	for name, value := range map[string]string{"source": source, "mapping": mappingPath, "project": root} {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cmd.Flags().Set("apply", "true"); err != nil {
+		t.Fatal(err)
+	}
+	var stderr strings.Builder
+	cmd.SetErr(&stderr)
+	err = runLessonImportLegacyWithDeps(cmd, deps)
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Fatalf("exit=%d want=%d err=%v", got, exitcode.Unexpected, err)
 	}
-	if !strings.Contains(stderr+err.Error(), "recovery required: prepared event") {
-		t.Fatalf("missing recovery instruction: stderr=%q err=%v", stderr, err)
+	if !strings.Contains(stderr.String()+err.Error(), "recovery required: prepared event") {
+		t.Fatalf("missing recovery instruction: stderr=%q err=%v", stderr.String(), err)
 	}
 	prepared, readErr := event.NewOutbox(root).Prepared()
 	if readErr != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.legacy-import-applied" {

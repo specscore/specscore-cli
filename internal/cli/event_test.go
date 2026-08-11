@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -15,6 +16,25 @@ import (
 	"github.com/specscore/specscore-cli/pkg/event"
 )
 
+type fakeEventOutbox struct {
+	prepared []event.PreparedRecord
+	result   event.ReplayResult
+	err      error
+	action   error
+}
+
+func (f *fakeEventOutbox) Replay(context.Context, []event.Subscriber, string, int) (event.ReplayResult, error) {
+	return f.result, f.err
+}
+func (f *fakeEventOutbox) Prepared() ([]event.PreparedRecord, error)     { return f.prepared, f.err }
+func (f *fakeEventOutbox) Commit(string) error                           { return f.action }
+func (f *fakeEventOutbox) Abort(string) error                            { return f.action }
+func (f *fakeEventOutbox) Enqueue(event.Event, []event.Subscriber) error { return f.action }
+
+func eventTestDeps(outbox eventCLIOutbox) eventCLIDeps {
+	return eventCLIDeps{func() (string, error) { return "root", nil }, func(s string) (string, error) { return s, nil }, func(string) ([]event.Subscriber, error) { return []event.Subscriber{event.NoOp{}}, nil }, func(string) eventCLIOutbox { return outbox }}
+}
+
 // runEvent invokes the event command tree in-process with the given args.
 func runEvent(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
@@ -25,6 +45,69 @@ func runEvent(t *testing.T, args ...string) (string, string, error) {
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
+}
+
+func TestEventAdapterFailures(t *testing.T) {
+	cmd := eventReplayCommand()
+	requireCLIError(t, runEventReplayWithDeps(cmd, defaultEventCLIDeps()))
+	cmd = eventReplayCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink", "limit": "-1"})
+	requireCLIError(t, runEventReplayWithDeps(cmd, defaultEventCLIDeps()))
+	for _, phase := range []string{"getwd", "root", "load", "replay", "failed"} {
+		cmd = eventReplayCommand()
+		setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink"})
+		fake := &fakeEventOutbox{}
+		deps := eventTestDeps(fake)
+		switch phase {
+		case "getwd":
+			deps.getwd = func() (string, error) { return "", errors.New("getwd") }
+		case "root":
+			deps.findRoot = func(string) (string, error) { return "", errors.New("root") }
+		case "load":
+			deps.load = func(string) ([]event.Subscriber, error) { return nil, errors.New("load") }
+		case "replay":
+			fake.err = errors.New("replay")
+		case "failed":
+			fake.result.Failed = []event.SubscriberFailure{{Name: "sink", Err: errors.New("delivery")}}
+		}
+		requireCLIError(t, runEventReplayWithDeps(cmd, deps))
+	}
+
+	for _, phase := range []string{"decision", "getwd", "root", "prepared", "missing", "action"} {
+		cmd = eventReconcileCommand()
+		fake := &fakeEventOutbox{}
+		deps := eventTestDeps(fake)
+		record := event.PreparedRecord{EventUUID: "id", EventName: "lesson.test", ArtifactPath: "spec/x"}
+		fake.prepared = []event.PreparedRecord{record}
+		decision := "abort"
+		switch phase {
+		case "decision":
+			decision = "bad"
+		case "getwd":
+			deps.getwd = func() (string, error) { return "", errors.New("getwd") }
+		case "root":
+			deps.findRoot = func(string) (string, error) { return "", errors.New("root") }
+		case "prepared":
+			fake.err = errors.New("prepared")
+		case "missing":
+			fake.prepared = nil
+		case "action":
+			fake.action = errors.New("action")
+		}
+		setLessonCommandFlags(t, cmd, map[string]string{"decision": decision, "confirm": event.ReconciliationToken(record, decision)})
+		requireCLIError(t, runEventReconcileWithDeps(cmd, []string{"id"}, deps))
+	}
+	cmd = eventReconcileCommand()
+	record := event.PreparedRecord{EventUUID: "id"}
+	setLessonCommandFlags(t, cmd, map[string]string{"decision": "abort", "confirm": event.ReconciliationToken(record, "abort")})
+	requireCLISuccess(t, runEventReconcileWithDeps(cmd, []string{"id"}, eventTestDeps(&fakeEventOutbox{prepared: []event.PreparedRecord{record}})))
+
+	cmd = eventEmitCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"name": "lesson.test", "actor-kind": "external", "actor-id": "specscore", "artifact-type": "lesson", "artifact-id": "x", "artifact-path": "spec/lessons/x", "payload-json": "{}"})
+	requireCLIError(t, runEventEmitWithDeps(cmd, eventTestDeps(&fakeEventOutbox{err: errors.New("replay")})))
+	deps := eventTestDeps(&fakeEventOutbox{})
+	deps.getwd = func() (string, error) { return "", errors.New("getwd") }
+	requireCLIError(t, runEventEmitWithDeps(cmd, deps))
 }
 
 // AC: verb-registers-and-helps — bare `event` exits 0 and lists `emit`.

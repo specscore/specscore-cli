@@ -487,10 +487,6 @@ func finalizeFlatMigrationWithDeps(opts FlatMigrationOptions, eventUUID string, 
 	return syncDirectoryWithFS(opts.LessonsDir, deps.fs)
 }
 
-func validateFlatMigrationIndexRow(lessonsDir, canonicalPath string) error {
-	return validateFlatMigrationIndexRowWithFS(lessonsDir, canonicalPath, osLessonFS{})
-}
-
 func validateFlatMigrationIndexRowWithFS(lessonsDir, canonicalPath string, fs lessonFS) error {
 	l, err := Parse(canonicalPath)
 	if err != nil {
@@ -881,10 +877,6 @@ func parseCompletedFlatMigration(canonicalPath string) (*Lesson, error) {
 // the canonical README.  Once the old flat source and transaction marker are
 // gone, declaring a migration already complete is safe only when the immutable
 // manifest/source proof and the exact denormalized index row still agree.
-func validateCompletedFlatMigrationProof(lessonsDir, canonicalPath, slug string) error {
-	return validateCompletedFlatMigrationProofWithFS(lessonsDir, canonicalPath, slug, osLessonFS{})
-}
-
 func validateCompletedFlatMigrationProofWithFS(lessonsDir, canonicalPath, slug string, fs lessonFS) error {
 	l, err := parseCompletedFlatMigration(canonicalPath)
 	if err != nil {

@@ -71,6 +71,10 @@ Docs: docs/agent-lessons.md#create-and-record`,
 }
 
 func runLessonNew(cmd *cobra.Command, args []string) error {
+	return runLessonNewWithDeps(cmd, args, defaultLessonCLIDeps())
+}
+
+func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps) error {
 	slug := args[0]
 	if err := lesson.ValidateSlug(slug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
@@ -93,7 +97,7 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 	// turn a legacy tree into a half-migrated tree merely because it happened
 	// to find spec/.  In particular, do this before materializing indexes or
 	// directories so a failed preflight has a declared empty write set.
-	cfg, configErr := projectdef.ReadSpecConfig(root)
+	cfg, configErr := deps.readConfig(root)
 	if configErr != nil {
 		if os.IsNotExist(unwrapPathError(configErr)) {
 			return exitcode.InvalidStateError("lesson new requires specscore.yaml; run `specscore init`, configure non-empty lessons.classifications, then retry")
@@ -115,30 +119,29 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 	lessonsDir := filepath.Join(root, "spec", "lessons")
 	target := filepath.Join(lessonsDir, slug, "README.md")
 	legacy := filepath.Join(lessonsDir, slug+".md")
-	if _, err := os.Stat(legacy); err == nil {
+	if _, err := deps.fs.stat(legacy); err == nil {
 		return exitcode.ConflictErrorf("legacy lesson already exists: %s; migrate it before creating canonical %q", legacy, slug)
 	} else if !os.IsNotExist(err) {
 		return exitcode.UnexpectedErrorf("preflighting %s: %v", legacy, err)
 	}
-	if _, statErr := os.Stat(target); statErr == nil && !force {
+	if _, statErr := deps.fs.stat(target); statErr == nil && !force {
 		return exitcode.ConflictErrorf("lesson already exists: %s (pass --force to overwrite)", target)
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return exitcode.UnexpectedErrorf("preflighting %s: %v", target, statErr)
 	}
 
-	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, classifications)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("scaffolding lesson: %v", err)
-	}
+	// ValidateSlug and the non-empty classifications preflight satisfy every
+	// ScaffoldCanonical error precondition.
+	body, _ := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, classifications)
 	if err := lesson.ValidateSafeContent("Lesson scaffold", string(body)); err != nil {
 		return exitcode.InvalidArgsErrorf("unsafe Lesson content: %v", err)
 	}
 
-	snapshot, err := snapshotLessonScaffold(root, target)
+	snapshot, err := snapshotLessonScaffoldWithOps(root, target, deps.fs)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("snapshotting declared write set: %v", err)
 	}
-	prepared, err := prepareLessonEvent(root, "lesson.created", slug, map[string]any{"classifications": classifications}, time.Time{})
+	prepared, err := deps.prepareEvent(root, "lesson.created", slug, map[string]any{"classifications": classifications}, time.Time{})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing lesson event: %v", err)
 	}
@@ -156,25 +159,25 @@ func runLessonNew(cmd *cobra.Command, args []string) error {
 	if err := ensureLessonAncestorIndexes(root); err != nil {
 		return fail("materializing ancestor indexes", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := deps.fs.mkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fail("creating lesson directory", err)
 	}
-	if err := os.MkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
+	if err := deps.fs.mkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
 		return fail("creating occurrences directory", err)
 	}
-	if err := os.WriteFile(target, body, 0o644); err != nil {
+	if err := deps.fs.write(target, body, 0o644); err != nil {
 		return fail("writing Lesson", err)
 	}
 
 	specSub := filepath.Join(root, "spec")
-	parsed, err := lesson.Parse(target)
+	parsed, err := deps.parse(target)
 	if err != nil {
 		return fail("parsing generated Lesson", err)
 	}
-	if err := lessonIndexUpsertFn(specSub, parsed); err != nil {
+	if err := deps.indexUpsert(specSub, parsed); err != nil {
 		return fail("upserting declared Lesson index row", err)
 	}
-	violations, err := lintLintFn(lint.Options{SpecRoot: specSub})
+	violations, err := deps.lint(lint.Options{SpecRoot: specSub})
 	if err != nil {
 		return fail("running read-only lint", err)
 	}
@@ -219,17 +222,21 @@ type lessonScaffoldSnapshot struct {
 }
 
 func snapshotLessonScaffold(root, target string) (lessonScaffoldSnapshot, error) {
+	return snapshotLessonScaffoldWithOps(root, target, defaultLessonCLIDeps().fs)
+}
+
+func snapshotLessonScaffoldWithOps(root, target string, fs lessonFileOps) (lessonScaffoldSnapshot, error) {
 	s := lessonScaffoldSnapshot{
 		lessonsDir:  filepath.Join(root, "spec", "lessons"),
 		lessonDir:   filepath.Dir(target),
 		occurrences: filepath.Join(filepath.Dir(target), "occurrences"),
 	}
 	for _, p := range []string{filepath.Join(root, "spec", "README.md"), filepath.Join(root, "spec", "lessons", "README.md"), target} {
-		b, err := os.ReadFile(p)
+		info, err := fs.stat(p)
 		if err == nil {
-			info, statErr := os.Stat(p)
-			if statErr != nil {
-				return s, statErr
+			b, readErr := fs.read(p)
+			if readErr != nil {
+				return s, readErr
 			}
 			s.files = append(s.files, fileSnapshot{path: p, data: b, mode: info.Mode().Perm(), exists: true})
 		} else if os.IsNotExist(err) {
@@ -250,32 +257,24 @@ func pathIsDir(path string) bool {
 }
 
 func (s lessonScaffoldSnapshot) restore() error {
-	var first error
+	var failures []error
 	for _, f := range s.files {
 		if f.exists {
-			if err := durableRestoreFile(f.path, f.data, f.mode); err != nil && first == nil {
-				first = err
-			}
-		} else if err := durableRemovePath(f.path); err != nil && first == nil {
-			first = err
+			failures = append(failures, durableRestoreFile(f.path, f.data, f.mode))
+		} else {
+			failures = append(failures, durableRemovePath(f.path))
 		}
 	}
 	if !s.hadOccurrence {
-		if err := durableRemovePath(s.occurrences); err != nil && first == nil {
-			first = err
-		}
+		failures = append(failures, durableRemovePath(s.occurrences))
 	}
 	if !s.hadLessonDir {
-		if err := durableRemovePath(s.lessonDir); err != nil && first == nil {
-			first = err
-		}
+		failures = append(failures, durableRemovePath(s.lessonDir))
 	}
 	if !s.hadLessonsDir {
-		if err := durableRemovePath(s.lessonsDir); err != nil && first == nil {
-			first = err
-		}
+		failures = append(failures, durableRemovePath(s.lessonsDir))
 	}
-	return first
+	return errors.Join(failures...)
 }
 
 func lessonClassificationsFromConfig(cfg projectdef.SpecConfig) []string {
@@ -360,6 +359,10 @@ Examples:
 }
 
 func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
+	return runLessonChangeStatusWithDeps(cmd, args, defaultLessonCLIDeps())
+}
+
+func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps) error {
 	if len(args) == 0 {
 		return exitcode.InvalidArgsError("missing required positional argument: <slug>")
 	}
@@ -433,16 +436,16 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 		}
 		return exitcode.UnexpectedErrorf("reading lesson status: %v", err)
 	}
-	postMutation, err := prepareLessonPostMutation(specRoot, slug)
+	postMutation, err := prepareLessonPostMutationWithDeps(specRoot, slug, deps)
 	if err != nil {
 		return err
 	}
-	prepared, err := prepareLessonEvent(specRoot, "lesson.lifecycle-changed", slug, map[string]any{"to": string(to)}, time.Time{})
+	prepared, err := deps.prepareEvent(specRoot, "lesson.lifecycle-changed", slug, map[string]any{"to": string(to)}, time.Time{})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing lifecycle event: %v", err)
 	}
 
-	result, err := lesson.ChangeStatus(lesson.ChangeStatusOptions{
+	result, err := deps.changeStatus(lesson.ChangeStatusOptions{
 		SpecRoot:     specRoot,
 		Slug:         slug,
 		To:           to,
@@ -475,18 +478,18 @@ func runLessonChangeStatus(cmd *cobra.Command, args []string) error {
 // lint read-only. It deliberately does not invoke the repository-wide fixer:
 // only an explicit `specscore spec lint --fix` may migrate unrelated content
 // such as an Outstanding Questions heading.
-func prepareLessonPostMutation(root, slug string) (lesson.PostMutationHook, error) {
+func prepareLessonPostMutationWithDeps(root, slug string, deps lessonCLIDeps) (lesson.PostMutationHook, error) {
 	specSub := filepath.Join(root, "spec")
 	indexPath := filepath.Join(specSub, "lessons", "README.md")
-	indexBefore, err := os.ReadFile(indexPath)
-	if err != nil {
-		return nil, exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
-	}
-	info, err := os.Stat(indexPath)
+	info, err := deps.fs.stat(indexPath)
 	if err != nil {
 		return nil, exitcode.UnexpectedErrorf("snapshotting lessons index mode: %v", err)
 	}
-	restore := func() error { return os.WriteFile(indexPath, indexBefore, info.Mode().Perm()) }
+	indexBefore, err := deps.fs.read(indexPath)
+	if err != nil {
+		return nil, exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
+	}
+	restore := func() error { return durableRestoreFile(indexPath, indexBefore, info.Mode().Perm()) }
 	fail := func(message string, cause error) error {
 		if rollbackErr := restore(); rollbackErr != nil {
 			message += fmt.Sprintf("; index rollback failed: %v", rollbackErr)
@@ -499,14 +502,14 @@ func prepareLessonPostMutation(root, slug string) (lesson.PostMutationHook, erro
 		if err != nil {
 			return fail("resolving rewritten Lesson", err)
 		}
-		updated, err := lesson.Parse(path)
+		updated, err := deps.parse(path)
 		if err != nil {
 			return fail("parsing rewritten Lesson", err)
 		}
-		if err := lessonIndexUpsertFn(specSub, updated); err != nil {
+		if err := deps.indexUpsert(specSub, updated); err != nil {
 			return fail("upserting Lesson index row", err)
 		}
-		violations, err := lintLintFn(lint.Options{SpecRoot: specSub})
+		violations, err := deps.lint(lint.Options{SpecRoot: specSub})
 		if err != nil {
 			return fail("running read-only lint", err)
 		}

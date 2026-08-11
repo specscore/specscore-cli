@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,6 +40,29 @@ func eventReplayCommand() *cobra.Command {
 	return cmd
 }
 func runEventReplay(cmd *cobra.Command, _ []string) error {
+	return runEventReplayWithDeps(cmd, defaultEventCLIDeps())
+}
+
+type eventCLIOutbox interface {
+	Replay(context.Context, []event.Subscriber, string, int) (event.ReplayResult, error)
+	Prepared() ([]event.PreparedRecord, error)
+	Commit(string) error
+	Abort(string) error
+	Enqueue(event.Event, []event.Subscriber) error
+}
+
+type eventCLIDeps struct {
+	getwd     func() (string, error)
+	findRoot  func(string) (string, error)
+	load      func(string) ([]event.Subscriber, error)
+	outboxFor func(string) eventCLIOutbox
+}
+
+func defaultEventCLIDeps() eventCLIDeps {
+	return eventCLIDeps{osGetwdFn, findRepoConfigRoot, event.LoadSubscribers, func(root string) eventCLIOutbox { return event.NewOutbox(root) }}
+}
+
+func runEventReplayWithDeps(cmd *cobra.Command, deps eventCLIDeps) error {
 	name, _ := cmd.Flags().GetString("subscriber")
 	if name == "" {
 		return exitcode.InvalidArgsError("--subscriber is required")
@@ -47,19 +71,19 @@ func runEventReplay(cmd *cobra.Command, _ []string) error {
 	if limit < 0 {
 		return exitcode.InvalidArgsError("--limit must be >= 0")
 	}
-	start, err := osGetwdFn()
+	start, err := deps.getwd()
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getwd: %v", err)
 	}
-	root, err := findRepoConfigRoot(start)
+	root, err := deps.findRoot(start)
 	if err != nil {
 		return err
 	}
-	subs, err := event.LoadSubscribers(root)
+	subs, err := deps.load(root)
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("%v", err)
 	}
-	r, err := event.NewOutbox(root).Replay(cmd.Context(), subs, name, limit)
+	r, err := deps.outboxFor(root).Replay(cmd.Context(), subs, name, limit)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("replaying outbox: %v", err)
 	}
@@ -89,19 +113,23 @@ func eventReconcileCommand() *cobra.Command {
 }
 
 func runEventReconcile(cmd *cobra.Command, args []string) error {
+	return runEventReconcileWithDeps(cmd, args, defaultEventCLIDeps())
+}
+
+func runEventReconcileWithDeps(cmd *cobra.Command, args []string, deps eventCLIDeps) error {
 	decision, _ := cmd.Flags().GetString("decision")
 	if decision != "commit" && decision != "abort" {
 		return exitcode.InvalidArgsError("--decision must be commit or abort")
 	}
-	start, err := osGetwdFn()
+	start, err := deps.getwd()
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getwd: %v", err)
 	}
-	root, err := findRepoConfigRoot(start)
+	root, err := deps.findRoot(start)
 	if err != nil {
 		return err
 	}
-	outbox := event.NewOutbox(root)
+	outbox := deps.outboxFor(root)
 	prepared, err := outbox.Prepared()
 	if err != nil {
 		return exitcode.UnexpectedErrorf("inspecting prepared events: %v", err)
@@ -358,6 +386,10 @@ func determineInputMode(payloadJSON, payloadFile string) string {
 }
 
 func runEventEmit(cmd *cobra.Command, _ []string) error {
+	return runEventEmitWithDeps(cmd, defaultEventCLIDeps())
+}
+
+func runEventEmitWithDeps(cmd *cobra.Command, deps eventCLIDeps) error {
 	for _, rf := range envelopeRequiredFlags {
 		v, _ := cmd.Flags().GetString(rf.flag)
 		if v == "" {
@@ -381,11 +413,11 @@ func runEventEmit(cmd *cobra.Command, _ []string) error {
 
 	// Discover the project root. Same heuristic the rest of the CLI uses
 	// (`findRepoConfigRoot` in spec.go); missing root → exit 3 (NotFound).
-	startDir, err := osGetwdFn()
+	startDir, err := deps.getwd()
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getwd: %v", err)
 	}
-	projectRoot, err := findRepoConfigRoot(startDir)
+	projectRoot, err := deps.findRoot(startDir)
 	if err != nil {
 		return err
 	}
@@ -418,7 +450,7 @@ func runEventEmit(cmd *cobra.Command, _ []string) error {
 	}
 	autofillEnvelope(&e, projectRoot, flagArtifactRevision)
 
-	subscribers, err := event.LoadSubscribers(projectRoot)
+	subscribers, err := deps.load(projectRoot)
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("%v", err)
 	}
@@ -428,7 +460,7 @@ func runEventEmit(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	outbox := event.NewOutbox(projectRoot)
+	outbox := deps.outboxFor(projectRoot)
 	if err := outbox.Enqueue(e, subscribers); err != nil {
 		return exitcode.UnexpectedErrorf("durably queueing event: %v", err)
 	}

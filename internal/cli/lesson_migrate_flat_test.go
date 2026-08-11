@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -20,6 +21,23 @@ func runGitForFlatMigration(t *testing.T, root string, args ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
+}
+
+func runFlatMigrationWithDeps(t *testing.T, root, slug string, deps lessonCLIDeps) (string, string, error) {
+	t.Helper()
+	cmd := lessonMigrateFlatCommand()
+	cmd.SetContext(context.Background())
+	if err := cmd.Flags().Set("classification", "process"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("project", root); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	err := runLessonMigrateFlatWithDeps(cmd, []string{slug}, deps)
+	return stdout.String(), stderr.String(), err
 }
 
 func TestLessonMigrateFlat_EndToEndIsLintCleanAndBounded(t *testing.T) {
@@ -139,18 +157,17 @@ func TestLessonMigrateFlat_ResumesEveryDurableBoundary(t *testing.T) {
 	for _, phase := range []string{"artifact-publication", "index-upsert", "event-commit"} {
 		t.Run(phase, func(t *testing.T) {
 			root := setupFlatMigrationCLIProject(t, "resume-boundary")
-			original := lessonMigrateFlatPhaseHook
 			injected := false
-			lessonMigrateFlatPhaseHook = func(actual string) error {
+			deps := defaultLessonCLIDeps()
+			deps.afterFlatPhase = func(actual string) error {
 				if actual == phase && !injected {
 					injected = true
 					return errors.New("simulated process stop")
 				}
 				return nil
 			}
-			t.Cleanup(func() { lessonMigrateFlatPhaseHook = original })
 
-			if _, _, err := runLesson(t, "migrate-flat", "resume-boundary", "--classification", "process", "--project", root); err == nil {
+			if _, _, err := runFlatMigrationWithDeps(t, root, "resume-boundary", deps); err == nil {
 				t.Fatal("expected injected crash")
 			}
 			marker := filepath.Join(root, "spec", "lessons", ".flat-migration-resume-boundary.json")
@@ -161,8 +178,7 @@ func TestLessonMigrateFlat_ResumesEveryDurableBoundary(t *testing.T) {
 				t.Fatalf("verified flat source was not removed before %s: %v", phase, err)
 			}
 
-			lessonMigrateFlatPhaseHook = nil
-			if _, stderr, err := runLesson(t, "migrate-flat", "resume-boundary", "--classification", "process", "--project", root); err != nil {
+			if _, stderr, err := runFlatMigrationWithDeps(t, root, "resume-boundary", defaultLessonCLIDeps()); err != nil {
 				t.Fatalf("resume after %s: %v\nstderr=%s", phase, err, stderr)
 			}
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {
@@ -252,17 +268,22 @@ func treeDigestForCLI(t *testing.T, root string) []byte {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() {
-			return nil
-		}
 		rel, _ := filepath.Rel(root, path)
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
 		b, readErr := os.ReadFile(path)
-		if readErr != nil {
+		if readErr != nil && !entry.IsDir() {
 			return readErr
 		}
 		out.WriteString(filepath.ToSlash(rel))
 		out.WriteByte(0)
-		out.Write(b)
+		out.WriteString(info.Mode().String())
+		out.WriteByte(0)
+		if !entry.IsDir() {
+			out.Write(b)
+		}
 		return nil
 	})
 	if err != nil {

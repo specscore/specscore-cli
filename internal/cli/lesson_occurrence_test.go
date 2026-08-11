@@ -114,17 +114,19 @@ func TestLessonReadCommandsRejectTraversalThroughCentralResolver(t *testing.T) {
 
 func TestLessonOccurrence_UnknownPostPublicationFailureRetainsPreparedEvent(t *testing.T) {
 	root := canonicalLessonProject(t)
-	orig := lessonAddOccurrenceFn
-	lessonAddOccurrenceFn = func(lesson.AddOccurrenceOptions) (lesson.Occurrence, error) {
+	deps := defaultLessonCLIDeps()
+	deps.addOccurrence = func(lesson.AddOccurrenceOptions) (lesson.Occurrence, error) {
 		return lesson.Occurrence{}, errors.New("injected publication/fsync boundary uncertainty")
 	}
-	t.Cleanup(func() { lessonAddOccurrenceFn = orig })
-	_, stderr, err := runLesson(t, "occurrence", "add", "review-before-merge")
+	cmd := lessonOccurrenceAddCommand()
+	var stderr strings.Builder
+	cmd.SetErr(&stderr)
+	err := runLessonOccurrenceAddWithDeps(cmd, []string{"review-before-merge"}, deps)
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Fatalf("exit=%d want=%d err=%v", got, exitcode.Unexpected, err)
 	}
-	if !strings.Contains(stderr+err.Error(), "recovery required: prepared event") {
-		t.Fatalf("missing visible recovery instruction: stderr=%q err=%v", stderr, err)
+	if !strings.Contains(stderr.String()+err.Error(), "recovery required: prepared event") {
+		t.Fatalf("missing visible recovery instruction: stderr=%q err=%v", stderr.String(), err)
 	}
 	prepared, readErr := event.NewOutbox(root).Prepared()
 	if readErr != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.occurrence-recorded" {

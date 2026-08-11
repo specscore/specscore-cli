@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/spf13/cobra"
@@ -37,30 +39,30 @@ func lessonOccurrenceAddCommand() *cobra.Command {
 }
 
 func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
+	return runLessonOccurrenceAddWithDeps(cmd, args, defaultLessonCLIDeps())
+}
+
+func runLessonOccurrenceAddWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps) error {
 	slug := args[0]
 	if err := lesson.ValidateSlug(slug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
 	}
 	project, _ := cmd.Flags().GetString("project")
-	lessonsDir, err := resolveLessonsDir(project)
+	root, err := resolveSpecRoot(project)
 	if err != nil {
 		return err
 	}
+	lessonsDir := filepath.Join(root, "spec", "lessons")
 	path, err := lesson.ResolveLessonFile(lessonsDir, slug)
 	if err != nil {
 		return err
 	}
-	l, err := lesson.Parse(path)
+	l, err := deps.parse(path)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("parsing lesson %s: %v", slug, err)
 	}
 	if !l.Canonical {
 		return exitcode.InvalidStateErrorf("lesson %q is legacy flat form; `lesson recur` remains available until explicit migration", slug)
-	}
-	root := projectRootForOccurrence(project)
-	indexSnapshot, err := snapshotOccurrenceIndex(root)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
 	}
 	context, explicit, err := occurrenceContextInput(cmd)
 	if err != nil {
@@ -68,7 +70,7 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	}
 	capture, _ := cmd.Flags().GetBool("capture-context")
 	if !explicit && capture {
-		context = captureOccurrenceContext(projectRootForOccurrence(project), path)
+		context = captureOccurrenceContext(root, path)
 	}
 	summary, _ := cmd.Flags().GetString("summary")
 	kind, _ := cmd.Flags().GetString("evidence-kind")
@@ -80,67 +82,111 @@ func runLessonOccurrenceAdd(cmd *cobra.Command, args []string) error {
 	}
 	id := uuid.NewString()
 	now := time.Now().UTC()
-	prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": id}, now)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("preparing occurrence event: %v", err)
+	result, failure := publishCanonicalOccurrence(cmd.Context(), root, l, lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: summary, Context: context, Evidence: evidence, Now: now}, false, deps)
+	if failure != nil {
+		return failure.cliError(false)
 	}
-	o, err := lessonAddOccurrenceFn(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: summary, Context: context, Evidence: evidence, Now: now})
-	if err != nil {
-		if recovery, resolved := prepared.ResolveMutationFailure("recording occurrence", err); recovery {
-			return exitcode.UnexpectedErrorf("%v", resolved)
-		} else {
-			return exitcode.InvalidArgsErrorf("invalid occurrence: %v", resolved)
-		}
-	}
-	if err := lessonIndexUpsertFn(filepath.Join(root, "spec"), l); err != nil {
-		failure := lesson.CompensatePublication(func() error {
-			if removeErr := lesson.RemoveOccurrence(o.Path); removeErr != nil {
-				return removeErr
-			}
-			return indexSnapshot.restore()
-		}, err)
-		if recovery, resolved := prepared.ResolveMutationFailure("upserting occurrence index row", failure); recovery {
-			return exitcode.UnexpectedErrorf("%v", resolved)
-		} else {
-			return exitcode.UnexpectedErrorf("upserting occurrence index row: %v", resolved)
-		}
-	}
-	result, commitErr := prepared.Commit(cmd.Context())
-	if commitErr != nil {
-		return exitcode.UnexpectedErrorf("occurrence recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
-	}
-	for _, failure := range result.Failed {
+	for _, failure := range result.delivery.Failed {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: occurrence %s\n", slug, o.ID)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: occurrence %s\n", slug, result.occurrence.ID)
 	return nil
 }
 
-// occurrenceIndexSnapshot lets occurrence publication compensate both the
-// immutable child and the derived index row if the narrow index upsert fails.
-// It is deliberately scoped to spec/lessons/README.md: occurrence add never
-// runs a repository-wide fixer.
-type occurrenceIndexSnapshot struct {
-	path string
-	data []byte
-	mode os.FileMode
+type canonicalOccurrenceResult struct {
+	occurrence lesson.Occurrence
+	items      []lesson.Occurrence
+	delivery   event.ReplayResult
 }
 
-func snapshotOccurrenceIndex(root string) (occurrenceIndexSnapshot, error) {
+type canonicalOccurrenceFailure struct {
+	phase            string
+	recoveryRequired bool
+	err              error
+	eventID          string
+}
+
+func (f *canonicalOccurrenceFailure) cliError(recur bool) error {
+	if f.recoveryRequired {
+		return exitcode.UnexpectedErrorf("%v", f.err)
+	}
+	switch f.phase {
+	case "snapshot":
+		return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", f.err)
+	case "prepare":
+		return exitcode.UnexpectedErrorf("preparing occurrence event: %v", f.err)
+	case "record":
+		if !recur {
+			return exitcode.InvalidArgsErrorf("invalid occurrence: %v", f.err)
+		}
+		return exitcode.UnexpectedErrorf("recording occurrence: %v", f.err)
+	case "index":
+		return exitcode.UnexpectedErrorf("upserting occurrence index row: %v", f.err)
+	case "read":
+		return exitcode.UnexpectedErrorf("reading occurrences: %v", f.err)
+	default:
+		return exitcode.UnexpectedErrorf("occurrence recorded but event publication is pending for event %s: %v", f.eventID, f.err)
+	}
+}
+
+// publishCanonicalOccurrence owns the one canonical occurrence transaction:
+// snapshot index, prepare event, publish child, refresh/read the derived row,
+// compensate child+index together, then commit the event.
+func publishCanonicalOccurrence(ctx context.Context, root string, l *lesson.Lesson, opts lesson.AddOccurrenceOptions, readBack bool, deps lessonCLIDeps) (canonicalOccurrenceResult, *canonicalOccurrenceFailure) {
+	if err := preflightOccurrenceIndex(root); err != nil {
+		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "snapshot", err: err}
+	}
+	prepared, err := deps.prepareEvent(root, "lesson.occurrence-recorded", l.Slug, map[string]any{"occurrence_id": opts.ID}, opts.Now)
+	if err != nil {
+		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "prepare", err: err}
+	}
+	o, err := deps.addOccurrence(opts)
+	if err != nil {
+		recovery, resolved := prepared.ResolveMutationFailure("recording occurrence", err)
+		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "record", recoveryRequired: recovery, err: resolved}
+	}
+	compensate := func(operation string, cause error) (bool, error) {
+		failure := lesson.CompensatePublication(func() error {
+			if err := deps.removeOccurrence(o.Path); err != nil {
+				return err
+			}
+			// Recompute only this Lesson's derived row from the surviving
+			// immutable children. Restoring a whole-file snapshot could erase a
+			// concurrently committed row owned by another command.
+			indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+			if err := deps.reconcileIndex(filepath.Join(root, "spec"), l); err != nil {
+				return err
+			}
+			return durableFencePathWithOps(indexPath, deps.durable)
+		}, cause)
+		return prepared.ResolveMutationFailure(operation, failure)
+	}
+	if err := deps.indexUpsert(filepath.Join(root, "spec"), l); err != nil {
+		recovery, resolved := compensate("upserting occurrence index row", err)
+		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "index", recoveryRequired: recovery, err: resolved}
+	}
+	var items []lesson.Occurrence
+	if readBack {
+		items, err = deps.discoverOccurrences(opts.LessonPath)
+		if err != nil {
+			recovery, resolved := compensate("reading occurrences after publication", err)
+			return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "read", recoveryRequired: recovery, err: resolved}
+		}
+	}
+	delivery, err := prepared.Commit(ctx)
+	if err != nil {
+		return canonicalOccurrenceResult{}, &canonicalOccurrenceFailure{phase: "commit", eventID: prepared.event.UUID, err: err}
+	}
+	return canonicalOccurrenceResult{occurrence: o, items: items, delivery: delivery}, nil
+}
+
+func preflightOccurrenceIndex(root string) error {
 	path := filepath.Join(root, "spec", "lessons", "README.md")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return occurrenceIndexSnapshot{}, err
+	if _, err := os.Stat(path); err != nil {
+		return err
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return occurrenceIndexSnapshot{}, err
-	}
-	return occurrenceIndexSnapshot{path: path, data: b, mode: info.Mode().Perm()}, nil
-}
-
-func (s occurrenceIndexSnapshot) restore() error {
-	return durableRestoreFile(s.path, s.data, s.mode)
+	_, err := os.ReadFile(path)
+	return err
 }
 
 func occurrenceContextInput(cmd *cobra.Command) (map[string]any, bool, error) {
@@ -182,14 +228,6 @@ func occurrenceContextInput(cmd *cobra.Command) (map[string]any, bool, error) {
 		return nil, false, exitcode.InvalidArgsError("context must be a JSON object")
 	}
 	return context, true, nil
-}
-
-func projectRootForOccurrence(project string) string {
-	root, err := resolveSpecRoot(project)
-	if err != nil {
-		return ""
-	}
-	return root
 }
 
 // captureOccurrenceContext only reads local git state and has no connection to

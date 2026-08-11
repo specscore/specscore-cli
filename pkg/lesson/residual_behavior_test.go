@@ -220,7 +220,7 @@ func TestFinalizeFlatMigrationVerifiesCompleteTreeAtEveryFilesystemBoundary(t *t
 			if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
 				t.Fatalf("changed finalization tree retained marker: %v", statErr)
 			}
-			if proofErr := validateCompletedFlatMigrationProof(lessons, filepath.Join(lessons, "rule", "README.md"), "rule"); proofErr != nil {
+			if proofErr := validateCompletedFlatMigrationProofWithFS(lessons, filepath.Join(lessons, "rule", "README.md"), "rule", osLessonFS{}); proofErr != nil {
 				t.Fatalf("post-marker failure lacks complete canonical/index/manifest proof: %v", proofErr)
 			}
 		})
@@ -278,10 +278,10 @@ func TestFlatMigrationStageAndProofRejectMalformedCompleteArtifacts(t *testing.T
 
 	lessons, opts, _, _ := finalizedFlatMatrixFixture(t)
 	canonical := filepath.Join(lessons, opts.Slug, "README.md")
-	if err := validateFlatMigrationIndexRow(lessons, canonical); err != nil {
+	if err := validateFlatMigrationIndexRowWithFS(lessons, canonical, osLessonFS{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateCompletedFlatMigrationProof(lessons, canonical, opts.Slug); err != nil {
+	if err := validateCompletedFlatMigrationProofWithFS(lessons, canonical, opts.Slug, osLessonFS{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -893,7 +893,7 @@ func TestFlatMigrationResidualArtifactValidation(t *testing.T) {
 			canonical := filepath.Join(lessons, opts.Slug, "README.md")
 			writeFlatMigrationIndex(t, lessons, canonical)
 			mutate(lessons, canonical)
-			if err := validateCompletedFlatMigrationProof(lessons, canonical, opts.Slug); err == nil {
+			if err := validateCompletedFlatMigrationProofWithFS(lessons, canonical, opts.Slug, osLessonFS{}); err == nil {
 				t.Fatal("corrupt completed proof accepted")
 			}
 		})

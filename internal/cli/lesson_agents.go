@@ -8,6 +8,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -50,7 +51,15 @@ type lessonAgentsRequest struct {
 	Text    string `json:"text,omitempty"`
 }
 
-var lessonAgentsCommandContext = exec.CommandContext
+type lessonAgentsHookRunner func(context.Context, string, string, []byte, io.Writer, io.Writer) error
+
+func runLessonAgentsHook(ctx context.Context, hook, root string, payload []byte, stdout, stderr io.Writer) error {
+	external := exec.CommandContext(ctx, hook)
+	external.Dir = root
+	external.Stdin = bytes.NewReader(payload)
+	external.Stdout, external.Stderr = stdout, stderr
+	return external.Run()
+}
 
 func lessonAgentsCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "agents <lesson>", Short: "Read durable Lesson agent context or invoke an explicit external hook", Long: "Reads the adapter-produced canonical Lesson projection at spec/lessons/<slug>/agents.json without network access. The core never writes this operational projection. --refresh, --open, --message, and --resume invoke only the executable configured by SPECSCORE_LESSON_AGENTS_HOOK, sending a neutral JSON request on stdin and streaming its result. The external adapter owns all live coordination, authentication, retries, and projection updates.", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonAgents}
@@ -183,6 +192,10 @@ func writeLessonAgentsProjection(w io.Writer, format string, projection lessonAg
 }
 
 func invokeLessonAgentsHook(cmd *cobra.Command, action, root, path, slug, agentID, text string) error {
+	return invokeLessonAgentsHookWithRunner(cmd, action, root, path, slug, agentID, text, runLessonAgentsHook)
+}
+
+func invokeLessonAgentsHookWithRunner(cmd *cobra.Command, action, root, path, slug, agentID, text string, run lessonAgentsHookRunner) error {
 	hook := strings.TrimSpace(os.Getenv(lessonAgentsHookEnv))
 	if hook == "" {
 		return exitcode.InvalidStateErrorf("%s must name the external lesson-agents hook for --%s", lessonAgentsHookEnv, action)
@@ -195,18 +208,11 @@ func invokeLessonAgentsHook(cmd *cobra.Command, action, root, path, slug, agentI
 	req.Lesson.Slug, req.Lesson.Path = slug, filepath.ToSlash(filepath.Join("spec", "lessons", slug, "README.md"))
 	sum := sha256.Sum256(b)
 	req.Lesson.Revision = fmt.Sprintf("sha256:%x", sum[:])
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("encoding external hook request: %v", err)
-	}
-	external := lessonAgentsCommandContext(cmd.Context(), hook)
+	payload, _ := json.Marshal(req) // request contains strings only; encoding cannot fail.
 	// The selected project, not the caller's ambient CWD, is the hook's
 	// canonical anchor. This makes --project deterministic for native adapters
 	// that locate their configuration and durable state relative to a repo.
-	external.Dir = root
-	external.Stdin = bytes.NewReader(payload)
-	external.Stdout, external.Stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
-	if err := external.Run(); err != nil {
+	if err := run(cmd.Context(), hook, root, payload, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 		return exitcode.UnexpectedErrorf("external lesson-agents hook failed: %v", err)
 	}
 	return nil

@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
-	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
 
@@ -42,6 +40,10 @@ Docs: docs/agent-lessons.md#import-and-deduplicate-without-losing-history`, Args
 }
 
 func runLessonImportLegacy(cmd *cobra.Command, _ []string) error {
+	return runLessonImportLegacyWithDeps(cmd, defaultLessonCLIDeps())
+}
+
+func runLessonImportLegacyWithDeps(cmd *cobra.Command, deps lessonCLIDeps) error {
 	source, _ := cmd.Flags().GetString("source")
 	if source == "" {
 		return exitcode.InvalidArgsError("--source is required")
@@ -63,7 +65,7 @@ func runLessonImportLegacy(cmd *cobra.Command, _ []string) error {
 	if !filepath.IsAbs(source) {
 		source = filepath.Join(root, source)
 	}
-	inv, err := lessonInventoryLegacyFn(source)
+	inv, err := deps.inventoryLegacy(source)
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("reading legacy source: %v", err)
 	}
@@ -74,7 +76,7 @@ func runLessonImportLegacy(cmd *cobra.Command, _ []string) error {
 	if mappingPath == "" {
 		return exitcode.InvalidArgsError("--apply requires --mapping with an explicit disposition for every source entry")
 	}
-	b, err := os.ReadFile(mappingPath)
+	b, err := deps.fs.read(mappingPath)
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("reading mapping: %v", err)
 	}
@@ -88,7 +90,7 @@ func runLessonImportLegacy(cmd *cobra.Command, _ []string) error {
 	if err := dec.Decode(&trailing); err != io.EOF {
 		return exitcode.InvalidArgsError("parsing mapping JSON: trailing JSON")
 	}
-	cfg, err := projectdef.ReadSpecConfig(root)
+	cfg, err := deps.readConfig(root)
 	if err != nil {
 		return exitcode.InvalidStateErrorf("legacy apply requires a valid specscore.yaml: %v", err)
 	}
@@ -97,14 +99,14 @@ func runLessonImportLegacy(cmd *cobra.Command, _ []string) error {
 		return exitcode.InvalidStateError("legacy apply requires non-empty lessons.classifications in specscore.yaml")
 	}
 	dir := filepath.Join(root, "spec", "lessons")
-	if err := lesson.PreflightLegacyApply(dir, allowedClassifications, inv, mapping); err != nil {
+	if err := deps.preflightLegacy(dir, allowedClassifications, inv, mapping); err != nil {
 		return exitcode.InvalidStateErrorf("legacy import preflight refused: %v", err)
 	}
-	prepared, err := prepareLessonEvent(root, "lesson.legacy-import-applied", "legacy-import", map[string]any{"source_sha256": inv.Source.SHA256, "source_revision": inv.Source.Revision, "mapping_count": len(mapping.Entries)}, time.Time{})
+	prepared, err := deps.prepareEvent(root, "lesson.legacy-import-applied", "legacy-import", map[string]any{"source_sha256": inv.Source.SHA256, "source_revision": inv.Source.Revision, "mapping_count": len(mapping.Entries)}, time.Time{})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing import event: %v", err)
 	}
-	result, err := lessonApplyLegacyFn(dir, allowedClassifications, inv, mapping)
+	result, err := deps.applyLegacy(dir, allowedClassifications, inv, mapping)
 	if err != nil {
 		if recovery, resolved := prepared.ResolveMutationFailure("applying legacy import", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)

@@ -157,7 +157,7 @@ func TestLessonChangeStatus_SupersededUnresolvableSuccessor_CLI(t *testing.T) {
 	}
 }
 
-// AC: lint-failure-rolls-back — inject a lint failure via the lintLintFn seam.
+// AC: lint-failure-rolls-back.
 func TestLessonChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Recorded")
 	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
@@ -165,16 +165,18 @@ func TestLessonChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orig := lintLintFn
-	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
+	deps := defaultLessonCLIDeps()
+	deps.lint = func(opts lint.Options) ([]lint.Violation, error) {
 		if opts.Fix {
 			return nil, nil
 		}
 		return []lint.Violation{{File: "x", Line: 1, Rule: "L-001", Severity: "error", Message: "boom"}}, nil
 	}
-	t.Cleanup(func() { lintLintFn = orig })
-
-	_, _, err = runLesson(t, "change-status", "kinder-fake", "--to=stated")
+	cmd := lessonChangeStatusCommand()
+	if setErr := cmd.Flags().Set("to", "stated"); setErr != nil {
+		t.Fatal(setErr)
+	}
+	err = runLessonChangeStatusWithDeps(cmd, []string{"kinder-fake"}, deps)
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}

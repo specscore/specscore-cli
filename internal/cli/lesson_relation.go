@@ -26,6 +26,10 @@ func lessonRelationAddCommand() *cobra.Command {
 }
 
 func runLessonRelationAdd(cmd *cobra.Command, args []string) error {
+	return runLessonRelationAddWithDeps(cmd, args, defaultLessonCLIDeps())
+}
+
+func runLessonRelationAddWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps) error {
 	from, to := args[0], args[1]
 	typ, _ := cmd.Flags().GetString("type")
 	if err := lesson.ValidateRelation(from, typ, to); err != nil {
@@ -43,11 +47,11 @@ func runLessonRelationAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	dir := filepath.Join(root, "spec", "lessons")
-	prepared, err := prepareLessonEvent(root, "lesson.relation-recorded", from, map[string]any{"type": typ, "to": to}, time.Time{})
+	prepared, err := deps.prepareEvent(root, "lesson.relation-recorded", from, map[string]any{"type": typ, "to": to}, time.Time{})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing relation event: %v", err)
 	}
-	if err := lesson.AddRelation(dir, from, typ, to); err != nil {
+	if err := deps.addRelation(dir, from, typ, to); err != nil {
 		if recovery, resolved := prepared.ResolveMutationFailure("adding relation", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
 		} else {
@@ -73,6 +77,10 @@ func lessonRelationListCommand() *cobra.Command {
 }
 
 func runLessonRelationList(cmd *cobra.Command, args []string) error {
+	return runLessonRelationListWithDeps(cmd, args, defaultLessonCLIDeps())
+}
+
+func runLessonRelationListWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps) error {
 	format, _ := cmd.Flags().GetString("format")
 	if err := validateFormat(format); err != nil {
 		return err
@@ -82,7 +90,7 @@ func runLessonRelationList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	items, err := lesson.ListRelations(dir, args[0])
+	items, err := deps.listRelations(dir, args[0])
 	if err != nil {
 		return err
 	}

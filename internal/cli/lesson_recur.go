@@ -62,6 +62,10 @@ func warnIfLessonRetired(w io.Writer, slug string, status string) {
 }
 
 func runLessonRecur(cmd *cobra.Command, args []string) error {
+	return runLessonRecurWithDeps(cmd, args, defaultLessonCLIDeps())
+}
+
+func runLessonRecurWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps) error {
 	if len(args) == 0 {
 		return exitcode.InvalidArgsError("missing required positional argument: <slug>")
 	}
@@ -87,67 +91,22 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	before, err := lessonParseFn(path)
+	before, err := deps.parse(path)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("parsing lesson %s: %v", slug, err)
 	}
 	warnIfLessonRetired(cmd.ErrOrStderr(), slug, before.Status)
 	if before.Canonical {
-		root := projectRootForOccurrence(projectFlag)
-		indexSnapshot, indexErr := snapshotOccurrenceIndex(root)
-		if indexErr != nil {
-			return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", indexErr)
-		}
 		id := uuid.NewString()
 		now := time.Now().UTC()
-		prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"occurrence_id": id}, now)
-		if err != nil {
-			return exitcode.UnexpectedErrorf("preparing occurrence event: %v", err)
+		result, failure := publishCanonicalOccurrence(cmd.Context(), root, before, lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: note, Context: captureOccurrenceContext(root, path), Evidence: lesson.Evidence{Kind: "none"}, Now: now}, true, deps)
+		if failure != nil {
+			return failure.cliError(true)
 		}
-		o, err := lessonAddOccurrenceFn(lesson.AddOccurrenceOptions{LessonPath: path, ID: id, Summary: note, Context: captureOccurrenceContext(root, path), Evidence: lesson.Evidence{Kind: "none"}, Now: now})
-		if err != nil {
-			if recovery, resolved := prepared.ResolveMutationFailure("recording occurrence", err); recovery {
-				return exitcode.UnexpectedErrorf("%v", resolved)
-			} else {
-				return exitcode.UnexpectedErrorf("recording occurrence: %v", resolved)
-			}
-		}
-		if err := lessonIndexUpsertFn(filepath.Join(root, "spec"), before); err != nil {
-			failure := lesson.CompensatePublication(func() error {
-				if removeErr := lesson.RemoveOccurrence(o.Path); removeErr != nil {
-					return removeErr
-				}
-				return indexSnapshot.restore()
-			}, err)
-			if recovery, resolved := prepared.ResolveMutationFailure("upserting occurrence index row", failure); recovery {
-				return exitcode.UnexpectedErrorf("%v", resolved)
-			} else {
-				return exitcode.UnexpectedErrorf("upserting occurrence index row: %v", resolved)
-			}
-		}
-		items, err := lesson.DiscoverOccurrences(path)
-		if err != nil {
-			failure := lesson.CompensatePublication(func() error {
-				if removeErr := lesson.RemoveOccurrence(o.Path); removeErr != nil {
-					return removeErr
-				}
-				return indexSnapshot.restore()
-			}, err)
-			if recovery, resolved := prepared.ResolveMutationFailure("reading occurrences after publication", failure); recovery {
-				return exitcode.UnexpectedErrorf("%v", resolved)
-			} else {
-				return exitcode.UnexpectedErrorf("reading occurrences: %v", resolved)
-			}
-		}
-		result, commitErr := prepared.Commit(cmd.Context())
-		if commitErr != nil {
-			return exitcode.UnexpectedErrorf("occurrence recorded but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
-		}
-		for _, failure := range result.Failed {
+		for _, failure := range result.delivery.Failed {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
 		}
-		_ = items // occurrence identifier stays internal for historical output compatibility.
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: recurred %d\n", slug, len(items))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: recurred %d\n", slug, len(result.items))
 		return nil
 	}
 
@@ -155,31 +114,33 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 		return exitcode.InvalidArgsErrorf("unsafe recurrence note: %v", err)
 	}
 	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
-	beforeBody, err := os.ReadFile(path)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("snapshotting legacy Lesson: %v", err)
-	}
-	bodyInfo, err := os.Stat(path)
+	bodyInfo, err := deps.fs.stat(path)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("snapshotting legacy Lesson mode: %v", err)
 	}
-	beforeIndex, indexErr := os.ReadFile(indexPath)
-	if indexErr != nil && !os.IsNotExist(indexErr) {
-		return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", indexErr)
+	beforeBody, err := deps.fs.read(path)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("snapshotting legacy Lesson: %v", err)
 	}
+	indexInfo, indexErr := deps.fs.stat(indexPath)
 	var indexMode os.FileMode
 	if indexErr == nil {
-		indexInfo, statErr := os.Stat(indexPath)
-		if statErr != nil {
-			return exitcode.UnexpectedErrorf("snapshotting lessons index mode: %v", statErr)
-		}
 		indexMode = indexInfo.Mode().Perm()
+	} else if !os.IsNotExist(indexErr) {
+		return exitcode.UnexpectedErrorf("snapshotting lessons index mode: %v", indexErr)
 	}
-	prepared, err := prepareLessonEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"kind": "legacy-recurrence"}, time.Now().UTC())
+	var beforeIndex []byte
+	if indexErr == nil {
+		beforeIndex, err = deps.fs.read(indexPath)
+		if err != nil {
+			return exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
+		}
+	}
+	prepared, err := deps.prepareEvent(root, "lesson.occurrence-recorded", slug, map[string]any{"kind": "legacy-recurrence"}, time.Now().UTC())
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing recurrence event: %v", err)
 	}
-	count, err := lessonRecurFn(path, note)
+	count, err := deps.recur(path, note)
 	if err != nil {
 		if recovery, resolved := prepared.ResolveMutationFailure("recording legacy recurrence", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
@@ -189,7 +150,7 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 	}
 
 	specSub := filepath.Join(root, "spec")
-	updated, parseErr := lesson.Parse(path)
+	updated, parseErr := deps.parse(path)
 	if parseErr != nil {
 		failure := lesson.CompensatePublication(func() error {
 			return restoreLegacyRecurFiles(path, beforeBody, bodyInfo.Mode().Perm(), indexPath, beforeIndex, indexMode, indexErr == nil)
@@ -200,7 +161,7 @@ func runLessonRecur(cmd *cobra.Command, args []string) error {
 			return exitcode.UnexpectedErrorf("parsing updated legacy Lesson: %v", resolved)
 		}
 	}
-	if err := lessonIndexUpsertFn(specSub, updated); err != nil {
+	if err := deps.indexUpsert(specSub, updated); err != nil {
 		failure := lesson.CompensatePublication(func() error {
 			return restoreLegacyRecurFiles(path, beforeBody, bodyInfo.Mode().Perm(), indexPath, beforeIndex, indexMode, indexErr == nil)
 		}, err)
@@ -233,7 +194,34 @@ func restoreLegacyRecurFiles(path string, body []byte, bodyMode os.FileMode, ind
 }
 
 func durableRestoreFile(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	return durableRestoreFileWithOps(path, data, mode, defaultDurableFileOps())
+}
+
+type durableFile interface {
+	Chmod(os.FileMode) error
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type durableFileOps struct {
+	openFile func(string, int, os.FileMode) (durableFile, error)
+	open     func(string) (durableFile, error)
+	remove   func(string) error
+}
+
+func defaultDurableFileOps() durableFileOps {
+	return durableFileOps{
+		openFile: func(path string, flag int, mode os.FileMode) (durableFile, error) {
+			return os.OpenFile(path, flag, mode)
+		},
+		open:   func(path string) (durableFile, error) { return os.Open(path) },
+		remove: os.Remove,
+	}
+}
+
+func durableRestoreFileWithOps(path string, data []byte, mode os.FileMode, ops durableFileOps) error {
+	f, err := ops.openFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
@@ -252,7 +240,7 @@ func durableRestoreFile(path string, data []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	dir, err := ops.open(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
@@ -261,13 +249,34 @@ func durableRestoreFile(path string, data []byte, mode os.FileMode) error {
 }
 
 func durableRemovePath(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	return durableRemovePathWithOps(path, defaultDurableFileOps())
+}
+
+func durableRemovePathWithOps(path string, ops durableFileOps) error {
+	if err := ops.remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	dir, err := ops.open(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = dir.Close() }()
 	return dir.Sync()
+}
+
+func durableFencePathWithOps(path string, ops durableFileOps) error {
+	for _, target := range []string{path, filepath.Dir(path)} {
+		f, err := ops.open(target)
+		if err != nil {
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

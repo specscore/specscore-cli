@@ -10,26 +10,20 @@ import (
 	"github.com/specscore/specscore-cli/pkg/ideapromote"
 	"github.com/specscore/specscore-cli/pkg/idearelocate"
 	"github.com/specscore/specscore-cli/pkg/issue"
-	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // Test seams — package-level vars wrapping external functions.
 // Production code calls these vars; tests replace them via t.Cleanup.
 var (
-	decisionScaffoldFn      = decision.Scaffold
-	decisionNextNumberFn    = decision.NextNumber
-	ideaScaffoldFn          = idea.Scaffold
-	planScaffoldFn          = plan.Scaffold
-	lessonAddOccurrenceFn   = lesson.AddOccurrence
-	lessonRecurFn           = lesson.Recur
-	lessonParseFn           = lesson.Parse
-	lessonInventoryLegacyFn = lesson.InventoryLegacy
-	lessonApplyLegacyFn     = lesson.ApplyLegacy
-	issueScaffoldFn         = issue.Scaffold
-	issueParseFn            = issue.Parse
-	featureFindRefsFn       = feature.FindFeatureRefs
-	filepathRelFn           = filepath.Rel
+	decisionScaffoldFn   = decision.Scaffold
+	decisionNextNumberFn = decision.NextNumber
+	ideaScaffoldFn       = idea.Scaffold
+	planScaffoldFn       = plan.Scaffold
+	issueScaffoldFn      = issue.Scaffold
+	issueParseFn         = issue.Parse
+	featureFindRefsFn    = feature.FindFeatureRefs
+	filepathRelFn        = filepath.Rel
 
 	idearelocateDiscoverSiblingsFn   = idearelocate.DiscoverSiblings
 	idearelocateExecuteCommitPhaseFn = idearelocate.ExecuteCommitPhase

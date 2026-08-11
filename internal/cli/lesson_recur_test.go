@@ -9,7 +9,6 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
-	"github.com/specscore/specscore-cli/pkg/lint"
 )
 
 func TestLessonRecur_HappyPath(t *testing.T) {
@@ -90,14 +89,15 @@ func TestLessonRecur_WarnsOnRetiredStatuses(t *testing.T) {
 // TestLessonRecur_ParseError covers runLessonRecur's lesson.Parse error
 // branch via the lessonParseFn seam.
 func TestLessonRecur_ParseError(t *testing.T) {
-	stageLesson(t, "kinder-fake", "Stated")
-	orig := lessonParseFn
-	lessonParseFn = func(string) (*lesson.Lesson, error) {
+	root := stageLesson(t, "kinder-fake", "Stated")
+	deps := defaultLessonCLIDeps()
+	deps.parse = func(string) (*lesson.Lesson, error) {
 		return nil, errors.New("parse boom")
 	}
-	t.Cleanup(func() { lessonParseFn = orig })
+	cmd := lessonRecurCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
 
-	_, _, err := runLesson(t, "recur", "kinder-fake")
+	err := runLessonRecurWithDeps(cmd, []string{"kinder-fake"}, deps)
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
 	}
@@ -149,31 +149,33 @@ func TestLessonRecur_RecurFnFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeLessonInDir(t, filepath.Join(root, "spec", "lessons"), "kinder-fake", "Stated")
-	orig := lessonRecurFn
-	lessonRecurFn = func(string, string) (int, error) {
+	deps := defaultLessonCLIDeps()
+	deps.recur = func(string, string) (int, error) {
 		return 0, errors.New("boom")
 	}
-	t.Cleanup(func() { lessonRecurFn = orig })
+	cmd := lessonRecurCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
 
-	_, _, err := runLesson(t, "recur", "kinder-fake")
+	err := runLessonRecurWithDeps(cmd, []string{"kinder-fake"}, deps)
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
 	}
 }
 
-func TestLessonRecur_LintFixFails(t *testing.T) {
+func TestLessonRecur_IndexUpsertFails(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Stated")
 	if err := os.RemoveAll(filepath.Join(root, "spec", "lessons", "kinder-fake")); err != nil {
 		t.Fatal(err)
 	}
 	writeLessonInDir(t, filepath.Join(root, "spec", "lessons"), "kinder-fake", "Stated")
-	orig := lintLintFn
-	lintLintFn = func(lint.Options) ([]lint.Violation, error) {
-		return nil, errors.New("fix boom")
+	deps := defaultLessonCLIDeps()
+	deps.indexUpsert = func(string, *lesson.Lesson) error {
+		return errors.New("index boom")
 	}
-	t.Cleanup(func() { lintLintFn = orig })
+	cmd := lessonRecurCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
 
-	_, _, err := runLesson(t, "recur", "kinder-fake")
+	err := runLessonRecurWithDeps(cmd, []string{"kinder-fake"}, deps)
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
 	}
