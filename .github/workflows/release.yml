@@ -109,6 +109,11 @@ jobs:
       # Pre-1.0: cap an accidental major (feat!:) to a minor bump. Cut v1.0.0
       # only by pushing that tag explicitly.
       allow_major_version_bump: false
+      # specscore: cli/release-distribution#req:defer-cask-install-smoke
+      # Keep publishing the Homebrew cask, but do not exercise `brew install
+      # --cask` until macOS notarization is fail-closed. The raw release
+      # artifact smoke remains enabled by the reusable workflow's default.
+      artifact_smoke_test_homebrew_cask: false
     secrets:
       # Cross-repo PAT (classic, public_repo) for the Homebrew tap, Scoop
       # bucket, and WinGet fork. Forwarded to GoReleaser as
