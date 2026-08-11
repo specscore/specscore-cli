@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
@@ -162,6 +164,18 @@ func TestLessonNew_UpgradesLegacyIndexForFirstCanonicalLesson(t *testing.T) {
 	}
 }
 
+func TestLessonNew_InvalidSlug(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	_, _, err := runLesson(t, "new", "Bad_Slug")
+	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "Bad_Slug.md")); statErr == nil {
+		t.Error("no file should be created for an invalid slug")
+	}
+}
+
 func TestLessonNew_Collision(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -214,6 +228,15 @@ func TestLessonNew_TitleOwnerDefaults(t *testing.T) {
 	}
 	if !strings.Contains(s, "**Owner:** envuser") {
 		t.Errorf("owner not defaulted from $USER:\n%s", s)
+	}
+}
+
+func TestLessonNew_ResolveSpecRootError(t *testing.T) {
+	dir := t.TempDir() // no spec/ tree
+	withCwd(t, dir)
+	_, _, err := runLesson(t, "new", "p")
+	if err == nil {
+		t.Fatal("expected error when no spec root can be resolved")
 	}
 }
 
@@ -277,10 +300,63 @@ func TestLessonNew_AncestorIndexError(t *testing.T) {
 	}
 }
 
+func TestLessonNew_WriteError(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, filepath.Join(root, "spec", "README.md"), "# spec\n")
+	writeFileT(t, filepath.Join(lessonsDir, "README.md"), "# lessons\n")
+	if err := os.Chmod(lessonsDir, 0o555); err != nil {
+		t.Skip("cannot change permissions")
+	}
+	defer func() { _ = os.Chmod(lessonsDir, 0o755) }()
+
+	_, _, err := runLesson(t, "new", "p")
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
+	}
+}
+
 // AC: narrow-index-upsert-failure — the lint-owned bounded row writer fails
 // transactionally without invoking a whole-tree lint fixer.
+func TestLessonNew_IndexUpsertFails(t *testing.T) {
+	root := setupSpecRoot(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, root)
+	deps := defaultLessonCLIDeps()
+	deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("index boom") }
+
+	err := runLessonNewWithTestDeps(t, "boom", deps)
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom", "README.md")); statErr == nil {
+		t.Error("partial file should be removed after an index-upsert failure")
+	}
+}
 
 // AC: internal-verify-pass-failure — the focused read-only lint call erroring exits 10.
+func TestLessonNew_LintVerifyFails(t *testing.T) {
+	root := setupSpecRoot(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, root)
+	deps := defaultLessonCLIDeps()
+	deps.lint = func(lint.Options) ([]lint.Violation, error) {
+		return nil, errors.New("verify boom")
+	}
+
+	err := runLessonNewWithTestDeps(t, "boom", deps)
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
+	}
+}
 
 // AC: generated-lesson-lint-error-surfaced — a remaining error-severity
 // violation touching the new file (or the lessons/ family) after the read-only
