@@ -73,6 +73,7 @@ Register the `plan-index-sync` checker in the default lint suite. For the canoni
 - cli/spec/lint#ac:entity-and-property-rules-selectable — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:managed-section-fix-idempotent — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:consumer-path-multi-glob-parsed — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
+- cli/spec/lint#ac:implements-reference-requirement-liveness — Added by the later offline requirement-reference increment; outside this plan's Fixed-files reporting scope.
 
 ## Open Questions
 

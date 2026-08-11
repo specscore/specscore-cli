@@ -59,6 +59,12 @@ Without `--rules` or `--ignore`, `spec lint` MUST execute every registered rule 
 
 `--rules` and `--ignore` MUST NOT be combined. Supplying both MUST exit `2`.
 
+### Implements-reference liveness
+
+#### REQ: implements-reference-offline-requirement-resolution
+
+The default error-severity `implements-reference` rule MUST resolve an Implementation Feature's Capability reference from the current project or an explicitly configured local `projects:` mirror. A Feature `#REQ:<id>` fragment MUST name exactly one non-fenced, non-comment `#### REQ: <id>` heading. Cross-repo authority MUST exactly match `project.host`, `project.org`, and `project.repo`; unavailable, ambiguous, mismatched, malformed, renamed, deleted, or duplicate targets MUST fail closed. Resolution never fetches a network resource. An unpinned cross-repo target MUST be tracked and clean and is read from its local `HEAD` blob; a `?ref=` target is read only from the verified matching local commit.
+
 ### Features index synchronization
 
 Every directory under `spec/features/` that contains a `README.md` is treated as a feature index for its immediate sub-features. The `index-entries` rule keeps the index in sync with the filesystem in both directions.
@@ -501,6 +507,16 @@ Given a spec tree with one autofixable violation, running `specscore spec lint -
 **Requirements:** cli/spec/lint#req:fix-report-default-on
 
 Given a spec tree with one autofixable violation, running `specscore spec lint --fix` with no flags beyond `--fix` (and an optional `--format`) produces the fixed-files report — the stderr summary in text format, the `fixed` key in `--format json|yaml` — without any additional enabling flag.
+
+### AC: implements-reference-requirement-liveness
+
+**Requirements:** cli/spec/lint#req:implements-reference-offline-requirement-resolution
+
+**Given** an Implementation cites a shorthand or current-project-authority Capability, or a configured local cross-repo Capability, with `#REQ:<id>`
+
+**When** `specscore spec lint` runs
+
+**Then** one exact live heading passes, and unavailable, renamed/deleted, duplicate, malformed, identity-mismatched, or unclean targets report an error without network access.
 
 ## Open Questions
 

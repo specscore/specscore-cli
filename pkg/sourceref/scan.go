@@ -14,6 +14,16 @@ import (
 type ScanResult struct {
 	// FileRefs maps file path to list of references found in that file
 	FileRefs map[string][]*Reference
+	// ParseErrors records syntactically detected annotations that could not be
+	// parsed. Listing mode remains backward-compatible; validation mode reports
+	// these deterministic file/line diagnostics instead of silently dropping them.
+	ParseErrors map[string][]ParseError
+}
+
+type ParseError struct {
+	Line  int
+	Token string
+	Err   error
 }
 
 // ScanFiles scans a list of files for source references.
@@ -22,17 +32,20 @@ type ScanResult struct {
 // and returned alongside whatever refs were successfully scanned.
 func ScanFiles(filePaths []string) (*ScanResult, error) {
 	result := &ScanResult{
-		FileRefs: make(map[string][]*Reference),
+		FileRefs: make(map[string][]*Reference), ParseErrors: make(map[string][]ParseError),
 	}
 	var errs []string
 	for _, filePath := range filePaths {
-		refs, err := scanFile(filePath)
+		refs, parseErrors, err := scanFileDetailed(filePath)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", filePath, err))
 			continue
 		}
 		if len(refs) > 0 {
 			result.FileRefs[filePath] = refs
+		}
+		if len(parseErrors) > 0 {
+			result.ParseErrors[filePath] = parseErrors
 		}
 	}
 	if len(errs) > 0 {
@@ -42,31 +55,50 @@ func ScanFiles(filePaths []string) (*ScanResult, error) {
 }
 
 func scanFile(filePath string) ([]*Reference, error) {
+	refs, _, err := scanFileDetailed(filePath)
+	return refs, err
+}
+
+func scanFileDetailed(filePath string) ([]*Reference, []ParseError, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = file.Close() }()
 
 	seen := make(map[string]bool)
 	var refs []*Reference
+	var parseErrors []ParseError
 
 	scanner := bufio.NewScanner(file)
+	lineNumber := 0
 	for scanner.Scan() {
+		lineNumber++
 		line := scanner.Text()
-		ref := ScanLine(line)
+		if !DetectReference(line) {
+			continue
+		}
+		token := ExtractReference(line)
+		ref, parseErr := ParseReference(token)
+		if parseErr != nil {
+			parseErrors = append(parseErrors, ParseError{Line: lineNumber, Token: token, Err: parseErr})
+			continue
+		}
 		if ref != nil {
-			key := ref.ResolvedPath + ref.CrossRepoSuffix
+			key := ref.Canonical()
 			if !seen[key] {
 				seen[key] = true
 				refs = append(refs, ref)
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return refs, parseErrors, err
+	}
 	sort.Slice(refs, func(i, j int) bool {
-		return refs[i].ResolvedPath+refs[i].CrossRepoSuffix < refs[j].ResolvedPath+refs[j].CrossRepoSuffix
+		return refs[i].Canonical() < refs[j].Canonical()
 	})
-	return refs, nil
+	return refs, parseErrors, nil
 }
 
 // ExpandGlobPattern expands a glob pattern to a list of file paths.
@@ -180,7 +212,7 @@ func GetUniqueReferences(result *ScanResult, typeFilter string) []*Reference {
 			if typeFilter != "" && ref.Type != typeFilter {
 				continue
 			}
-			key := ref.ResolvedPath + ref.CrossRepoSuffix
+			key := ref.Canonical()
 			if _, exists := seen[key]; !exists {
 				seen[key] = ref
 			}
@@ -193,8 +225,8 @@ func GetUniqueReferences(result *ScanResult, typeFilter string) []*Reference {
 	}
 
 	sort.Slice(unique, func(i, j int) bool {
-		keyI := unique[i].ResolvedPath + unique[i].CrossRepoSuffix
-		keyJ := unique[j].ResolvedPath + unique[j].CrossRepoSuffix
+		keyI := unique[i].Canonical()
+		keyJ := unique[j].Canonical()
 		return keyI < keyJ
 	})
 
@@ -213,7 +245,7 @@ func FormatOutput(result *ScanResult, singleFile bool, typeFilter string) string
 	if singleFile {
 		refs := GetUniqueReferences(result, typeFilter)
 		for _, ref := range refs {
-			output = append(output, ref.ResolvedPath+ref.CrossRepoSuffix)
+			output = append(output, ref.display())
 		}
 	} else {
 		fileNames := make([]string, 0, len(result.FileRefs))
@@ -240,7 +272,7 @@ func FormatOutput(result *ScanResult, singleFile bool, typeFilter string) string
 			}
 
 			for _, ref := range filtered {
-				output = append(output, "  "+ref.ResolvedPath+ref.CrossRepoSuffix)
+				output = append(output, "  "+ref.display())
 			}
 		}
 	}
@@ -250,6 +282,19 @@ func FormatOutput(result *ScanResult, singleFile bool, typeFilter string) string
 	}
 
 	return fmt.Sprintf("%s\n", joinStrings(output))
+}
+
+// display preserves the historic concise deps output while retaining address
+// components that make two citations meaningfully distinct.
+func (r Reference) display() string {
+	value := r.ResolvedPath + r.CrossRepoSuffix
+	if r.Ref != "" {
+		value += "?ref=" + r.Ref
+	}
+	if r.Fragment != "" {
+		value += "#" + r.Fragment
+	}
+	return value
 }
 
 // joinStrings joins strings with newlines.

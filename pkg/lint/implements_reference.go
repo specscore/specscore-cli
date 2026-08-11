@@ -61,6 +61,7 @@ func (c *implementsReferenceChecker) name() string     { return "implements-refe
 func (c *implementsReferenceChecker) severity() string { return "error" }
 
 func (c *implementsReferenceChecker) check(specRoot string) ([]Violation, error) {
+	resolver := sourceref.NewLocalResolver(specRoot)
 	var violations []Violation
 	walkErr := walkFeatureReadmes(specRoot, func(readmePath string, content []byte) {
 		role := classifyFeatureRole(string(content))
@@ -95,24 +96,19 @@ func (c *implementsReferenceChecker) check(specRoot string) ([]Violation, error)
 			add("Implements reference is not a well-formed specscore: reference (capability-and-platform-implementations#req:implements-resolution)")
 			return
 		}
-		if ref.crossRepo {
-			// Cross-repo liveness is out of scope; a well-formed cross-repo
-			// reference is accepted without fetching the remote repository.
-			return
-		}
 		slug := ref.featureSlug()
 		if slug == "" {
 			add(fmt.Sprintf("Implements reference %q does not resolve to a Capability Feature (capability-and-platform-implementations#req:implements-resolution)", ref.raw))
 			return
 		}
-		target := filepath.Join(specRoot, "features", slug, "README.md")
-		data, readErr := os.ReadFile(target)
+		data, readErr := resolver.ValidateRequirementCitation(ref.ref)
 		if readErr != nil {
-			add(fmt.Sprintf("Implements reference %q does not resolve to an existing Capability Feature (capability-and-platform-implementations#req:implements-resolution)", ref.raw))
+			add(fmt.Sprintf("Implements reference %q cannot be resolved locally: %v (capability-and-platform-implementations#req:implements-resolution)", ref.raw, readErr))
 			return
 		}
 		if !classifyFeatureRole(string(data)).isCapability {
 			add(fmt.Sprintf("Implements reference %q resolves to a Feature that is not a Capability — it has no \"## Implementation Matrix\" section (capability-and-platform-implementations#req:implements-resolution)", ref.raw))
+			return
 		}
 	})
 	if walkErr != nil {
