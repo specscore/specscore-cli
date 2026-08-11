@@ -208,6 +208,9 @@ func (o outboxOperations) commitTransition(id string, record ledgerRecord, state
 			return err
 		}
 	case committedState:
+		if err := o.syncOutboxDirectory(filepath.Dir(o.statePath(id))); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("event %s has invalid ledger state", id)
 	}
@@ -234,7 +237,7 @@ func (o outboxOperations) abort(id string) error {
 func (o outboxOperations) abortTransition(id, state string) error {
 	switch state {
 	case abortedState:
-		return nil
+		return o.syncOutboxDirectory(filepath.Dir(o.statePath(id)))
 	case committedState:
 		return fmt.Errorf("cannot abort committed event %s", id)
 	case preparedState:

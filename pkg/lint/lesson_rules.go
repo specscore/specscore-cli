@@ -88,6 +88,9 @@ type lessonRulesChecker struct {
 	// fixIndex, when true, makes the fix pass regenerate spec/lessons/README.md
 	// from the parsed Lesson set (L-003 missing rows, L-004 drifted rows).
 	fixIndex bool
+	// withIndexLock is an operation-scoped test seam. Production uses the
+	// shared cross-process Lesson-index lock.
+	withIndexLock func(string, func() error) error
 }
 
 func newLessonRulesChecker() *lessonRulesChecker { return &lessonRulesChecker{} }
@@ -150,16 +153,28 @@ func (c *lessonRulesChecker) fix(specRoot string) error {
 	if info, err := os.Stat(lessonsDir); err != nil || !info.IsDir() {
 		return nil
 	}
-	parsed := map[string]*lesson.Lesson{}
-	lessons, err := lesson.Discover(lessonsDir)
-	if err != nil {
-		return err
+	lock := c.withIndexLock
+	if lock == nil {
+		lock = func(root string, mutate func() error) error {
+			return withLessonIndexLock(root, defaultLessonIndexLockDeps(), mutate)
+		}
 	}
-	for _, l := range lessons {
-		parsed[l.Slug] = l
-	}
-	_, _ = lessonIndexRules(specRoot, parsed, true)
-	return nil
+	// This repair does not mutate a Lesson artifact, so it takes only the
+	// shared index lock. Holding it before discovery makes the parsed set and
+	// replacement table one serialized snapshot: a lifecycle writer that has
+	// already published waits here, then reconciles its current row afterward.
+	return lock(specRoot, func() error {
+		parsed := map[string]*lesson.Lesson{}
+		lessons, err := lesson.Discover(lessonsDir)
+		if err != nil {
+			return err
+		}
+		for _, l := range lessons {
+			parsed[l.Slug] = l
+		}
+		_, _ = lessonIndexRulesWithRewrite(specRoot, parsed, true, rewriteLessonIndexUnlocked)
+		return nil
+	})
 }
 
 // lintLesson runs L-001 (required sections) and L-002 (status value) against
@@ -455,6 +470,10 @@ func expectedLessonIndexRow(slug string, l *lesson.Lesson) (lessonIndexRow, erro
 // archived-index half: a Lesson never relocates on disposition, so there is
 // only one active index.
 func lessonIndexRules(specRoot string, parsed map[string]*lesson.Lesson, fix bool) ([]Violation, bool) {
+	return lessonIndexRulesWithRewrite(specRoot, parsed, fix, rewriteLessonIndex)
+}
+
+func lessonIndexRulesWithRewrite(specRoot string, parsed map[string]*lesson.Lesson, fix bool, rewrite func(string, []string, map[string]*lesson.Lesson) error) ([]Violation, bool) {
 	var vs []Violation
 	fixed := false
 
@@ -508,7 +527,7 @@ func lessonIndexRules(specRoot string, parsed map[string]*lesson.Lesson, fix boo
 	needsRewrite := shapeMismatch || malformed || len(missing) > 0 || len(drifted) > 0 || len(orphaned) > 0 || len(duplicates) > 0
 
 	if needsRewrite && fix {
-		if err := rewriteLessonIndex(idxPath, slugs, parsed); err == nil {
+		if err := rewrite(idxPath, slugs, parsed); err == nil {
 			fixed = true
 			return vs, fixed
 		}

@@ -576,6 +576,53 @@ func TestOutbox_DecisionRetriesReadExistingCASWinnerWithoutOverwritingIt(t *test
 	}
 }
 
+func TestOutbox_TerminalDecisionRetriesReFenceStateParentAfterInterruptedSync(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		id         string
+		decision   string
+		transition func(outboxOperations, string, string) error
+	}{
+		{
+			name:     "committed",
+			id:       validEvent().UUID,
+			decision: committedState,
+			transition: func(o outboxOperations, id, state string) error {
+				return o.commitTransition(id, ledgerRecord{}, state)
+			},
+		},
+		{
+			name:     "aborted",
+			id:       "00000000-0000-4000-8000-000000000031",
+			decision: abortedState,
+			transition: func(o outboxOperations, id, state string) error {
+				return o.abortTransition(id, state)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := NewOutbox(t.TempDir())
+			if err := os.MkdirAll(filepath.Dir(o.statePath(tc.id)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			faulty := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "open"}}
+			if err := tc.transition(faulty, tc.id, preparedState); err == nil || !strings.Contains(err.Error(), "injected open") {
+				t.Fatalf("initial decision parent-sync failure = %v", err)
+			}
+			state, err := o.readState(tc.id)
+			if err != nil || state != tc.decision {
+				t.Fatalf("published decision after interrupted parent sync = %q, %v", state, err)
+			}
+			if err := tc.transition(faulty, tc.id, tc.decision); err == nil || !strings.Contains(err.Error(), "injected open") {
+				t.Fatalf("terminal retry must re-fence the state parent: %v", err)
+			}
+			if err := tc.transition(o.operation(), tc.id, tc.decision); err != nil {
+				t.Fatalf("clean terminal retry must converge after re-fencing: %v", err)
+			}
+		})
+	}
+}
+
 func TestOutbox_RecoverAndReplayHandleInterruptedLedgerDirectorySafely(t *testing.T) {
 	o := NewOutbox(t.TempDir())
 	if err := o.Recover(); err != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
 type testLessonIndexLock struct {
@@ -94,6 +95,114 @@ func TestUpsertLessonIndexRowSerializesConcurrentRowsAndLockFailures(t *testing.
 	deps.newLock = func(string) lessonIndexLocker { return testLessonIndexLock{unlockErr: boom} }
 	if err := upsertLessonIndexRowWithLock(specRoot, parsed[0], deps); !errors.Is(err, boom) || lesson.MutationOutcomeOf(err) != lesson.MutationUncertain {
 		t.Fatalf("release lock error = %v", err)
+	}
+}
+
+func TestLessonRulesFixLocksIndexBeforeDiscoverySoLifecycleRowSurvives(t *testing.T) {
+	projectRoot := t.TempDir()
+	specRoot := filepath.Join(projectRoot, "spec")
+	lessonsDir := filepath.Join(specRoot, "lessons")
+	lessonPath := filepath.Join(lessonsDir, "serialized-fix", "README.md")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(lessonPath), "occurrences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: "serialized-fix", Owner: "codex", Date: "2026-08-12"}, []string{"process"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lessonPath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	index := "# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n_No lessons recorded yet._\n"
+	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := lesson.Parse(lessonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertLessonIndexRow(specRoot, parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	indexLocked := make(chan struct{})
+	allowDiscovery := make(chan struct{})
+	checker := &lessonRulesChecker{fixIndex: true}
+	checker.withIndexLock = func(root string, mutate func() error) error {
+		return withLessonIndexLock(root, defaultLessonIndexLockDeps(), func() error {
+			close(indexLocked)
+			<-allowDiscovery
+			return mutate()
+		})
+	}
+	fixDone := make(chan error, 1)
+	go func() { fixDone <- checker.fix(specRoot) }()
+	select {
+	case <-indexLocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("whole-index fix did not acquire the shared index lock")
+	}
+
+	artifactPublished := make(chan struct{})
+	transitionDone := make(chan error, 1)
+	go func() {
+		_, transitionErr := lesson.ChangeStatus(lesson.ChangeStatusOptions{
+			SpecRoot: projectRoot,
+			Slug:     "serialized-fix",
+			To:       lifecycle.LessonStated,
+			PostMutation: func() error {
+				close(artifactPublished)
+				current, parseErr := lesson.Parse(lessonPath)
+				if parseErr != nil {
+					return parseErr
+				}
+				return UpsertLessonIndexRow(specRoot, current)
+			},
+		})
+		transitionDone <- transitionErr
+	}()
+	select {
+	case <-artifactPublished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("lifecycle writer did not publish before index reconciliation")
+	}
+	close(allowDiscovery)
+
+	select {
+	case err := <-fixDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("whole-index fix deadlocked while holding the shared index lock")
+	}
+	select {
+	case err := <-transitionDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("lifecycle row reconcile did not resume after whole-index fix")
+	}
+	finalLesson, err := lesson.Parse(lessonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalLesson.Status != "Stated" {
+		t.Fatalf("final Lesson status = %q", finalLesson.Status)
+	}
+	got, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte("| [serialized-fix](serialized-fix/README.md) | Stated |")) {
+		t.Fatalf("whole-index fix lost the cooperating lifecycle row:\n%s", got)
+	}
+
+	boom := errors.New("whole-index lock")
+	checker.withIndexLock = func(string, func() error) error { return boom }
+	if err := checker.fix(specRoot); !errors.Is(err, boom) {
+		t.Fatalf("whole-index lock failure = %v", err)
 	}
 }
 
