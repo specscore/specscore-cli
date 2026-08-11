@@ -485,7 +485,9 @@ func ValidateOccurrenceFile(path string) (Occurrence, error) {
 
 func validateOccurrenceFileWithFS(path string, fs lessonFS) (Occurrence, error) {
 	return validateOccurrenceFileWithRuntime(path, fs, func(data string) *json.Decoder {
-		return json.NewDecoder(strings.NewReader(data))
+		decoder := json.NewDecoder(strings.NewReader(data))
+		decoder.UseNumber()
+		return decoder
 	})
 }
 

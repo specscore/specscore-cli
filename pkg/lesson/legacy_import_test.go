@@ -35,8 +35,9 @@ func inventoryLegacyForApply(t *testing.T, source string) LegacyInventory {
 
 type legacyImportTestFS struct {
 	lessonFS
-	link func(string, string) error
-	open func(string) (lessonFile, error)
+	link   func(string, string) error
+	open   func(string) (lessonFile, error)
+	remove func(string) error
 }
 
 func (fs legacyImportTestFS) Link(oldname, newname string) error {
@@ -51,6 +52,13 @@ func (fs legacyImportTestFS) Open(path string) (lessonFile, error) {
 		return fs.open(path)
 	}
 	return fs.lessonFS.Open(path)
+}
+
+func (fs legacyImportTestFS) Remove(path string) error {
+	if fs.remove != nil {
+		return fs.remove(path)
+	}
+	return fs.lessonFS.Remove(path)
 }
 
 type legacyImportTestFile struct {
@@ -590,15 +598,14 @@ func TestApplyLegacy_PublicationFailureRollsBackEveryArtifact(t *testing.T) {
 		}
 		return os.Link(old, new)
 	}}
-	if _, err := applyLegacyWithDeps(lessonsDir, []string{"process"}, inv, mapping, deps); err == nil {
+	if _, err := applyLegacyWithDeps(lessonsDir, []string{"process"}, inv, mapping, deps); err == nil || MutationOutcomeOf(err) != MutationUncertain {
 		t.Fatal("expected injected failure")
 	}
-	entries, err := os.ReadDir(lessonsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("rollback left artifacts: %#v", entries)
+	// Historical name retained for deletion-audit continuity. The safe policy
+	// now retains every post-publication artifact and reconciles it on retry.
+	resumed, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil || len(resumed.CreatedOccurrences) != 2 {
+		t.Fatalf("retained publication did not resume: result=%#v err=%v", resumed, err)
 	}
 }
 
@@ -615,8 +622,12 @@ func TestApplyLegacy_RollbackPreservesConcurrentForeignOccurrenceAndRetryComplet
 	inv := inventoryLegacyForApply(t, source)
 	mapping := legacyMapping(inv, reviewedNew("L1#1", "one"))
 	foreignID := "12345678-1234-4123-8123-123456789abc"
+	removeCalls := 0
 	deps := defaultLegacyImportDeps()
-	deps.fs = legacyImportTestFS{lessonFS: osLessonFS{}, link: func(old, new string) error {
+	deps.fs = legacyImportTestFS{lessonFS: osLessonFS{}, remove: func(path string) error {
+		removeCalls++
+		return os.Remove(path)
+	}, link: func(old, new string) error {
 		if !strings.Contains(new, string(filepath.Separator)+".legacy-import"+string(filepath.Separator)) {
 			return os.Link(old, new)
 		}
@@ -637,8 +648,11 @@ func TestApplyLegacy_RollbackPreservesConcurrentForeignOccurrenceAndRetryComplet
 	if got := MutationOutcomeOf(err); got != MutationUncertain {
 		t.Fatalf("outcome = %v, want uncertain: %v", got, err)
 	}
-	if !strings.Contains(err.Error(), "ownership is uncertain") {
+	if !strings.Contains(err.Error(), "retained for durable retry") {
 		t.Fatalf("error does not explain refused ownership rollback: %v", err)
+	}
+	if removeCalls != 0 {
+		t.Fatalf("post-publication failure attempted %d destructive removes", removeCalls)
 	}
 	foreignPath := filepath.Join(lessonsDir, "one", "occurrences", foreignID+".json")
 	foreignBefore, err := os.ReadFile(foreignPath)
@@ -671,66 +685,153 @@ func TestApplyLegacy_RollbackPreservesConcurrentForeignOccurrenceAndRetryComplet
 
 func TestLegacyPublishedSet_VerificationRejectsEveryOwnershipDrift(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, "owned")
-	file := filepath.Join(root, "owned.json")
-	if err := os.Mkdir(dir, 0o755); err != nil {
+	stage := filepath.Join(root, "stage")
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "actual.json"), []byte("foreign\n"), 0o644); err != nil {
+	if err := writeDurableStageFile(filepath.Join(stage, "README.md"), []byte("owned\n")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(file, []byte("owned\n"), 0o644); err != nil {
+	if err := os.Mkdir(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	baseFS := osLessonFS{}
-	tests := map[string]struct {
-		published legacyPublishedSet
-		fs        lessonFS
+	foreign := filepath.Join(target, "foreign.json")
+	if err := os.WriteFile(foreign, []byte("foreign\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishStagedLesson(stage, target); err == nil || MutationOutcomeOf(err) != MutationPrePublication {
+		t.Fatalf("foreign target err=%v outcome=%v", err, MutationOutcomeOf(err))
+	}
+	if got, err := os.ReadFile(foreign); err != nil || string(got) != "foreign\n" {
+		t.Fatalf("foreign target was changed: %q err=%v", got, err)
+	}
+}
+
+func TestPublishStagedLessonRetryAndCollisionEdges(t *testing.T) {
+	newStage := func(t *testing.T, root string) (string, []byte) {
+		t.Helper()
+		stage := filepath.Join(root, "stage")
+		if err := os.MkdirAll(stage, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		readme := []byte("owned\n")
+		if err := writeDurableStageFile(filepath.Join(stage, "README.md"), readme); err != nil {
+			t.Fatal(err)
+		}
+		return stage, []byte("specscore-legacy-import:" + shaString(readme) + "\n")
+	}
+
+	t.Run("complete retry is byte-identical", func(t *testing.T) {
+		root := t.TempDir()
+		stage, _ := newStage(t, root)
+		target := filepath.Join(root, "target")
+		if err := publishStagedLesson(stage, target); err != nil {
+			t.Fatal(err)
+		}
+		if err := publishStagedLesson(stage, target); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, root, target string, marker []byte) lessonFS
 	}{
-		"missing path": {
-			published: legacyPublishedSet{artifacts: []legacyPublishedArtifact{{path: filepath.Join(root, "missing")}}},
-			fs:        baseFS,
-		},
-		"directory changed type": {
-			published: legacyPublishedSet{artifacts: []legacyPublishedArtifact{{path: file, directory: true}}},
-			fs:        baseFS,
-		},
-		"directory unreadable": {
-			published: legacyPublishedSet{artifacts: []legacyPublishedArtifact{{path: dir, directory: true}}},
-			fs: legacyOwnershipTestFS{lessonFS: baseFS, readDir: func(string) ([]os.DirEntry, error) {
-				return nil, errors.New("injected readdir failure")
-			}},
-		},
-		"directory child changed": {
-			published: legacyPublishedSet{artifacts: []legacyPublishedArtifact{{path: dir, directory: true}, {path: filepath.Join(dir, "expected.json"), content: []byte("owned\n")}}},
-			fs:        baseFS,
-		},
-		"file changed type": {
-			published: legacyPublishedSet{artifacts: []legacyPublishedArtifact{{path: dir, content: []byte("owned\n")}}},
-			fs:        baseFS,
-		},
-		"file unreadable": {
-			published: legacyPublishedSet{artifacts: []legacyPublishedArtifact{{path: file, content: []byte("owned\n")}}},
-			fs: legacyOwnershipTestFS{lessonFS: baseFS, read: func(string) ([]byte, error) {
-				return nil, errors.New("injected read failure")
-			}},
-		},
-		"file bytes changed": {
-			published: legacyPublishedSet{artifacts: []legacyPublishedArtifact{{path: file, content: []byte("different\n")}}},
-			fs:        baseFS,
-		},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			if err := tc.published.verify(tc.fs); err == nil {
-				t.Fatal("ownership drift was accepted")
+		{name: "different existing marker", setup: func(t *testing.T, _, target string, _ []byte) lessonFS {
+			t.Helper()
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, ".legacy-import-owner"), []byte("different"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return osLessonFS{}
+		}},
+		{name: "partial target unreadable", setup: func(t *testing.T, _, target string, _ []byte) lessonFS {
+			t.Helper()
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return legacyOwnershipTestFS{lessonFS: osLessonFS{}, readDir: func(string) ([]os.DirEntry, error) { return nil, errors.New("readdir") }}
+		}},
+		{name: "marker unreadable", setup: func(t *testing.T, _, target string, _ []byte) lessonFS {
+			t.Helper()
+			if err := os.MkdirAll(filepath.Join(target, ".legacy-import-owner"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return osLessonFS{}
+		}},
+		{name: "marker link collision", setup: func(t *testing.T, _, target string, _ []byte) lessonFS {
+			t.Helper()
+			return legacyImportTestFS{lessonFS: osLessonFS{}, link: func(old, new string) error {
+				if filepath.Base(new) == ".legacy-import-owner" {
+					if err := os.WriteFile(new, []byte("racer"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					return os.ErrExist
+				}
+				return os.Link(old, new)
+			}}
+		}},
+		{name: "occurrence store collision", setup: func(t *testing.T, _, target string, marker []byte) lessonFS {
+			t.Helper()
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, ".legacy-import-owner"), marker, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, "occurrences"), []byte("foreign"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return osLessonFS{}
+		}},
+		{name: "README collision", setup: func(t *testing.T, _, target string, marker []byte) lessonFS {
+			t.Helper()
+			if err := os.MkdirAll(filepath.Join(target, "occurrences"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, ".legacy-import-owner"), marker, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, "README.md"), []byte("foreign"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return osLessonFS{}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stage, marker := newStage(t, root)
+			target := filepath.Join(root, "target")
+			fs := tc.setup(t, root, target, marker)
+			if err := publishStagedLessonWithFS(stage, target, fs); err == nil {
+				t.Fatal("collision/fault was accepted")
 			}
 		})
 	}
 }
 
+func TestLegacyPreflightSurfacesUnreadableRetryDirectory(t *testing.T) {
+	lessons, inv, mapping := legacyMatrixFixture(t)
+	target := filepath.Join(lessons, mapping.Entries[0].Slug)
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fs := legacyOwnershipTestFS{lessonFS: osLessonFS{}, readDir: func(path string) ([]os.DirEntry, error) {
+		if path == target {
+			return nil, errors.New("unreadable partial target")
+		}
+		return os.ReadDir(path)
+	}}
+	if _, err := preflightLegacyApplyWithFS(lessons, []string{"process"}, inv, mapping, fs); err == nil || !strings.Contains(err.Error(), "unreadable partial target") {
+		t.Fatalf("preflight error = %v", err)
+	}
+}
+
 func TestApplyLegacy_PostLinkDurabilityFailureRollsBackOwnedArtifacts(t *testing.T) {
-	for name, failCall := range map[string]int{"Lesson directory sync": 1, "manifest directory sync": 3} {
+	for name, failCall := range map[string]int{"Lesson directory sync": 2, "manifest directory sync": 4} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			lessonsDir := filepath.Join(dir, "spec", "lessons")
@@ -743,7 +844,6 @@ func TestApplyLegacy_PostLinkDurabilityFailureRollsBackOwnedArtifacts(t *testing
 			}
 			inv := inventoryLegacyForApply(t, source)
 			mapping := legacyMapping(inv, reviewedNew("L1#1", "one"))
-			before := snapshotTree(t, lessonsDir)
 			calls := 0
 			deps := defaultLegacyImportDeps()
 			deps.fs = legacyImportTestFS{lessonFS: osLessonFS{}, open: func(path string) (lessonFile, error) {
@@ -760,11 +860,12 @@ func TestApplyLegacy_PostLinkDurabilityFailureRollsBackOwnedArtifacts(t *testing
 				}}, nil
 			}}
 
-			if _, err := applyLegacyWithDeps(lessonsDir, []string{"process"}, inv, mapping, deps); err == nil {
+			if _, err := applyLegacyWithDeps(lessonsDir, []string{"process"}, inv, mapping, deps); err == nil || MutationOutcomeOf(err) != MutationUncertain {
 				t.Fatal("expected injected durability failure")
 			}
-			if !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
-				t.Fatal("post-link failure left an owned artifact")
+			resumed, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+			if err != nil || len(resumed.CreatedOccurrences) != 1 {
+				t.Fatalf("durability retry result=%#v err=%v", resumed, err)
 			}
 		})
 	}
@@ -791,11 +892,10 @@ func TestApplyLegacy_CompensationFailureAfterPublicationRemainsUncertain(t *test
 		}
 		return legacyImportTestFile{lessonFile: file, sync: func() error {
 			calls++
-			// Call four is the second Lesson's parent-directory durability
-			// fence, after its README link is visible. Calls five and six make
-			// the inner and outer removals respectively non-durable.
-			if calls == 4 || calls == 5 || calls == 6 {
-				return errors.New("injected rollback directory sync failure")
+			// Call four is a post-publication durability fence. No later call
+			// may attempt destructive compensation.
+			if calls == 4 {
+				return errors.New("injected publication directory sync failure")
 			}
 			return file.Sync()
 		}}, nil
@@ -805,8 +905,8 @@ func TestApplyLegacy_CompensationFailureAfterPublicationRemainsUncertain(t *test
 	if MutationOutcomeOf(err) != MutationUncertain {
 		t.Fatalf("outcome=%v err=%v; post-publication compensation was not proven durable", MutationOutcomeOf(err), err)
 	}
-	if calls < 6 {
-		t.Fatalf("fault plan did not reach both compensation fences: calls=%d", calls)
+	if calls != 4 {
+		t.Fatalf("post-publication failure attempted extra destructive fences: calls=%d", calls)
 	}
 }
 

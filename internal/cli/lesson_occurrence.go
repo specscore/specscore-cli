@@ -224,7 +224,13 @@ func occurrenceContextInput(cmd *cobra.Command) (map[string]any, bool, error) {
 		raw = string(b)
 	}
 	var context map[string]any
-	if err := json.Unmarshal([]byte(raw), &context); err != nil || context == nil {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&context); err != nil || context == nil {
+		return nil, false, exitcode.InvalidArgsError("context must be a JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, false, exitcode.InvalidArgsError("context must be a JSON object")
 	}
 	return context, true, nil

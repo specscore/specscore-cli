@@ -16,9 +16,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
+
+type lessonIndexLocker interface {
+	Lock() error
+	Unlock() error
+}
+
+type lessonIndexLockDeps struct {
+	mkdirAll func(string, os.FileMode) error
+	newLock  func(string) lessonIndexLocker
+}
+
+func defaultLessonIndexLockDeps() lessonIndexLockDeps {
+	return lessonIndexLockDeps{
+		mkdirAll: os.MkdirAll,
+		newLock:  func(path string) lessonIndexLocker { return flock.New(path) },
+	}
+}
 
 // lessonRuleIDs is the ordered rule-name set the lessonRulesChecker answers
 // to; linter.go registers the single checker instance under each.
@@ -652,6 +670,26 @@ func rewriteLessonIndex(path string, slugs []string, parsed map[string]*lesson.L
 // intentionally narrower than lint --fix so scaffold commands have a bounded
 // declared write set and cannot repair unrelated historical artifacts.
 func UpsertLessonIndexRow(specRoot string, l *lesson.Lesson) error {
+	if l == nil {
+		return fmt.Errorf("lesson index upsert requires a Lesson")
+	}
+	return upsertLessonIndexRowWithLock(specRoot, l, defaultLessonIndexLockDeps())
+}
+
+func upsertLessonIndexRowWithLock(specRoot string, l *lesson.Lesson, deps lessonIndexLockDeps) error {
+	lockDir := filepath.Join(filepath.Dir(specRoot), ".specscore", "locks")
+	if err := deps.mkdirAll(lockDir, 0o700); err != nil {
+		return fmt.Errorf("creating Lesson index lock directory: %w", err)
+	}
+	lock := deps.newLock(filepath.Join(lockDir, "lesson-index.lock"))
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("acquiring Lesson index lock: %w", err)
+	}
+	defer func() { _ = lock.Unlock() }()
+	return upsertLessonIndexRowUnlocked(specRoot, l)
+}
+
+func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 	if l == nil {
 		return fmt.Errorf("lesson index upsert requires a Lesson")
 	}

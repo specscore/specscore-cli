@@ -7,8 +7,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type outboxSub struct {
@@ -114,6 +117,71 @@ func TestOutbox_ReplaysFailedSubscriberIndependently(t *testing.T) {
 	}
 	if r.Delivered != 1 || len(a.seen) != 2 || len(b.seen) != 1 {
 		t.Fatalf("independent replay %#v a=%v b=%v", r, a.seen, b.seen)
+	}
+}
+
+func TestOutbox_ReplayFromUsesLedgerOrderAndDurableInclusiveCursor(t *testing.T) {
+	sink := &outboxSub{name: "sink"}
+	o := NewOutbox(t.TempDir())
+	base := validEvent()
+	base.Timestamp = time.Date(2026, 5, 22, 9, 0, 0, 0, time.UTC)
+	base.UUID = "ffffffff-ffff-4fff-8fff-fffffffffff1"
+	middle := validEvent()
+	middle.Timestamp = time.Date(2026, 5, 22, 10, 0, 0, 0, time.UTC)
+	middle.UUID = "ffffffff-ffff-4fff-8fff-fffffffffff2"
+	late := validEvent()
+	late.Timestamp = time.Date(2026, 5, 22, 11, 0, 0, 0, time.UTC)
+	late.UUID = "00000000-0000-4000-8000-000000000003"
+	for _, e := range []Event{late, base, middle} {
+		if err := o.Enqueue(e, []Subscriber{sink}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := o.ReplayFrom(context.Background(), []Subscriber{sink}, "sink", middle.UUID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Delivered != 2 || result.Pending != 2 || !slices.Equal(sink.seen, []string{middle.UUID, late.UUID}) {
+		t.Fatalf("cursor replay=%#v seen=%v", result, sink.seen)
+	}
+	if _, err := os.Stat(o.pendingPath("sink", base.UUID)); err != nil {
+		t.Fatalf("event before cursor was acknowledged: %v", err)
+	}
+
+	after := validEvent()
+	after.Timestamp = time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	after.UUID = "00000000-0000-4000-8000-000000000004"
+	if err := o.Enqueue(after, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = o.ReplayFrom(context.Background(), []Subscriber{sink}, "sink", middle.UUID, 0)
+	if err != nil || result.Delivered != 1 || sink.seen[len(sink.seen)-1] != after.UUID {
+		t.Fatalf("acknowledged cursor replay=%#v err=%v seen=%v", result, err, sink.seen)
+	}
+}
+
+func TestOutbox_ReplayFromRejectsUnknownPreparedAndUnaddressedCursor(t *testing.T) {
+	sink := &outboxSub{name: "sink"}
+	o := NewOutbox(t.TempDir())
+	if _, err := o.ReplayFrom(context.Background(), []Subscriber{sink}, "sink", "00000000-0000-4000-8000-000000000099", 0); err == nil || !strings.Contains(err.Error(), "unknown --from") {
+		t.Fatalf("unknown cursor err=%v", err)
+	}
+	prepared := validEvent()
+	prepared.UUID = "00000000-0000-4000-8000-000000000098"
+	if err := o.Prepare(prepared, []Subscriber{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.ReplayFrom(context.Background(), []Subscriber{sink}, "sink", prepared.UUID, 0); err == nil || !strings.Contains(err.Error(), "not committed") {
+		t.Fatalf("prepared cursor err=%v", err)
+	}
+	other := validEvent()
+	other.UUID = "00000000-0000-4000-8000-000000000097"
+	if err := o.Enqueue(other, []Subscriber{&outboxSub{name: "other"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.ReplayFrom(context.Background(), []Subscriber{sink}, "sink", other.UUID, 0); err == nil || !strings.Contains(err.Error(), "not addressed") {
+		t.Fatalf("unaddressed cursor err=%v", err)
 	}
 }
 

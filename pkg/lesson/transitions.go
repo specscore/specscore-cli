@@ -33,9 +33,9 @@ var (
 )
 
 // PostMutationHook is the callback the cobra adapter wires to its bounded
-// index synchronization and read-only validation. It MUST return nil on
-// success; a non-nil return triggers full rollback of every on-disk mutation
-// and the error is returned by ChangeStatus.
+// index synchronization, durability fence, and read-only validation. Once the
+// status rewrite is visible, a hook failure is retained as MutationUncertain;
+// restoring a whole-file snapshot could erase a concurrent foreign edit.
 type PostMutationHook func() error
 
 // ChangeStatusOptions packages the inputs to ChangeStatus.
@@ -83,10 +83,12 @@ type ChangeStatusResult struct {
 //     exit 3.
 //  2. lifecycle.Validate against the KindLesson matrix. Illegal transitions
 //     return exit 4.
-//  3. lifecycle.Rewrite the **Status:** line; capture original for rollback.
+//  3. lifecycle.Rewrite the **Status:** line.
 //  4. Optionally write the `**Superseded By:**` successor reference and the
-//     `## Resolution` note, each rolled back together with the status line.
-//  5. Invoke the PostMutation hook. Failure → full rollback + exit 10.
+//     `## Resolution` note.
+//  5. Invoke the PostMutation hook. Any failure after step 3 is uncertain and
+//     retained for durable recovery; this function never destructively
+//     restores a snapshot after publication.
 func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	if opts.SpecRoot == "" {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
@@ -127,43 +129,23 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading lesson status: %v", err)
 	}
 
-	origLine, err := lifecycle.Rewrite(path, opts.To)
+	_, err = lifecycle.Rewrite(path, opts.To)
 	if err != nil {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("rewriting status line: %v", err)
 	}
-	fullRollback := func() {
-		_ = lifecycle.Rollback(path, origLine)
+
+	_, _, err = setSupersededByFn(path, opts.Successor)
+	if err != nil {
+		return ChangeStatusResult{}, mutationFailure(MutationUncertain, exitcode.UnexpectedErrorf("writing successor reference: %v", err))
 	}
 
-	origSucc, succWritten, err := setSupersededByFn(path, opts.Successor)
+	_, _, err = appendNoteFn(path, opts.Note)
 	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing successor reference: %v", err)
-	}
-	if succWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origSucc)
-			prev()
-		}
-	}
-
-	origBody, noteWritten, err := appendNoteFn(path, opts.Note)
-	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing transition note: %v", err)
-	}
-	if noteWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origBody)
-			prev()
-		}
+		return ChangeStatusResult{}, mutationFailure(MutationUncertain, exitcode.UnexpectedErrorf("writing transition note: %v", err))
 	}
 
 	if err := opts.PostMutation(); err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, err
+		return ChangeStatusResult{}, mutationFailure(MutationUncertain, err)
 	}
 
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil

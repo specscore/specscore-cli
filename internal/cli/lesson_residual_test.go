@@ -522,7 +522,7 @@ func TestLessonLifecycleFilesystemAndPublicationEdges(t *testing.T) {
 		case "index-stat":
 			deps.fs.stat = func(string) (os.FileInfo, error) { return nil, errors.New("stat") }
 		case "index-read":
-			deps.fs.read = func(string) ([]byte, error) { return nil, errors.New("read") }
+			deps.durable.open = func(string) (durableFile, error) { return nil, errors.New("fence") }
 		case "prepare":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")
@@ -562,11 +562,8 @@ func TestLessonLifecycleFilesystemAndPublicationEdges(t *testing.T) {
 			deps.lint = func(lint.Options) ([]lint.Violation, error) { return nil, errors.New("lint") }
 			hook, _ = prepareLessonPostMutationWithDeps(root, "review-before-merge", deps)
 		case "restore":
-			deps.parse = func(string) (*lesson.Lesson, error) { return nil, errors.New("parse") }
+			deps.durable.open = func(string) (durableFile, error) { return nil, errors.New("fence") }
 			hook, _ = prepareLessonPostMutationWithDeps(root, "review-before-merge", deps)
-			idx := filepath.Join(root, "spec", "lessons", "README.md")
-			_ = os.Remove(idx)
-			_ = os.Mkdir(idx, 0o755)
 		}
 		requireCLIError(t, hook())
 	}

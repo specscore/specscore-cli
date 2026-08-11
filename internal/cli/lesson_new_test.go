@@ -34,6 +34,9 @@ func runLessonNewWithTestDeps(t *testing.T, slug string, deps lessonCLIDeps) err
 }
 
 func TestLessonScaffoldSnapshotRestorePreservesCapturedMode(t *testing.T) {
+	// Historical name retained for deletion-audit continuity. The production
+	// path now performs a read-only write-set preflight and never snapshots an
+	// artifact for destructive restoration after publication.
 	root := t.TempDir()
 	target := filepath.Join(root, "spec", "lessons", "existing", "README.md")
 	if err := os.MkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
@@ -42,17 +45,7 @@ func TestLessonScaffoldSnapshotRestorePreservesCapturedMode(t *testing.T) {
 	if err := os.WriteFile(target, []byte("original\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := snapshotLessonScaffold(root, target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, []byte("mutated\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(target, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := snapshot.restore(); err != nil {
+	if err := preflightLessonScaffoldWriteSetWithOps(root, target, defaultLessonCLIDeps().fs); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(target)
@@ -60,14 +53,14 @@ func TestLessonScaffoldSnapshotRestorePreservesCapturedMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != "original\n" {
-		t.Fatalf("restored bytes = %q", got)
+		t.Fatalf("preflight changed bytes = %q", got)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("restored mode = %o, want 600", info.Mode().Perm())
+		t.Fatalf("preflight changed mode = %o, want 600", info.Mode().Perm())
 	}
 }
 
@@ -335,8 +328,8 @@ func TestLessonNew_IndexUpsertFails(t *testing.T) {
 	if got := exitCodeOf(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected)", got, exitcode.Unexpected)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom", "README.md")); statErr == nil {
-		t.Error("partial file should be removed after an index-upsert failure")
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "boom", "README.md")); statErr != nil {
+		t.Errorf("published Lesson should be retained for safe recovery: %v", statErr)
 	}
 }
 

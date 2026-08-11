@@ -681,11 +681,11 @@ func TestOutbox_RecoveryAndReplaySurfaceDurabilityCleanupFailures(t *testing.T) 
 		t.Fatal(err)
 	}
 	openFault := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "open-file"}}
-	if _, err := openFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected open-file") {
+	if _, err := openFault.replay(context.Background(), []Subscriber{sink}, "", "", 0); err == nil || !strings.Contains(err.Error(), "injected open-file") {
 		t.Fatalf("ack publication failure must leave event pending and surface: %v", err)
 	}
 	removeFault = outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "remove"}}
-	if _, err := removeFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected remove") {
+	if _, err := removeFault.replay(context.Background(), []Subscriber{sink}, "", "", 0); err == nil || !strings.Contains(err.Error(), "injected remove") {
 		t.Fatalf("post-ack pending cleanup failure must surface: %v", err)
 	}
 }
@@ -827,26 +827,34 @@ func TestOutbox_OperationScopedReadFailuresNeverBecomeDelivery(t *testing.T) {
 	}
 
 	pendingFault := outboxOperations{Outbox: o, fs: pendingReadDirFaultFS{}}
-	if _, err := pendingFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected pending read-dir") {
+	if _, err := pendingFault.replay(context.Background(), []Subscriber{sink}, "", "", 0); err == nil || !strings.Contains(err.Error(), "injected pending read-dir") {
 		t.Fatalf("pending read-dir failure = %v", err)
 	}
 
 	readRecordFault := &sequencedReadFileFS{failAt: 4}
-	if _, err := (outboxOperations{Outbox: o, fs: readRecordFault}).replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
+	if _, err := (outboxOperations{Outbox: o, fs: readRecordFault}).replay(context.Background(), []Subscriber{sink}, "", "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
 		t.Fatalf("pending ledger read failure = %v", err)
 	}
 	readStateFault := &sequencedReadFileFS{failAt: 5}
-	if _, err := (outboxOperations{Outbox: o, fs: readStateFault}).replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
+	if _, err := (outboxOperations{Outbox: o, fs: readStateFault}).replay(context.Background(), []Subscriber{sink}, "", "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
 		t.Fatalf("pending state read failure = %v", err)
+	}
+	for name, failAt := range map[string]int{"cursor-record": 4, "cursor-state": 5, "delivery-state": 8} {
+		t.Run(name, func(t *testing.T) {
+			fs := &sequencedReadFileFS{failAt: failAt}
+			if _, err := (outboxOperations{Outbox: o, fs: fs}).replay(context.Background(), []Subscriber{sink}, sink.name, e.UUID, 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
+				t.Fatalf("cursor/state read failure = %v (reads=%d)", err, fs.reads)
+			}
+		})
 	}
 
 	preparedFault := &sequencedReadFileFS{failAt: 3}
-	if _, err := (outboxOperations{Outbox: o, fs: preparedFault}).replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
+	if _, err := (outboxOperations{Outbox: o, fs: preparedFault}).replay(context.Background(), []Subscriber{sink}, "", "", 0); err == nil || !strings.Contains(err.Error(), "sequenced read-file") {
 		t.Fatalf("prepared reconciliation read failure = %v", err)
 	}
 
 	ackFault := outboxOperations{Outbox: o, fs: ackOpenFileFaultFS{}}
-	if _, err := ackFault.replay(context.Background(), []Subscriber{sink}, "", 0); err == nil || !strings.Contains(err.Error(), "injected ack open-file") {
+	if _, err := ackFault.replay(context.Background(), []Subscriber{sink}, "", "", 0); err == nil || !strings.Contains(err.Error(), "injected ack open-file") {
 		t.Fatalf("ack durability failure = %v", err)
 	}
 }

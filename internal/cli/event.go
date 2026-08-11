@@ -34,8 +34,9 @@ func eventCommand() *cobra.Command {
 }
 
 func eventReplayCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "replay", Short: "Replay pending durable subscriber deliveries", Long: "Reconstructs pending delivery from the immutable committed ledger, then replays only the named subscriber's unacknowledged entries. Success for one sink never acknowledges another. Delivery is at-least-once, so subscribers must deduplicate the event UUID. Interrupted prepared records remain visible for explicit reconciliation. Docs: docs/agent-lessons.md#durable-event-delivery", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true, RunE: runEventReplay}
+	cmd := &cobra.Command{Use: "replay", Short: "Replay pending durable subscriber deliveries", Long: "Reconstructs pending delivery from the immutable committed ledger, then replays only the named subscriber's unacknowledged entries in ledger timestamp/UUID order. --from starts inclusively at a committed event and remains valid after that event is acknowledged. Success for one sink never acknowledges another. Delivery is at-least-once, so subscribers must deduplicate the event UUID. Interrupted prepared records remain visible for explicit reconciliation. Docs: docs/agent-lessons.md#durable-event-delivery", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true, RunE: runEventReplay}
 	cmd.Flags().String("subscriber", "", "stable subscriber name (required)")
+	cmd.Flags().String("from", "", "inclusive committed event UUID cursor")
 	cmd.Flags().Int("limit", 0, "maximum pending entries to attempt (0 is all)")
 	return cmd
 }
@@ -45,6 +46,7 @@ func runEventReplay(cmd *cobra.Command, _ []string) error {
 
 type eventCLIOutbox interface {
 	Replay(context.Context, []event.Subscriber, string, int) (event.ReplayResult, error)
+	ReplayFrom(context.Context, []event.Subscriber, string, string, int) (event.ReplayResult, error)
 	Prepared() ([]event.PreparedRecord, error)
 	Commit(string) error
 	Abort(string) error
@@ -71,6 +73,12 @@ func runEventReplayWithDeps(cmd *cobra.Command, deps eventCLIDeps) error {
 	if limit < 0 {
 		return exitcode.InvalidArgsError("--limit must be >= 0")
 	}
+	from, _ := cmd.Flags().GetString("from")
+	if from != "" {
+		if _, err := uuid.Parse(from); err != nil {
+			return exitcode.InvalidArgsErrorf("--from must be a valid event UUID: %v", err)
+		}
+	}
 	start, err := deps.getwd()
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getwd: %v", err)
@@ -83,7 +91,7 @@ func runEventReplayWithDeps(cmd *cobra.Command, deps eventCLIDeps) error {
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("%v", err)
 	}
-	r, err := deps.outboxFor(root).Replay(cmd.Context(), subs, name, limit)
+	r, err := deps.outboxFor(root).ReplayFrom(cmd.Context(), subs, name, from, limit)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("replaying outbox: %v", err)
 	}

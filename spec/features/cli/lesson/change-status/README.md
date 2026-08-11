@@ -21,11 +21,11 @@ specscore lesson change-status <slug> --to=<status> [--note <markdown>] [--succe
 
 ## Problem
 
-A hand-maintained markdown log has no notion of a status transition at all — `LESSONS-LEARNED.md`'s own convention is a hand-edited `**Status:**` line ("updating its `Status:` line" is explicitly listed as one of the only permitted edits to a past entry), which is precisely the anti-pattern `idea`/`feature`/`plan change-status` already eliminate for their kinds. A dedicated verb closes the gap for Lesson: every promotion up the ladder, and every retirement, goes through the same validated, rollback-safe, index-syncing path every other kind uses.
+A hand-maintained markdown log has no notion of a status transition at all — `LESSONS-LEARNED.md`'s own convention is a hand-edited `**Status:**` line ("updating its `Status:` line" is explicitly listed as one of the only permitted edits to a past entry), which is precisely the anti-pattern `idea`/`feature`/`plan change-status` already eliminate for their kinds. A dedicated verb closes the gap for Lesson: every promotion up the ladder, and every retirement, goes through the same validated, fail-closed, index-syncing path every other kind uses.
 
 ## Behavior
 
-This verb inherits the strict state machine (exit `4`), `--to` parsing, slug resolution, atomic rewrite, rollback (exit `10`), success line, shared exit-code mapping, and optional `--note` → `## Resolution` mechanism from [lifecycle-transitions](../../lifecycle-transitions/README.md). Lesson index synchronization is deliberately narrower than the generic repository-wide fixer.
+This verb inherits the strict state machine (exit `4`), `--to` parsing, slug resolution, atomic rewrite, success line, shared exit-code mapping, and optional `--note` → `## Resolution` mechanism from [lifecycle-transitions](../../lifecycle-transitions/README.md). Lesson index synchronization is deliberately narrower than the generic repository-wide fixer. Once the rewrite is visible, rollback requires atomic ownership; absent that proof, the artifact/index and prepared event remain recoverable instead of overwriting concurrent data.
 
 ### Legal-transition matrix
 
@@ -63,7 +63,7 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: lessons-index-sync
 
-After the rewrite, the verb MUST upsert only the resolved Lesson's exact row in `spec/lessons/README.md`, then run lint read-only. It MUST NOT invoke a repository-wide fixer or migrate an unrelated `## Outstanding Questions` heading. Exit `0` depends on the rewrite, index upsert, and read-only lint all succeeding; failure restores the Lesson and index bytes and exits `10`.
+After the rewrite, the verb MUST upsert only the resolved Lesson's exact row in `spec/lessons/README.md` under the project-private Lesson-index writer lock, then run lint read-only and durably fence both artifact/index files and parent directories before event commit. It MUST NOT invoke a repository-wide fixer or migrate an unrelated `## Outstanding Questions` heading. Exit `0` depends on every step succeeding. A post-rewrite failure exits `10`, retains the prepared event, and MUST preserve the published state and concurrent index rows rather than restoring whole-file snapshots.
 
 ## Flags
 
@@ -82,7 +82,7 @@ After the rewrite, the verb MUST upsert only the resolved Lesson's exact row in 
 | `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No canonical or compatibility Lesson for the slug. |
 | `4` | `(current_status, --to)` is not a legal transition. |
-| `10` | I/O, narrow index-upsert, or read-only lint failure after a successful rewrite (Lesson and index rollback applied). |
+| `10` | I/O, narrow index-upsert, read-only lint, or durability-fence failure; post-publication state and its prepared recovery event are retained. |
 
 ## Interaction with Other Features
 
@@ -145,7 +145,7 @@ After the rewrite, the verb MUST upsert only the resolved Lesson's exact row in 
 
 **Given** `spec/lessons/kinder-fake.md` in `**Status:** Recorded`
 **When** read-only lint fails after a successful Status rewrite and exact index-row upsert
-**Then** a full rollback restores the original Lesson and index bytes, and the command exits `10`.
+**Then** the command exits `10`, retains the rewritten Lesson, its row, every concurrent foreign row, and the prepared lifecycle event for explicit recovery; it does not restore a whole-file snapshot. (The AC identifier is retained for traceability to the superseded rollback behavior.)
 
 ### AC: unrelated-files-remain-byte-identical
 

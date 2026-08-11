@@ -494,10 +494,24 @@ func ReconciliationToken(record PreparedRecord, decision string) string {
 }
 
 func (o Outbox) Replay(ctx context.Context, subscribers []Subscriber, name string, limit int) (ReplayResult, error) {
-	return o.operation().replay(ctx, subscribers, name, limit)
+	return o.ReplayFrom(ctx, subscribers, name, "", limit)
 }
 
-func (o outboxOperations) replay(ctx context.Context, subscribers []Subscriber, name string, limit int) (ReplayResult, error) {
+// ReplayFrom retries pending deliveries in immutable ledger order. When from
+// is non-empty, replay starts inclusively at that committed event's position
+// in the ledger. The cursor remains useful after that event is acknowledged:
+// ordering is derived from the ledger record, never from pending directory
+// enumeration.
+func (o Outbox) ReplayFrom(ctx context.Context, subscribers []Subscriber, name, from string, limit int) (ReplayResult, error) {
+	return o.operation().replay(ctx, subscribers, name, from, limit)
+}
+
+type replayEntry struct {
+	id        string
+	timestamp time.Time
+}
+
+func (o outboxOperations) replay(ctx context.Context, subscribers []Subscriber, name, from string, limit int) (ReplayResult, error) {
 	if err := o.recover(); err != nil {
 		return ReplayResult{}, err
 	}
@@ -525,6 +539,27 @@ func (o outboxOperations) replay(ctx context.Context, subscribers []Subscriber, 
 	}
 	sort.Strings(names)
 	result := ReplayResult{Prepared: prepared}
+	var cursor *replayEntry
+	if from != "" {
+		record, err := o.readRecord(from)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return result, fmt.Errorf("unknown --from event %q", from)
+			}
+			return result, err
+		}
+		state, err := o.readState(from)
+		if err != nil {
+			return result, err
+		}
+		if state != committedState {
+			return result, fmt.Errorf("--from event %s is not committed", from)
+		}
+		if name != "" && !containsSubscriber(record.Subscribers, name) {
+			return result, fmt.Errorf("--from event %s was not addressed to subscriber %q", from, name)
+		}
+		cursor = &replayEntry{id: from, timestamp: record.Event.Timestamp.UTC()}
+	}
 	for _, n := range names {
 		entries, err := o.operations().ReadDir(filepath.Dir(o.pendingPath(n, "x")))
 		if os.IsNotExist(err) {
@@ -533,15 +568,32 @@ func (o outboxOperations) replay(ctx context.Context, subscribers []Subscriber, 
 		if err != nil {
 			return result, err
 		}
+		ordered := make([]replayEntry, 0, len(entries))
 		for _, entry := range entries {
-			if limit > 0 && result.Delivered+len(result.Failed) >= limit {
-				return result, nil
-			}
 			if entry.IsDir() {
 				continue
 			}
+			record, err := o.readRecord(entry.Name())
+			if err != nil {
+				return result, err
+			}
+			ordered = append(ordered, replayEntry{id: entry.Name(), timestamp: record.Event.Timestamp.UTC()})
+		}
+		sort.Slice(ordered, func(i, j int) bool {
+			if ordered[i].timestamp.Equal(ordered[j].timestamp) {
+				return ordered[i].id < ordered[j].id
+			}
+			return ordered[i].timestamp.Before(ordered[j].timestamp)
+		})
+		for _, entry := range ordered {
+			if cursor != nil && (entry.timestamp.Before(cursor.timestamp) || (entry.timestamp.Equal(cursor.timestamp) && entry.id < cursor.id)) {
+				continue
+			}
+			if limit > 0 && result.Delivered+len(result.Failed) >= limit {
+				return result, nil
+			}
 			result.Pending++
-			id := entry.Name()
+			id := entry.id
 			record, err := o.readRecord(id)
 			if err != nil {
 				return result, err
@@ -567,6 +619,15 @@ func (o outboxOperations) replay(ctx context.Context, subscribers []Subscriber, 
 		}
 	}
 	return result, nil
+}
+
+func containsSubscriber(names []string, name string) bool {
+	for _, candidate := range names {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (o outboxOperations) touchExclusive(path string) error {

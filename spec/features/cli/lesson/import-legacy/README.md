@@ -29,7 +29,7 @@ The inventory preserves every recognized heading and inline recurrence-marker id
 
 A `new` row creates the canonical Lesson and exactly one deterministic provider Occurrence for that source observation. An `occurrence` row adds exactly one deterministic child to a canonical Lesson. One aggregate marker row remains one ambiguity-tagged evidence record. Source status remains in the immutable manifest and apply reports the conservative `Recorded` status decision; this importer does not create `Enforced` Lessons or fabricate control, verification, or evidence.
 
-Committed migration artifacts MUST NOT contain raw/base64 legacy prose. The manifest retains source identity, raw status, exact ranges, and block hashes, while compact reviewed text is allowed because it is the current rule rather than a copy of the archive. All targets and evidence paths are collision-preflighted. Exclusive publication and post-link durability failures roll back every artifact still provably owned by the attempt. Rollback verifies the complete owned tree before deleting any path and uses non-recursive removal; a concurrent foreign child makes ownership uncertain, is preserved, and leaves the visible import state retryable. Re-running an approved apply reconciles that state byte-identically and creates no second provider Occurrence.
+Committed migration artifacts MUST NOT contain raw/base64 legacy prose. The manifest retains source identity, raw status, exact ranges, and block hashes, while compact reviewed text is allowed because it is the current rule rather than a copy of the archive. All targets and evidence paths are collision-preflighted. New Lesson publication reserves its directory, durably records a deterministic `.legacy-import-owner` marker, and exclusively links immutable children. Once any path is visible, failure retains the complete/partial state as uncertain; the importer never performs a verify-then-delete rollback that could erase a concurrent foreign child. Re-running an approved apply reconciles its marker, README, occurrence directory, manifest, and deterministic provider Occurrence byte-identically without changing foreign children or creating a duplicate.
 
 ## Acceptance Criteria
 
@@ -55,7 +55,7 @@ Committed migration artifacts MUST NOT contain raw/base64 legacy prose. The mani
 
 **Given** an exclusive README or manifest link succeeds and its following directory sync fails
 **When** apply returns the durability error
-**Then** every path owned by that attempt is removed and all pre-existing Lesson bytes remain identical.
+**Then** no published path is deleted, the error is classified uncertain, every concurrent foreign child remains byte-identical, and a clean retry finishes the same deterministic import without a second provider Occurrence. (The AC identifier is retained for traceability to the superseded destructive rollback behavior.)
 
 ## Open Questions
 

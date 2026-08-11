@@ -609,7 +609,15 @@ func preflightLegacyApplyWithRuntime(lessonsDir string, allowedClassifications [
 			} else if !os.IsNotExist(err) {
 				return plan, fmt.Errorf("mapping %s target stat: %w", key, err)
 			} else if _, dirErr := fs.Stat(targetDir); dirErr == nil {
-				return plan, fmt.Errorf("mapping %s target directory already exists without matching imported provenance", key)
+				entries, readErr := fs.ReadDir(targetDir)
+				if readErr != nil {
+					return plan, fmt.Errorf("mapping %s target directory read: %w", key, readErr)
+				}
+				for _, child := range entries {
+					if child.Name() != ".legacy-import-owner" && child.Name() != "occurrences" {
+						return plan, fmt.Errorf("mapping %s target directory already exists without matching imported provenance", key)
+					}
+				}
 			} else if !os.IsNotExist(dirErr) {
 				return plan, fmt.Errorf("mapping %s target directory stat: %w", key, dirErr)
 			}
@@ -670,96 +678,6 @@ func preflightLegacyApplyWithRuntime(lessonsDir string, allowedClassifications [
 
 func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping) (LegacyApplyResult, error) {
 	return applyLegacyWithDeps(lessonsDir, allowedClassifications, inv, mapping, defaultLegacyImportDeps())
-}
-
-type legacyPublishedArtifact struct {
-	path      string
-	directory bool
-	content   []byte
-}
-
-// legacyPublishedSet is the importer's exact rollback ownership claim. Files
-// carry their published bytes and owned directories carry their complete
-// immediate child set. Rollback verifies the entire set before deleting a
-// single path, then uses non-recursive Remove calls so an unobserved foreign
-// child can never be recursively erased.
-type legacyPublishedSet struct {
-	artifacts []legacyPublishedArtifact
-}
-
-func (p *legacyPublishedSet) addDirectory(path string) {
-	p.artifacts = append(p.artifacts, legacyPublishedArtifact{path: path, directory: true})
-}
-
-func (p *legacyPublishedSet) addFile(path string, content []byte) {
-	p.artifacts = append(p.artifacts, legacyPublishedArtifact{path: path, content: append([]byte(nil), content...)})
-}
-
-func (p *legacyPublishedSet) verify(fs lessonFS) error {
-	expectedChildren := make(map[string]map[string]bool)
-	for _, artifact := range p.artifacts {
-		if artifact.directory {
-			expectedChildren[artifact.path] = map[string]bool{}
-		}
-	}
-	for _, artifact := range p.artifacts {
-		if children, ownedParent := expectedChildren[filepath.Dir(artifact.path)]; ownedParent {
-			children[filepath.Base(artifact.path)] = artifact.directory
-		}
-	}
-	for _, artifact := range p.artifacts {
-		info, err := fs.Lstat(artifact.path)
-		if err != nil {
-			return fmt.Errorf("verifying rollback ownership of %s: %w", artifact.path, err)
-		}
-		if artifact.directory {
-			if !info.IsDir() {
-				return fmt.Errorf("rollback-owned directory changed type: %s", artifact.path)
-			}
-			entries, err := fs.ReadDir(artifact.path)
-			if err != nil {
-				return fmt.Errorf("reading rollback-owned directory %s: %w", artifact.path, err)
-			}
-			want := expectedChildren[artifact.path]
-			if len(entries) != len(want) {
-				return fmt.Errorf("rollback-owned directory changed after publication: %s", artifact.path)
-			}
-			for _, entry := range entries {
-				wantDirectory, ok := want[entry.Name()]
-				if !ok || entry.IsDir() != wantDirectory {
-					return fmt.Errorf("rollback-owned directory changed after publication: %s", artifact.path)
-				}
-			}
-			continue
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("rollback-owned file changed type: %s", artifact.path)
-		}
-		got, err := fs.ReadFile(artifact.path)
-		if err != nil {
-			return fmt.Errorf("reading rollback-owned file %s: %w", artifact.path, err)
-		}
-		if !bytes.Equal(got, artifact.content) {
-			return fmt.Errorf("rollback-owned file changed after publication: %s", artifact.path)
-		}
-	}
-	return nil
-}
-
-func (p *legacyPublishedSet) rollback(fs lessonFS) error {
-	if err := p.verify(fs); err != nil {
-		return fmt.Errorf("refusing rollback because publication ownership is uncertain: %w", err)
-	}
-	for i := len(p.artifacts) - 1; i >= 0; i-- {
-		path := p.artifacts[i].path
-		if err := fs.Remove(path); err != nil {
-			return fmt.Errorf("removing rollback-owned path %s: %w", path, err)
-		}
-		if err := syncDirectoryWithFS(filepath.Dir(path), fs); err != nil {
-			return fmt.Errorf("durably removing rollback-owned path %s: %w", path, err)
-		}
-	}
-	return nil
 }
 
 func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping, deps legacyImportDeps) (LegacyApplyResult, error) {
@@ -836,30 +754,22 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 		}
 	}
 
-	var published legacyPublishedSet
+	published := false
 	manifestDirExisted, err := statDirectoryWithFS(filepath.Dir(manifestPath), deps.fs)
 	if err != nil {
 		return result, err
 	}
-	rollback := func() error {
-		return published.rollback(deps.fs)
-	}
 	failAfterPublication := func(cause error) (LegacyApplyResult, error) {
-		rollbackErr := rollback()
-		// A nested occurrence writer may already have crossed a publication or
-		// fsync boundary. Rolling back sibling files cannot prove that child is
-		// gone, so its prepared event must remain recoverable even when the
-		// outer rollback itself succeeds.
-		if MutationOutcomeOf(cause) == MutationUncertain {
-			if rollbackErr != nil {
-				return LegacyApplyResult{}, mutationFailure(MutationUncertain, fmt.Errorf("%v; outer rollback also failed: %w", cause, rollbackErr))
-			}
-			return LegacyApplyResult{}, mutationFailure(MutationUncertain, cause)
+		// Once any canonical path is visible, there is no atomic ownership CAS
+		// for an entire directory tree. Never delete or restore it: a concurrent
+		// occurrence may have become its child after publication. Every publish
+		// is complete and deterministic, so a clean retry reconciles the retained
+		// Lesson/manifest/occurrence set.
+		outcome := MutationOutcomeOf(cause)
+		if !published && (outcome == MutationPrePublication || outcome == MutationCompensated) {
+			return LegacyApplyResult{}, cause
 		}
-		if rollbackErr != nil {
-			return LegacyApplyResult{}, mutationFailure(MutationUncertain, fmt.Errorf("%v; rollback failed: %w", cause, rollbackErr))
-		}
-		return LegacyApplyResult{}, mutationFailure(MutationCompensated, cause)
+		return LegacyApplyResult{}, mutationFailure(MutationUncertain, fmt.Errorf("post-publication state retained for durable retry: %w", cause))
 	}
 	for _, key := range keys {
 		m := byMap[key]
@@ -870,16 +780,10 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 			continue
 		}
 		finalDir := filepath.Join(lessonsDir, m.Slug)
-		readmeBytes, err := deps.fs.ReadFile(filepath.Join(stageDir, m.Slug, "README.md"))
-		if err != nil {
-			return failAfterPublication(err)
-		}
 		if err := publishStagedLessonWithFS(filepath.Join(stageDir, m.Slug), finalDir, deps.fs); err != nil {
 			return failAfterPublication(err)
 		}
-		published.addDirectory(finalDir)
-		published.addDirectory(filepath.Join(finalDir, "occurrences"))
-		published.addFile(filepath.Join(finalDir, "README.md"), readmeBytes)
+		published = true
 		result.CreatedLessons = append(result.CreatedLessons, m.Slug)
 	}
 	if !manifestExists {
@@ -887,14 +791,12 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 			if err := deps.fs.Mkdir(filepath.Dir(manifestPath), 0o755); err != nil {
 				return failAfterPublication(err)
 			}
-			published.addDirectory(filepath.Dir(manifestPath))
+			published = true
 		}
 		if err := deps.fs.Link(filepath.Join(stageDir, "manifest.json"), manifestPath); err != nil {
 			return failAfterPublication(err)
 		}
-		// Ownership begins when the exclusive link succeeds, not after fsync.
-		// Recording it first guarantees a post-link durability failure removes it.
-		published.addFile(manifestPath, manifestBytes)
+		published = true
 		if err := syncDirectoryWithFS(filepath.Dir(manifestPath), deps.fs); err != nil {
 			return failAfterPublication(err)
 		}
@@ -910,14 +812,7 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 		if err != nil {
 			return failAfterPublication(err)
 		}
-		occurrenceBytes, err := deps.fs.ReadFile(o.Path)
-		if err != nil {
-			// The immutable child may already be visible, but without its exact
-			// bytes this importer cannot claim rollback ownership. Preserve it
-			// and classify the transaction for durable retry.
-			return failAfterPublication(mutationFailure(MutationUncertain, fmt.Errorf("snapshotting published occurrence: %w", err)))
-		}
-		published.addFile(o.Path, occurrenceBytes)
+		published = true
 		result.CreatedOccurrences = append(result.CreatedOccurrences, o.ID)
 	}
 	for _, key := range keys {
@@ -979,9 +874,10 @@ func statDirectoryWithFS(path string, fs lessonFS) (bool, error) {
 	return info.IsDir(), nil
 }
 
-// publishStagedLesson reserves the target directory with mkdir's exclusive
-// create, then atomically links the fully-written staged README into it. A
-// racing importer cannot replace another writer's Lesson directory.
+// publishStagedLesson reserves a canonical directory exclusively, records a
+// permanent deterministic ownership marker, and then publishes only missing
+// immutable children. Any post-reservation failure retains the partial tree;
+// a retry can finish it without deleting or overwriting a concurrent child.
 func publishStagedLesson(stageDir, finalDir string) error {
 	return publishStagedLessonWithFS(stageDir, finalDir, osLessonFS{})
 }
@@ -991,30 +887,74 @@ func publishStagedLessonWithFS(stageDir, finalDir string, fs lessonFS) error {
 	if err != nil {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	var published legacyPublishedSet
-	if err := fs.Mkdir(finalDir, 0o755); err != nil {
+	markerBytes := []byte("specscore-legacy-import:" + shaString(readmeBytes) + "\n")
+	stageMarker := filepath.Join(stageDir, ".legacy-import-owner")
+	if err := writeDurableStageFileWithFS(stageMarker, markerBytes, fs); err != nil && !os.IsExist(err) {
 		return mutationFailure(MutationPrePublication, err)
 	}
-	published.addDirectory(finalDir)
-	rollback := func(cause error) error {
-		if rollbackErr := published.rollback(fs); rollbackErr != nil {
-			return mutationFailure(MutationUncertain, fmt.Errorf("%v; staged Lesson rollback failed: %w", cause, rollbackErr))
+	if err := fs.Mkdir(finalDir, 0o755); err != nil {
+		if !os.IsExist(err) {
+			return mutationFailure(MutationPrePublication, err)
 		}
-		return mutationFailure(MutationCompensated, cause)
+		markerPath := filepath.Join(finalDir, ".legacy-import-owner")
+		existing, readErr := fs.ReadFile(markerPath)
+		if readErr == nil {
+			if !bytes.Equal(existing, markerBytes) {
+				return mutationFailure(MutationPrePublication, fmt.Errorf("legacy import ownership marker differs: %s", markerPath))
+			}
+		} else if os.IsNotExist(readErr) {
+			entries, dirErr := fs.ReadDir(finalDir)
+			if dirErr != nil {
+				return mutationFailure(MutationPrePublication, dirErr)
+			}
+			if len(entries) != 0 {
+				return mutationFailure(MutationPrePublication, fmt.Errorf("target Lesson directory exists without this import's ownership marker: %s", finalDir))
+			}
+		} else {
+			return mutationFailure(MutationPrePublication, readErr)
+		}
 	}
-	if err := fs.Mkdir(filepath.Join(finalDir, "occurrences"), 0o755); err != nil {
-		return rollback(err)
+	fail := func(cause error) error {
+		return mutationFailure(MutationUncertain, fmt.Errorf("published Lesson retained for durable retry: %w", cause))
 	}
-	published.addDirectory(filepath.Join(finalDir, "occurrences"))
-	if err := fs.Link(filepath.Join(stageDir, "README.md"), filepath.Join(finalDir, "README.md")); err != nil {
-		return rollback(err)
+	markerPath := filepath.Join(finalDir, ".legacy-import-owner")
+	if err := fs.Link(stageMarker, markerPath); err != nil {
+		if !os.IsExist(err) {
+			return fail(err)
+		}
+		existing, readErr := fs.ReadFile(markerPath)
+		if readErr != nil || !bytes.Equal(existing, markerBytes) {
+			return fail(fmt.Errorf("legacy import ownership marker collision: %s", markerPath))
+		}
 	}
-	published.addFile(filepath.Join(finalDir, "README.md"), readmeBytes)
+	occurrences := filepath.Join(finalDir, "occurrences")
+	if err := fs.Mkdir(occurrences, 0o755); err != nil {
+		if !os.IsExist(err) {
+			return fail(err)
+		}
+		info, statErr := fs.Stat(occurrences)
+		if statErr != nil || !info.IsDir() {
+			return fail(fmt.Errorf("occurrence store collision: %s", occurrences))
+		}
+	}
+	readmePath := filepath.Join(finalDir, "README.md")
+	if err := fs.Link(filepath.Join(stageDir, "README.md"), readmePath); err != nil {
+		if !os.IsExist(err) {
+			return fail(err)
+		}
+		existing, readErr := fs.ReadFile(readmePath)
+		if readErr != nil || !bytes.Equal(existing, readmeBytes) {
+			return fail(fmt.Errorf("Lesson README collision: %s", readmePath))
+		}
+	}
+	if err := syncDirectoryWithFS(occurrences, fs); err != nil {
+		return fail(err)
+	}
 	if err := syncDirectoryWithFS(finalDir, fs); err != nil {
-		return rollback(err)
+		return fail(err)
 	}
 	if err := syncDirectoryWithFS(filepath.Dir(finalDir), fs); err != nil {
-		return rollback(err)
+		return fail(err)
 	}
 	return nil
 }

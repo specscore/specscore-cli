@@ -259,13 +259,17 @@ func TestChangeStatus_PostMutationFails_RollsBack(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected boom error, got %v", err)
 	}
-	body, _ := os.ReadFile(path)
-	// Full rollback: status restored, no note, no successor line.
-	if !strings.Contains(string(body), "**Status:** Enforced") {
-		t.Errorf("status not rolled back:\n%s", body)
+	if MutationOutcomeOf(err) != MutationUncertain {
+		t.Fatalf("post-publication outcome = %v", MutationOutcomeOf(err))
 	}
-	if strings.Contains(string(body), "## Resolution") || strings.Contains(string(body), "Superseded By") {
-		t.Errorf("body mutations not rolled back:\n%s", body)
+	body, _ := os.ReadFile(path)
+	// Historical test name retained: post-publication state is now preserved
+	// for explicit recovery instead of risking a concurrent edit.
+	if !strings.Contains(string(body), "**Status:** Superseded") {
+		t.Errorf("status publication not retained:\n%s", body)
+	}
+	if !strings.Contains(string(body), "## Resolution") || !strings.Contains(string(body), "Superseded By") {
+		t.Errorf("complete body publication not retained:\n%s", body)
 	}
 }
 
@@ -285,8 +289,8 @@ func TestChangeStatus_SuccessorWriteFails_RollsBack(t *testing.T) {
 		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "**Status:** Enforced") {
-		t.Errorf("status not rolled back after successor-write failure:\n%s", body)
+	if MutationOutcomeOf(err) != MutationUncertain || !strings.Contains(string(body), "**Status:** Superseded") {
+		t.Errorf("status was not retained as uncertain after successor-write failure:\n%s", body)
 	}
 }
 
@@ -306,8 +310,8 @@ func TestChangeStatus_NoteWriteFails_RollsBack(t *testing.T) {
 		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "**Status:** Enforced") {
-		t.Errorf("status not rolled back after note-write failure:\n%s", body)
+	if MutationOutcomeOf(err) != MutationUncertain || !strings.Contains(string(body), "**Status:** Withdrawn") {
+		t.Errorf("status was not retained as uncertain after note-write failure:\n%s", body)
 	}
 }
 

@@ -179,6 +179,105 @@ func TestCanonicalOccurrenceReconcileFailureRetainsPreparedEvent(t *testing.T) {
 	}
 }
 
+func TestLessonNewFailureRetainsConcurrentIndexRowAndPreparedRecovery(t *testing.T) {
+	root := setupSpecRoot(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	configureNoopLessonEvents(t, root)
+	concurrent := "| [foreign](foreign/README.md) | Recorded | process | 0 |  | — |"
+	deps := defaultLessonCLIDeps()
+	deps.lint = func(lint.Options) ([]lint.Violation, error) {
+		indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+		body, err := os.ReadFile(indexPath)
+		requireCLISuccess(t, err)
+		body = bytes.Replace(body, []byte("\n## Open Questions"), []byte("\n"+concurrent+"\n\n## Open Questions"), 1)
+		requireCLISuccess(t, os.WriteFile(indexPath, body, 0o644))
+		return nil, errors.New("late lint failure")
+	}
+	cmd := lessonNewCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
+	requireCLIError(t, runLessonNewWithDeps(cmd, []string{"retained-new"}, deps))
+	index, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	requireCLISuccess(t, err)
+	if !bytes.Contains(index, []byte(concurrent)) || !bytes.Contains(index, []byte("retained-new/README.md")) {
+		t.Fatalf("post-publication recovery erased a row:\n%s", index)
+	}
+	if _, err := os.Stat(filepath.Join(root, "spec", "lessons", "retained-new", "README.md")); err != nil {
+		t.Fatalf("published Lesson was destructively rolled back: %v", err)
+	}
+	prepared, err := event.NewOutbox(root).Prepared()
+	if err != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.created" {
+		t.Fatalf("prepared recovery=%#v err=%v", prepared, err)
+	}
+}
+
+func TestLessonNewCoordinatorDistinguishesPrepublicationAndFenceFailure(t *testing.T) {
+	root := setupSpecRoot(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
+	configureNoopLessonEvents(t, root)
+	deps := defaultLessonCLIDeps()
+	deps.fs.mkdirAll = func(string, os.FileMode) error {
+		return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: errors.New("exclusive create failed")}
+	}
+	cmd := lessonNewCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
+	requireCLIError(t, runLessonNewWithDeps(cmd, []string{"prepublication"}, deps))
+	assertAbortedLessonEvent(t, root, "lesson.created")
+
+	root = setupSpecRoot(t)
+	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
+	configureNoopLessonEvents(t, root)
+	deps = defaultLessonCLIDeps()
+	deps.durable.open = func(string) (durableFile, error) { return nil, errors.New("injected scaffold fence") }
+	cmd = lessonNewCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
+	requireCLIError(t, runLessonNewWithDeps(cmd, []string{"fence-recovery"}, deps))
+	prepared, err := event.NewOutbox(root).Prepared()
+	if err != nil || len(prepared) != 1 {
+		t.Fatalf("scaffold fence prepared recovery=%#v err=%v", prepared, err)
+	}
+}
+
+func TestLessonLifecycleFailureRetainsConcurrentIndexRowAndDurabilityRecovery(t *testing.T) {
+	root := canonicalLessonProject(t)
+	configureNoopLessonEvents(t, root)
+	concurrent := "| [foreign](foreign/README.md) | Recorded | process | 0 |  | — |"
+	deps := defaultLessonCLIDeps()
+	deps.lint = func(lint.Options) ([]lint.Violation, error) {
+		indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+		body, err := os.ReadFile(indexPath)
+		requireCLISuccess(t, err)
+		body = bytes.Replace(body, []byte("\n## Open Questions"), []byte("\n"+concurrent+"\n\n## Open Questions"), 1)
+		requireCLISuccess(t, os.WriteFile(indexPath, body, 0o644))
+		return nil, errors.New("late lint failure")
+	}
+	cmd := lessonChangeStatusCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "to": "Stated"})
+	requireCLIError(t, runLessonChangeStatusWithDeps(cmd, []string{"review-before-merge"}, deps))
+	index, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	requireCLISuccess(t, err)
+	if !bytes.Contains(index, []byte(concurrent)) || !bytes.Contains(index, []byte("| Stated |")) {
+		t.Fatalf("lifecycle recovery erased concurrent/owned row:\n%s", index)
+	}
+	prepared, err := event.NewOutbox(root).Prepared()
+	if err != nil || len(prepared) != 1 || prepared[0].EventName != "lesson.lifecycle-changed" {
+		t.Fatalf("prepared recovery=%#v err=%v", prepared, err)
+	}
+
+	// A durability-fence failure likewise cannot advance the event to committed.
+	root = canonicalLessonProject(t)
+	configureNoopLessonEvents(t, root)
+	deps = defaultLessonCLIDeps()
+	deps.durable.open = func(string) (durableFile, error) { return nil, errors.New("injected directory fence") }
+	cmd = lessonChangeStatusCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "to": "Stated"})
+	requireCLIError(t, runLessonChangeStatusWithDeps(cmd, []string{"review-before-merge"}, deps))
+	prepared, err = event.NewOutbox(root).Prepared()
+	if err != nil || len(prepared) != 1 {
+		t.Fatalf("fence failure prepared recovery=%#v err=%v", prepared, err)
+	}
+}
+
 func TestLegacyRecurRestoresBodyAndIndexBytesAndModes(t *testing.T) {
 	for _, phase := range []string{"parse", "index"} {
 		t.Run(phase, func(t *testing.T) {
@@ -576,6 +675,9 @@ func TestDurableFileFaultsAreReportedWithoutGlobalHooks(t *testing.T) {
 	if err := durableRemovePathWithOps("/x/missing", faultDurableOps("remove-missing")); err != nil {
 		t.Fatalf("missing remove should still fence its directory: %v", err)
 	}
+	removed := filepath.Join(t.TempDir(), "remove-me")
+	requireCLISuccess(t, os.WriteFile(removed, []byte("x"), 0o600))
+	requireCLISuccess(t, durableRemovePath(removed))
 	for _, fault := range []string{"dir-sync", "dir-close"} {
 		requireCLIError(t, durableFencePathWithOps("/x/file", faultDurableOps(fault)))
 	}

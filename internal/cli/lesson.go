@@ -137,17 +137,19 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		return exitcode.InvalidArgsErrorf("unsafe Lesson content: %v", err)
 	}
 
-	snapshot, err := snapshotLessonScaffoldWithOps(root, target, deps.fs)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("snapshotting declared write set: %v", err)
+	if err := preflightLessonScaffoldWriteSetWithOps(root, target, deps.fs); err != nil {
+		return exitcode.UnexpectedErrorf("preflighting declared write set: %v", err)
 	}
 	prepared, err := deps.prepareEvent(root, "lesson.created", slug, map[string]any{"classifications": classifications}, time.Time{})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing lesson event: %v", err)
 	}
+	transaction := newLessonMutationCoordinator(prepared, deps.durable)
 	fail := func(message string, cause error) error {
-		failure := lesson.CompensatePublication(snapshot.restore, cause)
-		if recovery, resolved := prepared.ResolveMutationFailure(message, failure); recovery {
+		// Every failure after this point may follow a visible file or directory.
+		// Retain it with the prepared event; a whole-tree restore cannot prove
+		// ownership and could erase a concurrent Lesson/index mutation.
+		if recovery, resolved := transaction.ResolveFailure(message, cause); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
 		} else {
 			return exitcode.UnexpectedErrorf(message+": %v", resolved)
@@ -192,7 +194,15 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 	if len(own) > 0 {
 		return fail("generated Lesson failed lint", fmt.Errorf("%s", strings.Join(own, "\n")))
 	}
-	result, commitErr := prepared.Commit(cmd.Context())
+	if err := transaction.Fence(
+		filepath.Join(root, "spec", "README.md"),
+		filepath.Join(root, "spec", "lessons", "README.md"),
+		target,
+		filepath.Join(filepath.Dir(target), "occurrences"),
+	); err != nil {
+		return fail("durably fencing Lesson scaffold", err)
+	}
+	result, commitErr := transaction.Commit(cmd.Context())
 	if commitErr != nil {
 		return exitcode.UnexpectedErrorf("Lesson created but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
@@ -204,77 +214,20 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 	return nil
 }
 
-type fileSnapshot struct {
-	path   string
-	data   []byte
-	mode   os.FileMode
-	exists bool
-}
-
-type lessonScaffoldSnapshot struct {
-	files         []fileSnapshot
-	lessonsDir    string
-	lessonDir     string
-	occurrences   string
-	hadLessonsDir bool
-	hadLessonDir  bool
-	hadOccurrence bool
-}
-
-func snapshotLessonScaffold(root, target string) (lessonScaffoldSnapshot, error) {
-	return snapshotLessonScaffoldWithOps(root, target, defaultLessonCLIDeps().fs)
-}
-
-func snapshotLessonScaffoldWithOps(root, target string, fs lessonFileOps) (lessonScaffoldSnapshot, error) {
-	s := lessonScaffoldSnapshot{
-		lessonsDir:  filepath.Join(root, "spec", "lessons"),
-		lessonDir:   filepath.Dir(target),
-		occurrences: filepath.Join(filepath.Dir(target), "occurrences"),
-	}
+func preflightLessonScaffoldWriteSetWithOps(root, target string, fs lessonFileOps) error {
 	for _, p := range []string{filepath.Join(root, "spec", "README.md"), filepath.Join(root, "spec", "lessons", "README.md"), target} {
-		info, err := fs.stat(p)
+		_, err := fs.stat(p)
 		if err == nil {
-			b, readErr := fs.read(p)
-			if readErr != nil {
-				return s, readErr
+			if _, readErr := fs.read(p); readErr != nil {
+				return readErr
 			}
-			s.files = append(s.files, fileSnapshot{path: p, data: b, mode: info.Mode().Perm(), exists: true})
 		} else if os.IsNotExist(err) {
-			s.files = append(s.files, fileSnapshot{path: p})
+			continue
 		} else {
-			return s, err
+			return err
 		}
 	}
-	s.hadLessonsDir = pathIsDir(s.lessonsDir)
-	s.hadLessonDir = pathIsDir(s.lessonDir)
-	s.hadOccurrence = pathIsDir(s.occurrences)
-	return s, nil
-}
-
-func pathIsDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-func (s lessonScaffoldSnapshot) restore() error {
-	var failures []error
-	for _, f := range s.files {
-		if f.exists {
-			failures = append(failures, durableRestoreFile(f.path, f.data, f.mode))
-		} else {
-			failures = append(failures, durableRemovePath(f.path))
-		}
-	}
-	if !s.hadOccurrence {
-		failures = append(failures, durableRemovePath(s.occurrences))
-	}
-	if !s.hadLessonDir {
-		failures = append(failures, durableRemovePath(s.lessonDir))
-	}
-	if !s.hadLessonsDir {
-		failures = append(failures, durableRemovePath(s.lessonsDir))
-	}
-	return errors.Join(failures...)
+	return nil
 }
 
 func lessonClassificationsFromConfig(cfg projectdef.SpecConfig) []string {
@@ -333,9 +286,9 @@ exclusive to an explicit ` + "`specscore spec lint --fix`" + ` command.
 Both dispositions require a reason: --to=withdrawn and --to=superseded
 require --note. --to=superseded additionally requires --successor naming the
 lesson that replaces this one; it is written as a **Superseded By:**
-reference. If anything fails after the status rewrite (lint failure, I/O
-error), the on-disk state is restored to its pre-invocation form before the
-verb exits.
+reference. If anything fails after the status rewrite (lint, I/O, or durability
+fence), the command exits recovery-required with its prepared event and visible
+state retained; it never restores a whole snapshot over concurrent work.
 
 ` + lesson.LegalTransitionMatrix() + `
 Examples:
@@ -444,6 +397,7 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 	if err != nil {
 		return exitcode.UnexpectedErrorf("preparing lifecycle event: %v", err)
 	}
+	transaction := newLessonMutationCoordinator(prepared, deps.durable)
 
 	result, err := deps.changeStatus(lesson.ChangeStatusOptions{
 		SpecRoot:     specRoot,
@@ -454,13 +408,13 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 		PostMutation: postMutation,
 	})
 	if err != nil {
-		if recovery, resolved := prepared.ResolveMutationFailure("changing lesson status", err); recovery {
+		if recovery, resolved := transaction.ResolveFailure("changing lesson status", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
 		} else {
 			return resolved
 		}
 	}
-	delivery, commitErr := prepared.Commit(cmd.Context())
+	delivery, commitErr := transaction.Commit(cmd.Context())
 	if commitErr != nil {
 		return exitcode.UnexpectedErrorf("status changed but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
 	}
@@ -473,45 +427,33 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 	return nil
 }
 
-// prepareLessonPostMutation snapshots the only index file owned by a Lesson
-// lifecycle change. The returned hook upserts that Lesson's row, then runs
-// lint read-only. It deliberately does not invoke the repository-wide fixer:
-// only an explicit `specscore spec lint --fix` may migrate unrelated content
-// such as an Outstanding Questions heading.
+// prepareLessonPostMutation returns the shared lifecycle completion hook. It
+// upserts only this Lesson's row, validates read-only, and durably fences both
+// artifact and index before the event can commit. It never restores a whole
+// index snapshot: after publication, retaining an uncertain prepared event is
+// safer than erasing a concurrent row.
 func prepareLessonPostMutationWithDeps(root, slug string, deps lessonCLIDeps) (lesson.PostMutationHook, error) {
 	specSub := filepath.Join(root, "spec")
 	indexPath := filepath.Join(specSub, "lessons", "README.md")
-	info, err := deps.fs.stat(indexPath)
-	if err != nil {
-		return nil, exitcode.UnexpectedErrorf("snapshotting lessons index mode: %v", err)
-	}
-	indexBefore, err := deps.fs.read(indexPath)
-	if err != nil {
-		return nil, exitcode.UnexpectedErrorf("snapshotting lessons index: %v", err)
-	}
-	restore := func() error { return durableRestoreFile(indexPath, indexBefore, info.Mode().Perm()) }
-	fail := func(message string, cause error) error {
-		if rollbackErr := restore(); rollbackErr != nil {
-			message += fmt.Sprintf("; index rollback failed: %v", rollbackErr)
-		}
-		return exitcode.UnexpectedErrorf(message+": %v", cause)
+	if _, err := deps.fs.stat(indexPath); err != nil {
+		return nil, exitcode.UnexpectedErrorf("preflighting lessons index: %v", err)
 	}
 
 	return func() error {
 		path, err := lesson.ResolveLessonFile(filepath.Join(specSub, "lessons"), slug)
 		if err != nil {
-			return fail("resolving rewritten Lesson", err)
+			return exitcode.UnexpectedErrorf("resolving rewritten Lesson: %v", err)
 		}
 		updated, err := deps.parse(path)
 		if err != nil {
-			return fail("parsing rewritten Lesson", err)
+			return exitcode.UnexpectedErrorf("parsing rewritten Lesson: %v", err)
 		}
 		if err := deps.indexUpsert(specSub, updated); err != nil {
-			return fail("upserting Lesson index row", err)
+			return exitcode.UnexpectedErrorf("upserting Lesson index row: %v", err)
 		}
 		violations, err := deps.lint(lint.Options{SpecRoot: specSub})
 		if err != nil {
-			return fail("running read-only lint", err)
+			return exitcode.UnexpectedErrorf("running read-only lint: %v", err)
 		}
 		var errs []lint.Violation
 		for _, violation := range violations {
@@ -519,15 +461,18 @@ func prepareLessonPostMutationWithDeps(root, slug string, deps lessonCLIDeps) (l
 				errs = append(errs, violation)
 			}
 		}
-		if len(errs) == 0 {
-			return nil
+		if len(errs) > 0 {
+			var message strings.Builder
+			message.WriteString("lint failed after status rewrite")
+			for _, violation := range errs {
+				fmt.Fprintf(&message, "\n  %s:%d [%s] %s", violation.File, violation.Line, violation.Rule, violation.Message)
+			}
+			return exitcode.UnexpectedErrorf("%s: %d error-severity violation(s)", message.String(), len(errs))
 		}
-		var message strings.Builder
-		message.WriteString("lint failed after status rewrite")
-		for _, violation := range errs {
-			fmt.Fprintf(&message, "\n  %s:%d [%s] %s", violation.File, violation.Line, violation.Rule, violation.Message)
+		if err := newLessonMutationCoordinator(nil, deps.durable).Fence(path, indexPath); err != nil {
+			return exitcode.UnexpectedErrorf("%v", err)
 		}
-		return fail(message.String(), fmt.Errorf("%d error-severity violation(s)", len(errs)))
+		return nil
 	}, nil
 }
 

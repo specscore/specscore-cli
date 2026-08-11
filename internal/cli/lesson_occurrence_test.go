@@ -30,8 +30,8 @@ func canonicalLessonProject(t *testing.T) string {
 
 func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testing.T) {
 	root := canonicalLessonProject(t)
-	contextJSON := `{"run":"42","files":["x.go"],"nested":{"attempt":2,"verified":true,"meta":null}}`
-	wantContext := map[string]any{"run": "42", "files": []any{"x.go"}, "nested": map[string]any{"attempt": float64(2), "verified": true, "meta": nil}}
+	contextJSON := `{"run":"42","files":["x.go"],"sequence":9007199254740993,"nested":{"attempt":2,"verified":true,"meta":null}}`
+	wantContext := map[string]any{"run": "42", "files": []any{"x.go"}, "sequence": json.Number("9007199254740993"), "nested": map[string]any{"attempt": json.Number("2"), "verified": true, "meta": nil}}
 	out, stderr, err := runLesson(t, "occurrence", "add", "review-before-merge", "--summary", "stale branch", "--context-json", contextJSON)
 	if err != nil {
 		t.Fatalf("occurrence add: %v stderr=%s", err, stderr)
@@ -47,7 +47,7 @@ func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testin
 		t.Fatal(err)
 	}
 	var stored map[string]any
-	if err := json.Unmarshal(b, &stored); err != nil {
+	if err := decodeLessonOccurrenceJSON(b, &stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored["summary"] != "stale branch" {
@@ -62,7 +62,7 @@ func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testin
 		t.Fatal(err)
 	}
 	var listed []map[string]any
-	if err := json.Unmarshal([]byte(listJSON), &listed); err != nil || len(listed) != 1 || !reflect.DeepEqual(listed[0]["context"], wantContext) {
+	if err := decodeLessonOccurrenceJSON([]byte(listJSON), &listed); err != nil || len(listed) != 1 || !reflect.DeepEqual(listed[0]["context"], wantContext) {
 		t.Fatalf("list did not round-trip opaque context: err=%v items=%#v", err, listed)
 	}
 	infoJSON, _, err := runLesson(t, "occurrence", "info", "review-before-merge", id, "--format", "json")
@@ -70,7 +70,7 @@ func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testin
 		t.Fatal(err)
 	}
 	var inspected map[string]any
-	if err := json.Unmarshal([]byte(infoJSON), &inspected); err != nil || !reflect.DeepEqual(inspected["context"], wantContext) {
+	if err := decodeLessonOccurrenceJSON([]byte(infoJSON), &inspected); err != nil || !reflect.DeepEqual(inspected["context"], wantContext) {
 		t.Fatalf("info did not round-trip opaque context: err=%v item=%#v", err, inspected)
 	}
 	index, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
@@ -97,6 +97,12 @@ func TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility(t *testin
 	if !strings.Contains(info, `"recurred": 2`) {
 		t.Fatalf("derived recurrence missing from info: %s", info)
 	}
+}
+
+func decodeLessonOccurrenceJSON(raw []byte, target any) error {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	return decoder.Decode(target)
 }
 
 func TestLessonOccurrenceRejectsBadContextBeforeWrite(t *testing.T) {

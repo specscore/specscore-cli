@@ -324,7 +324,9 @@ func TestLegacyPreflightRejectsEveryReviewedMappingContradictionWriteFree(t *tes
 			_ = os.WriteFile(filepath.Join(lessons, m.Entries[0].Slug+".md"), []byte("x"), 0o644)
 		},
 		"target directory collision": func(lessons string, _ *LegacyInventory, m *LegacyMapping, _ *[]string) {
-			_ = os.MkdirAll(filepath.Join(lessons, m.Entries[0].Slug), 0o755)
+			dir := filepath.Join(lessons, m.Entries[0].Slug)
+			_ = os.MkdirAll(dir, 0o755)
+			_ = os.WriteFile(filepath.Join(dir, "foreign"), []byte("foreign"), 0o644)
 		},
 		"invalid action":       func(_ string, _ *LegacyInventory, m *LegacyMapping, _ *[]string) { m.Entries[0].Action = "drop" },
 		"missing local source": func(_ string, inv *LegacyInventory, _ *LegacyMapping, _ *[]string) { inv.localSource = "" },
@@ -1400,7 +1402,7 @@ func TestLegacyResidualApplyRacesAndRollbackFailures(t *testing.T) {
 	for _, tc := range []struct {
 		mode string
 		want MutationOutcome
-	}{{"remove-all", MutationCompensated}, {"remove", MutationUncertain}, {"sync", MutationUncertain}} {
+	}{{"remove-all", MutationUncertain}, {"remove", MutationUncertain}, {"sync", MutationUncertain}} {
 		t.Run("rollback-"+tc.mode, func(t *testing.T) {
 			lessons, inv, mapping := legacyMatrixFixture(t)
 			deps := defaultLegacyImportDeps()
@@ -1416,7 +1418,7 @@ func TestLegacyResidualApplyRacesAndRollbackFailures(t *testing.T) {
 		deps := defaultLegacyImportDeps()
 		deps.fs = &legacyRollbackFS{lessonFS: osLessonFS{}, mode: "occurrence-remove-all"}
 		_, err := applyLegacyWithDeps(lessons, []string{"process"}, inv, mapping, deps)
-		if err == nil || MutationOutcomeOf(err) != MutationCompensated {
+		if err == nil || MutationOutcomeOf(err) != MutationUncertain {
 			t.Fatalf("rollback err=%v outcome=%v", err, MutationOutcomeOf(err))
 		}
 	})

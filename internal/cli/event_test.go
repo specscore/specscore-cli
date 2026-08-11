@@ -21,9 +21,14 @@ type fakeEventOutbox struct {
 	result   event.ReplayResult
 	err      error
 	action   error
+	from     string
 }
 
 func (f *fakeEventOutbox) Replay(context.Context, []event.Subscriber, string, int) (event.ReplayResult, error) {
+	return f.result, f.err
+}
+func (f *fakeEventOutbox) ReplayFrom(_ context.Context, _ []event.Subscriber, _, from string, _ int) (event.ReplayResult, error) {
+	f.from = from
 	return f.result, f.err
 }
 func (f *fakeEventOutbox) Prepared() ([]event.PreparedRecord, error)     { return f.prepared, f.err }
@@ -53,6 +58,17 @@ func TestEventAdapterFailures(t *testing.T) {
 	cmd = eventReplayCommand()
 	setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink", "limit": "-1"})
 	requireCLIError(t, runEventReplayWithDeps(cmd, defaultEventCLIDeps()))
+	cmd = eventReplayCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink", "from": "not-a-uuid"})
+	requireCLIError(t, runEventReplayWithDeps(cmd, defaultEventCLIDeps()))
+	cmd = eventReplayCommand()
+	fakeReplay := &fakeEventOutbox{}
+	const cursor = "00000000-0000-4000-8000-000000000042"
+	setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink", "from": cursor})
+	requireCLISuccess(t, runEventReplayWithDeps(cmd, eventTestDeps(fakeReplay)))
+	if fakeReplay.from != cursor {
+		t.Fatalf("replay cursor = %q, want %q", fakeReplay.from, cursor)
+	}
 	for _, phase := range []string{"getwd", "root", "load", "replay", "failed"} {
 		cmd = eventReplayCommand()
 		setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink"})

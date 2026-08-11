@@ -27,7 +27,7 @@ Recording a process gap must remain quick, but a mutating scaffold cannot silent
 
 The user configures the repository's Lesson classification vocabulary and chooses a slug. Before any write, the command validates configuration, content policy, both layout targets, and the complete bounded write set. The observable start result is either zero changed bytes or one prepared event naming the intended mutation.
 
-The command publishes the directory scaffold and exact index row, then runs lint read-only. The observable middle result is one canonical Lesson and no changed unrelated spec file. It commits and attempts the prepared event only after the artifact is valid. The observable end result is a lint-clean Lesson plus independently replayable event delivery. A collision or validation failure rolls the owned paths back; a durable post-mutation event failure remains inspectable.
+The command publishes the directory scaffold and exact index row, then runs lint read-only and durably fences both files and parent directories. The observable middle result is one canonical Lesson and no changed unrelated spec file. It commits and attempts the prepared event only after the artifact is valid and durable. The observable end result is a lint-clean Lesson plus independently replayable event delivery. A pre-publication collision or validation failure changes no bytes. Any post-publication failure retains the complete visible state and prepared event for explicit recovery; it never restores a whole-file/tree snapshot that could erase concurrent work.
 
 ## Behavior
 
@@ -57,7 +57,7 @@ Before artifact publication, the command MUST prepare `lesson.created` with the 
 
 #### REQ: rollback-owned-write-set
 
-Any pre-commit creation, index, parsing, or focused-lint failure MUST restore every pre-existing owned file byte-for-byte and remove only directories/files created by the failed attempt. Unrelated files MUST remain byte-identical.
+Any failure proven to precede publication MUST leave the declared write set byte-identical. After a path becomes visible, the command MUST NOT delete or restore an artifact/index snapshot without an atomic ownership proof. It MUST retain the visible state and prepared event as uncertain for explicit recovery, preserving every unrelated or concurrently added file/index row. Exact-row index writes MUST serialize through the project-private Lesson-index writer lock. Event commit MUST follow successful file and parent-directory durability fences for the Lesson, occurrence store, and both declared indexes.
 
 ## Parameters
 

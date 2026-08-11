@@ -89,6 +89,7 @@ func TestOccurrenceInputsAndTransactionFailures(t *testing.T) {
 		{"exclusive", map[string]string{"context-json": `{}`, "context-file": contextPath}, nil, true},
 		{"missing-file", map[string]string{"context-file": contextPath + ".missing"}, nil, true},
 		{"bad-json", map[string]string{"context-json": `[]`}, nil, true},
+		{"trailing-json", map[string]string{"context-json": `{} {}`}, nil, true},
 		{"stdin-error", map[string]string{"context-stdin": "true"}, &testErrReader{}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2,14 +2,95 @@ package lint
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/specscore/specscore-cli/pkg/lesson"
 )
+
+type testLessonIndexLock struct {
+	lockErr error
+}
+
+func (l testLessonIndexLock) Lock() error { return l.lockErr }
+func (testLessonIndexLock) Unlock() error { return errors.New("ignored unlock") }
+
+func TestUpsertLessonIndexRowSerializesConcurrentRowsAndLockFailures(t *testing.T) {
+	specRoot := t.TempDir()
+	lessonsDir := filepath.Join(specRoot, "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n## Open Questions\n\nNone at this time.\n"
+	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var parsed []*lesson.Lesson
+	for i := 0; i < 16; i++ {
+		slug := fmt.Sprintf("concurrent-%02d", i)
+		path := filepath.Join(lessonsDir, slug, "README.md")
+		if err := os.MkdirAll(filepath.Join(filepath.Dir(path), "occurrences"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Owner: "codex", Date: "2026-08-11"}, []string{"process"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		item, err := lesson.Parse(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed = append(parsed, item)
+	}
+	start := make(chan struct{})
+	errs := make(chan error, len(parsed))
+	var wg sync.WaitGroup
+	for _, item := range parsed {
+		wg.Add(1)
+		go func(l *lesson.Lesson) {
+			defer wg.Done()
+			<-start
+			errs <- UpsertLessonIndexRow(specRoot, l)
+		}(item)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range parsed {
+		if !bytes.Contains(got, []byte("["+item.Slug+"]("+item.Slug+"/README.md)")) {
+			t.Errorf("concurrent row missing for %s", item.Slug)
+		}
+	}
+
+	boom := errors.New("lock boundary")
+	deps := lessonIndexLockDeps{mkdirAll: func(string, os.FileMode) error { return boom }, newLock: func(string) lessonIndexLocker { return testLessonIndexLock{} }}
+	if err := upsertLessonIndexRowWithLock(specRoot, parsed[0], deps); !errors.Is(err, boom) {
+		t.Fatalf("mkdir lock error = %v", err)
+	}
+	deps.mkdirAll = func(string, os.FileMode) error { return nil }
+	deps.newLock = func(string) lessonIndexLocker { return testLessonIndexLock{lockErr: boom} }
+	if err := upsertLessonIndexRowWithLock(specRoot, parsed[0], deps); !errors.Is(err, boom) {
+		t.Fatalf("acquire lock error = %v", err)
+	}
+}
 
 func TestLessonRules_CanonicalLessonChecksConfiguredControlAndOccurrenceSchema(t *testing.T) {
 	projectRoot := t.TempDir()

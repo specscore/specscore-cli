@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
 )
@@ -157,9 +158,11 @@ func TestLessonChangeStatus_SupersededUnresolvableSuccessor_CLI(t *testing.T) {
 	}
 }
 
-// AC: lint-failure-rolls-back.
+// Historical AC name retained: a post-publication lint failure is recoverable
+// and must never restore whole artifact/index snapshots over concurrent data.
 func TestLessonChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Recorded")
+	configureNoopLessonEvents(t, root)
 	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
 	indexBefore, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -181,11 +184,15 @@ func TestLessonChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
 	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
-	if !strings.Contains(string(body), "**Status:** Recorded") {
-		t.Errorf("status not rolled back after lint failure:\n%s", body)
+	if !strings.Contains(string(body), "**Status:** Stated") {
+		t.Errorf("uncertain status publication not retained after lint failure:\n%s", body)
 	}
-	if indexAfter, readErr := os.ReadFile(indexPath); readErr != nil || string(indexAfter) != string(indexBefore) {
-		t.Fatalf("index not rolled back after lint failure: err=%v", readErr)
+	if indexAfter, readErr := os.ReadFile(indexPath); readErr != nil || string(indexAfter) == string(indexBefore) || !strings.Contains(string(indexAfter), "Stated") {
+		t.Fatalf("row-scoped index publication not retained after lint failure: err=%v\n%s", readErr, indexAfter)
+	}
+	prepared, readErr := event.NewOutbox(root).Prepared()
+	if readErr != nil || len(prepared) != 1 {
+		t.Fatalf("prepared recovery event=%#v err=%v", prepared, readErr)
 	}
 }
 

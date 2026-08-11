@@ -19,6 +19,36 @@ type preparedLessonEvent struct {
 	disabled    bool
 }
 
+// lessonMutationCoordinator is the common fail-closed boundary for Lesson
+// artifact commands. It owns prepared-event resolution, durability fencing,
+// and commit ordering so individual verbs cannot invent weaker rollback or
+// event semantics.
+type lessonMutationCoordinator struct {
+	prepared *preparedLessonEvent
+	durable  durableFileOps
+}
+
+func newLessonMutationCoordinator(prepared *preparedLessonEvent, durable durableFileOps) lessonMutationCoordinator {
+	return lessonMutationCoordinator{prepared: prepared, durable: durable}
+}
+
+func (c lessonMutationCoordinator) ResolveFailure(operation string, cause error) (bool, error) {
+	return c.prepared.ResolveMutationFailure(operation, cause)
+}
+
+func (c lessonMutationCoordinator) Fence(paths ...string) error {
+	for _, path := range paths {
+		if err := durableFencePathWithOps(path, c.durable); err != nil {
+			return fmt.Errorf("durably fencing %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func (c lessonMutationCoordinator) Commit(ctx context.Context) (event.ReplayResult, error) {
+	return c.prepared.Commit(ctx)
+}
+
 // prepareLessonEvent persists the complete recipient set before the artifact
 // mutation. A caller must either Commit after the mutation or Abort after
 // rolling it back; a crash leaves an inspectable prepared record.

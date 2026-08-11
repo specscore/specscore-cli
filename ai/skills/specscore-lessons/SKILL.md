@@ -96,6 +96,7 @@ Writers and guidance emit `Open Questions`; compatibility parsing may still diag
 ```sh
 specscore event emit --name lesson.observed --actor-kind skill --actor-id skill:specscore-lessons --artifact-type feature --artifact-id lesson --artifact-path spec/features/lesson/README.md --payload-json '{}'
 specscore event replay --subscriber audit-sink --limit 100
+specscore event replay --subscriber audit-sink --from 123e4567-e89b-42d3-a456-426614174000 --limit 100
 specscore event reconcile 123e4567-e89b-42d3-a456-426614174000 --decision commit
 specscore event reconcile 123e4567-e89b-42d3-a456-426614174000 --decision commit --confirm TOKEN_FROM_PREVIEW
 ```
