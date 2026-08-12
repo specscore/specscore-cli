@@ -98,3 +98,20 @@ func TestCompareAndSwap_LockFaultLeavesOriginal(t *testing.T) {
 		t.Fatalf("lock fault wrote %q", got)
 	}
 }
+
+func TestWithArtifactMutationLock_IsBoundedAndReleases(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "task.md")
+	lock, err := acquireCASLock(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WithArtifactMutationLock(p, func() error { return nil }); !errors.Is(err, ErrConcurrentMutation) {
+		t.Fatalf("contention=%v", err)
+	}
+	if err := lock.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if err := WithArtifactMutationLock(p, func() error { return nil }); err != nil {
+		t.Fatalf("release=%v", err)
+	}
+}

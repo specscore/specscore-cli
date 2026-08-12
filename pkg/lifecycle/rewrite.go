@@ -83,6 +83,11 @@ func Validate(kind Kind, artifactPath string, to Status) (Status, error) {
 // If the file has no `**Status:**` line, Rewrite returns ErrStatusLineNotFound
 // and the file is left untouched.
 func Rewrite(artifactPath string, newStatus Status) (string, error) {
+	lock, err := acquireCASLock(artifactPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = lock.Unlock() }()
 	original, err := os.ReadFile(artifactPath)
 	if err != nil {
 		return "", err

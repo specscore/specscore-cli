@@ -202,6 +202,9 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 	// frontmatter status: mirror if present). No claim/release, lock, or
 	// conflict-resolution step (cli/task/change-status#ac:single-actor-no-coordination).
 	if _, err := lifecycle.Rewrite(taskFilePath, to); err != nil {
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
+		}
 		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
 	}
 
@@ -454,6 +457,9 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 	}
 	extraFields := buildExtraTaskFieldLines(implementedBy, noteFromFlags(cmd), evidenceFromFlags(cmd))
 	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to, extraFields); err != nil {
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
+		}
 		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
 	}
 
@@ -472,14 +478,16 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 // provenance/note/evidence writes land together. A nil/empty extraFields is a
 // pure status rewrite.
 func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status, extraFields []string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(data), "\n")
-	lines[statusLine-1] = "**Status:** " + string(to)
-	lines = withExtraFieldLines(lines, statusLine-1, extraFields)
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return lifecycle.WithArtifactMutationLock(path, func() error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(data), "\n")
+		lines[statusLine-1] = "**Status:** " + string(to)
+		lines = withExtraFieldLines(lines, statusLine-1, extraFields)
+		return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	})
 }
 
 // isImplementedByLine reports whether ln is an `**Implemented-by:**` field line.
