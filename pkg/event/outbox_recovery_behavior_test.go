@@ -595,8 +595,99 @@ func TestOutbox_ReadRecordRejectsEveryUnsafeDurableLedgerShape(t *testing.T) {
 		})
 	}
 	write(t, encode(t, missingFacts))
-	if _, err := o.Prepared(); err == nil || !strings.Contains(err.Error(), "explicit recovery is required") {
-		t.Fatalf("legacy private-intent ledger did not fail closed through public reconciliation: %v", err)
+	if _, err := o.Prepared(); err == nil || !strings.Contains(err.Error(), "incomplete private prepared-intent identity") {
+		t.Fatalf("partially populated private-intent ledger did not fail closed: %v", err)
+	}
+}
+
+func TestOutbox_CurrentMainLegacyLedgerRemainsExplicitlyRecoverableButNeverAutoMatches(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	legacyEvent := validEvent()
+	// This anonymous shape is the exact ledger schema on current main: no
+	// private intent fields exist. Keeping the fixture independent of
+	// ledgerRecord prevents a new field default from weakening this proof.
+	currentMainFixture := func(e Event) []byte {
+		body, err := json.Marshal(struct {
+			Event       Event    `json:"event"`
+			Subscribers []string `json:"subscribers"`
+			State       string   `json:"state"`
+		}{Event: e, Subscribers: []string{"sink"}, State: preparedState})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(body, '\n')
+	}
+	if err := os.MkdirAll(filepath.Dir(o.ledgerPath(legacyEvent.UUID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.ledgerPath(legacyEvent.UUID), currentMainFixture(legacyEvent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	newEvent := legacyEvent
+	newEvent.UUID = "00000000-0000-4000-8000-000000000041"
+	newEvent.Timestamp = newEvent.Timestamp.Add(time.Second)
+	newEvent.Name = "lesson.other"
+	if err := o.PrepareIntent(newEvent, []Subscriber{&outboxSub{name: "sink"}}, json.RawMessage(`{"content_sha256":"new"}`)); err != nil {
+		t.Fatal(err)
+	}
+	newIntent := newEvent
+	newIntent.UUID = ""
+	newIntent.Timestamp = time.Time{}
+	if found, err := o.FindPreparedIntent(newIntent, json.RawMessage(`{"content_sha256":"new"}`)); err != nil || found == nil || found.UUID != newEvent.UUID {
+		t.Fatalf("new intent was not found beside a legacy ledger: %#v, %v", found, err)
+	}
+
+	legacyIntent := legacyEvent
+	legacyIntent.UUID = ""
+	legacyIntent.Timestamp = time.Time{}
+	before, err := os.ReadFile(o.ledgerPath(legacyEvent.UUID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, err := o.FindPreparedIntent(legacyIntent, nil); err == nil || found != nil || !strings.Contains(err.Error(), "legacy prepared event") || !strings.Contains(err.Error(), "reconcile it explicitly") {
+		t.Fatalf("legacy automatic intent lookup did not require explicit reconciliation: %#v, %v", found, err)
+	}
+	after, err := os.ReadFile(o.ledgerPath(legacyEvent.UUID))
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("automatic lookup mutated the legacy ledger: %v", err)
+	}
+	prepared, err := o.Prepared()
+	if err != nil || len(prepared) != 2 {
+		t.Fatalf("mixed legacy/new explicit listing = %#v, %v", prepared, err)
+	}
+	if err := o.Commit(legacyEvent.UUID); err != nil {
+		t.Fatalf("explicit legacy commit: %v", err)
+	}
+	if err := os.Remove(o.pendingPath("sink", legacyEvent.UUID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Recover(); err != nil {
+		t.Fatalf("explicit legacy recovery: %v", err)
+	}
+	sink := &outboxSub{name: "sink"}
+	result, err := o.Replay(context.Background(), []Subscriber{sink}, "sink", 0)
+	if err != nil || result.Delivered != 1 || len(sink.seen) != 1 || sink.seen[0] != legacyEvent.UUID {
+		t.Fatalf("legacy committed replay = %#v seen=%v err=%v", result, sink.seen, err)
+	}
+	committedLedger, err := os.ReadFile(o.ledgerPath(legacyEvent.UUID))
+	if err != nil || !bytes.Equal(committedLedger, before) {
+		t.Fatalf("explicit commit/replay rewrote the immutable legacy ledger: %v", err)
+	}
+
+	legacyAbort := legacyEvent
+	legacyAbort.UUID = "00000000-0000-4000-8000-000000000042"
+	legacyAbort.Timestamp = legacyAbort.Timestamp.Add(2 * time.Second)
+	abortFixture := currentMainFixture(legacyAbort)
+	if err := os.WriteFile(o.ledgerPath(legacyAbort.UUID), abortFixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Abort(legacyAbort.UUID); err != nil {
+		t.Fatalf("explicit legacy abort: %v", err)
+	}
+	abortedLedger, err := os.ReadFile(o.ledgerPath(legacyAbort.UUID))
+	if err != nil || !bytes.Equal(abortedLedger, abortFixture) {
+		t.Fatalf("explicit abort rewrote the immutable legacy ledger: %v", err)
 	}
 }
 

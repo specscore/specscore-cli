@@ -316,8 +316,15 @@ func (o outboxOperations) readRecord(id string) (ledgerRecord, error) {
 	if err := validateLedgerSubscriberNames(r.Subscribers); err != nil {
 		return r, fmt.Errorf("event ledger %s contains invalid subscribers: %w", id, err)
 	}
+	if len(r.IntentFacts) == 0 && r.IntentFingerprint == "" {
+		// Exact current-main records predate automatic mutation-intent matching.
+		// Keep their validated envelope available to explicit reconciliation,
+		// commit/abort, and replay; findPreparedIntent handles them as
+		// deliberately unmatchable legacy records.
+		return r, nil
+	}
 	if len(r.IntentFacts) == 0 || r.IntentFingerprint == "" {
-		return r, fmt.Errorf("event ledger %s lacks private prepared-intent identity; explicit recovery is required", id)
+		return r, fmt.Errorf("event ledger %s contains incomplete private prepared-intent identity", id)
 	}
 	canonicalFacts, err := canonicalPreparedIntentFacts(r.IntentFacts)
 	if err != nil {
@@ -573,6 +580,12 @@ func (o outboxOperations) findPreparedIntent(intent Event, facts json.RawMessage
 		record, err := o.readRecord(id)
 		if err != nil {
 			return nil, err
+		}
+		if len(record.IntentFacts) == 0 {
+			if samePreparedIntentScope(record.Event, intent) {
+				return nil, fmt.Errorf("legacy prepared event %s exists for the same mutation scope without private intent identity; reconcile it explicitly before retrying", id)
+			}
+			continue
 		}
 		// readRecord validates the stored envelope and payload before returning,
 		// so canonicalization cannot fail for this candidate.
