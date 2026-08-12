@@ -1,7 +1,6 @@
 # specscore-cli
 
 [![CI](https://github.com/specscore/specscore-cli/actions/workflows/go-ci.yml/badge.svg)](https://github.com/specscore/specscore-cli/actions/workflows/go-ci.yml)
-[![Dogfood lint](https://github.com/specscore/specscore-cli/actions/workflows/dogfood.yml/badge.svg)](https://github.com/specscore/specscore-cli/actions/workflows/dogfood.yml)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/specscore/specscore-cli/actions/workflows/go-ci.yml)
 
 CLI for [SpecScore](https://specscore.md) — lint, query, and scaffold SpecScore specifications.
