@@ -35,12 +35,12 @@ specscore lesson check --not-enforced --min-recurred 1 --format json
 
 <!-- capability: specscore.lesson.agents -->
 
-Read agent context offline from an adapter-produced `agents.json` beside a canonical Lesson. SpecScore never creates or rewrites that projection: the repository's native orchestration plugin decides whether it is versioned or local. Live actions are opt-in and use only the neutral executable named by `SPECSCORE_LESSON_AGENTS_HOOK`; the hook receives a versioned JSON request on stdin and owns authentication, messages, retries, and all backend access.
+Read agent context offline from an adapter-produced `agents.json` beside a canonical Lesson. SpecScore never creates or rewrites that projection: the repository's native orchestration plugin decides whether it is versioned or local. Live actions are opt-in and use only the neutral executable named by `SPECSCORE_LESSON_AGENTS_HOOK`. The SpecScore lesson-agents request schema version 2 contains selected-project context plus one canonical project-relative `external_resource` reference and revision; it contains no structured Lesson slug, status, occurrence, or relation fields. Synchestra must compare, store, and return that reference as an opaque generic association—never parse it or expose a Lesson-specific endpoint. Synchestra owns authorization, live messaging, stable idempotent IDs, receipts/retry, and resume audit; the adapter owns only project/reference mapping, authoritative public-interface invocation, and atomic projection refresh.
 
 ```sh
 specscore lesson agents verify-before-merge --format json
-SPECSCORE_LESSON_AGENTS_HOOK=synchestra-lesson-agents specscore lesson agents verify-before-merge --refresh
-SPECSCORE_LESSON_AGENTS_HOOK=synchestra-lesson-agents specscore lesson agents verify-before-merge --message codex-1 --text "Please review the occurrence."
+SPECSCORE_LESSON_AGENTS_HOOK=specscore-synchestra-adapter specscore lesson agents verify-before-merge --refresh
+SPECSCORE_LESSON_AGENTS_HOOK=specscore-synchestra-adapter specscore lesson agents verify-before-merge --message codex-1 --text "Please review the occurrence."
 ```
 
 ## Import and migration

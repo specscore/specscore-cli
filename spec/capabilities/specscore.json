@@ -1110,11 +1110,11 @@
                 "--text"
               ],
               "modes": [
-                "offline projection; explicit neutral executable hook"
+                "offline projection; explicit generic external-resource hook"
               ]
             }
           ],
-          "limitation": "A native orchestration adapter owns live transport and projection updates."
+          "limitation": "Synchestra owns live transport guarantees; a native adapter must map generic external resources through its authoritative public interface and atomically update the projection."
         },
         "help": {
           "status": "Full",
@@ -1123,6 +1123,8 @@
               "command": "specscore lesson agents --help",
               "contains": [
                 "SPECSCORE_LESSON_AGENTS_HOOK",
+                "external-resource",
+                "Lesson semantics remain inside SpecScore",
                 "never writes"
               ]
             }
@@ -1147,19 +1149,24 @@
           "references": [
             {
               "path": "internal/cli/lesson_agents_test.go",
-              "name": "TestLessonAgentsReadsOfflineProjectionAndStreamsNeutralHook",
+              "name": "TestLessonAgentsReadsOfflineProjectionAndStreamsGenericExternalResourceHook",
               "kind": "integration"
             },
             {
               "path": "internal/cli/lesson_agents_test.go",
               "name": "TestLessonAgentsRefusesInvalidProjectionAndActions",
               "kind": "integration"
+            },
+            {
+              "path": "internal/cli/lesson_agents_test.go",
+              "name": "TestLessonAgentsBoundaryHasNoSynchestraBackendAccess",
+              "kind": "conformance"
             }
           ],
           "limitation": "The native adapter conformance test belongs to the orchestration repository."
         }
       },
-      "notes": "The core projection and hook envelope are generic; no orchestrator dependency is imported."
+      "notes": "The core constructs project context plus a canonical external-resource reference; the request has no structured Lesson fields, and no orchestrator dependency is imported."
     },
     {
       "id": "specscore.lesson.import-legacy",

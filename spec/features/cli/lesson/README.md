@@ -70,7 +70,15 @@ The `list` and `info` subcommands MUST NOT create, edit, or transition either la
 
 ### Durable facts versus live coordination
 
-SpecScore owns durable, reviewable artifact facts: lifecycle/occurrence history, evidence/tracking links, and links to agent work. Synchestra owns mutable agent presence, authorization, live message delivery, replay, and resumption. A SpecScore command may render cached Synchestra links or deliberately invoke its public CLI/server adapter; it MUST NOT persist live message bodies, create a message outbox, or read Synchestra Git/SQLite storage.
+SpecScore owns durable, reviewable artifact facts: lifecycle/occurrence history,
+evidence/tracking links, and links to agent work. A SpecScore command resolves
+the Lesson locally, then may render adapter-produced links or deliberately pass
+project context plus a canonical opaque external-resource reference to its
+configured adapter. Synchestra owns generic effort/run/session association,
+mutable agent presence, authorization, live message delivery, replay, and
+resumption; it MUST NOT parse or resolve Lesson slugs, statuses, occurrences,
+relations, or expose a Lesson-specific API. SpecScore MUST NOT persist live
+message bodies, create a message outbox, or read Synchestra Git/SQLite storage.
 
 ### Shared flags
 
@@ -163,9 +171,9 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 
 ### AC: coordination-delegates-live-work
 
-**Given** durable Synchestra links for agents associated with a Lesson
+**Given** durable Synchestra links for generic efforts associated through the configured adapter with a Lesson's canonical external-resource reference
 **When** a user lists them offline, then explicitly requests open/message/resume
-**Then** local facts render without network access and only the configured authoritative Synchestra CLI/server endpoint handles the live action; SpecScore stores no message or backend-specific state.
+**Then** local facts render without network access and only the configured authoritative Synchestra public interface handles the live action; SpecScore stores no message or backend-specific state, and Synchestra receives no structured Lesson semantics.
 
 ## Open Questions
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
-func TestLessonAgentsReadsOfflineProjectionAndStreamsNeutralHook(t *testing.T) {
+func TestLessonAgentsReadsOfflineProjectionAndStreamsGenericExternalResourceHook(t *testing.T) {
 	root := canonicalLessonProject(t)
 	projection := `{"version":"1","agents":[{"id":"codex-1","role":"implementer","state":"working","observed_at":"2026-08-10T12:00:00Z","url":"https://example.test/tasks/1","source_event_id":"event-1"}]}`
 	path := filepath.Join(root, "spec", "lessons", "review-before-merge", "agents.json")
@@ -26,11 +27,107 @@ func TestLessonAgentsReadsOfflineProjectionAndStreamsNeutralHook(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"action":"message"`) || !strings.Contains(out, `"agent_id":"codex-1"`) {
 		t.Fatalf("hook out=%q err=%v", out, err)
 	}
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &request); err != nil {
+		t.Fatalf("decode hook request: %v", err)
+	}
+	forbiddenFields := map[string]bool{
+		"lesson": true, "lesson_slug": true, "lesson_path": true,
+		"slug": true, "status": true, "occurrence": true,
+		"occurrences": true, "relation": true, "relations": true,
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("decode generic hook request: %v", err)
+	}
+	var rejectLessonFields func(any)
+	rejectLessonFields = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if forbiddenFields[key] {
+					t.Errorf("hook request exposes SpecScore-only %q field: %s", key, out)
+				}
+				rejectLessonFields(child)
+			}
+		case []any:
+			for _, child := range typed {
+				rejectLessonFields(child)
+			}
+		}
+	}
+	rejectLessonFields(decoded)
+	var project struct {
+		Root string `json:"root"`
+	}
+	canonicalRoot, canonicalErr := filepath.EvalSymlinks(root)
+	if err := json.Unmarshal(request["project"], &project); err != nil || canonicalErr != nil || project.Root != canonicalRoot {
+		t.Fatalf("project context = %+v, err=%v, canonicalErr=%v, want root %q", project, err, canonicalErr, canonicalRoot)
+	}
+	var resource struct {
+		Ref      string `json:"ref"`
+		Revision string `json:"revision"`
+	}
+	if err := json.Unmarshal(request["external_resource"], &resource); err != nil {
+		t.Fatalf("decode external resource: %v", err)
+	}
+	if resource.Ref != "spec/lessons/review-before-merge/README.md" || !strings.HasPrefix(resource.Revision, "sha256:") {
+		t.Fatalf("external resource = %+v", resource)
+	}
+	if got := strings.TrimSpace(string(request["version"])); got != `"2"` {
+		t.Fatalf("request version = %s, want 2", got)
+	}
 	// Explicit project selection must become the executable's working directory.
 	t.Setenv(lessonAgentsHookEnv, "/bin/pwd")
 	out, _, err = runLesson(t, "agents", "review-before-merge", "--project", root, "--refresh")
-	if err != nil || strings.TrimSpace(out) != root {
-		t.Fatalf("project-anchored hook out=%q err=%v want=%q", out, err, root)
+	if err != nil || strings.TrimSpace(out) != canonicalRoot {
+		t.Fatalf("project-anchored hook out=%q err=%v want=%q", out, err, canonicalRoot)
+	}
+}
+
+func TestLessonAgentsCanonicalizesSymlinkedProjectContext(t *testing.T) {
+	physicalRoot := canonicalLessonProject(t)
+	physicalRoot, err := filepath.EvalSymlinks(physicalRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "project-alias")
+	if err := os.Symlink(physicalRoot, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv(lessonAgentsHookEnv, "/bin/cat")
+	out, _, err := runLesson(t, "agents", "review-before-merge", "--project", alias, "--refresh")
+	if err != nil {
+		t.Fatalf("refresh through symlink alias: %v", err)
+	}
+	var request lessonAgentsRequest
+	if err := json.Unmarshal([]byte(out), &request); err != nil {
+		t.Fatalf("decode hook request: %v", err)
+	}
+	if request.Project.Root != physicalRoot {
+		t.Fatalf("project.root = %q, want canonical %q", request.Project.Root, physicalRoot)
+	}
+	if request.ExternalResource.Ref != "spec/lessons/review-before-merge/README.md" {
+		t.Fatalf("external_resource.ref = %q", request.ExternalResource.Ref)
+	}
+	if _, err := canonicalLessonAgentsProjectRoot(filepath.Join(t.TempDir(), "missing")); exitCodeOfErr(err) != exitcode.Unexpected {
+		t.Fatalf("missing canonical root exit=%d err=%v", exitCodeOfErr(err), err)
+	}
+}
+
+func TestLessonAgentsBoundaryHasNoSynchestraBackendAccess(t *testing.T) {
+	source, err := os.ReadFile("lesson_agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lower := strings.ToLower(string(source))
+	for _, forbidden := range []string{
+		`"database/sql"`, `"net/http"`, "github.com/dal-go", "ingitdb",
+		"modernc.org/sqlite", "/v1/lesson-agents", `exec.commandcontext(ctx, "git"`,
+	} {
+		if strings.Contains(lower, forbidden) {
+			t.Errorf("Lesson adapter boundary contains forbidden backend access %q", forbidden)
+		}
 	}
 }
 
@@ -115,14 +212,21 @@ func TestLessonAgentsActionAndHookFailures(t *testing.T) {
 	cmd := lessonAgentsCommand()
 	cmd.SetContext(context.Background())
 	t.Setenv(lessonAgentsHookEnv, "")
-	if err := invokeLessonAgentsHook(cmd, "refresh", root, path, "review-before-merge", "", ""); exitCodeOfErr(err) != exitcode.InvalidState {
+	if err := invokeLessonAgentsHook(cmd, "refresh", root, path, "", ""); exitCodeOfErr(err) != exitcode.InvalidState {
 		t.Fatalf("missing hook exit=%d err=%v", exitCodeOfErr(err), err)
 	}
 	t.Setenv(lessonAgentsHookEnv, "/usr/bin/false")
-	if err := invokeLessonAgentsHook(cmd, "refresh", root, path, "review-before-merge", "", ""); err == nil {
+	if err := invokeLessonAgentsHook(cmd, "refresh", root, path, "", ""); err == nil {
 		t.Fatal("expected failed hook")
 	}
 	t.Setenv(lessonAgentsHookEnv, "/bin/cat")
+	outside := filepath.Join(t.TempDir(), "README.md")
+	if err := os.WriteFile(outside, []byte("external"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := invokeLessonAgentsHook(cmd, "refresh", root, outside, "", ""); exitCodeOfErr(err) != exitcode.Unexpected {
+		t.Fatalf("outside resource exit=%d err=%v", exitCodeOfErr(err), err)
+	}
 	out, _, err := runLesson(t, "agents", "review-before-merge", "--resume", "codex-1")
 	if err != nil || !strings.Contains(out, `"action":"resume"`) {
 		t.Fatalf("resume out=%q err=%v", out, err)

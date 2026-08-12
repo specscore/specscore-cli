@@ -2,9 +2,14 @@ package cli
 
 // The Lesson agents surface intentionally knows nothing about an orchestrator.
 // It reads an adapter-produced durable projection and, only on an explicit
-// action, streams a neutral JSON request to one configured executable. The
-// executable owns authentication, live transport, retries, and any projection
-// refresh write; SpecScore never opens an orchestrator database or queue.
+// action, streams a generic external-resource request to one configured
+// executable. Lesson semantics stop at this boundary: the adapter may map the
+// project-relative resource reference into an orchestrator association, but
+// the orchestrator must not parse SpecScore Doc-Kinds. Synchestra owns
+// authorization, live transport, idempotency, receipts/retry, and resume audit;
+// the executable owns only the generic mapping, public-interface invocation,
+// and projection refresh write. SpecScore never opens an orchestrator database
+// or queue.
 
 import (
 	"bytes"
@@ -42,11 +47,13 @@ type lessonAgentsProjection struct {
 type lessonAgentsRequest struct {
 	Version string `json:"version"`
 	Action  string `json:"action"`
-	Lesson  struct {
-		Slug     string `json:"slug"`
-		Path     string `json:"path"`
+	Project struct {
+		Root string `json:"root"`
+	} `json:"project"`
+	ExternalResource struct {
+		Ref      string `json:"ref"`
 		Revision string `json:"revision"`
-	} `json:"lesson"`
+	} `json:"external_resource"`
 	AgentID string `json:"agent_id,omitempty"`
 	Text    string `json:"text,omitempty"`
 }
@@ -62,7 +69,7 @@ func runLessonAgentsHook(ctx context.Context, hook, root string, payload []byte,
 }
 
 func lessonAgentsCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "agents <lesson>", Short: "Read durable Lesson agent context or invoke an explicit external hook", Long: "Reads the adapter-produced canonical Lesson projection at spec/lessons/<slug>/agents.json without network access. The core never writes this operational projection. --refresh, --open, --message, and --resume invoke only the executable configured by SPECSCORE_LESSON_AGENTS_HOOK, sending a neutral JSON request on stdin and streaming its result. The external adapter owns all live coordination, authentication, retries, and projection updates.", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonAgents}
+	cmd := &cobra.Command{Use: "agents <lesson>", Short: "Read durable Lesson agent context or invoke an explicit external hook", Long: "Reads the adapter-produced canonical Lesson projection at spec/lessons/<slug>/agents.json without network access. The core never writes this operational projection. --refresh, --open, --message, and --resume invoke only the executable configured by SPECSCORE_LESSON_AGENTS_HOOK, sending project context plus a canonical external-resource reference on stdin and streaming its result. Lesson semantics remain inside SpecScore; the adapter's orchestrator stays generic. Synchestra owns authorization, live messaging, idempotency, receipts/retry, and resume audit; the adapter owns generic mapping, public-interface invocation, and atomic projection refresh.", Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runLessonAgents}
 	cmd.Flags().Bool("refresh", false, "ask the configured external hook to refresh its projection")
 	cmd.Flags().String("open", "", "ask the configured external hook to open one agent")
 	cmd.Flags().String("message", "", "ask the configured external hook to message one agent")
@@ -83,6 +90,10 @@ func runLessonAgents(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	root, err = canonicalLessonAgentsProjectRoot(root)
+	if err != nil {
+		return err
+	}
 	path, err := lesson.ResolveLessonFile(filepath.Join(root, "spec", "lessons"), args[0])
 	if err != nil {
 		return err
@@ -99,7 +110,7 @@ func runLessonAgents(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if action != "read" {
-		return invokeLessonAgentsHook(cmd, action, root, path, l.Slug, agentID, text)
+		return invokeLessonAgentsHook(cmd, action, root, path, agentID, text)
 	}
 	projection, err := readLessonAgentsProjection(filepath.Join(filepath.Dir(path), "agents.json"))
 	if os.IsNotExist(err) {
@@ -109,6 +120,14 @@ func runLessonAgents(cmd *cobra.Command, args []string) error {
 		return exitcode.InvalidStateErrorf("reading durable agent projection: %v", err)
 	}
 	return writeLessonAgentsProjection(cmd.OutOrStdout(), format, projection)
+}
+
+func canonicalLessonAgentsProjectRoot(root string) (string, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", exitcode.UnexpectedErrorf("resolving canonical project root: %v", err)
+	}
+	return canonical, nil
 }
 
 func lessonAgentsAction(cmd *cobra.Command) (string, string, string, error) {
@@ -191,11 +210,11 @@ func writeLessonAgentsProjection(w io.Writer, format string, projection lessonAg
 	}
 }
 
-func invokeLessonAgentsHook(cmd *cobra.Command, action, root, path, slug, agentID, text string) error {
-	return invokeLessonAgentsHookWithRunner(cmd, action, root, path, slug, agentID, text, runLessonAgentsHook)
+func invokeLessonAgentsHook(cmd *cobra.Command, action, root, path, agentID, text string) error {
+	return invokeLessonAgentsHookWithRunner(cmd, action, root, path, agentID, text, runLessonAgentsHook)
 }
 
-func invokeLessonAgentsHookWithRunner(cmd *cobra.Command, action, root, path, slug, agentID, text string, run lessonAgentsHookRunner) error {
+func invokeLessonAgentsHookWithRunner(cmd *cobra.Command, action, root, path, agentID, text string, run lessonAgentsHookRunner) error {
 	hook := strings.TrimSpace(os.Getenv(lessonAgentsHookEnv))
 	if hook == "" {
 		return exitcode.InvalidStateErrorf("%s must name the external lesson-agents hook for --%s", lessonAgentsHookEnv, action)
@@ -204,10 +223,15 @@ func invokeLessonAgentsHookWithRunner(cmd *cobra.Command, action, root, path, sl
 	if err != nil {
 		return exitcode.UnexpectedErrorf("reading lesson revision: %v", err)
 	}
-	req := lessonAgentsRequest{Version: "1", Action: action, AgentID: agentID, Text: text}
-	req.Lesson.Slug, req.Lesson.Path = slug, filepath.ToSlash(filepath.Join("spec", "lessons", slug, "README.md"))
+	resourceRef, err := filepath.Rel(root, path)
+	if err != nil || resourceRef == "." || resourceRef == ".." || strings.HasPrefix(resourceRef, ".."+string(filepath.Separator)) || filepath.IsAbs(resourceRef) {
+		return exitcode.UnexpectedErrorf("resolving external resource reference for %s", path)
+	}
+	req := lessonAgentsRequest{Version: "2", Action: action, AgentID: agentID, Text: text}
+	req.Project.Root = root
+	req.ExternalResource.Ref = filepath.ToSlash(filepath.Clean(resourceRef))
 	sum := sha256.Sum256(b)
-	req.Lesson.Revision = fmt.Sprintf("sha256:%x", sum[:])
+	req.ExternalResource.Revision = fmt.Sprintf("sha256:%x", sum[:])
 	payload, _ := json.Marshal(req) // request contains strings only; encoding cannot fail.
 	// The selected project, not the caller's ambient CWD, is the hook's
 	// canonical anchor. This makes --project deterministic for native adapters

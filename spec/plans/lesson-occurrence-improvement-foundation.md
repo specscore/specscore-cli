@@ -133,21 +133,33 @@ Implement `lesson check` by reusing the list filter parser and ordered result mo
 
 Extend the existing event subsystem with immutable ledger, independent durable-subscriber outboxes/cursors, UUID idempotency, and `event replay`. Wire automatic events only after each successful Lesson mutation's durable commit point; test rollback emits none and one failed subscriber does not redeliver an acknowledged peer.
 
-### Task 10: Synchestra coordination projection and adapter boundary
+### Task 10: Generic external-resource coordination and native adapter
 
 **Id:** synchestra-coordination
 **Verifies:** cli/lesson#ac:coordination-delegates-live-work
 **Depends-On:** 9
 **Status:** blocked
 
-Implement local projection rendering plus explicit `--refresh|--open|--message|--resume` adapter calls. Integrate only through Synchestra's configured authoritative public CLI/server endpoint/outbox; contract tests must prove no direct mirror, Git, SQLite, DALgo, or inGitDB access, no message persistence/outbox, and graceful visible mirror-lag rendering.
+Implement local projection rendering plus explicit `--refresh|--open|--message|--resume` adapter calls. SpecScore resolves the selected Lesson and sends the configured adapter only project context plus a canonical project-relative external-resource reference and revision digest. The adapter maps that opaque reference to generic Synchestra effort/run/session associations; Synchestra stores, compares, and returns the reference unchanged and does not parse or resolve Lesson slugs, statuses, occurrences, relations, or any other SpecScore Doc-Kind semantics.
 
 The candidate implements the vendor-neutral core: it reads the adapter-owned
 `agents.json` projection without network access and delegates live actions to
-an explicitly configured external hook using a typed JSON request anchored to
-the selected project. The task remains Blocked until a native Synchestra
-adapter implements that hook contract and proves authentication, idempotent
-receipts/retries, resume auditing, and projection refresh end to end.
+an explicitly configured external hook using the SpecScore lesson-agents
+request schema version 2, whose `project` context and `external_resource` value
+replace the former structured `lesson` object. The native adapter must use only
+Synchestra's configured authoritative public interface and generic
+external-resource associations; it must not require a Lesson-specific endpoint.
+Contract tests must prove no direct mirror, Git, SQLite, DALgo, or inGitDB
+access, no SpecScore-side message persistence/outbox, and graceful visible
+mirror-lag rendering.
+
+The task remains Blocked on implementation, not a product decision: Synchestra
+does not yet expose the required generic external-resource association journey,
+and the native integration does not yet prove Synchestra authorization, stable
+idempotent message IDs, durable receipts/retry, auditable resume, plus the
+adapter's atomic `agents.json` refresh end to end. Synchestra owns those
+coordination guarantees; the adapter owns the mapping and projection
+render/write, while SpecScore retains all Lesson semantics.
 
 ### Task 11: Whole journey and downstream migration verification
 
@@ -156,7 +168,7 @@ receipts/retries, resume auditing, and projection refresh end to end.
 **Depends-On:** 5, 8, 9, 10
 **Status:** blocked
 
-Build an end-to-end fixture that records a Lesson, captures an occurrence, shares durable agent context, promotes with evidence, exercises policy, fails/replays one subscriber, and verifies both closure and human-confirmed-overlap epilogues. Dogfood the release against Backstage with a dry-run import before any apply; do not enable the recurrence CI gate until its baseline is explicitly handled.
+Build an end-to-end fixture that records a Lesson, captures an occurrence, shares durable agent context through the real native adapter and Synchestra's generic external-resource association, promotes with evidence, exercises policy, fails/replays one subscriber, and verifies both closure and human-confirmed-overlap epilogues. Dogfood the release against Backstage with a dry-run import before any apply; do not enable the recurrence CI gate until its baseline is explicitly handled. A fake hook or Lesson-aware Synchestra endpoint does not satisfy this task.
 
 ### Task 12: Finalize validated task lifecycle after merge
 
@@ -175,7 +187,9 @@ Tasks 10–11 remain Blocked until their own acceptance criteria are delivered.
 
 ## Open Questions
 
-- **Blocked native dependency — Synchestra Cloud/API and CLI.** The authoritative Cloud API currently has session list/get/send, but no Lesson association/filter, no auditable resume, and no complete projection refresh contract; Git fallback has durable envelopes but no public construction/config/CLI and no reconciliation. A separate Synchestra Feature must bind the project-anchored Lesson slug to `GET /v1/lesson-agents`, use `POST /v1/sessions/:id/send` with a stable idempotent message ID and durable receipt/retry, add an auditable resume path, and publish the adapter-produced projection. Until that exact journey is implemented and proven, Tasks 10–11 remain blocked.
+None at this time. Task 10's remaining dependency is the generic Synchestra
+capability and native-adapter implementation described above, not a decision
+about Lesson semantics or a Lesson-specific API.
 
 ---
 
