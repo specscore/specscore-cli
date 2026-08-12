@@ -475,6 +475,11 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 		return changePlanTaskStatusBytes(cmd, planPath, taskSlug, planSlug, specRoot, to, &from, before, &coordinationWarning, deps.rewritePlanTaskStatus)
 	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("changing plan-inline task status: %v", err), err)
+		}
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
 		}
@@ -763,6 +768,11 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 		return deps.amendPlanProvenance(before, target.StatusLine, implementedByRefFromFlags(cmd))
 	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("amending provenance: %v", err), err)
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
 		}

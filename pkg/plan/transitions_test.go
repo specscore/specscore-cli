@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -74,6 +75,31 @@ func TestChangeStatus_HappyPath_DraftToInReview(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "status: In Review") {
 		t.Errorf("frontmatter mirror not rewritten:\n%s", body)
+	}
+}
+
+func TestChangeStatus_RewriteGrammarMismatchIsWriteFree(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ParseBytes historically accepts a status marker with no separating
+	// whitespace, while lifecycle.RewriteBytes deliberately rejects it.
+	// A reachable pure-transform error must abort the transaction, never be
+	// mistaken for a nil postimage and truncate the Plan.
+	malformed := []byte(strings.Replace(string(before), "**Status:** Draft", "**Status:**Draft", 1))
+	if err := os.WriteFile(path, malformed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview, PostMutation: okHook,
+	})
+	if !errors.Is(err, lifecycle.ErrStatusLineNotFound) {
+		t.Fatalf("err=%v, want status-line transform rejection", err)
+	}
+	if after, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(after, malformed) {
+		t.Fatalf("malformed Plan changed: read=%v\n%s", readErr, after)
 	}
 }
 

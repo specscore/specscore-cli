@@ -100,10 +100,12 @@ type ownedMarkerOps struct {
 	link    func(string, string) error
 	remove  func(string) error
 	syncDir func(string) error
+	read    func(string) ([]byte, error)
+	stat    func(string) (os.FileInfo, error)
 }
 
 func defaultOwnedMarkerOps() ownedMarkerOps {
-	return ownedMarkerOps{link: os.Link, remove: os.Remove, syncDir: syncOwnedMarkerDir}
+	return ownedMarkerOps{link: os.Link, remove: os.Remove, syncDir: syncOwnedMarkerDir, read: os.ReadFile, stat: os.Stat}
 }
 
 func committedMarkerPath(path string) string { return path + ".committed" }
@@ -143,8 +145,8 @@ func removeOwnedFileDurable(path string, expected []byte) error {
 
 func removeOwnedFileDurableWithOps(path string, expected []byte, ops ownedMarkerOps) error {
 	finalPath := committedMarkerPath(path)
-	prepared, preparedErr := os.ReadFile(path)
-	committed, committedErr := os.ReadFile(finalPath)
+	prepared, preparedErr := ops.read(path)
+	committed, committedErr := ops.read(finalPath)
 	preparedExists := preparedErr == nil
 	committedExists := committedErr == nil
 	if preparedErr != nil && !os.IsNotExist(preparedErr) {
@@ -161,15 +163,33 @@ func removeOwnedFileDurableWithOps(path string, expected []byte, ops ownedMarker
 	}
 	dir := filepath.Dir(path)
 	if !committedExists {
+		// Revalidate immediately before linking the pathname. A non-cooperating
+		// writer may have replaced it after the initial read.
+		if err := verifyOwnedMarker(ops, path, expected); err != nil {
+			return err
+		}
 		if err := ops.link(path, finalPath); err != nil {
 			return err
 		}
 		committedExists = true
 	}
+	// The two visible names must still carry the owned bytes and, while both
+	// exist, identify the same inode created by the hard-link receipt step.
+	// This detects a pathname replacement before either name is removed.
+	if preparedExists {
+		if err := verifyOwnedMarkerPair(ops, path, finalPath, expected); err != nil {
+			return err
+		}
+	} else if err := verifyOwnedMarker(ops, finalPath, expected); err != nil {
+		return err
+	}
 	if err := ops.syncDir(dir); err != nil {
 		return err
 	}
 	if preparedExists {
+		if err := verifyOwnedMarkerPair(ops, path, finalPath, expected); err != nil {
+			return err
+		}
 		if err := ops.remove(path); err != nil {
 			return err
 		}
@@ -178,6 +198,9 @@ func removeOwnedFileDurableWithOps(path string, expected []byte, ops ownedMarker
 		}
 	}
 	if committedExists {
+		if err := verifyOwnedMarker(ops, finalPath, expected); err != nil {
+			return err
+		}
 		if err := ops.remove(finalPath); err != nil {
 			return err
 		}
@@ -186,6 +209,38 @@ func removeOwnedFileDurableWithOps(path string, expected []byte, ops ownedMarker
 		// leaving a currently visible ownership receipt. Treat deletion as done;
 		// a crash may only bring the harmless receipt back for later cleanup.
 		_ = ops.syncDir(dir)
+	}
+	return nil
+}
+
+func verifyOwnedMarker(ops ownedMarkerOps, path string, expected []byte) error {
+	got, err := ops.read(path)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(got, expected) {
+		return fmt.Errorf("prepared marker changed before finalization")
+	}
+	return nil
+}
+
+func verifyOwnedMarkerPair(ops ownedMarkerOps, preparedPath, committedPath string, expected []byte) error {
+	if err := verifyOwnedMarker(ops, preparedPath, expected); err != nil {
+		return err
+	}
+	if err := verifyOwnedMarker(ops, committedPath, expected); err != nil {
+		return err
+	}
+	preparedInfo, err := ops.stat(preparedPath)
+	if err != nil {
+		return err
+	}
+	committedInfo, err := ops.stat(committedPath)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(preparedInfo, committedInfo) {
+		return fmt.Errorf("prepared marker identity changed before finalization")
 	}
 	return nil
 }

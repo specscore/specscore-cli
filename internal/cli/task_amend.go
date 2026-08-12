@@ -156,6 +156,11 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 		return amendTaskBytes(before, taskSlug, target.HeadingLine-1, end, a, deps.annotationAmendmentNow)
 	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("writing plan-inline amendment: %v", err), err)
+		}
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", taskSlug)
 		}

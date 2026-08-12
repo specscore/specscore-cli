@@ -161,7 +161,10 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		if validateErr = lifecycle.Transition(lifecycle.KindPlan, from, opts.To); validateErr != nil {
 			return nil, validateErr
 		}
-		updated, _, _ := lifecycle.RewriteBytes(before, opts.To)
+		updated, _, transformErr := lifecycle.RewriteBytes(before, opts.To)
+		if transformErr != nil {
+			return nil, transformErr
+		}
 		if opts.Successor != "" {
 			updated, _, _ = lifecycle.SetSupersededByBytes(updated, opts.Successor)
 		}
@@ -194,8 +197,8 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 				opts.Slug, string(ite.From), strings.Join(targets, ", "))
 		}
 		if errors.Is(err, lifecycle.ErrStatusLineNotFound) {
-			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
-				"plan %s has no **Status:** line", path)
+			return ChangeStatusResult{}, exitcode.UnexpectedErrorCause(
+				fmt.Sprintf("plan %s has no **Status:** line", path), err)
 		}
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorCause(fmt.Sprintf("reading plan status: %v", err), err)
 	}

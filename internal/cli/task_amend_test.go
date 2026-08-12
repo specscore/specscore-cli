@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -98,6 +99,19 @@ func TestTaskAmend_RejectsDuplicateMalformedAndInvalidArgsWithoutWrites(t *testi
 	_, _, err = runTask(t, "amend", "auth", "--clear-note", "--actor", "", "--reason", "r")
 	if exitCodeOfErr(err) != exitcode.InvalidArgs {
 		t.Fatalf("actor exit=%v", err)
+	}
+}
+
+func TestTaskAmend_PlanDuplicateIdentityRejectedThroughCommand(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Id:** deploy", "**Id:** setup", 1)
+	_, path := stagePlanWithTasks(t, "auth", body)
+	before := mustRead(path)
+	_, _, err := runTask(t, "amend", "setup", "--plan=auth", "--note=clarified", "--actor=codex", "--reason=correct")
+	if exitCodeOfErr(err) != exitcode.InvalidArgs {
+		t.Fatalf("err=%v", err)
+	}
+	if after := mustRead(path); !bytes.Equal(after, before) {
+		t.Fatal("duplicate Plan identity was mutated")
 	}
 }
 
