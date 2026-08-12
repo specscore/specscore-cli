@@ -222,6 +222,10 @@ func lessonClassifications(specRoot string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	return lessonClassificationsFromConfig(cfg)
+}
+
+func lessonClassificationsFromConfig(cfg projectdef.SpecConfig) (map[string]bool, error) {
 	raw, ok := cfg.Extras["lessons"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("specscore.yaml lacks lessons.classifications")
