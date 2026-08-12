@@ -39,7 +39,7 @@ That left two gaps. First, tasks reached `complete` only by hand-editing Markdow
 
 ## Behavior
 
-This verb satisfies the cross-cutting [lifecycle-transitions](../../lifecycle-transitions/README.md) contract — `status-line-rewrite`, `index-sync-on-success` (post-mutation `spec lint --fix`), `rollback-on-lint-failure` (exit `10`), `success-output-format`, `error-to-stderr`, `exit-code-fidelity`, and strict non-idempotent state-machine semantics. The REQs below are the task-specific declarations. (The `--amend-provenance` path is **not** a status transition: it is exempt from `success-output-format` — emitting `<task>: provenance amended` instead of the `<from> → <to>` line — and from the matrix; see [provenance-corrective-restamp](#req-provenance-corrective-restamp).)
+This verb satisfies the cross-cutting lifecycle contract: one locked artifact transaction, fail-fast contention, retained recovery-required derived-work failure, and strict non-idempotent state-machine semantics.
 
 ### Scope amendment: a single-actor task lifecycle is permitted
 
@@ -128,7 +128,7 @@ coordination-branch precondition.
 - `--evidence` is split on commas, each entry trimmed, empty entries dropped, and the result written as a single `**Evidence:**` field with entries rejoined by `", "` — mirroring [`plan reconcile`](../../plan/reconcile/README.md)'s `--evidence` flag. An `--evidence` value that reduces to zero entries after trimming writes nothing.
 - Both fields are written in the SAME atomic rewrite as the status transition (or, for `--to=complete`, the same write as `**Implemented-by:**`), in the fixed order `**Implemented-by:**` → `**Note:**` → `**Evidence:**`, immediately after `**Status:**`.
 - `--note`/`--evidence` are syntactically UNVALIDATED free text/refs — unlike `implementation_commit` ([provenance-ref-assembly](#req-provenance-ref-assembly)), which is a single, format-checked code reference. This is a deliberate distinction: `**Implemented-by:**` answers "which commit did the work"; `**Note:**`/`**Evidence:**` answer "what backs the claim that it's actually done" (e.g. a live-URL check, a manual QA note) — a broader, unstructured category that a strict commit-ref format cannot carry.
-- `--note`/`--evidence` MUST NOT be combined with `--amend-provenance` (exit `2`) — `--amend-provenance` is a provenance-only corrective re-stamp, not a transition, and silently dropping an annotation flag would be a footgun. A future amend-style corrective path for `**Note:**`/`**Evidence:**` is an [Open Question](#open-questions).
+- `--note`/`--evidence` MUST NOT be combined with `--amend-provenance` (exit `2`) — use `task amend` for explicit Note/Evidence correction.
 - Neither field is part of the [KindTask](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#optional-task-id) transition matrix or the plan execution-band rollup: `**Note:**`/`**Evidence:**` are pure annotations that never influence [task-legal-transition-matrix](#req-task-legal-transition-matrix) or [plan#req:status-rollup](https://specscore.md/plan-specification#req-status-rollup). They are parsed by `pkg/plan` (`Task.Note`/`Task.Evidence`) but are NOT yet surfaced by `plan info`'s structured output — a human or tool reads them directly from the plan file today; surfacing them in `plan info` is a deferred [Open Question](#open-questions).
 
 #### REQ: plan-inline-coordination-branch-enforcement
@@ -169,7 +169,7 @@ The verb MUST accept a `--force-coordination` boolean flag, honored only in plan
 | `2` | Missing/unknown `--to`; a provenance flag with non-`complete` `--to`; a provenance flag set without `--commit`; `--amend-provenance` combined with `--to`; `--note`/`--evidence` combined with `--amend-provenance`. |
 | `3` | `<task>` resolves to no task in the requested store (plan-inline: no block with matching `**Id:**`). |
 | `4` | `(current_status, --to)` not a legal transition; or `--amend-provenance` on a task not in `complete`. |
-| `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
+| `10` | I/O failure or derived-work failure after a committed transaction (recovery required). |
 
 ## Interaction with Other Features
 
@@ -189,7 +189,6 @@ The verb MUST accept a `--force-coordination` boolean flag, honored only in plan
 - Recording more than one commit per task (single reference — MVP).
 - Reachability detection / lost-commit recovery — the meta-spec feature's Not Doing carries.
 - Syntactic validation of `--note`/`--evidence` values — unlike `implementation_commit`, they are free text / unstructured refs by design ([task-annotation-fields](#req-task-annotation-fields)).
-- Amending `**Note:**`/`**Evidence:**` on an already-transitioned task without a further status transition (the way `--amend-provenance` corrects provenance) — deferred; see [Open Questions](#open-questions).
 - Surfacing `**Note:**`/`**Evidence:**` in `plan info`'s structured output — parsed by `pkg/plan` today but not yet queryable through the CLI; deferred, see [Open Questions](#open-questions).
 
 ## Rehearse Integration

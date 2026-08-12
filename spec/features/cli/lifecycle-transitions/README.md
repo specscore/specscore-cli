@@ -68,7 +68,7 @@ After a successful file rewrite, the verb MUST invoke `specscore spec lint --fix
 
 #### REQ: rollback-on-lint-failure
 
-If `spec lint --fix` reports any error-severity violation after the file rewrite — including violations introduced by the rewrite itself or pre-existing violations elsewhere that prevent index sync from completing — the verb MUST restore the original `**Status:**` line in the artifact file and exit `10` (UnexpectedError) per the shared exit-code contract. The stderr message MUST name the lint violation(s) that caused the rollback. Partial state (artifact says new status, index says old) MUST NOT be observable after the command returns.
+If derived post-mutation work such as `spec lint --fix` reports an error after the artifact transaction commits, the verb exits `10` and retains the committed artifact as an explicit recovery-required state; it MUST NOT perform a later split rollback that could erase another writer. Fail-fast lifecycle-lock contention exits `1` and requires a re-read.
 
 ### Argument shape and output
 
@@ -115,7 +115,7 @@ A verb MAY designate a subset of its legal transitions as **reason-required** �
 | `2` | Missing or malformed positional slug, an unknown flag, or a missing/empty `--note` on a reason-required transition. |
 | `3` | No artifact file found at the expected path. |
 | `4` | Source status was not in the verb's legal-source set (illegal transition, including re-running on the target status). |
-| `10` | I/O failure during read/write, or `spec lint --fix` failed after a successful file rewrite (rollback applied). |
+| `10` | I/O failure during read/write, or derived post-mutation work failed after a committed artifact transaction (recovery required). |
 
 #### REQ: exit-code-fidelity
 
@@ -126,7 +126,7 @@ A lifecycle verb MUST map errors to the codes above per their declared meanings.
 | Feature | Interaction |
 |---|---|
 | [CLI](../README.md) | Inherits the shared exit-code contract, including the pre-reserved code `4` for invalid state transitions and code `10` for unexpected/runtime errors. Inherits the `--project` autodetect rule. Inherits `REQ: error-on-stderr`. |
-| [spec lint](../spec/lint/README.md) | Invoked internally by every successful lifecycle transition to keep the artifact's index row in sync via the appropriate `*-index-row-sync` rule. A lint failure after mutation triggers rollback. |
+| [spec lint](../spec/lint/README.md) | Invoked after the committed lifecycle artifact transaction to sync derived indexes. A failure is reported as recovery-required; the committed artifact is retained. |
 | [idea](../../idea/README.md), [feature](../../feature/README.md) | Sources of truth for the artifact document structures, including the `**Status:**` header line that lifecycle verbs rewrite, and the legal status enumerations per doc kind. |
 | Source Idea: [lifecycle-verbs-for-idea-and-feature](../../../ideas/lifecycle-verbs-for-idea-and-feature.md) | This feature realizes the shared-infrastructure half of the source Idea. Per-verb features realize the kind-specific halves. |
 | [`cli/idea/change-status`](../idea/change-status/README.md) | Verb implementing this contract for the Idea kind. Encodes the Idea legal-transition matrix (`Draft → Approved`, `Approved → Specifying`, `Specifying → Specified`, `Specified → Implementing`, `Implementing → Implemented`, `{Draft, In Review, Approved, Specifying, Specified, Implementing} → Rejected`, `{Draft, In Review, Approved, Specifying, Specified, Implementing} → Stale`; `{Draft, Under Review, Approved, Specifying, Specified, Implementing, Implemented} → Archived`) and extends the Meta with a `--to=archived` file-relocation side effect. Every pre-terminal status now has both a `Rejected` and a `Stale` exit — the disposition vocabulary is complete. Change-request ideas have all transitions author-managed (not derived from Feature status). |

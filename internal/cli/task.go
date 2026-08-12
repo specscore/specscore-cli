@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,10 @@ import (
 	"github.com/specscore/specscore-cli/pkg/task"
 	"github.com/spf13/cobra"
 )
+
+func taskNewMarkerPath(tasksDir, slug string) string {
+	return filepath.Join(tasksDir, ".task-new-"+slug+".prepared")
+}
 
 func taskCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -337,18 +342,36 @@ func writeBoardExtraFields(path string, fields []string) error {
 func rewriteBoardTask(path string, to lifecycle.Status, fields []string) (lifecycle.Status, error) {
 	var from lifecycle.Status
 	err := lifecycle.WithArtifactMutationLock(path, func() error {
-		var err error
-		from, err = lifecycle.Validate(lifecycle.KindTask, path, to)
+		before, err := osReadFileFn(path)
 		if err != nil {
 			return err
 		}
-		if _, err = lifecycle.RewriteUnderLock(path, to); err != nil {
+		from, err = lifecycle.StatusFromBytes(before)
+		if err != nil {
 			return err
 		}
-		if len(fields) == 0 {
-			return nil
+		if err = lifecycle.Transition(lifecycle.KindTask, from, to); err != nil {
+			return err
 		}
-		return writeBoardExtraFieldsUnlocked(path, fields)
+		updated, _, err := lifecycle.RewriteBytes(before, to)
+		if err != nil {
+			return err
+		}
+		if len(fields) > 0 {
+			lines := strings.Split(string(updated), "\n")
+			idx := -1
+			for i, ln := range lines {
+				if strings.HasPrefix(strings.TrimSpace(ln), "**Status:**") {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				return errNoStatusForProvenance
+			}
+			updated = []byte(strings.Join(withExtraFieldLines(lines, idx, fields), "\n"))
+		}
+		return lifecycle.TransformArtifactUnderLock(path, before, func([]byte) ([]byte, error) { return updated, nil })
 	})
 	return from, err
 }
@@ -457,16 +480,10 @@ func changePlanTaskStatusUnderLock(cmd *cobra.Command, planPath, taskSlug, planS
 		return cerr
 	}
 
-	// Resolve the task block by its stable **Id:** field.
-	var target *plan.Task
-	for i := range p.Tasks {
-		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
-			target = &p.Tasks[i]
-			break
-		}
-	}
-	if target == nil {
-		return exitcode.NotFoundErrorf("task %q not found by **Id:** in plan %s", taskSlug, planSlug)
+	// Resolve the task block by its stable **Id:** field, rejecting duplicates.
+	target, err := uniquePlanTaskByID(p, taskSlug)
+	if err != nil {
+		return err
 	}
 
 	// Validate through the same single-actor KindTask matrix as board mode.
@@ -982,12 +999,32 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 	}
 	taskFilePath := filepath.Join(taskDir, "README.md")
 	boardPath := filepath.Join(tasksDir, "README.md")
+	taskBytes := task.RenderTaskFile(tfd)
+	markerPath := taskNewMarkerPath(tasksDir, taskFlag)
+	marker := fmt.Sprintf("slug=%s\nsha256=%x\n", taskFlag, sha256.Sum256(taskBytes))
 	// The board path lock exists even before its README does. It fences the
 	// complete allocation/publication transaction, so concurrent creators cannot
 	// leave an unlisted README or lose an appended row.
 	if err := lifecycle.WithArtifactMutationLock(boardPath, func() error {
-		if _, err := os.Stat(taskDir); err == nil {
-			return exitcode.ConflictErrorf("task already exists: %s", taskFlag)
+		markerOwned := false
+		if existing, err := os.ReadFile(markerPath); err == nil && string(existing) != marker {
+			return exitcode.ConflictErrorf("task creation recovery marker belongs to a different intent: %s", taskFlag)
+		} else if err == nil {
+			markerOwned = true
+		} else if os.IsNotExist(err) {
+			if err := os.WriteFile(markerPath, []byte(marker), 0o600); err != nil {
+				return err
+			}
+		}
+		if existing, err := os.ReadFile(taskFilePath); err == nil {
+			if !markerOwned {
+				return exitcode.ConflictErrorf("task already exists: %s", taskFlag)
+			}
+			if sha256.Sum256(existing) != sha256.Sum256(taskBytes) {
+				return exitcode.ConflictErrorf("task %s was replaced outside prepared creation", taskFlag)
+			}
+		} else if !os.IsNotExist(err) {
+			return err
 		}
 		boardData, err := osReadFileFn(boardPath)
 		if err != nil {
@@ -1005,14 +1042,22 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 		if err := os.MkdirAll(taskDir, 0o755); err != nil {
 			return err
 		}
-		if err := osWriteFileFn(taskFilePath, task.RenderTaskFile(tfd), 0o644); err != nil {
-			return err
+		if _, err := os.Stat(taskFilePath); os.IsNotExist(err) {
+			if err := osWriteFileFn(taskFilePath, taskBytes, 0o644); err != nil {
+				// No README was durably published by this invocation; directory cleanup
+				// is intentionally skipped rather than recursively removing a path a
+				// concurrent external actor could have claimed.
+				return err
+			}
 		}
 		bv.Rows = append(bv.Rows, task.BoardRow{Task: taskFlag, Status: task.StatusPlanning, DependsOn: deps})
 		if err := os.WriteFile(boardPath, task.RenderBoard(bv), 0o644); err != nil {
+			// The README is now a retained, recoverable record. Never recursively
+			// delete it: another actor may have observed or replaced it after this
+			// transaction's write. The retry sees deterministic task/board state.
 			return err
 		}
-		return nil
+		return os.Remove(markerPath)
 	}); err != nil {
 		var coded *exitcode.Error
 		if errors.As(err, &coded) {

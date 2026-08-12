@@ -30,7 +30,7 @@ Plans move through a document lifecycle, but historically there was **no CLI ver
 
 ## Behavior
 
-This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md) — strict state machine (exit `4`), `--to` parse + slug resolution, atomic rewrite + `spec lint --fix` index sync, rollback (exit `10`), `<slug>: <from> → <to>` success line, the shared exit-code mapping, and the optional `--note` → `## Resolution` mechanism. The REQs below are the Plan-specific declarations: the human-only legal-transition matrix, the execution-band-not-settable rule, the `--to` flag enumeration, the kind-specific slug resolution, the reason-required dispositions, and the Superseded-needs-successor rule.
+This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md), including one committed artifact transaction, fail-fast lock contention, and retained recovery-required derived-work failures.
 
 ### Legal-transition matrix
 
@@ -85,7 +85,7 @@ A `Superseded` plan MUST reference its successor plan (canonical [plan#req:valid
 
 #### REQ: plans-index-sync
 
-The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success)) MUST sync the plans index (`spec/plans/README.md`) to the new status. The verb reuses the same post-mutation lint hook as `idea`/`feature change-status`; the lint pass IS the sync. The verb's exit `0` depends on the rewrite AND the lint pass both succeeding; a lint failure rolls back every mutation and exits `10`.
+The post-mutation lint/index sync runs after the committed Plan transaction. Exit `0` requires both stages; a derived-work failure exits `10` with the committed Plan retained for recovery.
 
 #### REQ: coordination-branch-enforcement
 

@@ -13,7 +13,7 @@ import (
 // stagePlan bootstraps a spec repo, scaffolds a lint-clean plan via `plan new`,
 // patches its **Status:** to the requested value, runs lint --fix to sync the
 // plans index, and returns the project root (cwd is set to it). The fixture is
-// verified lint-clean before the test runs so the post-mutation rollback fires
+// verified lint-clean before the test runs so retained post-mutation failure
 // only on the verb under test.
 func stagePlan(t *testing.T, slug, status string) string {
 	t.Helper()

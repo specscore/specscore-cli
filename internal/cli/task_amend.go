@@ -263,7 +263,7 @@ func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmen
 			}
 		}
 	}
-	if !hasFinalNewline {
+	if !hasFinalNewline && start == 0 {
 		auditAt = len(kept)
 	}
 	kept = append(kept[:auditAt], append([]string{audit}, kept[auditAt:]...)...)
