@@ -25,6 +25,7 @@ func taskCommand() *cobra.Command {
 		taskInfoCommand(),
 		taskNewCommand(),
 		taskChangeStatusCommand(),
+		taskAmendCommand(),
 	)
 	return cmd
 }

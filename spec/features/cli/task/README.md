@@ -28,6 +28,7 @@ Task boards live as Markdown (`tasks/README.md` plus `tasks/<slug>/README.md` pe
 | [list/](list/README.md) | List tasks from the board, optionally filtered by status |
 | [new/](new/README.md) | Create a new task in `planning` status |
 | [change-status](change-status/README.md) | Transition a Task's status and optionally record implementation-commit provenance. |
+| [amend](change-status/README.md#req-annotation-corrective-amendment) | Correct singleton Task annotations without changing lifecycle state. |
 
 ### info
 

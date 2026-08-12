@@ -17,6 +17,10 @@ The verb also accepts two optional annotation flags, `--note` and `--evidence`, 
 
 The verb is **single-actor file mutation** — it performs no claim/release, locking, or conflict resolution. That deliberately narrow shape is what lets it exist within `specscore`'s local-file-mutation model without reopening the coordination concerns that keep full task-board orchestration out (see [single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)). It resolves a task in **either** of two stores: the `tasks/` board (the existing `task` group's target) or a plan-inline task block addressed by its stable `**Id:**` (whose completion feeds the plan execution-band rollup).
 
+`specscore task amend` is the separate corrective surface for annotations that
+became stale after a transition. It has no status-transition flags and cannot
+change `**Status:**` or `**Implemented-by:**`.
+
 ## Synopsis
 
 ```
@@ -92,6 +96,29 @@ The verb MUST source the provenance reference **only** from flags — it MUST NO
 A wrong or missing provenance reference on an already-`complete` task MUST be correctable without a status transition. The verb accepts an `--amend-provenance` flag that, on a task **already** in `complete`, overwrites `implementation_commit` from the supplied `--repo`/`--commit`/`--branch` (or clears it when no provenance flags are given), then exits `0` with a `<task>: provenance amended` line — distinct from a transition. `--amend-provenance` requires the task already be `complete` (else exit `4`), MUST NOT be combined with `--to` (else exit `2`), and follows the same `--commit`-required and syntactic-only rules as a completion write. Provenance remains a single reference; this is correction, not history. (Outside `--amend-provenance`, the strict matrix still forbids `complete → complete`.)
 
 ### Task annotation: note and evidence
+
+#### REQ: annotation-corrective-amendment
+
+`specscore task amend <task>` corrects `**Note:**` and/or `**Evidence:**`
+without a status transition. It is valid for every recognized task state: the
+task status and implementation-commit provenance remain byte-for-byte
+unchanged. A caller explicitly chooses each affected singleton with either a
+non-blank replacement (`--note` / `--evidence`) or removal (`--clear-note` /
+`--clear-evidence`); at least one operation, plus a single-line `--actor` and
+`--reason`, are required. Empty replacement values are rejected rather than
+being interpreted as removal.
+
+Before mutation the command MUST reject a target with duplicate or empty
+`**Note:**`/`**Evidence:**` fields. A successful amendment leaves no more than
+one of each corrected field, preserves unknown text and formatting, and adds a
+new append-only `**Annotation Amendment:**` record containing actor, UTC time,
+reason, and a SHA-256 digest of the exact pre-amendment artifact. It uses a
+byte compare-and-swap immediately before the atomic replacement; a changed
+preimage exits `1` without overwriting the other writer. Board task files may
+be directory (`tasks/<id>/README.md`) or legacy flat (`tasks/<id>.md`); plan
+tasks may be in `spec/plans/<id>.md` or legacy
+`spec/plans/<id>/README.md`. Plan-inline amendments retain the existing
+coordination-branch precondition.
 
 #### REQ: task-annotation-fields
 
@@ -329,7 +356,7 @@ CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path
 - ~~Corrective re-stamp of an already-`complete` task~~ — **Resolved:** the `--amend-provenance` path ([provenance-corrective-restamp](#req-provenance-corrective-restamp)).
 - ~~A `--note`/annotation mechanism for tasks~~ — **Resolved:** [task-annotation-fields](#req-task-annotation-fields) adds `--note`/`--evidence`, valid on any transition, written adjacent to `**Status:**`.
 - Is the MVP transition matrix complete? Should `depends_on` gating (`queued → in_progress` only when dependencies are `complete`) be enforced here or left to orchestrators? (Still open.)
-- Should `**Note:**`/`**Evidence:**` be correctable via an `--amend-note`/`--amend-evidence`-style path (mirroring `--amend-provenance`) without a further status transition? Deferred — no motivating case yet; `--amend-provenance` today explicitly rejects `--note`/`--evidence` rather than silently ignoring them.
+- ~~Should `**Note:**`/`**Evidence:**` be correctable without a further status transition?~~ — **Resolved:** `task amend` provides explicit replacement/removal, append-only audit provenance, duplicate rejection, and a CAS fence ([annotation-corrective-amendment](#req-annotation-corrective-amendment)).
 - Should `plan info` surface each task's `**Note:**`/`**Evidence:**` (already parsed into `pkg/plan.Task`) the way it surfaces `ImplementationEvidence` (`**Implemented-by:**` refs) today? Deferred — not required by the motivating case (a plain rollup count), and it would need a decision on whether to fold it into `ImplementationEvidence` or add a parallel field.
 
 ---
