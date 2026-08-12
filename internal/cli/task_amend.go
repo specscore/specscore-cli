@@ -129,10 +129,13 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 	}
 	for i := range p.Tasks {
 		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
-			end := len(strings.Split(string(mustRead(path)), "\n"))
-			for _, other := range p.Tasks {
-				if other.HeadingLine > p.Tasks[i].HeadingLine && other.HeadingLine-1 < end {
-					end = other.HeadingLine - 1
+			lines := strings.Split(string(mustRead(path)), "\n")
+			end := len(lines)
+			for line := p.Tasks[i].HeadingLine; line < len(lines); line++ {
+				trimmed := strings.TrimSpace(lines[line])
+				if strings.HasPrefix(trimmed, "### Task ") || strings.HasPrefix(trimmed, "## ") {
+					end = line
+					break
 				}
 			}
 			return amendTaskArtifact(cmd, path, taskSlug, p.Tasks[i].HeadingLine-1, end, a)
@@ -148,7 +151,12 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 	if err != nil {
 		return exitcode.UnexpectedErrorf("reading task: %v", err)
 	}
-	lines := strings.Split(string(before), "\n")
+	newline := "\n"
+	if strings.Contains(string(before), "\r\n") {
+		newline = "\r\n"
+	}
+	hasFinalNewline := strings.HasSuffix(string(before), newline)
+	lines := strings.Split(string(before), newline)
 	if end < 0 || end > len(lines) {
 		end = len(lines)
 	}
@@ -230,8 +238,11 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 			}
 		}
 	}
+	if !hasFinalNewline {
+		auditAt = len(kept)
+	}
 	kept = append(kept[:auditAt], append([]string{audit}, kept[auditAt:]...)...)
-	after := []byte(strings.Join(kept, "\n"))
+	after := []byte(strings.Join(kept, newline))
 	if err := taskAmendCAS(path, before, after); err != nil {
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", slug)

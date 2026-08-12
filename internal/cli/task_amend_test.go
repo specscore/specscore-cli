@@ -164,3 +164,30 @@ func TestTaskAmend_MalformedStatusAndCASFailuresAreWriteFree(t *testing.T) {
 		t.Fatalf("write fence=%v", err)
 	}
 }
+
+func TestTaskAmend_PreservesNoFinalNewlineCRLFAndPlanSectionBoundary(t *testing.T) {
+	_, path := stageTaskWithStatus(t, "auth", "blocked")
+	body := "# Auth\r\n\r\n**Status:** blocked\r\n**Note:** stale"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runTask(t, "amend", "auth", "--note", "truth", "--actor", "a", "--reason", "r"); err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(path))
+	if strings.Contains(got, "\n") && !strings.Contains(got, "\r\n") {
+		t.Fatalf("CRLF lost: %q", got)
+	}
+	if !strings.HasSuffix(got, "before_sha256="+fmtDigest([]byte(body))) {
+		t.Fatalf("audit was not appended at EOF: %q", got)
+	}
+	planBody := twoTaskPlanBody + "\n## Open Questions\n\n**Status:** unrelated\n**Note:** preserve\n"
+	_, planPath := stagePlanWithTasks(t, "auth", planBody)
+	if _, _, err := runTask(t, "amend", "deploy", "--plan", "auth", "--note", "truth", "--actor", "a", "--reason", "r"); err != nil {
+		t.Fatal(err)
+	}
+	got = string(mustRead(planPath))
+	if !strings.Contains(got, "**Note:** preserve") || strings.Count(got, "**Status:** unrelated") != 1 {
+		t.Fatalf("trailing section was touched: %s", got)
+	}
+}

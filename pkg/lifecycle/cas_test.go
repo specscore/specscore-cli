@@ -45,3 +45,18 @@ func TestCompareAndSwap_ReadFailure(t *testing.T) {
 		t.Fatal("expected read failure")
 	}
 }
+
+func TestCompareAndSwap_ConcurrentWriterIsFenced(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "task.md")
+	if err := os.WriteFile(p, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := acquireCASLock(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close(); _ = os.Remove(lock.Name()) }()
+	if err := CompareAndSwap(p, []byte("before"), []byte("after")); !errors.Is(err, ErrConcurrentMutation) {
+		t.Fatalf("err=%v", err)
+	}
+}
