@@ -24,7 +24,7 @@ specscore task new --task <slug> --title <text> [--description <text>] [--depend
 
 ## Problem
 
-Board and task-file creation need to stay in lock-step: a row without a file is an orphan, a file without a row is invisible. Doing both by hand is a two-step ritual that is easy to half-complete. A single command that writes both atomically keeps the board coherent.
+Board and task-file creation need to stay in lock-step: a row without a file is an orphan, a file without a row is invisible. Doing both by hand is a two-step ritual that is easy to half-complete. A single command uses a durable prepared marker so any interruption is either pre-publication or exactly retryable.
 
 ## Behavior
 
@@ -53,7 +53,9 @@ The command produces exactly two changes in the working tree:
 
 #### REQ: atomic-board-update
 
-The new file and the new board row MUST be written as a pair. If either write fails, the command MUST leave the working tree unchanged (no orphan files, no orphan rows). The implementation MAY achieve atomicity by writing to a temp path and renaming, or by rolling back the file write on board-update failure.
+The command MUST acquire the board artifact's fail-fast lock before it reads the board, checks the target path, or allocates the task identity. Only after proving both board row and target path absent may it publish an exclusive durable prepared marker binding task id, target path, exact README digest, and pre-mutation board digest. It then publishes the README exclusively, commits the new board row through one atomic durable board transaction, and removes only the exact marker it owns.
+
+A failure before prepared-marker publication leaves no new state. A failure after the marker or README becomes visible MUST retain the exact marker and any owned bytes for explicit retry; it MUST NOT recursively delete or blindly roll back visible state. A retry adopts state only when marker, requested content, README bytes, and board preimage/committed row match exactly. A committed row finalizes its matching marker idempotently. A foreign replacement, duplicate row, changed board, or different retry intent exits `1` and is never overwritten or deleted.
 
 ### Collision handling
 
@@ -80,10 +82,10 @@ None. All inputs are flags.
 | Code | Condition |
 |---|---|
 | `0` | Task created (file + board row written) |
-| `1` | Slug collision — directory or board row already exists |
+| `1` | Slug collision, artifact-lock contention, duplicate row, changed recovery preimage, or prepared ownership mismatch |
 | `2` | Missing `--task`/`--title`, invalid flag value, bad slug |
 | `3` | `--depends-on` names a non-existent task |
-| `10` | Unexpected I/O failure (partial write scenario — the atomicity guarantee requires rollback if this occurs) |
+| `10` | Unexpected I/O/durability failure; if publication became visible, the exact prepared marker is retained and the error reports recovery required |
 
 ## Interaction with Other Features
 
@@ -98,7 +100,7 @@ None. All inputs are flags.
 
 **Requirements:** cli/task/new#req:slug-and-title-required, cli/task/new#req:atomic-board-update
 
-`specscore task new --task my-task --title "My Task"` creates `tasks/my-task/README.md` with the required sections and appends a row to `tasks/README.md` with status `planning`. Both files are written atomically.
+`specscore task new --task my-task --title "My Task"` creates `tasks/my-task/README.md` with the required sections and appends a row to `tasks/README.md` with status `planning`. On success the marker has been durably finalized; at every failure boundary the operation is either write-free or exactly retryable.
 
 ### AC: collision-exits-1
 

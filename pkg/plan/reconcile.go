@@ -29,8 +29,8 @@
 package plan
 
 import (
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -49,18 +49,6 @@ const reconciledMarkerPrefix = "**Reconciled:**"
 // reconcileTodayUTC is a seam over time.Now so tests can pin the date written
 // into the **Reconciled:** marker and the Resolution paragraph.
 var reconcileTodayUTC = func() string { return time.Now().UTC().Format("2006-01-02") }
-
-// reconcileReadOriginalFn is a testable indirection for the pre-mutation
-// snapshot read. Parse() has already proven the file readable moments
-// earlier, so a real filesystem race is the only way this call fails in
-// production; tests inject a failure here directly rather than relying on
-// timing.
-var reconcileReadOriginalFn = os.ReadFile
-
-// reconcileAppendNoteUnderLockFn is separate from the ordinary transition
-// seam because Reconcile owns its plan artifact lock across its status rewrite
-// and its audit append.
-var reconcileAppendNoteUnderLockFn = lifecycle.AppendResolutionNoteUnderLock
 
 // ReconcileOptions packages the inputs to Reconcile.
 type ReconcileOptions struct {
@@ -106,6 +94,10 @@ type ReconcileOptions struct {
 	// path for an over-stated prior reconciliation, not a general bypass of
 	// the task lifecycle.
 	ReopenTasks []int
+
+	// ValidateSnapshot runs under the Plan artifact lock before reconciliation
+	// validation/transformation. It must not mutate the artifact.
+	ValidateSnapshot SnapshotValidator
 
 	// PostMutation is the post-rewrite hook (typically a spec-lint pass,
 	// which also syncs the frontmatter `status:` mirror and the plans
@@ -166,16 +158,13 @@ type ReconcileResult struct {
 //     already complete AND the plan is already at the derived band — exit 4
 //     (not idempotent; re-running a completed reconciliation is a no-op
 //     refusal, mirroring lifecycle-transitions#req:not-idempotent).
-//  4. Rewrite every non-complete task's **Status:** line, the plan's own
-//     **Status:** line, and (on the first reconciliation only) insert the
-//     **Reconciled:** header marker — one atomic-enough write, all indices
-//     resolved from the SAME pre-mutation parse.
-//  5. Append the `## Resolution` note: a fixed preamble naming the jump
-//     explicitly as a reconciliation (never mistakable for a normal
-//     transition), the caller's Note, and the Evidence list when supplied.
-//  6. Invoke the PostMutation hook (spec lint --fix + verify). Failure → full
-//     rollback to the pre-invocation file bytes, exit propagated as-is
-//     (typically 10).
+//  4. Under one fail-fast per-artifact lock, read the exact bytes, resolve and
+//     validate every target against that snapshot, then compose every task
+//     status, the Plan status, the first-reconciliation marker, and the
+//     `## Resolution` audit into one atomic durable replacement.
+//  5. Release the lock, then invoke PostMutation (spec lint --fix + verify).
+//     Callback failure reports a typed committed/recovery-required error; the
+//     already-visible canonical bytes are deliberately never rolled back.
 func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 	if opts.SpecRoot == "" {
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("Reconcile: SpecRoot required")
@@ -193,28 +182,6 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 
 	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
 	flatPath := filepath.Join(plansDir, opts.Slug+".md")
-	var result ReconcileResult
-	err := lifecycle.WithArtifactMutationLock(flatPath, func() error {
-		var reconcileErr error
-		result, reconcileErr = reconcileUnderLock(opts, plansDir, flatPath)
-		return reconcileErr
-	})
-	if err != nil {
-		return result, err
-	}
-	// Like ChangeStatus, the artifact transaction is durable before derived
-	// lint/index work begins. The ordinary hook may acquire Plan locks itself,
-	// so it must never run while flatPath's non-reentrant fence is held.
-	if err := opts.PostMutation(); err != nil {
-		return ReconcileResult{}, err
-	}
-	return result, nil
-}
-
-// reconcileUnderLock performs the full plan and embedded-Task transaction
-// while the caller owns flatPath's lifecycle fence. It must not call a public
-// lifecycle writer that would acquire that fence again.
-func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (ReconcileResult, error) {
 	resolved, err := resolvePlanFile(plansDir, opts.Slug)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -224,29 +191,68 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 			"plan %q uses the directory form (spec/plans/%s/README.md); `plan reconcile` only supports the flat single-file form",
 			opts.Slug, opts.Slug)
 	}
-
-	p, err := Parse(flatPath)
+	var result ReconcileResult
+	err = lifecycle.TransformArtifact(flatPath, func(before []byte) ([]byte, error) {
+		if opts.ValidateSnapshot != nil {
+			if validateErr := opts.ValidateSnapshot(flatPath, before); validateErr != nil {
+				return nil, validateErr
+			}
+		}
+		var after []byte
+		var reconcileErr error
+		result, after, reconcileErr = reconcileBytes(opts, flatPath, before)
+		return after, reconcileErr
+	})
 	if err != nil {
-		return ReconcileResult{}, exitcode.UnexpectedErrorf("parsing plan %s: %v", flatPath, err)
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return result, exitcode.Wrap(exitcode.Conflict,
+				fmt.Sprintf("plan %s is busy; retry reconciliation from fresh state", opts.Slug), err)
+		}
+		var coded *exitcode.Error
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &coded) || errors.As(err, &committed) {
+			return result, err
+		}
+		return result, exitcode.UnexpectedErrorf("reconciling plan artifact transaction %s: %v", flatPath, err)
 	}
-	if p.StatusLine == 0 {
-		return ReconcileResult{}, exitcode.UnexpectedErrorf("plan %s has no **Status:** line", flatPath)
+	// Like ChangeStatus, the artifact transaction is durable before derived
+	// lint/index work begins. The ordinary hook may acquire Plan locks itself,
+	// so it must never run while flatPath's non-reentrant fence is held.
+	if err := opts.PostMutation(); err != nil {
+		return result, lifecycle.CommittedError(flatPath, "post-mutation callback", err)
+	}
+	return result, nil
+}
+
+// reconcileBytes validates and transforms one exact Plan snapshot. It has no
+// filesystem side effects; status, task rows, marker, and Resolution audit are
+// composed into the one byte slice committed by TransformArtifact.
+func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (ReconcileResult, []byte, error) {
+	p, err := ParseBytes(flatPath, original)
+	if err != nil {
+		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", flatPath, err)
+	}
+	if p.StatusCount == 0 {
+		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("plan %s has no **Status:** line", flatPath)
+	}
+	if p.StatusCount > 1 {
+		return ReconcileResult{}, nil, exitcode.InvalidArgsErrorf("plan %q must have exactly one header **Status:** field; found %d", opts.Slug, p.StatusCount)
 	}
 	from := lifecycle.Status(p.Status)
 
 	if lifecycle.IsPlanDisposition(from) {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+		return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 			"plan %q is in disposition status %q; reconcile does not resurrect terminal dispositions — author a new plan, or use `specscore plan change-status` if this disposition was itself recorded in error",
 			opts.Slug, p.Status)
 	}
 
 	if len(p.Tasks) == 0 {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+		return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 			"plan %q has no embedded tasks; there is nothing for reconcile to derive a status from", opts.Slug)
 	}
 	for _, t := range p.Tasks {
 		if t.StatusLine == 0 {
-			return ReconcileResult{}, exitcode.InvalidStateErrorf(
+			return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 				"plan %q Task %d has no explicit **Status:** line; reconcile requires one on every task", opts.Slug, t.Number)
 		}
 	}
@@ -258,7 +264,7 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 		wanted := map[int]bool{}
 		for _, n := range opts.ReopenTasks {
 			if n <= 0 {
-				return ReconcileResult{}, exitcode.InvalidArgsError("Reconcile: reopen task numbers must be positive")
+				return ReconcileResult{}, nil, exitcode.InvalidArgsError("Reconcile: reopen task numbers must be positive")
 			}
 			wanted[n] = true
 		}
@@ -269,22 +275,17 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 				continue
 			}
 			if hypothetical[i].Status != StatusComplete {
-				return ReconcileResult{}, exitcode.InvalidStateErrorf("plan %q Task %d is %s; only falsely complete tasks may be reopened", opts.Slug, hypothetical[i].Number, hypothetical[i].Status)
+				return ReconcileResult{}, nil, exitcode.InvalidStateErrorf("plan %q Task %d is %s; only falsely complete tasks may be reopened", opts.Slug, hypothetical[i].Number, hypothetical[i].Status)
 			}
 			hypothetical[i].Status = StatusBlocked
 			delete(wanted, hypothetical[i].Number)
 			changed++
 		}
 		if len(wanted) > 0 {
-			return ReconcileResult{}, exitcode.InvalidStateErrorf("plan %q has no Task %d to reopen", opts.Slug, firstReconcileTask(wanted))
+			return ReconcileResult{}, nil, exitcode.InvalidStateErrorf("plan %q has no Task %d to reopen", opts.Slug, firstReconcileTask(wanted))
 		}
 		band, _ := (&Plan{Tasks: hypothetical}).DeriveExecutionBand()
 		to := lifecycle.Status(band)
-		original, err := reconcileReadOriginalFn(flatPath)
-		if err != nil {
-			return ReconcileResult{}, exitcode.UnexpectedErrorf("reading plan: %v", err)
-		}
-		rollback := func() { _ = os.WriteFile(flatPath, original, 0o644) }
 		lines := strings.Split(string(original), "\n")
 		for _, t := range p.Tasks {
 			if !wantedOriginal(opts.ReopenTasks, t.Number) {
@@ -294,15 +295,12 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 		}
 		lines[p.StatusLine-1] = "**Status:** " + string(to)
 		lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
-		if err := os.WriteFile(flatPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
-			return ReconcileResult{}, exitcode.UnexpectedErrorf("writing plan: %v", err)
-		}
 		noteText := reconcileNoteTextWithTarget(from, to, changed, StatusBlocked, opts.Note, opts.Evidence, nil)
-		if _, _, err := reconcileAppendNoteUnderLockFn(flatPath, noteText); err != nil {
-			rollback()
-			return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
+		updated, _, err := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
+		if err != nil {
+			return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("building resolution note: %v", err)
 		}
-		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, nil
+		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, updated, nil
 	}
 
 	// A task recorded as failed or aborted is a deliberate, meaningful claim
@@ -337,7 +335,7 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 			descs[i] = fmt.Sprintf("Task %d (%s)", t.Number, string(t.Status))
 			nums[i] = strconv.Itoa(t.Number)
 		}
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+		return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 			"plan %q has task(s) recorded as failed/aborted that --tasks=complete would silently overwrite: %s; pass --force-tasks=%s to explicitly acknowledge overriding these specific task(s)",
 			opts.Slug, strings.Join(descs, ", "), strings.Join(nums, ","))
 	}
@@ -355,15 +353,9 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 	to := lifecycle.Status(band)
 
 	if changedTasks == 0 && from == to {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+		return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 			"plan %q is already reconciled: status is %q and every task is complete; re-running is a no-op", opts.Slug, string(to))
 	}
-
-	original, err := reconcileReadOriginalFn(flatPath)
-	if err != nil {
-		return ReconcileResult{}, exitcode.UnexpectedErrorf("reading plan: %v", err)
-	}
-	rollback := func() { _ = os.WriteFile(flatPath, original, 0o644) }
 
 	lines := strings.Split(string(original), "\n")
 	for _, t := range p.Tasks {
@@ -375,17 +367,13 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 	lines[p.StatusLine-1] = "**Status:** " + string(to)
 	lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
 
-	if err := os.WriteFile(flatPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
-		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing plan: %v", err)
-	}
-
 	noteText := reconcileNoteTextWithTarget(from, to, changedTasks, StatusComplete, opts.Note, opts.Evidence, overrides)
-	if _, _, err := reconcileAppendNoteUnderLockFn(flatPath, noteText); err != nil {
-		rollback()
-		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
+	updated, _, err := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
+	if err != nil {
+		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("building resolution note: %v", err)
 	}
 
-	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, nil
+	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, updated, nil
 }
 
 func wantedOriginal(numbers []int, n int) bool {

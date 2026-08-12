@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +22,21 @@ import (
 func taskNewMarkerPath(tasksDir, slug string) string {
 	return filepath.Join(tasksDir, ".task-new-"+slug+".prepared")
 }
+
+type taskNewPrepared struct {
+	SchemaVersion     int    `json:"schema_version"`
+	TaskID            string `json:"task_id"`
+	TaskPath          string `json:"task_path"`
+	ContentSHA256     string `json:"content_sha256"`
+	BoardBeforeSHA256 string `json:"board_before_sha256"`
+}
+
+func (p taskNewPrepared) bytes() []byte {
+	b, _ := json.Marshal(p)
+	return append(b, '\n')
+}
+
+func taskNewDigest(b []byte) string { return fmt.Sprintf("%x", sha256.Sum256(b)) }
 
 func taskCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -38,11 +56,10 @@ func taskCommand() *cobra.Command {
 // --- task change-status ---
 
 // taskChangeStatusCommand transitions a task's **Status:** field via the shared
-// lifecycle state-machine contract (KindTask). It is a pure single-actor
-// mutation: read the task file, validate the (from, to) arc against the strict
-// task legal-transition matrix, and rewrite the **Status:** line. There is no
-// claim/release, lock acquisition, or conflict-resolution step
-// (cli/task/change-status#ac:single-actor-no-coordination).
+// lifecycle state-machine contract (KindTask). It is one fail-fast artifact
+// transaction: lock, read exact bytes, validate the (from, to) arc, compose
+// status and adjacent fields in memory, then make one atomic durable write.
+// It acquires no distributed coordination claim.
 //
 // Both board-mode (tasks/<task>/README.md) and plan-inline (--plan) resolution
 // are wired here. On --to=complete the --repo/--commit/--branch flags assemble
@@ -64,8 +81,8 @@ legal-transition matrix:
 --to is case-insensitive and must name one of the seven task statuses
 (planning, queued, in_progress, blocked, complete, failed, aborted); a missing
 or unrecognized value exits 2. An illegal (from, to) pair — including re-running
-on the current status — exits 4. On success the verb performs a pure file
-rewrite of the **Status:** line and prints "<task>: <from> → <to>".
+on the current status — exits 4. On success the verb performs one atomic file
+transaction for the **Status:** line and prints "<task>: <from> → <to>".
 
 --note and --evidence are optional annotations, valid on ANY transition (not
 restricted to --to=complete like the provenance flags): --note records a
@@ -198,6 +215,10 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 	fields := buildExtraTaskFieldLines(ref, noteFromFlags(cmd), evidenceFromFlags(cmd))
 	from, err := rewriteBoardTaskFn(taskFilePath, to, fields)
 	if err != nil {
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return err
+		}
 		switch {
 		case errors.Is(err, lifecycle.ErrConcurrentMutation):
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
@@ -331,8 +352,8 @@ var errNoStatusForProvenance = errors.New("task file has no **Status:** line for
 // concurrent amendment. Every other byte is preserved. Covers provenance
 // (**Implemented-by:**) and the optional **Note:**/**Evidence:** annotations.
 func writeBoardExtraFields(path string, fields []string) error {
-	return lifecycle.WithArtifactMutationLock(path, func() error {
-		return writeBoardExtraFieldsUnlocked(path, fields)
+	return taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+		return boardExtraFieldsBytes(before, fields)
 	})
 }
 
@@ -341,59 +362,40 @@ func writeBoardExtraFields(path string, fields []string) error {
 // fence: no writer may validate an old task body then overwrite an amendment.
 func rewriteBoardTask(path string, to lifecycle.Status, fields []string) (lifecycle.Status, error) {
 	var from lifecycle.Status
-	err := lifecycle.WithArtifactMutationLock(path, func() error {
-		before, err := osReadFileFn(path)
-		if err != nil {
-			return err
+	err := taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+		lines := strings.Split(string(before), "\n")
+		statusIdx, validateErr := validateTaskSingletonLines(lines, 0, len(lines), "board task")
+		if validateErr != nil {
+			return nil, validateErr
 		}
-		from, err = lifecycle.StatusFromBytes(before)
-		if err != nil {
-			return err
+		from = lifecycle.Status(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[statusIdx]), "**Status:**")))
+		var transformErr error
+		if transformErr = lifecycle.Transition(lifecycle.KindTask, from, to); transformErr != nil {
+			return nil, transformErr
 		}
-		if err = lifecycle.Transition(lifecycle.KindTask, from, to); err != nil {
-			return err
-		}
-		updated, _, err := lifecycle.RewriteBytes(before, to)
-		if err != nil {
-			return err
+		updated, _, transformErr := lifecycle.RewriteBytes(before, to)
+		if transformErr != nil {
+			return nil, transformErr
 		}
 		if len(fields) > 0 {
-			lines := strings.Split(string(updated), "\n")
-			idx := -1
-			for i, ln := range lines {
-				if strings.HasPrefix(strings.TrimSpace(ln), "**Status:**") {
-					idx = i
-					break
-				}
+			updated, transformErr = boardExtraFieldsBytes(updated, fields)
+			if transformErr != nil {
+				return nil, transformErr
 			}
-			if idx < 0 {
-				return errNoStatusForProvenance
-			}
-			updated = []byte(strings.Join(withExtraFieldLines(lines, idx, fields), "\n"))
 		}
-		return lifecycle.TransformArtifactUnderLock(path, before, func([]byte) ([]byte, error) { return updated, nil })
+		return updated, nil
 	})
 	return from, err
 }
 
-func writeBoardExtraFieldsUnlocked(path string, fields []string) error {
-	data, err := osReadFileFn(path)
-	if err != nil {
-		return err
-	}
+func boardExtraFieldsBytes(data []byte, fields []string) ([]byte, error) {
 	lines := strings.Split(string(data), "\n")
-	idx := -1
-	for i, ln := range lines {
-		if strings.HasPrefix(strings.TrimSpace(ln), "**Status:**") {
-			idx = i
-			break
-		}
+	idx, err := validateTaskSingletonLines(lines, 0, len(lines), "board task")
+	if err != nil {
+		return nil, err
 	}
-	if idx < 0 {
-		return errNoStatusForProvenance
-	}
-	lines = withExtraFieldLines(lines, idx, fields)
-	return osWriteFileFn(path, []byte(strings.Join(lines, "\n")), 0o644)
+	lines = upsertTaskFieldLines(lines, idx, len(lines), fields)
+	return []byte(strings.Join(lines, "\n")), nil
 }
 
 // writeBoardImplementedBy inserts an `**Implemented-by:** <ref>` line into the
@@ -446,8 +448,9 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 
 	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
 	var from lifecycle.Status
-	err = lifecycle.WithArtifactMutationLock(planPath, func() error {
-		return changePlanTaskStatusUnderLock(cmd, planPath, taskSlug, planSlug, specRoot, to, &from)
+	var coordinationWarning bytes.Buffer
+	err = taskTransformArtifactFn(planPath, func(before []byte) ([]byte, error) {
+		return changePlanTaskStatusBytes(cmd, planPath, taskSlug, planSlug, specRoot, to, &from, before, &coordinationWarning)
 	})
 	if err != nil {
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
@@ -456,19 +459,24 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 		if os.IsNotExist(err) {
 			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
 		}
-		return err
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return err
+		}
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("changing plan-inline task status: %v", err), err)
 	}
+	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
 	return nil
 }
 
-func changePlanTaskStatusUnderLock(cmd *cobra.Command, planPath, taskSlug, planSlug, specRoot string, to lifecycle.Status, fromOut *lifecycle.Status) error {
-	p, err := plan.Parse(planPath)
+func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug, specRoot string, to lifecycle.Status, fromOut *lifecycle.Status, before []byte, coordinationWarning io.Writer) ([]byte, error) {
+	p, err := plan.ParseBytes(planPath, before)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return err
+			return nil, err
 		}
-		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
+		return nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
 	}
 
 	// Coordination-branch enforcement: when the plan declares
@@ -476,24 +484,24 @@ func changePlanTaskStatusUnderLock(cmd *cobra.Command, planPath, taskSlug, planS
 	// only on the declared repo/branch
 	// (spec/features/plan/README.md#coordination-branch, upstream).
 	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-	if cerr := enforceCoordinationBranch(p, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
-		return cerr
+	if cerr := enforceCoordinationBranch(p, specRoot, forceCoordination, coordinationWarning); cerr != nil {
+		return nil, cerr
 	}
 
 	// Resolve the task block by its stable **Id:** field, rejecting duplicates.
 	target, err := uniquePlanTaskByID(p, taskSlug)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Validate through the same single-actor KindTask matrix as board mode.
 	from := lifecycle.Status(string(target.Status))
 	if err := lifecycle.Transition(lifecycle.KindTask, from, to); err != nil {
-		return exitcode.InvalidStateErrorf("%v", err)
+		return nil, exitcode.InvalidStateErrorf("%v", err)
 	}
 
 	if target.StatusLine == 0 {
-		return exitcode.UnexpectedErrorf("task %q in plan %s has no **Status:** line", taskSlug, planSlug)
+		return nil, exitcode.UnexpectedErrorf("task %q in plan %s has no **Status:** line", taskSlug, planSlug)
 	}
 	// Provenance is written ONLY when completing, in the same atomic write that
 	// sets the status; values come ONLY from flags (never ambient git HEAD).
@@ -505,14 +513,15 @@ func changePlanTaskStatusUnderLock(cmd *cobra.Command, planPath, taskSlug, planS
 		implementedBy = implementedByRefFromFlags(cmd)
 	}
 	extraFields := buildExtraTaskFieldLines(implementedBy, noteFromFlags(cmd), evidenceFromFlags(cmd))
-	if err := rewritePlanTaskStatusLineUnderLockFn(planPath, target.StatusLine, to, extraFields); err != nil {
+	after, err := rewritePlanTaskStatusLineBytes(before, target.StatusLine, to, extraFields)
+	if err != nil {
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
-			return err
+			return nil, err
 		}
-		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
+		return nil, exitcode.UnexpectedErrorf("rewriting status: %v", err)
 	}
 	*fromOut = from
-	return nil
+	return after, nil
 }
 
 // rewritePlanTaskStatusLine rewrites the 1-based statusLine of a plan file to
@@ -526,23 +535,83 @@ func changePlanTaskStatusUnderLock(cmd *cobra.Command, planPath, taskSlug, planS
 // provenance/note/evidence writes land together. A nil/empty extraFields is a
 // pure status rewrite.
 func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status, extraFields []string) error {
-	return lifecycle.WithArtifactMutationLock(path, func() error {
-		return rewritePlanTaskStatusLineUnderLock(path, statusLine, to, extraFields)
+	return taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+		return rewritePlanTaskStatusLineBytes(before, statusLine, to, extraFields)
 	})
 }
 
-func rewritePlanTaskStatusLineUnderLock(path string, statusLine int, to lifecycle.Status, extraFields []string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
+func rewritePlanTaskStatusLineBytes(data []byte, statusLine int, to lifecycle.Status, extraFields []string) ([]byte, error) {
 	lines := strings.Split(string(data), "\n")
 	if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
-		return lifecycle.ErrConcurrentMutation
+		return nil, lifecycle.ErrConcurrentMutation
 	}
 	lines[statusLine-1] = "**Status:** " + string(to)
-	lines = withExtraFieldLines(lines, statusLine-1, extraFields)
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	end := len(lines)
+	for i := statusLine; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "### Task ") || strings.HasPrefix(trimmed, "## ") {
+			end = i
+			break
+		}
+	}
+	lines = upsertTaskFieldLines(lines, statusLine-1, end, extraFields)
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
+func taskFieldName(line string) string {
+	trimmed := strings.TrimSpace(line)
+	for _, name := range []string{"Implemented-by", "Note", "Evidence"} {
+		if strings.HasPrefix(trimmed, "**"+name+":**") {
+			return name
+		}
+	}
+	return ""
+}
+
+// upsertTaskFieldLines replaces only the singleton fields explicitly supplied
+// by this transaction, within one already-resolved task block.
+func upsertTaskFieldLines(lines []string, statusIdx, end int, fields []string) []string {
+	if len(fields) == 0 {
+		return lines
+	}
+	replace := map[string]bool{}
+	for _, field := range fields {
+		if name := taskFieldName(field); name != "" {
+			replace[name] = true
+		}
+	}
+	out := make([]string, 0, len(lines)+len(fields))
+	for i, line := range lines {
+		if i > statusIdx && i < end && replace[taskFieldName(line)] {
+			continue
+		}
+		out = append(out, line)
+	}
+	return withExtraFieldLines(out, statusIdx, fields)
+}
+
+func validateTaskSingletonLines(lines []string, start, end int, label string) (int, error) {
+	counts := map[string]int{}
+	statusIdx := -1
+	for i := start; i < end; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "**Status:**") {
+			counts["Status"]++
+			statusIdx = i
+		}
+		if name := taskFieldName(trimmed); name != "" {
+			counts[name]++
+		}
+	}
+	if counts["Status"] == 0 {
+		return -1, errNoStatusForProvenance
+	}
+	for _, name := range []string{"Status", "Implemented-by", "Note", "Evidence"} {
+		if counts[name] > 1 {
+			return -1, exitcode.InvalidArgsErrorf("%s has duplicate **%s:** fields", label, name)
+		}
+	}
+	return statusIdx, nil
 }
 
 // isImplementedByLine reports whether ln is an `**Implemented-by:**` field line.
@@ -571,33 +640,25 @@ func withAmendedImplementedBy(lines []string, statusIdx int, ref string) []strin
 // boardTaskStatus returns the value text of the board task file's first
 // `**Status:**` line. A read error is returned verbatim; a file with no status
 // line returns errNoStatusForProvenance.
-func boardTaskStatus(path string) (string, error) {
-	data, err := osReadFileFn(path)
+func boardTaskStatusBytes(data []byte) (string, error) {
+	lines := strings.Split(string(data), "\n")
+	idx, err := validateTaskSingletonLines(lines, 0, len(lines), "board task")
 	if err != nil {
 		return "", err
 	}
-	for _, ln := range strings.Split(string(data), "\n") {
-		s := strings.TrimSpace(ln)
-		if strings.HasPrefix(s, "**Status:**") {
-			return strings.TrimSpace(strings.TrimPrefix(s, "**Status:**")), nil
-		}
-	}
-	return "", errNoStatusForProvenance
+	s := strings.TrimSpace(lines[idx])
+	return strings.TrimSpace(strings.TrimPrefix(s, "**Status:**")), nil
 }
 
 // amendBoardImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
 // in the board task file at path, anchored to its `**Status:**` line.
 func amendBoardImplementedBy(path, ref string) error {
-	return lifecycle.WithArtifactMutationLock(path, func() error {
-		return amendBoardImplementedByUnlocked(path, ref)
+	return taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+		return amendBoardImplementedByBytes(before, ref)
 	})
 }
 
-func amendBoardImplementedByUnlocked(path, ref string) error {
-	data, err := osReadFileFn(path)
-	if err != nil {
-		return err
-	}
+func amendBoardImplementedByBytes(data []byte, ref string) ([]byte, error) {
 	lines := strings.Split(string(data), "\n")
 	idx := -1
 	for i, ln := range lines {
@@ -607,10 +668,10 @@ func amendBoardImplementedByUnlocked(path, ref string) error {
 		}
 	}
 	if idx < 0 {
-		return errNoStatusForProvenance
+		return nil, errNoStatusForProvenance
 	}
 	lines = withAmendedImplementedBy(lines, idx, ref)
-	return osWriteFileFn(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return []byte(strings.Join(lines, "\n")), nil
 }
 
 // runTaskAmendProvenanceBoard re-stamps provenance on a board task that is
@@ -625,15 +686,15 @@ func runTaskAmendProvenanceBoard(cmd *cobra.Command, taskSlug string) error {
 	}
 
 	taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
-	if err := lifecycle.WithArtifactMutationLock(taskFilePath, func() error {
-		status, err := boardTaskStatus(taskFilePath)
+	if err := taskTransformArtifactFn(taskFilePath, func(before []byte) ([]byte, error) {
+		status, err := boardTaskStatusBytes(before)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if status != string(lifecycle.TaskComplete) {
-			return exitcode.InvalidStateErrorf("--amend-provenance requires task %s to be complete, but it is %s", taskSlug, status)
+			return nil, exitcode.InvalidStateErrorf("--amend-provenance requires task %s to be complete, but it is %s", taskSlug, status)
 		}
-		return amendBoardImplementedByUnlocked(taskFilePath, implementedByRefFromFlags(cmd))
+		return amendBoardImplementedByBytes(before, implementedByRefFromFlags(cmd))
 	}); err != nil {
 		if errors.Is(err, errNoStatusForProvenance) {
 			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
@@ -642,10 +703,10 @@ func runTaskAmendProvenanceBoard(cmd *cobra.Command, taskSlug string) error {
 			return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
 		}
 		var stateErr *exitcode.Error
-		if errors.As(err, &stateErr) && stateErr.ExitCode() == exitcode.InvalidState {
+		if errors.As(err, &stateErr) {
 			return err
 		}
-		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("amending provenance: %v", err), err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
 	return nil
@@ -662,23 +723,24 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 	}
 
 	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
-	err = lifecycle.WithArtifactMutationLock(planPath, func() error {
-		p, err := plan.Parse(planPath)
+	var coordinationWarning bytes.Buffer
+	err = taskTransformArtifactFn(planPath, func(before []byte) ([]byte, error) {
+		p, err := plan.ParseBytes(planPath, before)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-		if err := enforceCoordinationBranch(p, specRoot, forceCoordination, cmd.ErrOrStderr()); err != nil {
-			return err
+		if err := enforceCoordinationBranch(p, specRoot, forceCoordination, &coordinationWarning); err != nil {
+			return nil, err
 		}
 		target, err := uniquePlanTaskByID(p, taskSlug)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if string(target.Status) != string(lifecycle.TaskComplete) {
-			return exitcode.InvalidStateErrorf("--amend-provenance requires task %q to be complete, but it is %s", taskSlug, target.Status)
+			return nil, exitcode.InvalidStateErrorf("--amend-provenance requires task %q to be complete, but it is %s", taskSlug, target.Status)
 		}
-		return amendPlanImplementedByUnderLock(planPath, target.StatusLine, implementedByRefFromFlags(cmd))
+		return amendPlanImplementedByBytes(before, target.StatusLine, implementedByRefFromFlags(cmd))
 	})
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -688,8 +750,9 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 		if errors.As(err, &coded) {
 			return err
 		}
-		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("amending provenance: %v", err), err)
 	}
+	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
 	return nil
 }
@@ -697,27 +760,37 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 // amendPlanImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
 // adjacent to the 1-based statusLine of a plan file, preserving every other line.
 func amendPlanImplementedBy(path string, statusLine int, ref string) error {
-	return lifecycle.WithArtifactMutationLock(path, func() error {
-		return amendPlanImplementedByUnderLock(path, statusLine, ref)
+	return taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+		return amendPlanImplementedByBytes(before, statusLine, ref)
 	})
 }
 
-func amendPlanImplementedByUnderLock(path string, statusLine int, ref string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
+func amendPlanImplementedByBytes(data []byte, statusLine int, ref string) ([]byte, error) {
 	lines := strings.Split(string(data), "\n")
 	if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
-		return lifecycle.ErrConcurrentMutation
+		return nil, lifecycle.ErrConcurrentMutation
 	}
 	lines = withAmendedImplementedBy(lines, statusLine-1, ref)
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return []byte(strings.Join(lines, "\n")), nil
 }
 
 func uniquePlanTaskByID(p *plan.Plan, id string) (*plan.Task, error) {
 	var found *plan.Task
 	for i := range p.Tasks {
+		if p.Tasks[i].IdCount > 1 {
+			return nil, exitcode.InvalidArgsErrorf("plan Task %d has duplicate **Id:** fields", p.Tasks[i].Number)
+		}
+		for _, field := range []struct {
+			name  string
+			count int
+		}{
+			{"Status", p.Tasks[i].StatusCount}, {"Implemented-by", p.Tasks[i].ImplementedByCount},
+			{"Note", p.Tasks[i].NoteCount}, {"Evidence", p.Tasks[i].EvidenceCount},
+		} {
+			if field.count > 1 {
+				return nil, exitcode.InvalidArgsErrorf("plan Task %d has duplicate **%s:** fields", p.Tasks[i].Number, field.name)
+			}
+		}
 		if p.Tasks[i].IdPresent && p.Tasks[i].Id == id {
 			if found != nil {
 				return nil, exitcode.InvalidArgsErrorf("plan has duplicate Task **Id:** %q", id)
@@ -968,6 +1041,9 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 	if taskFlag == "" {
 		return exitcode.InvalidArgsError("missing required flag: --task")
 	}
+	if err := task.ValidateSlug(taskFlag); err != nil {
+		return exitcode.InvalidArgsErrorf("invalid --task: %v", err)
+	}
 	if titleFlag == "" {
 		return exitcode.InvalidArgsError("missing required flag: --title")
 	}
@@ -981,6 +1057,9 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 		for _, d := range strings.Split(depsFlag, ",") {
 			d = strings.TrimSpace(d)
 			if d != "" {
+				if err := task.ValidateSlug(d); err != nil {
+					return exitcode.InvalidArgsErrorf("invalid --depends-on task %q: %v", d, err)
+				}
 				deps = append(deps, d)
 			}
 		}
@@ -1001,92 +1080,173 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 	boardPath := filepath.Join(tasksDir, "README.md")
 	taskBytes := task.RenderTaskFile(tfd)
 	markerPath := taskNewMarkerPath(tasksDir, taskFlag)
-	marker := fmt.Sprintf("slug=%s\nsha256=%x\n", taskFlag, sha256.Sum256(taskBytes))
+	var marker taskNewPrepared
+	var markerBytes []byte
+	out := taskInfoOutput{
+		Slug: taskFlag, Title: titleFlag, Status: string(task.StatusPlanning),
+		Description: descFlag, DependsOn: deps,
+	}
 	// The board path lock exists even before its README does. It fences the
 	// complete allocation/publication transaction, so concurrent creators cannot
 	// leave an unlisted README or lose an appended row.
-	if err := lifecycle.WithArtifactMutationLock(boardPath, func() error {
-		markerOwned := false
-		if existing, err := os.ReadFile(markerPath); err == nil && string(existing) != marker {
-			return exitcode.ConflictErrorf("task creation recovery marker belongs to a different intent: %s", taskFlag)
-		} else if err == nil {
-			markerOwned = true
-		} else if os.IsNotExist(err) {
-			if err := os.WriteFile(markerPath, []byte(marker), 0o600); err != nil {
-				return err
-			}
-		}
-		if existing, err := os.ReadFile(taskFilePath); err == nil {
-			if !markerOwned {
-				return exitcode.ConflictErrorf("task already exists: %s", taskFlag)
-			}
-			if sha256.Sum256(existing) != sha256.Sum256(taskBytes) {
-				return exitcode.ConflictErrorf("task %s was replaced outside prepared creation", taskFlag)
-			}
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		boardData, err := osReadFileFn(boardPath)
-		if err != nil {
-			return err
-		}
+	if err := taskWithArtifactTxFn(boardPath, func(tx *lifecycle.ArtifactTransaction) error {
+		boardData := tx.Before()
 		bv, err := task.ParseBoard(boardData)
 		if err != nil {
 			return err
 		}
+		rowCount := 0
 		for _, row := range bv.Rows {
 			if row.Task == taskFlag {
+				rowCount++
+			}
+		}
+		if rowCount > 1 {
+			return exitcode.ConflictErrorf("task board contains duplicate rows for %s", taskFlag)
+		}
+		if err := validateTaskNewDependencies(tasksDir, taskFlag, deps, bv.Rows); err != nil {
+			return err
+		}
+
+		existingMarker, markerErr := os.ReadFile(markerPath)
+		markerExists := markerErr == nil
+		if markerErr != nil && !os.IsNotExist(markerErr) {
+			return markerErr
+		}
+		_, taskDirErr := os.Stat(taskDir)
+		taskDirExists := taskDirErr == nil
+		if taskDirErr != nil && !os.IsNotExist(taskDirErr) {
+			if markerExists {
+				return lifecycle.CommittedError(markerPath, "checking prepared task directory", taskDirErr)
+			}
+			return taskDirErr
+		}
+		readme, readmeErr := os.ReadFile(taskFilePath)
+		readmeExists := readmeErr == nil
+		if readmeErr != nil && !os.IsNotExist(readmeErr) {
+			if markerExists {
+				return lifecycle.CommittedError(markerPath, "reading prepared task README", readmeErr)
+			}
+			return readmeErr
+		}
+
+		if !markerExists {
+			// Fresh conflicts are rejected before a prepared record is created.
+			if rowCount != 0 || taskDirExists || readmeExists {
 				return exitcode.ConflictErrorf("task already exists: %s", taskFlag)
 			}
-		}
-		if err := os.MkdirAll(taskDir, 0o755); err != nil {
-			return err
-		}
-		if _, err := os.Stat(taskFilePath); os.IsNotExist(err) {
-			if err := osWriteFileFn(taskFilePath, taskBytes, 0o644); err != nil {
-				// No README was durably published by this invocation; directory cleanup
-				// is intentionally skipped rather than recursively removing a path a
-				// concurrent external actor could have claimed.
-				return err
+			marker = taskNewPrepared{SchemaVersion: 1, TaskID: taskFlag, TaskPath: filepath.ToSlash(filepath.Join(taskFlag, "README.md")), ContentSHA256: taskNewDigest(taskBytes), BoardBeforeSHA256: taskNewDigest(boardData)}
+			markerBytes = marker.bytes()
+			if err := taskNewPublishExclusiveFn(markerPath, markerBytes, 0o600); err != nil {
+				return fmt.Errorf("publishing prepared task marker: %w", err)
 			}
+		} else {
+			if err := json.Unmarshal(existingMarker, &marker); err != nil || marker.SchemaVersion != 1 || marker.TaskID != taskFlag || marker.TaskPath != filepath.ToSlash(filepath.Join(taskFlag, "README.md")) || marker.ContentSHA256 != taskNewDigest(taskBytes) {
+				return exitcode.ConflictErrorf("task creation recovery marker belongs to a different intent: %s", taskFlag)
+			}
+			markerBytes = existingMarker
+		}
+
+		if rowCount == 1 {
+			if !readmeExists || taskNewDigest(readme) != marker.ContentSHA256 {
+				return exitcode.ConflictErrorf("committed task %s does not match its prepared content", taskFlag)
+			}
+			return finishTaskNewVisibleTransaction(cmd, formatFlag, out, markerPath, markerBytes)
+		}
+		if taskNewDigest(boardData) != marker.BoardBeforeSHA256 {
+			return exitcode.ConflictErrorf("task board changed after preparing %s; recovery required", taskFlag)
+		}
+		if readmeExists {
+			if taskNewDigest(readme) != marker.ContentSHA256 {
+				return exitcode.ConflictErrorf("task %s was replaced outside prepared creation", taskFlag)
+			}
+		} else if err := taskNewPublishExclusiveFn(taskFilePath, taskBytes, 0o644); err != nil {
+			return lifecycle.CommittedError(markerPath, "publishing prepared task README", err)
+		}
+		// Directory-only dependencies are a legacy fallback outside the board's
+		// lock domain. Revalidate them immediately before the board commit; board
+		// rows themselves remain authoritative under this held lock.
+		if err := validateTaskNewDependencies(tasksDir, taskFlag, deps, bv.Rows); err != nil {
+			return lifecycle.CommittedError(markerPath, "revalidating prepared task dependencies", err)
 		}
 		bv.Rows = append(bv.Rows, task.BoardRow{Task: taskFlag, Status: task.StatusPlanning, DependsOn: deps})
-		if err := os.WriteFile(boardPath, task.RenderBoard(bv), 0o644); err != nil {
-			// The README is now a retained, recoverable record. Never recursively
-			// delete it: another actor may have observed or replaced it after this
-			// transaction's write. The retry sees deterministic task/board state.
-			return err
+		if err := taskNewCommitBoardFn(tx, task.RenderBoard(bv)); err != nil {
+			return lifecycle.CommittedError(markerPath, "committing prepared task board", err)
 		}
-		return os.Remove(markerPath)
+		return finishTaskNewVisibleTransaction(cmd, formatFlag, out, markerPath, markerBytes)
 	}); err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			return exitcode.UnexpectedErrorCause(err.Error(), err)
+		}
 		var coded *exitcode.Error
 		if errors.As(err, &coded) {
 			return err
 		}
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return exitcode.ConflictErrorf("task board is busy; retry creation of %s from fresh state", taskFlag)
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return exitcode.NotFoundErrorf("reading board: %v", err)
 		}
-		return exitcode.UnexpectedErrorf("writing board: %v", err)
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("writing board: %v", err), err)
 	}
 
-	// Output the created task info.
-	out := taskInfoOutput{
-		Slug:        taskFlag,
-		Title:       titleFlag,
-		Status:      string(task.StatusPlanning),
-		Description: descFlag,
-		DependsOn:   deps,
-	}
+	return nil
+}
 
+func validateTaskNewDependencies(tasksDir, taskSlug string, deps []string, rows []task.BoardRow) error {
+	boardTasks := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		boardTasks[row.Task] = struct{}{}
+	}
+	for _, dep := range deps {
+		if dep == taskSlug {
+			return exitcode.NotFoundErrorf("dependency task not found: %s", dep)
+		}
+		if _, ok := boardTasks[dep]; ok {
+			continue
+		}
+		info, err := taskNewStatFn(filepath.Join(tasksDir, dep))
+		if err == nil && info.IsDir() {
+			continue
+		}
+		if err == nil {
+			return exitcode.NotFoundErrorf("dependency task %s is not a directory", dep)
+		}
+		if os.IsNotExist(err) {
+			return exitcode.NotFoundErrorf("dependency task not found: %s", dep)
+		}
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking dependency task %s: %v", dep, err), err)
+	}
+	return nil
+}
+
+// finishTaskNewVisibleTransaction runs only after the task row is visible,
+// while the board transaction lock is still held. Output failure therefore
+// retains the exact prepared marker for retry; successful output is followed
+// by exact-owned durable marker finalization.
+func finishTaskNewVisibleTransaction(cmd *cobra.Command, formatFlag string, out taskInfoOutput, markerPath string, markerBytes []byte) error {
 	w := cmd.OutOrStdout()
+	var outputErr error
 	switch formatFlag {
 	case "yaml":
 		enc := newYAMLEnc(w)
 		if err := enc.Encode(out); err != nil {
-			return exitcode.UnexpectedErrorf("encoding yaml: %v", err)
+			outputErr = fmt.Errorf("encoding yaml: %w", err)
+		} else if err := enc.Close(); err != nil {
+			outputErr = fmt.Errorf("closing yaml output: %w", err)
 		}
-		return enc.Close()
 	default:
-		return newJSONEnc(w).Encode(out)
+		if err := newJSONEnc(w).Encode(out); err != nil {
+			outputErr = fmt.Errorf("encoding json: %w", err)
+		}
 	}
+	if outputErr != nil {
+		return outputErr
+	}
+	if err := taskNewRemoveMarkerFn(markerPath, markerBytes); err != nil {
+		return fmt.Errorf("finalizing prepared task marker: %w", err)
+	}
+	return nil
 }

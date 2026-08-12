@@ -15,7 +15,7 @@ status: Approved
 
 The verb also accepts two optional annotation flags, `--note` and `--evidence`, valid on **any** transition (not restricted to `--to=complete` the way the provenance flags are). `--note` records a free-text justification; `--evidence` records a comma-separated list of unstructured supporting references (commit SHAs, PR URLs, file paths, deploy/monitoring links) — distinct from `implementation_commit`, which is a single, syntactically validated code reference. Both are written as their own field (`**Note:**` / `**Evidence:**`) adjacent to `**Status:**`, in the same atomic write as the transition (see [task-annotation-fields](#req-task-annotation-fields)).
 
-The verb is **single-actor file mutation** — it performs no claim/release, locking, or conflict resolution. That deliberately narrow shape is what lets it exist within `specscore`'s local-file-mutation model without reopening the coordination concerns that keep full task-board orchestration out (see [single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)). It resolves a task in **either** of two stores: the `tasks/` board (the existing `task` group's target) or a plan-inline task block addressed by its stable `**Id:**` (whose completion feeds the plan execution-band rollup).
+The verb is a **single-artifact local transaction** — it performs no distributed claim/release or task orchestration, but it does take a fail-fast advisory lock on the resolved artifact so cooperating writers cannot validate stale bytes. That deliberately narrow shape keeps it within `specscore`'s local-file-mutation model (see [single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)). It resolves a task in **either** of two stores: the `tasks/` board (the existing `task` group's target) or a plan-inline task block addressed by its stable `**Id:**` (whose completion feeds the plan execution-band rollup).
 
 `specscore task amend` is the separate corrective surface for annotations that
 became stale after a transition. It has no status-transition flags and cannot
@@ -112,9 +112,14 @@ Before mutation the command MUST reject a target with duplicate or empty
 `**Note:**`/`**Evidence:**` fields. A successful amendment leaves no more than
 one of each corrected field, preserves unknown text and formatting, and adds a
 new append-only `**Annotation Amendment:**` record containing actor, UTC time,
-reason, and a SHA-256 digest of the exact pre-amendment artifact. It uses a
-byte compare-and-swap immediately before the atomic replacement; a changed
-preimage exits `1` without overwriting the other writer. Board task files may
+reason, and a SHA-256 digest of the exact pre-amendment artifact. The command
+acquires the artifact's fail-fast advisory lock, reads and resolves the target
+under that lock, composes the amendment and audit in memory, and makes one
+atomic durable replacement. Immediately before rename it compares the current
+bytes with the transaction's expected bytes to detect a non-cooperating edit;
+this is an expected-byte fence, not a claim of filesystem compare-and-swap
+semantics. Contention or changed bytes exit `1` without overwriting the other
+writer. Board task files may
 be directory (`tasks/<id>/README.md`) or legacy flat (`tasks/<id>.md`); plan
 tasks may be in `spec/plans/<id>.md` or legacy
 `spec/plans/<id>/README.md`. Plan-inline amendments retain the existing
@@ -133,7 +138,7 @@ coordination-branch precondition.
 
 #### REQ: plan-inline-coordination-branch-enforcement
 
-In plan-inline mode (`--plan`), when the resolved plan declares `**Coordination:** <owner>/<repo>@<branch>` (upstream [plan#coordination-branch](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#coordination-branch)), the verb MUST enforce the same check as [`plan change-status#req:coordination-branch-enforcement`](../../plan/change-status/README.md#req-coordination-branch-enforcement): resolve the CURRENT invocation's ambient git identity and compare it against the declared reference BEFORE any mutation (including a status transition or a corrective `--amend-provenance` re-stamp), exiting `1` (Conflict) on a mismatch, fail-closed on an unresolvable remote/branch. This is a DIFFERENT concept from the `single-actor-no-coordination` AC below: that AC is about the absence of a claim/release LOCK between multiple actors racing the same task; this REQ is about which repo/branch is authoritative for mutating the plan DOCUMENT itself. Board-mode tasks (no `--plan`) resolve to `tasks/<task>/README.md`, which carries no `**Coordination:**` field, so this REQ never applies to them.
+In plan-inline mode (`--plan`), when the resolved plan declares `**Coordination:** <owner>/<repo>@<branch>` (upstream [plan#coordination-branch](https://github.com/specscore/specscore/blob/main/spec/features/plan/README.md#coordination-branch)), the verb MUST enforce the same check as [`plan change-status#req:coordination-branch-enforcement`](../../plan/change-status/README.md#req-coordination-branch-enforcement): resolve the CURRENT invocation's ambient git identity and compare it against the declared reference BEFORE any mutation (including a status transition or a corrective `--amend-provenance` re-stamp), exiting `1` (Conflict) on a mismatch, fail-closed on an unresolvable remote/branch. This is a DIFFERENT concept from the `single-actor-no-coordination` AC below: that AC excludes a distributed actor claim/release protocol, while every local artifact mutation still uses its fail-fast advisory transaction lock. This REQ determines which repo/branch is authoritative for mutating the plan DOCUMENT itself. Board-mode tasks (no `--plan`) resolves to `tasks/<task>/README.md`, which carries no `**Coordination:**` field, so this REQ never applies to them.
 
 #### REQ: plan-inline-coordination-branch-override
 
@@ -184,7 +189,7 @@ The verb MUST accept a `--force-coordination` boolean flag, honored only in plan
 
 ## Not Doing / Out of Scope
 
-- Claim/release, locking, sync policy, conflict-aware exit codes, multi-agent coordination — remain orchestrator-owned ([single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)). [plan-inline-coordination-branch-enforcement](#req-plan-inline-coordination-branch-enforcement) does NOT reopen this exclusion: it is a deterministic, single-invocation precondition check (ambient git identity vs. a static `**Coordination:**` field value already on disk), not a claim/release lock, not contention resolution between racing actors, and it introduces no distributed state. Exit `1` here means "this invocation is in the wrong place," not "another actor is mid-mutation."
+- Distributed claim/release, sync policy, and multi-agent orchestration remain orchestrator-owned ([single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted)). Local artifact safety does not: every writer takes the same fail-fast advisory artifact lock, and contention exits `1`. [plan-inline-coordination-branch-enforcement](#req-plan-inline-coordination-branch-enforcement) is a separate deterministic precondition (ambient git identity vs. a static `**Coordination:**` field value already on disk), not distributed state.
 - Auto-deriving the commit from ambient `git HEAD`, and verifying the sha exists in the repo ([provenance-not-derived-not-verified](#req-provenance-not-derived-not-verified)).
 - Recording more than one commit per task (single reference — MVP).
 - Reachability detection / lost-commit recovery — the meta-spec feature's Not Doing carries.
@@ -267,7 +272,7 @@ CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path
 
 **Given** the verb is invoked on a task
 **When** it mutates the status field
-**Then** it performs a pure file rewrite (plus optional provenance) with no claim/release, lock acquisition, or conflict-resolution step — coordination is not attempted.
+**Then** it performs one local artifact transaction (fail-fast advisory lock, exact read and resolution under lock, one atomic durable write) with no distributed claim/release or orchestration step.
 
 ### AC: plan-inline-target-resolves
 
@@ -355,7 +360,7 @@ CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path
 - ~~Corrective re-stamp of an already-`complete` task~~ — **Resolved:** the `--amend-provenance` path ([provenance-corrective-restamp](#req-provenance-corrective-restamp)).
 - ~~A `--note`/annotation mechanism for tasks~~ — **Resolved:** [task-annotation-fields](#req-task-annotation-fields) adds `--note`/`--evidence`, valid on any transition, written adjacent to `**Status:**`.
 - Is the MVP transition matrix complete? Should `depends_on` gating (`queued → in_progress` only when dependencies are `complete`) be enforced here or left to orchestrators? (Still open.)
-- ~~Should `**Note:**`/`**Evidence:**` be correctable without a further status transition?~~ — **Resolved:** `task amend` provides explicit replacement/removal, append-only audit provenance, duplicate rejection, and a CAS fence ([annotation-corrective-amendment](#req-annotation-corrective-amendment)).
+- ~~Should `**Note:**`/`**Evidence:**` be correctable without a further status transition?~~ — **Resolved:** `task amend` provides explicit replacement/removal, append-only audit provenance, duplicate rejection, a fail-fast artifact lock, and a final expected-byte fence ([annotation-corrective-amendment](#req-annotation-corrective-amendment)).
 - Should `plan info` surface each task's `**Note:**`/`**Evidence:**` (already parsed into `pkg/plan.Task`) the way it surfaces `ImplementationEvidence` (`**Implemented-by:**` refs) today? Deferred — not required by the motivating case (a plain rollup count), and it would need a decision on whether to fold it into `ImplementationEvidence` or add a parallel field.
 
 ---

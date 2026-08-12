@@ -1715,7 +1715,7 @@ func TestRewriteTaskStatusLines_ConcurrentTaskWriterIsFenced(t *testing.T) {
 	if err := os.WriteFile(f, []byte("**Status:** planning\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := lifecycle.WithArtifactMutationLock(f, func() error {
+	err := lifecycle.WithArtifactTransaction(f, func(*lifecycle.ArtifactTransaction) error {
 		if err := rewriteTaskStatusLines(f, map[int]string{1: "complete"}); !errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			t.Fatalf("err=%v, want concurrent mutation", err)
 		}

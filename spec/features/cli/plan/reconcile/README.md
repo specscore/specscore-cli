@@ -258,7 +258,7 @@ The verb MUST accept a `--force-coordination` boolean flag with the same bypass-
 **When** the user runs `specscore plan reconcile ghost --tasks=complete --note "x"`
 **Then** the command exits `3`, naming the expected `spec/plans/ghost.md` path.
 
-### AC: lint-failure-rolls-back
+### AC: lint-failure-retains-committed-reconciliation
 
 **Requirements:** [index-sync](#req-index-sync)
 

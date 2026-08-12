@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/spf13/cobra"
 )
@@ -173,35 +176,33 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Coordination-branch enforcement: when the plan declares
-	// **Coordination:**, reconciliation is authoritative only on the declared
-	// repo/branch (spec/features/plan/README.md#coordination-branch,
-	// upstream; see cli/plan/reconcile for the enforcement contract).
-	planPath, perr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
-	if perr != nil {
-		return perr
-	}
-	parsedPlan, perr := plan.Parse(planPath)
-	if perr != nil {
-		return exitcode.UnexpectedErrorf("parsing plan %s: %v", slug, perr)
-	}
 	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-	if cerr := enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
-		return cerr
-	}
+	var coordinationWarning bytes.Buffer
 
 	result, err := plan.Reconcile(plan.ReconcileOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		Note:         note,
-		Evidence:     evidence,
-		ForceTasks:   forceTasks,
-		ReopenTasks:  reopenTasks,
+		SpecRoot:    specRoot,
+		Slug:        slug,
+		Note:        note,
+		Evidence:    evidence,
+		ForceTasks:  forceTasks,
+		ReopenTasks: reopenTasks,
+		ValidateSnapshot: func(path string, before []byte) error {
+			parsedPlan, parseErr := plan.ParseBytes(path, before)
+			if parseErr != nil {
+				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
+			}
+			return enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, &coordinationWarning)
+		},
 		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
 	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+		}
 		return err
 	}
+	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
 
 	msg := fmt.Sprintf("%s: %s → %s (reconciled, %d task(s) marked %s",
 		result.Slug, string(result.From), string(result.To), result.TasksReconciled, result.Target)

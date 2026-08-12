@@ -36,6 +36,14 @@ func TestNewf(t *testing.T) {
 	}
 }
 
+func TestWrapPreservesCause(t *testing.T) {
+	cause := errors.New("disk full")
+	err := exitcode.UnexpectedErrorCause("writing artifact: disk full", cause)
+	if err.ExitCode() != exitcode.Unexpected || !errors.Is(err, cause) {
+		t.Fatalf("wrapped error = %#v", err)
+	}
+}
+
 func TestConvenienceConstructors(t *testing.T) {
 	tests := []struct {
 		name string

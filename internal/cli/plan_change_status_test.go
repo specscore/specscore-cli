@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
 )
 
@@ -176,8 +178,9 @@ func TestPlanChangeStatus_SupersededUnresolvableSuccessor_CLI(t *testing.T) {
 	}
 }
 
-// AC: lint-failure-rolls-back — inject a lint failure via the lintLintFn seam.
-func TestPlanChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
+// AC: post-commit-callback-failure-is-recovery-required — derived lint failure
+// retains the durable Plan transaction and exposes the original cause.
+func TestPlanChangeStatus_LintFailureRetainsCommittedTransaction_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
 	orig := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
@@ -192,9 +195,13 @@ func TestPlanChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
+	var committed *lifecycle.CommittedMutationError
+	if !errors.As(err, &committed) || committed.Phase != "post-mutation callback" {
+		t.Fatalf("error = %T %v, want committed callback failure", err, err)
+	}
 	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
-	if !strings.Contains(string(body), "**Status:** Draft") {
-		t.Errorf("status not rolled back after lint failure:\n%s", body)
+	if !strings.Contains(string(body), "**Status:** In Review") {
+		t.Errorf("committed status was not retained after lint failure:\n%s", body)
 	}
 }
 

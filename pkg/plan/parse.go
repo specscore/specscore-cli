@@ -9,6 +9,7 @@ package plan
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -60,6 +61,7 @@ type Plan struct {
 	SourceLine        int      // 1-based line of the `**Source:**` field; 0 when absent
 	Status            string   // value of `**Status:**` (empty when missing)
 	StatusLine        int      // 1-based line of the field; 0 when absent
+	StatusCount       int      // number of Plan-header **Status:** fields
 	Date              string   // value of `**Date:**` (empty when missing)
 	DateLine          int      // 1-based line of the field; 0 when absent
 	Owner             string   // value of `**Owner:**` (empty when missing)
@@ -97,11 +99,13 @@ type Task struct {
 	Id               string   // stable task identifier from `**Id:**`; empty when absent
 	IdLine           int      // 1-based line of `**Id:**`; 0 when absent
 	IdPresent        bool     // true when the field was present
+	IdCount          int      // number of **Id:** fields; values above one are ambiguous
 	Status           TaskStatus
 	StatusLine       int    // 1-based line of `**Status:**`; 0 when absent
 	StatusRaw        string // raw value as written
 	StatusPresent    bool   // true when the field was present
 	StatusValueValid bool   // true when StatusRaw parsed cleanly into TaskStatus
+	StatusCount      int    // number of **Status:** fields in this task block
 	DependsOn        []int  // predecessor task numbers, empty when none
 	DependsOnLine    int    // 1-based line of `**Depends-On:**`; 0 when absent
 	DependsOnRaw     string // raw value as written
@@ -115,6 +119,7 @@ type Task struct {
 	ImplementationCommit string // raw value of `**Implemented-by:**`; empty when absent or empty
 	ImplementedByLine    int    // 1-based line of `**Implemented-by:**`; 0 when absent
 	ImplementedByPresent bool   // true when the field was present (even with an empty value)
+	ImplementedByCount   int    // number of singleton provenance fields
 
 	// Note is a free-text annotation written by `task change-status --note=`,
 	// adjacent to the task's **Status:** (and any **Implemented-by:**). Distinct
@@ -123,6 +128,7 @@ type Task struct {
 	Note        string // raw value of `**Note:**`; empty when absent or empty
 	NoteLine    int    // 1-based line of `**Note:**`; 0 when absent
 	NotePresent bool   // true when the field was present (even with an empty value)
+	NoteCount   int    // number of singleton Note fields
 
 	// Evidence is a list of supporting references written by
 	// `task change-status --evidence=`, adjacent to the task's **Status:**.
@@ -133,6 +139,7 @@ type Task struct {
 	EvidenceRaw     string   // raw value as written
 	EvidenceLine    int      // 1-based line of `**Evidence:**`; 0 when absent
 	EvidencePresent bool     // true when the field was present (even with an empty value)
+	EvidenceCount   int      // number of singleton Evidence fields
 }
 
 // DeferredAC is a single `- <feature-slug>#ac:<ac-slug> — <reason>` line.
@@ -170,19 +177,28 @@ func IsSingleFilePlanPath(plansDir, filePath string) bool {
 // file is not actually a Plan (HasPlanTitle == false in that case) so callers
 // can distinguish "not a Plan" from "malformed Plan".
 func Parse(path string) (*Plan, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	return ParseBytes(path, data)
+}
 
+// ParseBytes parses an exact in-memory Plan snapshot. Artifact transactions use
+// this entry point so identity resolution, singleton validation, and line-number
+// calculation all describe the same bytes that will be transformed and
+// committed. Path supplies only diagnostic and slug context; it is never read.
+func ParseBytes(path string, data []byte) (*Plan, error) {
 	p := &Plan{Path: path, Slug: slugFromPath(path), Mode: ModeFull}
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	var lines []string
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 	// Pass 1: locate title, header fields, section starts.
 	type sectionStart struct {
@@ -234,6 +250,7 @@ func Parse(path string) (*Plan, error) {
 					p.SourceNone = true
 				}
 			case "Status":
+				p.StatusCount++
 				p.Status = val
 				p.StatusLine = i + 1
 			case "Date":
@@ -381,10 +398,12 @@ func parseTaskBody(t *Task) {
 			t.VerifiesLine = absLine
 			t.Verifies = append(t.Verifies, splitCommaList(val)...)
 		case "Id":
+			t.IdCount++
 			t.IdPresent = true
 			t.IdLine = absLine
 			t.Id = val
 		case "Status":
+			t.StatusCount++
 			t.StatusPresent = true
 			t.StatusRaw = val
 			t.StatusLine = absLine
@@ -403,14 +422,17 @@ func parseTaskBody(t *Task) {
 			t.DependsOnValid = ok
 			t.DependsOn = deps
 		case "Implemented-by":
+			t.ImplementedByCount++
 			t.ImplementedByPresent = true
 			t.ImplementedByLine = absLine
 			t.ImplementationCommit = val
 		case "Note":
+			t.NoteCount++
 			t.NotePresent = true
 			t.NoteLine = absLine
 			t.Note = val
 		case "Evidence":
+			t.EvidenceCount++
 			t.EvidencePresent = true
 			t.EvidenceLine = absLine
 			t.EvidenceRaw = val

@@ -9,6 +9,10 @@ import (
 	"testing"
 )
 
+func transformTo(path string, content []byte) error {
+	return TransformArtifact(path, func([]byte) ([]byte, error) { return content, nil })
+}
+
 // Reused from independently validated coverage commit ca3e46c.
 func TestIsPlanDisposition(t *testing.T) {
 	for _, status := range []Status{PlanRejected, PlanWithdrawn, PlanSuperseded, PlanDeprecated} {
@@ -79,7 +83,7 @@ func TestReadStatus_NoStatusFound(t *testing.T) {
 
 func TestWriteFileAtomic_DestNotExists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nonexistent-file")
-	err := writeFileAtomic(path, []byte("data"))
+	err := transformTo(path, []byte("data"))
 	if err == nil {
 		t.Fatal("expected error when destination does not exist")
 	}
@@ -218,7 +222,7 @@ func TestWriteFileAtomic_HappyPath(t *testing.T) {
 	}
 	// Overwrite via writeFileAtomic
 	newContent := []byte("new content here\n")
-	if err := writeFileAtomic(path, newContent); err != nil {
+	if err := transformTo(path, newContent); err != nil {
 		t.Fatalf("writeFileAtomic: %v", err)
 	}
 	// Verify content
@@ -249,7 +253,7 @@ func TestWriteFileAtomic_ReadOnlyDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	err := writeFileAtomic(path, []byte("new"))
+	err := transformTo(path, []byte("new"))
 	if err == nil {
 		t.Fatal("expected error when dir is read-only")
 	}
@@ -347,7 +351,7 @@ func TestWriteFileAtomic_CustomPermPreserved(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(path, []byte("new content")); err != nil {
+	if err := transformTo(path, []byte("new content")); err != nil {
 		t.Fatalf("writeFileAtomic: %v", err)
 	}
 	info, _ := os.Stat(path)
@@ -372,7 +376,7 @@ func TestWriteFileAtomic_LargeContent(t *testing.T) {
 	}
 	// 100KB content to ensure Copy/Sync paths are fully exercised.
 	large := strings.Repeat("x", 100*1024)
-	if err := writeFileAtomic(path, []byte(large)); err != nil {
+	if err := transformTo(path, []byte(large)); err != nil {
 		t.Fatalf("writeFileAtomic: %v", err)
 	}
 	got, _ := os.ReadFile(path)
@@ -403,7 +407,7 @@ func TestWriteFileAtomic_CreateTempError(t *testing.T) {
 	}
 	t.Cleanup(func() { osCreateTemp = old })
 
-	err := writeFileAtomic(path, []byte("new content"))
+	err := transformTo(path, []byte("new content"))
 	if err == nil {
 		t.Fatal("expected error from injected CreateTemp failure")
 	}
@@ -432,7 +436,7 @@ func TestWriteFileAtomic_CopyError(t *testing.T) {
 	}
 	t.Cleanup(func() { ioCopy = old })
 
-	err := writeFileAtomic(path, []byte("new content"))
+	err := transformTo(path, []byte("new content"))
 	if err == nil {
 		t.Fatal("expected error from injected Copy failure")
 	}
@@ -461,7 +465,7 @@ func TestWriteFileAtomic_ChmodError(t *testing.T) {
 	}
 	t.Cleanup(func() { osChmod = old })
 
-	err := writeFileAtomic(path, []byte("new content"))
+	err := transformTo(path, []byte("new content"))
 	if err == nil {
 		t.Fatal("expected error from injected Chmod failure")
 	}
@@ -490,7 +494,7 @@ func TestWriteFileAtomic_RenameError(t *testing.T) {
 	}
 	t.Cleanup(func() { osRename = old })
 
-	err := writeFileAtomic(path, []byte("new content"))
+	err := transformTo(path, []byte("new content"))
 	if err == nil {
 		t.Fatal("expected error from injected Rename failure")
 	}
@@ -519,7 +523,7 @@ func TestWriteFileAtomic_SyncError(t *testing.T) {
 	}
 	t.Cleanup(func() { fileSync = old })
 
-	err := writeFileAtomic(path, []byte("new content"))
+	err := transformTo(path, []byte("new content"))
 	if err == nil {
 		t.Fatal("expected error from injected Sync failure")
 	}
@@ -549,7 +553,7 @@ func TestWriteFileAtomic_CloseError(t *testing.T) {
 	}
 	t.Cleanup(func() { fileClose = old })
 
-	err := writeFileAtomic(path, []byte("new content"))
+	err := transformTo(path, []byte("new content"))
 	if err == nil {
 		t.Fatal("expected error from injected Close failure")
 	}

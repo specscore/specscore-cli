@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -16,7 +17,6 @@ import (
 )
 
 var taskAmendNow = time.Now
-var taskAmendCAS = lifecycle.CompareAndSwap
 
 func taskAmendCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "amend <task>", Short: "Correct Task Note/Evidence without changing Status", Long: `Replaces or removes the singleton **Note:** and **Evidence:** fields without changing task Status or **Implemented-by:** provenance. Every successful correction appends an **Annotation Amendment:** audit line carrying the supplied actor and reason, UTC time, and SHA-256 digest of the exact prior artifact.`, Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runTaskAmend}
@@ -119,22 +119,19 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 	if path == "" {
 		return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
 	}
-	err = lifecycle.WithArtifactMutationLock(path, func() error {
-		p, err := plan.Parse(path)
+	var coordinationWarning bytes.Buffer
+	err = taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+		p, err := plan.ParseBytes(path, before)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		force, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-		if err := enforceCoordinationBranch(p, root, force, cmd.ErrOrStderr()); err != nil {
-			return err
+		if err := enforceCoordinationBranch(p, root, force, &coordinationWarning); err != nil {
+			return nil, err
 		}
 		target, err := uniquePlanTaskByID(p, taskSlug)
 		if err != nil {
-			return err
-		}
-		before, err := os.ReadFile(path)
-		if err != nil {
-			return err
+			return nil, err
 		}
 		lines := strings.Split(string(before), "\n")
 		end := len(lines)
@@ -145,31 +142,36 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 				break
 			}
 		}
-		return lifecycle.TransformArtifactUnderLock(path, before, func(b []byte) ([]byte, error) { return amendTaskBytes(b, taskSlug, target.HeadingLine-1, end, a) })
+		return amendTaskBytes(before, taskSlug, target.HeadingLine-1, end, a)
 	})
 	if err != nil {
-		return err
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", taskSlug)
+		}
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return err
+		}
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("writing plan-inline amendment: %v", err), err)
 	}
+	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: annotations amended\n", taskSlug)
 	return nil
 }
-func mustRead(path string) []byte { b, _ := os.ReadFile(path); return b }
 
 // start/end are zero-based line bounds; start=0/end=-1 means the full board file.
 func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a annotationAmendment) error {
-	before, err := os.ReadFile(path)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("reading task: %v", err)
-	}
-	after, err := amendTaskBytes(before, slug, start, end, a)
-	if err != nil {
-		return err
-	}
-	if err := taskAmendCAS(path, before, after); err != nil {
-		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+	if err := taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+		return amendTaskBytes(before, slug, start, end, a)
+	}); err != nil {
+		if err == lifecycle.ErrConcurrentMutation {
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", slug)
 		}
-		return exitcode.UnexpectedErrorf("writing amendment: %v", err)
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return err
+		}
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("writing amendment: %v", err), err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: annotations amended\n", slug)
 	return nil
@@ -253,7 +255,12 @@ func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmen
 	digest := fmt.Sprintf("%x", sha256.Sum256(before))
 	audit := fmt.Sprintf("**Annotation Amendment:** actor=%s; at=%s; reason=%s; before_sha256=%s", a.Actor, taskAmendNow().UTC().Format(time.RFC3339), a.Reason, digest)
 	// The audit is append-only and stays within a plan task block (before next task/H2).
-	auditAt := len(kept) - 1
+	auditAt := len(kept)
+	if hasFinalNewline {
+		// strings.Split represents the trailing newline as an empty final line;
+		// place the audit before it so the original EOF convention is preserved.
+		auditAt--
+	}
 	if start > 0 {
 		for i := status + 1; i < len(kept); i++ {
 			s := strings.TrimSpace(kept[i])
@@ -262,9 +269,6 @@ func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmen
 				break
 			}
 		}
-	}
-	if !hasFinalNewline && start == 0 {
-		auditAt = len(kept)
 	}
 	kept = append(kept[:auditAt], append([]string{audit}, kept[auditAt:]...)...)
 	return []byte(strings.Join(kept, newline)), nil

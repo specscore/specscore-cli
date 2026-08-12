@@ -120,7 +120,7 @@ The verb MUST accept a `--force-coordination` boolean flag. When set, a coordina
 | `2` | Missing/malformed `<slug>`; missing `--to`; unrecognized `--to`; an execution-band `--to`; missing required `--note` on `--to=superseded`/`--to=withdrawn`; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No Plan file at `spec/plans/<slug>.md` (nor the directory form). |
 | `4` | `(current_status, --to)` is not a legal transition per the matrix. |
-| `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
+| `10` | I/O failure, or derived lint/index work failed after the atomic Plan transaction committed; committed bytes are retained and the error requires recovery. |
 
 ## Interaction with Other Features
 
@@ -284,13 +284,13 @@ The verb MUST accept a `--force-coordination` boolean flag. When set, a coordina
 **When** the user runs `specscore plan change-status nonexistent --to=approved`
 **Then** the command exits `3` with stderr naming the expected `spec/plans/nonexistent.md` path.
 
-### AC: lint-failure-rolls-back
+### AC: lint-failure-retains-committed-transaction
 
-**Requirements:** [cli/plan/change-status#req:plans-index-sync](#req-plans-index-sync), [lifecycle-transitions#req:rollback-on-lint-failure](../../lifecycle-transitions/README.md#req-rollback-on-lint-failure)
+**Requirements:** [cli/plan/change-status#req:plans-index-sync](#req-plans-index-sync)
 
 **Given** `spec/plans/auth.md` in `**Status:** Draft`
 **When** `spec lint --fix` fails after a successful Status rewrite
-**Then** a full rollback restores the original `**Status:**` (and removes any `## Resolution` note or `**Superseded By:**` line), and the command exits `10` with stderr naming the lint violation(s).
+**Then** the command exits `10` with a committed/recovery-required error naming the lint violation(s), while the new `**Status:**` and any same-transaction `## Resolution` or `**Superseded By:**` bytes remain visible. No late rollback is attempted.
 
 ### AC: coordination-mismatch-rejected
 

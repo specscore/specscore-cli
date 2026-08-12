@@ -3,6 +3,8 @@ package cli
 // Features implemented: cli/plan
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,8 +64,10 @@ normal transition.
 Both dispositions require a reason: --to=withdrawn and --to=superseded
 require --note. --to=superseded additionally requires --successor naming the
 plan that replaces this one; it is written as a **Superseded By:** reference.
-If anything fails after the status rewrite (lint failure, I/O error), the
-on-disk state is restored to its pre-invocation form before the verb exits.
+The Plan artifact is committed as one atomic durable transaction before lint
+and index synchronization begins. If that derived work fails, the command
+exits with a committed/recovery-required error and retains the visible Plan;
+it never attempts a stale rollback.
 
 When the plan declares **Coordination:** <owner>/<repo>@<branch>, this verb
 refuses (exit 1) unless the current git repo/branch matches — mutating a
@@ -159,43 +163,46 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Coordination-branch enforcement: when the plan declares
-	// **Coordination:**, this mutation is authoritative only on the declared
-	// repo/branch (spec/features/plan/README.md#coordination-branch,
-	// upstream; see cli/plan/change-status for the enforcement contract).
-	planPath, perr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
-	if perr != nil {
-		return perr
-	}
-	parsedPlan, perr := plan.Parse(planPath)
-	if perr != nil {
-		return exitcode.UnexpectedErrorf("parsing plan %s: %v", slug, perr)
-	}
 	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-	if cerr := enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
-		return cerr
-	}
+	var coordinationWarning bytes.Buffer
 
-	// A Superseded plan MUST reference an existing successor plan.
-	if to == lifecycle.PlanSuperseded {
-		successor = strings.TrimSpace(successor)
-		if _, rerr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), successor); rerr != nil {
-			return exitcode.InvalidArgsErrorf(
-				"successor plan %q does not resolve to an existing plan at spec/plans/%s.md", successor, successor)
-		}
-	}
+	successor = strings.TrimSpace(successor)
 
 	result, err := plan.ChangeStatus(plan.ChangeStatusOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		To:           to,
-		Note:         note,
-		Successor:    successor,
+		SpecRoot:  specRoot,
+		Slug:      slug,
+		To:        to,
+		Note:      note,
+		Successor: successor,
+		ValidateSnapshot: func(path string, before []byte) error {
+			parsedPlan, parseErr := plan.ParseBytes(path, before)
+			if parseErr != nil {
+				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
+			}
+			if coordinationErr := enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, &coordinationWarning); coordinationErr != nil {
+				return coordinationErr
+			}
+			// Successor existence affects mutation admissibility, so sample it
+			// authoritatively while the exact source Plan bytes are locked, directly
+			// before the pure status/successor transform.
+			if to == lifecycle.PlanSuperseded {
+				if _, successorErr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), successor); successorErr != nil {
+					return exitcode.InvalidArgsErrorf(
+						"successor plan %q does not resolve to an existing plan at spec/plans/%s.md", successor, successor)
+				}
+			}
+			return nil
+		},
 		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
 	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+		}
 		return err
 	}
+	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
@@ -285,11 +292,15 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	}
 
 	target := filepath.Join(root, "spec", "plans", slug+".md")
-	// Collision check BEFORE any write (cli/plan/new#req:no-clobber-default).
-	if _, statErr := os.Stat(target); statErr == nil && !force {
-		return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
+	// Preserve the write-free fast conflict while the exclusive publication
+	// below remains the authoritative no-clobber decision under races.
+	if !force {
+		if _, statErr := os.Stat(target); statErr == nil {
+			return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
+		} else if !os.IsNotExist(statErr) {
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking %s: %v", target, statErr), statErr)
+		}
 	}
-
 	// Materialize ancestor indexes before the plan file
 	// (cli/plan/new#req:ancestor-indexes-materialized). This also creates the
 	// spec/plans/ directory (via spec/plans/README.md), so the plan file's
@@ -302,11 +313,27 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return exitcode.UnexpectedErrorf("scaffolding plan: %v", err)
 	}
-	if err := os.WriteFile(target, body, 0o644); err != nil {
-		return exitcode.UnexpectedErrorf("writing %s: %v", target, err)
+	if force {
+		if _, statErr := os.Stat(target); statErr == nil {
+			if err := lifecycle.TransformArtifact(target, func([]byte) ([]byte, error) { return body, nil }); err != nil {
+				return exitcode.UnexpectedErrorCause(fmt.Sprintf("replacing %s: %v", target, err), err)
+			}
+		} else if os.IsNotExist(statErr) {
+			if err := publishFileExclusive(target, body, 0o644); err != nil {
+				return exitcode.UnexpectedErrorCause(fmt.Sprintf("publishing %s: %v", target, err), err)
+			}
+		} else {
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking %s: %v", target, statErr), statErr)
+		}
+	} else if err := publishFileExclusive(target, body, 0o644); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
+		}
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("publishing %s: %v", target, err), err)
 	}
 	if _, err := plan.SyncIndex(filepath.Dir(target)); err != nil {
-		return exitcode.UnexpectedErrorf("syncing plans index: %v", err)
+		committed := lifecycle.CommittedError(target, "syncing plans index", err)
+		return exitcode.UnexpectedErrorCause(fmt.Sprintf("syncing plans index after committed Plan publication: %v", err), committed)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)

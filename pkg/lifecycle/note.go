@@ -1,9 +1,6 @@
 package lifecycle
 
-import (
-	"os"
-	"strings"
-)
+import "strings"
 
 // resolutionHeading is the H2 heading under which an optional transition
 // --note is written, per lifecycle-transitions#REQ:optional-transition-note.
@@ -28,35 +25,16 @@ const resolutionHeading = "## Resolution"
 // On a write, original holds the exact pre-invocation file bytes so the caller
 // can roll back via RestoreBody as part of the surrounding atomic transition.
 func AppendResolutionNote(artifactPath, note string) (original []byte, wrote bool, err error) {
-	err = WithArtifactMutationLock(artifactPath, func() error {
-		original, wrote, err = AppendResolutionNoteUnderLock(artifactPath, note)
-		return err
-	})
-	return original, wrote, err
-}
-
-// AppendResolutionNoteUnderLock has the same behavior as AppendResolutionNote,
-// but requires the caller to own WithArtifactMutationLock for artifactPath.
-// It exists for multi-step lifecycle transactions that must retain one fence
-// across their status rewrite and resolution audit append.
-func AppendResolutionNoteUnderLock(artifactPath, note string) (original []byte, wrote bool, err error) {
 	if strings.TrimSpace(note) == "" {
 		return nil, false, nil
 	}
-
-	orig, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return nil, false, err
-	}
-
-	updated, wrote, err := AppendResolutionNoteBytes(orig, note)
-	if err != nil || !wrote {
-		return orig, wrote, err
-	}
-	if err := writeFileAtomic(artifactPath, updated); err != nil {
-		return nil, false, err
-	}
-	return orig, true, nil
+	err = TransformArtifact(artifactPath, func(before []byte) ([]byte, error) {
+		original = append([]byte(nil), before...)
+		var updated []byte
+		updated, wrote, err = AppendResolutionNoteBytes(before, note)
+		return updated, err
+	})
+	return original, wrote, err
 }
 
 // AppendResolutionNoteBytes appends a resolution paragraph in memory.
@@ -73,15 +51,9 @@ func AppendResolutionNoteBytes(orig []byte, note string) ([]byte, bool, error) {
 // body-mutation counterpart to lifecycle.Rollback and participates in the same
 // rollback path.
 func RestoreBody(artifactPath string, original []byte) error {
-	return WithArtifactMutationLock(artifactPath, func() error {
-		return RestoreBodyUnderLock(artifactPath, original)
+	return TransformArtifact(artifactPath, func([]byte) ([]byte, error) {
+		return append([]byte(nil), original...), nil
 	})
-}
-
-// RestoreBodyUnderLock restores original while its caller owns the artifact
-// lifecycle lock. See AppendResolutionNoteUnderLock.
-func RestoreBodyUnderLock(artifactPath string, original []byte) error {
-	return writeFileAtomic(artifactPath, original)
 }
 
 // insertResolutionNote returns the lines with the note inserted: a new

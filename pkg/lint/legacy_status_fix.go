@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
 // Legacy→canonical artifact-status maps. Each is a CLOSED set: only these exact
@@ -63,18 +65,16 @@ func fixLegacyStatusesInTree(root string, legacyMap map[string]string, ideaArchi
 		if d.IsDir() || filepath.Base(path) == "README.md" || !strings.HasSuffix(path, ".md") {
 			return nil
 		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		out, changed := rewriteLegacyBodyStatus(content, legacyMap)
-		if !changed {
-			return nil
-		}
-		if ideaArchived {
-			out = ensureArchivedFlag(out)
-		}
-		return os.WriteFile(path, out, 0o644)
+		return lifecycle.TransformArtifact(path, func(content []byte) ([]byte, error) {
+			out, changed := rewriteLegacyBodyStatus(content, legacyMap)
+			if !changed {
+				return content, nil
+			}
+			if ideaArchived {
+				out = ensureArchivedFlag(out)
+			}
+			return out, nil
+		})
 	})
 }
 

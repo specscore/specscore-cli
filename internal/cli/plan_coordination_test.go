@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -617,6 +618,33 @@ func TestTaskChangeStatus_PlanInline_CoordinationForce_CLI(t *testing.T) {
 	}
 	if got := planTaskStatus(t, planPath, "setup"); got != "complete" {
 		t.Errorf("expected task completed after force-bypass, got %q", got)
+	}
+}
+
+func TestTaskChangeStatus_ForceWarningIsCommitGated(t *testing.T) {
+	root, planPath := stagePlanWithTasks(t, "auth", coordinatedPlanInlineBody)
+	gitInitWithRemoteAndBranch(t, root, "https://github.com/specscore/specscore-cli.git", "some-other-branch")
+	before, _ := os.ReadFile(planPath)
+	boom := errors.New("atomic write failed")
+	orig := taskTransformArtifactFn
+	taskTransformArtifactFn = func(path string, transform func([]byte) ([]byte, error)) error {
+		current, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if _, err := transform(current); err != nil {
+			return err
+		}
+		return boom
+	}
+	t.Cleanup(func() { taskTransformArtifactFn = orig })
+	_, stderr, err := runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete", "--force-coordination")
+	if !errors.Is(err, boom) || strings.Contains(stderr, "warning:") {
+		t.Fatalf("err=%v stderr=%q", err, stderr)
+	}
+	after, _ := os.ReadFile(planPath)
+	if !bytes.Equal(before, after) {
+		t.Fatal("fault-injected transaction changed Plan")
 	}
 }
 

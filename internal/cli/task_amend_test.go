@@ -52,6 +52,8 @@ func TestTaskAmend_BoardReplaceAndClearPreservesLifecycleAndAudit(t *testing.T) 
 
 func fmtDigest(b []byte) string { return fmt.Sprintf("%x", sha256.Sum256(b)) }
 
+func mustRead(path string) []byte { b, _ := os.ReadFile(path); return b }
+
 func TestTaskAmend_StatusAgnosticAndPlanDirectory(t *testing.T) {
 	root, path := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
 	dir := filepath.Join(root, "spec", "plans", "auth")
@@ -131,7 +133,7 @@ func TestTaskAmend_FlagAndResolutionFailuresAreWriteFree(t *testing.T) {
 	}
 }
 
-func TestTaskAmend_MalformedStatusAndCASFailuresAreWriteFree(t *testing.T) {
+func TestTaskAmend_MalformedStatusIsWriteFree(t *testing.T) {
 	_, path := stageTaskWithStatus(t, "auth", "blocked")
 	for _, body := range []string{"# Auth\n\nNo status\n", "# Auth\n\n**Status:** blocked\n**Status:** blocked\n"} {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -145,23 +147,6 @@ func TestTaskAmend_MalformedStatusAndCASFailuresAreWriteFree(t *testing.T) {
 		if string(mustRead(path)) != before {
 			t.Fatal("malformed status wrote")
 		}
-	}
-	_, path = stageTaskWithStatus(t, "auth", "blocked")
-	orig := taskAmendCAS
-	taskAmendCAS = func(string, []byte, []byte) error { return lifecycle.ErrConcurrentMutation }
-	t.Cleanup(func() { taskAmendCAS = orig })
-	before := string(mustRead(path))
-	_, _, err := runTask(t, "amend", "auth", "--note", "fixed", "--actor", "a", "--reason", "r")
-	if exitCodeOfErr(err) != exitcode.Conflict {
-		t.Fatalf("CAS conflict=%v", err)
-	}
-	if string(mustRead(path)) != before {
-		t.Fatal("CAS conflict wrote")
-	}
-	taskAmendCAS = func(string, []byte, []byte) error { return errors.New("write fence") }
-	_, _, err = runTask(t, "amend", "auth", "--note", "fixed", "--actor", "a", "--reason", "r")
-	if exitCodeOfErr(err) != exitcode.Unexpected {
-		t.Fatalf("write fence=%v", err)
 	}
 }
 
@@ -192,6 +177,23 @@ func TestTaskAmend_PreservesNoFinalNewlineCRLFAndPlanSectionBoundary(t *testing.
 	}
 }
 
+func TestTaskAmend_PlanInlineFinalBlockPreservesNoFinalNewline(t *testing.T) {
+	body := strings.TrimSuffix(twoTaskPlanBody, "\n")
+	_, planPath := stagePlanWithTasks(t, "auth", body)
+	before := mustRead(planPath)
+	if _, _, err := runTask(t, "amend", "deploy", "--plan", "auth", "--note", "landed", "--actor", "a", "--reason", "r"); err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(planPath))
+	if strings.HasSuffix(got, "\n") {
+		t.Fatalf("final newline was introduced: %q", got)
+	}
+	wantAudit := "**Annotation Amendment:** actor=a;"
+	if !strings.HasSuffix(got, "before_sha256="+fmtDigest(before)) || !strings.Contains(got, wantAudit) {
+		t.Fatalf("audit is not the exact final block line: %q", got)
+	}
+}
+
 func TestTaskChangeStatus_ConcurrentRewriteReturnsConflict(t *testing.T) {
 	_, path := stageTaskWithStatus(t, "auth", "planning")
 	orig := rewriteBoardTaskFn
@@ -207,17 +209,6 @@ func TestTaskChangeStatus_ConcurrentRewriteReturnsConflict(t *testing.T) {
 		t.Fatalf("status=%s", got)
 	}
 
-	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
-	origPlan := rewritePlanTaskStatusLineUnderLockFn
-	rewritePlanTaskStatusLineUnderLockFn = func(string, int, lifecycle.Status, []string) error { return lifecycle.ErrConcurrentMutation }
-	t.Cleanup(func() { rewritePlanTaskStatusLineUnderLockFn = origPlan })
-	_, _, err = runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete")
-	if exitCodeOfErr(err) != exitcode.Conflict {
-		t.Fatalf("plan conflict=%v", err)
-	}
-	if got := planTaskStatus(t, planPath, "setup"); got != "in_progress" {
-		t.Fatalf("plan status=%s", got)
-	}
 }
 
 func TestTaskChangeStatus_ConcurrentExtraFieldsReturnsConflict(t *testing.T) {
@@ -268,7 +259,7 @@ func TestTaskWriterFenceMatrix(t *testing.T) {
 			name: "board annotation amendment",
 			path: boardPath,
 			write: func() error {
-				return taskAmendCAS(boardPath, []byte("different"), []byte("after"))
+				return lifecycle.TransformArtifact(boardPath, func(b []byte) ([]byte, error) { return append(b, 'x'), nil })
 			},
 		},
 		{
@@ -282,13 +273,13 @@ func TestTaskWriterFenceMatrix(t *testing.T) {
 			name: "plan inline annotation amendment",
 			path: planPath,
 			write: func() error {
-				return taskAmendCAS(planPath, []byte("different"), []byte("after"))
+				return lifecycle.TransformArtifact(planPath, func(b []byte) ([]byte, error) { return append(b, 'x'), nil })
 			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := lifecycle.WithArtifactMutationLock(tc.path, func() error {
+			if err := lifecycle.WithArtifactTransaction(tc.path, func(*lifecycle.ArtifactTransaction) error {
 				if err := tc.write(); !errors.Is(err, lifecycle.ErrConcurrentMutation) {
 					t.Fatalf("err=%v, want concurrent mutation", err)
 				}

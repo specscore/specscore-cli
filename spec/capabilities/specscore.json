@@ -1853,7 +1853,7 @@
             },
             {
               "path": "pkg/lifecycle/cas_test.go",
-              "name": "TestCompareAndSwap",
+              "name": "TestTransformArtifact_ForeignEditBeforeRenameIsDetected",
               "kind": "unit"
             }
           ],

@@ -13,12 +13,14 @@ import (
 
 // Testable indirections for OS operations. Tests inject failures via these.
 var (
-	osCreateTemp = os.CreateTemp
-	ioCopy       = io.Copy
-	osChmod      = os.Chmod
-	osRename     = os.Rename
-	fileSync     = func(f *os.File) error { return f.Sync() }
-	fileClose    = func(f *os.File) error { return f.Close() }
+	osCreateTemp       = os.CreateTemp
+	ioCopy             = io.Copy
+	osChmod            = os.Chmod
+	osRename           = os.Rename
+	osReadBeforeRename = os.ReadFile
+	osOpenDir          = func(path string) (*os.File, error) { return os.Open(path) }
+	fileSync           = func(f *os.File) error { return f.Sync() }
+	fileClose          = func(f *os.File) error { return f.Close() }
 )
 
 // statusLineRe matches a header line of the form `**Status:** <value>`,
@@ -83,30 +85,13 @@ func Validate(kind Kind, artifactPath string, to Status) (Status, error) {
 // If the file has no `**Status:**` line, Rewrite returns ErrStatusLineNotFound
 // and the file is left untouched.
 func Rewrite(artifactPath string, newStatus Status) (string, error) {
-	lock, err := acquireCASLock(artifactPath)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = lock.Unlock() }()
-	return RewriteUnderLock(artifactPath, newStatus)
-}
-
-// RewriteUnderLock rewrites a status while the caller owns the artifact's
-// WithArtifactMutationLock fence. It is for compound lifecycle transactions;
-// callers without that fence must use Rewrite.
-func RewriteUnderLock(artifactPath string, newStatus Status) (string, error) {
-	original, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return "", err
-	}
-	updated, originalLine, err := RewriteBytes(original, newStatus)
-	if err != nil {
-		return "", err
-	}
-	if err := writeFileAtomic(artifactPath, updated); err != nil {
-		return "", err
-	}
-	return originalLine, nil
+	var originalLine string
+	err := TransformArtifact(artifactPath, func(original []byte) ([]byte, error) {
+		updated, line, transformErr := RewriteBytes(original, newStatus)
+		originalLine = line
+		return updated, transformErr
+	})
+	return originalLine, err
 }
 
 // RewriteBytes rewrites Status (and its frontmatter mirror) in memory. It is
@@ -168,22 +153,17 @@ func StatusFromBytes(original []byte) (Status, error) {
 // Concurrent modification is outside the contract (REQ: no-coordination in
 // the lifecycle-transitions Meta spec).
 func Rollback(artifactPath string, originalStatusLine string) error {
-	return WithArtifactMutationLock(artifactPath, func() error {
-		return RollbackUnderLock(artifactPath, originalStatusLine)
+	return TransformArtifact(artifactPath, func(current []byte) ([]byte, error) {
+		return RollbackBytes(current, originalStatusLine)
 	})
 }
 
-// RollbackUnderLock restores a status while the caller owns the artifact
-// lifecycle fence. Callers without the fence must use Rollback.
-func RollbackUnderLock(artifactPath string, originalStatusLine string) error {
-	current, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return err
-	}
+// RollbackBytes is the pure in-memory legacy status-line restoration transform.
+func RollbackBytes(current []byte, originalStatusLine string) ([]byte, error) {
 	lines := splitKeepTerminators(current)
 	idx := findStatusLineIndex(lines)
 	if idx < 0 {
-		return ErrStatusLineNotFound
+		return nil, ErrStatusLineNotFound
 	}
 	lines[idx] = originalStatusLine
 	// Re-mirror the frontmatter `status:` from the restored body value so the
@@ -194,7 +174,7 @@ func RollbackUnderLock(artifactPath string, originalStatusLine string) error {
 			setFrontmatterStatusLine(lines, fmIdx, v)
 		}
 	}
-	return writeFileAtomic(artifactPath, joinLines(lines))
+	return joinLines(lines), nil
 }
 
 // findFrontmatterStatusLineIndex returns the index of the `status:` line inside
@@ -323,10 +303,12 @@ func joinLines(lines []string) []byte {
 	return buf.Bytes()
 }
 
-// writeFileAtomic writes content to dst via a same-directory temp file +
-// rename, so a partial write cannot leave a half-rewritten artifact on
-// disk. File mode is preserved from the existing dst.
-func writeFileAtomic(dst string, content []byte) error {
+// writeFileAtomicExpected stages content beside dst, performs a deterministic
+// final identity check against expected, then renames and syncs the containing
+// directory. The check detects non-cooperating edits observed before rename;
+// it is deliberately not called compare-and-swap because POSIX rename cannot
+// make the preceding read and replacement one indivisible filesystem action.
+func writeFileAtomicExpected(dst string, expected, content []byte) error {
 	stat, err := os.Stat(dst)
 	if err != nil {
 		return err
@@ -357,9 +339,29 @@ func writeFileAtomic(dst string, content []byte) error {
 		cleanup()
 		return err
 	}
+	current, err := osReadBeforeRename(dst)
+	if err != nil {
+		cleanup()
+		return err
+	}
+	if !bytes.Equal(current, expected) {
+		cleanup()
+		return ErrConcurrentMutation
+	}
 	if err := osRename(tmpName, dst); err != nil {
 		cleanup()
 		return err
+	}
+	dir, err := osOpenDir(dirOf(dst))
+	if err != nil {
+		return CommittedError(dst, "opening artifact directory for durable sync", err)
+	}
+	if err := fileSync(dir); err != nil {
+		_ = fileClose(dir)
+		return CommittedError(dst, "syncing artifact directory", err)
+	}
+	if err := fileClose(dir); err != nil {
+		return CommittedError(dst, "closing artifact directory", err)
 	}
 	return nil
 }

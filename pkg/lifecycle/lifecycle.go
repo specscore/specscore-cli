@@ -18,8 +18,11 @@
 //   - REQ: status-line-rewrite — Rewrite mutates only the **Status:** line,
 //     preserving every other byte (including line endings and trailing
 //     whitespace).
-//   - REQ: rollback-on-lint-failure — Rollback restores the original
-//     **Status:** line byte-for-byte.
+//   - Existing-artifact writers use one fail-fast per-path transaction, read
+//     and validate under lock, and atomically replace only expected bytes.
+//   - Rollback remains an explicit legacy operation for callers whose broader
+//     contract still requires it; transaction users do not perform a late
+//     stale rollback after post-commit work fails.
 package lifecycle
 
 import (

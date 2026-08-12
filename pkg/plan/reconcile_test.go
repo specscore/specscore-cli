@@ -154,8 +154,8 @@ func TestReconcile_PartialCompletion(t *testing.T) {
 }
 
 // AC: tasks-already-complete-status-still-updates — every task is already
-// complete, but the plan's own Status field lagged (e.g. a prior reconcile's
-// PostMutation rolled back). Reconcile still fixes the plan-level line and
+// complete, but the plan's own Status field lagged (e.g. a prior external
+// updater never wrote it). Reconcile still fixes the plan-level line and
 // writes the record, with TasksReconciled == 0.
 func TestReconcile_TasksAlreadyComplete_OnlyPlanStatusChanges(t *testing.T) {
 	root, path := stageReconcilePlan(t, "auth", "Draft", "complete", "complete")
@@ -227,6 +227,24 @@ func TestReconcile_NoStatusLine(t *testing.T) {
 	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
 	if got := codeOf(t, err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+}
+
+func TestReconcile_DuplicatePlanStatusRejectedUnderTransaction(t *testing.T) {
+	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
+	before, _ := os.ReadFile(path)
+	seeded := strings.Replace(string(before), "**Status:** Draft", "**Status:** Draft\n**Status:** Approved", 1)
+	if err := os.WriteFile(path, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: func() error { called = true; return nil }})
+	if got := codeOf(t, err); got != exitcode.InvalidArgs {
+		t.Fatalf("exit=%d err=%v", got, err)
+	}
+	after, _ := os.ReadFile(path)
+	if called || string(after) != seeded {
+		t.Fatal("duplicate Plan status was not write-free")
 	}
 }
 
@@ -456,8 +474,8 @@ func TestReconcile_SecondReconcile_AfterNewTaskAdded(t *testing.T) {
 	}
 }
 
-// AC: post-mutation-failure-rolls-back — a failing PostMutation hook (e.g.
-// spec lint) restores the pre-invocation file bytes exactly.
+// AC: post-mutation-failure-is-recovery-required — the artifact commit is
+// retained when derived post-mutation work fails.
 func TestReconcile_PostMutationFails_RetainsCommittedTransaction(t *testing.T) {
 	root, path := stageReconcilePlan(t, "auth", "Draft", "planning", "planning")
 	before, _ := os.ReadFile(path)
@@ -476,7 +494,7 @@ func TestReconcile_PostMutationFails_RetainsCommittedTransaction(t *testing.T) {
 
 func TestReconcile_ConcurrentTaskWriterIsFenced(t *testing.T) {
 	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
-	err := lifecycle.WithArtifactMutationLock(path, func() error {
+	err := lifecycle.WithArtifactTransaction(path, func(*lifecycle.ArtifactTransaction) error {
 		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
 		if !errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			t.Fatalf("err=%v, want concurrent mutation", err)
@@ -485,28 +503,6 @@ func TestReconcile_ConcurrentTaskWriterIsFenced(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-}
-
-// AC: note-write-failure-rolls-back — injects a failure into the shared
-// appendNoteFn seam (also used by ChangeStatus) to cover the resolution-note
-// rollback branch.
-func TestReconcile_NoteWriteFails_RollsBack(t *testing.T) {
-	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
-	before, _ := os.ReadFile(path)
-	orig := reconcileAppendNoteUnderLockFn
-	reconcileAppendNoteUnderLockFn = func(string, string) ([]byte, bool, error) {
-		return nil, false, errors.New("note write boom")
-	}
-	t.Cleanup(func() { reconcileAppendNoteUnderLockFn = orig })
-
-	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
-	if got := codeOf(t, err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
-	}
-	after, _ := os.ReadFile(path)
-	if string(after) != string(before) {
-		t.Errorf("file not rolled back after note-write failure:\nbefore=%s\nafter=%s", before, after)
 	}
 }
 
@@ -526,28 +522,8 @@ func TestReconcile_ParseError(t *testing.T) {
 	if got := codeOf(t, err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
-	if !strings.Contains(err.Error(), "parsing plan") {
-		t.Errorf("expected parsing error, got: %q", err.Error())
-	}
-}
-
-// AC: read-original-snapshot-error — injects a failure into the
-// reconcileReadOriginalFn seam, covering the branch a real filesystem race
-// would otherwise be needed to reach.
-func TestReconcile_ReadOriginalSnapshotError(t *testing.T) {
-	root, _ := stageReconcilePlan(t, "auth", "Draft", "planning")
-	orig := reconcileReadOriginalFn
-	reconcileReadOriginalFn = func(string) ([]byte, error) {
-		return nil, errors.New("read boom")
-	}
-	t.Cleanup(func() { reconcileReadOriginalFn = orig })
-
-	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
-	if got := codeOf(t, err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
-	}
-	if !strings.Contains(err.Error(), "reading plan") {
-		t.Errorf("expected reading-plan error, got: %q", err.Error())
+	if !strings.Contains(err.Error(), "artifact transaction") {
+		t.Errorf("expected transaction read error, got: %q", err.Error())
 	}
 }
 
@@ -603,7 +579,7 @@ func TestReconcile_ReopenValidationAndRollback(t *testing.T) {
 			t.Fatalf("exit = %d, want %d: %v", got, exitcode.InvalidState, err)
 		}
 	})
-	t.Run("post-mutation-failure-restores-bytes", func(t *testing.T) {
+	t.Run("post-mutation-failure-retains-committed-bytes", func(t *testing.T) {
 		root, path := stageReconcilePlan(t, "auth", "Implemented", "complete")
 		before, _ := os.ReadFile(path)
 		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: func() error { return errors.New("lint boom") }})
@@ -613,28 +589,6 @@ func TestReconcile_ReopenValidationAndRollback(t *testing.T) {
 		after, _ := os.ReadFile(path)
 		if string(after) == string(before) {
 			t.Fatalf("committed reopen was unexpectedly rolled back")
-		}
-	})
-	t.Run("snapshot-read-and-note-write-failures", func(t *testing.T) {
-		root, path := stageReconcilePlan(t, "auth", "Implemented", "complete")
-		before, _ := os.ReadFile(path)
-		originalRead := reconcileReadOriginalFn
-		reconcileReadOriginalFn = func(string) ([]byte, error) { return nil, errors.New("read boom") }
-		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
-		reconcileReadOriginalFn = originalRead
-		if got := codeOf(t, err); got != exitcode.Unexpected {
-			t.Fatalf("read failure exit = %d, want %d: %v", got, exitcode.Unexpected, err)
-		}
-		originalAppend := reconcileAppendNoteUnderLockFn
-		reconcileAppendNoteUnderLockFn = func(string, string) ([]byte, bool, error) { return nil, false, errors.New("note boom") }
-		_, err = Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
-		reconcileAppendNoteUnderLockFn = originalAppend
-		if got := codeOf(t, err); got != exitcode.Unexpected {
-			t.Fatalf("note failure exit = %d, want %d: %v", got, exitcode.Unexpected, err)
-		}
-		after, _ := os.ReadFile(path)
-		if string(after) != string(before) {
-			t.Fatalf("reopen failure changed plan:\nbefore=%s\nafter=%s", before, after)
 		}
 	})
 }
@@ -653,34 +607,36 @@ func TestReconcile_ReopenWriteFailure(t *testing.T) {
 		t.Skip("permission bits are not enforced for root")
 	}
 	root, path := stageReconcilePlan(t, "auth", "Implemented", "complete")
-	if err := os.Chmod(path, 0o444); err != nil {
+	plansDir := filepath.Dir(path)
+	if err := os.Chmod(plansDir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(plansDir, 0o755) })
 	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
 	if got := codeOf(t, err); got != exitcode.Unexpected {
 		t.Fatalf("exit = %d, want %d: %v", got, exitcode.Unexpected, err)
 	}
 }
 
-// AC: write-plan-error — the target file itself is read-only, so the
-// combined status-line rewrite's os.WriteFile fails.
+// AC: write-plan-error — an unwritable artifact directory prevents staging
+// the transaction's atomic replacement.
 func TestReconcile_WritePlanError(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits are not enforced for root")
 	}
 	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
-	if err := os.Chmod(path, 0o444); err != nil {
+	plansDir := filepath.Dir(path)
+	if err := os.Chmod(plansDir, 0o555); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(plansDir, 0o755) })
 
 	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
 	if got := codeOf(t, err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
-	if !strings.Contains(err.Error(), "writing plan") {
-		t.Errorf("expected writing-plan error, got: %q", err.Error())
+	if !strings.Contains(err.Error(), "artifact transaction") {
+		t.Errorf("expected transaction write error, got: %q", err.Error())
 	}
 }
 

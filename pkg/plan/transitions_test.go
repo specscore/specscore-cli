@@ -216,6 +216,68 @@ func TestChangeStatus_NoStatusLine(t *testing.T) {
 	}
 }
 
+func TestChangeStatus_DuplicatePlanStatusRejectedUnderTransaction(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	before, _ := os.ReadFile(path)
+	seeded := strings.Replace(string(before), "**Status:** Draft", "**Status:** Draft\n**Status:** Approved", 1)
+	if err := os.WriteFile(path, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview,
+		PostMutation: func() error { called = true; return nil },
+	})
+	if got := codeOf(t, err); got != exitcode.InvalidArgs {
+		t.Fatalf("exit=%d err=%v", got, err)
+	}
+	if called || string(mustPlanBytes(t, path)) != seeded {
+		t.Fatal("duplicate Plan status was not write-free")
+	}
+}
+
+func TestChangeStatus_SnapshotValidatorSeesCoordinationStateChangedBeforeLock(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	initial, _ := os.ReadFile(path)
+	initial = []byte(strings.Replace(string(initial), "**Supersedes:** —", "**Supersedes:** —\n**Coordination:** owner/repo@main", 1))
+	if err := os.WriteFile(path, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate coordination state changing after an earlier caller observation
+	// but before ChangeStatus acquires the artifact transaction.
+	changed := []byte(strings.Replace(string(initial), "owner/repo@main", "owner/repo@release", 1))
+	if err := os.WriteFile(path, changed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview,
+		ValidateSnapshot: func(gotPath string, before []byte) error {
+			called = true
+			if gotPath != path || !strings.Contains(string(before), "owner/repo@release") {
+				t.Fatalf("validator saw stale coordination bytes: %q", before)
+			}
+			return exitcode.ConflictError("coordination state changed")
+		},
+		PostMutation: okHook,
+	})
+	if got := codeOf(t, err); got != exitcode.Conflict || !called {
+		t.Fatalf("exit=%d called=%v err=%v", got, called, err)
+	}
+	if got := mustPlanBytes(t, path); string(got) != string(changed) {
+		t.Fatal("rejected changed coordination snapshot was mutated")
+	}
+}
+
+func mustPlanBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // TestChangeStatus_ReadStatusError covers the generic "reading plan status"
 // branch: resolving <slug> to a *directory* named auth.md lets os.Stat
 // succeed (so resolution picks it) but lifecycle.Validate's status read then

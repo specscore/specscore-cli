@@ -2,7 +2,7 @@
 //
 // This file hosts ChangeStatus, the kind-specific orchestrator invoked by
 // `specscore plan change-status`. It composes pkg/lifecycle/ primitives
-// (state-machine validation, status-line rewrite, rollback) and adds the
+// (state-machine validation and one atomic artifact transaction) and adds the
 // Plan-specific structured `**Superseded By:**` successor reference.
 //
 // `plan change-status` owns ONLY the human-authored arcs: the prep band
@@ -16,8 +16,8 @@
 // LINT INVOCATION lives in the cobra adapter (internal/cli/plan.go), NOT
 // here, to avoid an import cycle: pkg/lint imports pkg/plan for the plan-*
 // lint rules, so pkg/plan cannot depend back on pkg/lint. The adapter passes
-// a PostMutationHook callback into ChangeStatus; this package only knows
-// "run the post-mutation hook, and roll back if it fails".
+// a PostMutationHook callback into ChangeStatus. It runs after the Plan lock is
+// released; failure retains the committed Plan and reports recovery required.
 //
 // Cross-references:
 //
@@ -28,6 +28,7 @@ package plan
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,18 +37,14 @@ import (
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
-// appendNoteFn / setSupersededByFn are testable indirections for the lifecycle
-// body-mutation helpers, so tests can exercise the failure-rollback branches.
-var (
-	appendNoteFn      = lifecycle.AppendResolutionNote
-	setSupersededByFn = lifecycle.SetSupersededBy
-)
-
 // PostMutationHook is the callback the cobra adapter wires to
 // `specscore spec lint --fix` (plus a verify pass). It MUST return nil on
-// success; a non-nil return triggers full rollback of every on-disk mutation
-// and the error is returned by ChangeStatus.
+// success; a non-nil return is wrapped as a committed/recovery-required error.
 type PostMutationHook func() error
+
+// SnapshotValidator checks caller-specific preconditions against the exact
+// bytes read under the Plan artifact lock. It must not mutate the artifact.
+type SnapshotValidator func(path string, before []byte) error
 
 // ChangeStatusOptions packages the inputs to ChangeStatus.
 type ChangeStatusOptions struct {
@@ -77,6 +74,11 @@ type ChangeStatusOptions struct {
 	// It is written as a `**Superseded By:** <slug>` header line.
 	Successor string
 
+	// ValidateSnapshot runs under the Plan artifact lock before lifecycle
+	// validation and transformation. CLI coordination-branch enforcement is
+	// supplied here so it cannot authorize one snapshot and mutate another.
+	ValidateSnapshot SnapshotValidator
+
 	// PostMutation is the post-rewrite hook (typically a spec-lint pass).
 	// Required; ChangeStatus returns exit 10 if nil.
 	PostMutation PostMutationHook
@@ -96,15 +98,11 @@ type ChangeStatusResult struct {
 //
 //  1. Resolve <slug> to an existing Plan file (flat or directory form). A
 //     missing file returns exit 3.
-//  2. lifecycle.Validate against the KindPlan matrix. Illegal transitions
-//     return exit 4.
-//  3. lifecycle.Rewrite the **Status:** line; capture original for rollback.
-//  4. Optionally write the `**Superseded By:**` successor reference and the
-//     `## Resolution` note, each rolled back together with the status line.
-//  5. Invoke the PostMutation hook. Failure → full rollback + exit 10.
-//
-// ChangeStatus performs all rollback internally — by the time it returns an
-// error, the on-disk state is byte-identical to its pre-invocation shape.
+//  2. Under the Plan artifact lock, read the exact bytes, validate against the
+//     KindPlan matrix, and compose Status, successor, and Resolution in memory.
+//  3. Commit those bytes with one atomic durable replacement and release.
+//  4. Invoke PostMutation. Failure retains the committed Plan and returns a
+//     typed recovery-required error.
 func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	if opts.SpecRoot == "" {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
@@ -130,11 +128,23 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	err = lifecycle.TransformArtifact(path, func(before []byte) ([]byte, error) {
 		// Validation occurs only after the artifact fence is held and is derived
 		// from the exact bytes this callback transforms.
-		var validateErr error
-		from, validateErr = lifecycle.StatusFromBytes(before)
-		if validateErr != nil {
-			return nil, validateErr
+		if opts.ValidateSnapshot != nil {
+			if validateErr := opts.ValidateSnapshot(path, before); validateErr != nil {
+				return nil, validateErr
+			}
 		}
+		parsed, parseErr := ParseBytes(path, before)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if parsed.StatusCount == 0 {
+			return nil, lifecycle.ErrStatusLineNotFound
+		}
+		if parsed.StatusCount > 1 {
+			return nil, exitcode.InvalidArgsErrorf("plan %q must have exactly one header **Status:** field; found %d", opts.Slug, parsed.StatusCount)
+		}
+		from = lifecycle.Status(parsed.Status)
+		var validateErr error
 		if validateErr = lifecycle.Transition(lifecycle.KindPlan, from, opts.To); validateErr != nil {
 			return nil, validateErr
 		}
@@ -152,6 +162,14 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return updated, transformErr
 	})
 	if err != nil {
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return ChangeStatusResult{}, exitcode.Wrap(exitcode.Conflict,
+				fmt.Sprintf("plan %s is busy; retry from fresh state", opts.Slug), err)
+		}
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return ChangeStatusResult{}, err
+		}
 		var ite *lifecycle.InvalidTransitionError
 		if errors.As(err, &ite) {
 			targets := statusNames(ite.LegalTargets)
@@ -175,7 +193,7 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	// release so it may take its own ordered artifact/index locks. A failure is
 	// deliberately retained rather than attempting an unsafe split rollback.
 	if err := opts.PostMutation(); err != nil {
-		return ChangeStatusResult{}, err
+		return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, lifecycle.CommittedError(path, "post-mutation callback", err)
 	}
 
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil

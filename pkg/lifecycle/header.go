@@ -2,7 +2,6 @@ package lifecycle
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -35,31 +34,16 @@ var supersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*`)
 // On a write, original holds the exact pre-invocation file bytes so the caller
 // can roll back via RestoreBody as part of the surrounding atomic transition.
 func SetSupersededBy(artifactPath, successor string) (original []byte, wrote bool, err error) {
-	err = WithArtifactMutationLock(artifactPath, func() error {
-		original, wrote, err = setSupersededByUnderLock(artifactPath, successor)
-		return err
-	})
-	return original, wrote, err
-}
-
-func setSupersededByUnderLock(artifactPath, successor string) (original []byte, wrote bool, err error) {
-	successor = strings.TrimSpace(successor)
-	if successor == "" {
+	if strings.TrimSpace(successor) == "" {
 		return nil, false, nil
 	}
-
-	orig, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return nil, false, err
-	}
-	updated, wrote, err := SetSupersededByBytes(orig, successor)
-	if err != nil || !wrote {
-		return orig, wrote, err
-	}
-	if err := writeFileAtomic(artifactPath, updated); err != nil {
-		return nil, false, err
-	}
-	return orig, true, nil
+	err = TransformArtifact(artifactPath, func(before []byte) ([]byte, error) {
+		original = append([]byte(nil), before...)
+		var updated []byte
+		updated, wrote, err = SetSupersededByBytes(before, successor)
+		return updated, err
+	})
+	return original, wrote, err
 }
 
 // SetSupersededByBytes applies the successor header transform in memory.
@@ -143,34 +127,33 @@ var fullSupersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*[ \t]
 // caller can roll back via RestoreBody as part of the surrounding atomic
 // transition.
 func SetSupersedes(artifactPath, target string) (original []byte, wrote bool, err error) {
-	err = WithArtifactMutationLock(artifactPath, func() error {
-		original, wrote, err = setSupersedesUnderLock(artifactPath, target)
-		return err
+	if strings.TrimSpace(target) == "" {
+		return nil, false, nil
+	}
+	err = TransformArtifact(artifactPath, func(before []byte) ([]byte, error) {
+		original = append([]byte(nil), before...)
+		var updated []byte
+		updated, wrote, err = SetSupersedesBytes(before, target)
+		return updated, err
 	})
 	return original, wrote, err
 }
 
-func setSupersedesUnderLock(artifactPath, target string) (original []byte, wrote bool, err error) {
+// SetSupersedesBytes applies the predecessor header transform in memory.
+func SetSupersedesBytes(original []byte, target string) ([]byte, bool, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
-		return nil, false, nil
+		return original, false, nil
 	}
 
-	orig, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return nil, false, err
-	}
-	lines := splitKeepTerminators(orig)
+	lines := splitKeepTerminators(original)
 
 	// Rewrite an existing line in place.
 	for i, ln := range lines {
 		body, terminator := splitTerminator(ln)
 		if m := fullSupersedesLineRe.FindStringSubmatch(body); m != nil {
 			lines[i] = fmt.Sprintf("%s**Supersedes:** %s%s", m[1], target, m[3]) + terminator
-			if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
-				return nil, false, err
-			}
-			return orig, true, nil
+			return joinLines(lines), true, nil
 		}
 	}
 
@@ -188,8 +171,5 @@ func setSupersedesUnderLock(artifactPath, target string) (original []byte, wrote
 	newLine := fmt.Sprintf("**Supersedes:** %s%s", target, terminator)
 	lines = insertAt(lines, anchor+1, []string{newLine})
 
-	if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
-		return nil, false, err
-	}
-	return orig, true, nil
+	return joinLines(lines), true, nil
 }
