@@ -17,10 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var taskAmendNow = time.Now
-
-func taskAmendCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "amend <task>", Short: "Correct Task Note/Evidence without changing Status", Long: `Replaces or removes the singleton **Note:** and **Evidence:** fields without changing task Status or **Implemented-by:** provenance. Every successful correction appends an **Annotation Amendment:** audit line carrying the supplied actor and reason, UTC time, and SHA-256 digest of the exact prior artifact. The command uses one fail-fast artifact transaction; lock contention or a changed preimage exits 1 without overwriting another writer.`, Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runTaskAmend}
+func taskAmendCommand(deps taskMutationDeps) *cobra.Command {
+	cmd := &cobra.Command{Use: "amend <task>", Short: "Correct Task Note/Evidence without changing Status", Long: `Replaces or removes the singleton **Note:** and **Evidence:** fields without changing task Status or **Implemented-by:** provenance. Every successful correction appends an **Annotation Amendment:** audit line carrying the supplied actor and reason, UTC time, and SHA-256 digest of the exact prior artifact. The command uses one fail-fast artifact transaction; lock contention or a changed preimage exits 1 without overwriting another writer.`, Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, args []string) error { return runTaskAmend(cmd, args, deps) }}
 	cmd.Flags().String("note", "", "replacement **Note:** value")
 	cmd.Flags().Bool("clear-note", false, "remove the singleton **Note:** field")
 	cmd.Flags().String("evidence", "", "replacement comma-separated **Evidence:** values")
@@ -38,7 +36,7 @@ type annotationAmendment struct {
 	Actor, Reason  string
 }
 
-func runTaskAmend(cmd *cobra.Command, args []string) error {
+func runTaskAmend(cmd *cobra.Command, args []string, deps taskMutationDeps) error {
 	taskSlug := strings.TrimSpace(args[0])
 	if err := task.ValidateSlug(taskSlug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid task slug: %v", err)
@@ -52,7 +50,7 @@ func runTaskAmend(cmd *cobra.Command, args []string) error {
 		if err := plan.ValidateSlug(planSlug); err != nil {
 			return exitcode.InvalidArgsErrorf("invalid plan slug: %v", err)
 		}
-		return amendPlanTask(cmd, taskSlug, planSlug, a)
+		return amendPlanTask(cmd, taskSlug, planSlug, a, deps)
 	}
 	dir, err := resolveTasksDir(flagString(cmd, "project"))
 	if err != nil {
@@ -62,7 +60,7 @@ func runTaskAmend(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return amendTaskArtifact(cmd, path, taskSlug, 0, -1, a)
+	return amendTaskArtifact(cmd, path, taskSlug, 0, -1, a, deps)
 }
 
 func amendmentFromFlags(cmd *cobra.Command) (annotationAmendment, error) {
@@ -115,7 +113,7 @@ func resolveBoardTaskPath(dir, slug string) (string, error) {
 	return "", exitcode.NotFoundErrorf("task not found: %s", slug)
 }
 
-func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAmendment) error {
+func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAmendment, deps taskMutationDeps) error {
 	root, err := resolveSpecRoot(flagString(cmd, "project"))
 	if err != nil {
 		return err
@@ -133,7 +131,7 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 		return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
 	}
 	var coordinationWarning bytes.Buffer
-	err = taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+	err = deps.transformArtifact(path, func(before []byte) ([]byte, error) {
 		p, err := plan.ParseBytes(path, before)
 		if err != nil {
 			return nil, err
@@ -155,7 +153,7 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 				break
 			}
 		}
-		return amendTaskBytes(before, taskSlug, target.HeadingLine-1, end, a)
+		return amendTaskBytes(before, taskSlug, target.HeadingLine-1, end, a, deps.annotationAmendmentNow)
 	})
 	if err != nil {
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
@@ -173,9 +171,9 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 }
 
 // start/end are zero-based line bounds; start=0/end=-1 means the full board file.
-func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a annotationAmendment) error {
-	if err := taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
-		return amendTaskBytes(before, slug, start, end, a)
+func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a annotationAmendment, deps taskMutationDeps) error {
+	if err := deps.transformArtifact(path, func(before []byte) ([]byte, error) {
+		return amendTaskBytes(before, slug, start, end, a, deps.annotationAmendmentNow)
 	}); err != nil {
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", slug)
@@ -190,7 +188,7 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 	return nil
 }
 
-func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmendment) ([]byte, error) {
+func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmendment, now func() time.Time) ([]byte, error) {
 	newline := "\n"
 	if strings.Contains(string(before), "\r\n") {
 		newline = "\r\n"
@@ -230,24 +228,19 @@ func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmen
 		break
 	}
 	kept := make([]string, 0, len(lines)+1)
+	removedBeforeStatus := 0
 	for i, l := range lines {
 		if (i == fields["Note"]-1 && a.Note != nil) || (i == fields["Evidence"]-1 && a.Evidence != nil) {
+			if i < status {
+				removedBeforeStatus++
+			}
 			continue
 		}
 		kept = append(kept, l)
 	}
-	// Recalculate insertion after removals and add replacement fields in canonical order.
-	status = -1
-	for i := start; i < len(kept); i++ {
-		l := kept[i]
-		if strings.HasPrefix(strings.TrimSpace(l), "**Status:**") {
-			status = i
-			break
-		}
-	}
-	if status < 0 {
-		return nil, exitcode.UnexpectedErrorf("task %s lost its **Status:** line during amendment", slug)
-	}
+	// Only Note/Evidence lines are removed, so the already-validated Status line
+	// remains present and its new index shifts only by removed preceding fields.
+	status -= removedBeforeStatus
 	insert = status + 1
 	for insert < len(kept) && (strings.HasPrefix(strings.TrimSpace(kept[insert]), "**Implemented-by:**") || strings.HasPrefix(strings.TrimSpace(kept[insert]), "**Note:**") || strings.HasPrefix(strings.TrimSpace(kept[insert]), "**Evidence:")) {
 		insert++
@@ -263,7 +256,7 @@ func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmen
 		kept = append(kept[:insert], append(add, kept[insert:]...)...)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(before))
-	audit := fmt.Sprintf("**Annotation Amendment:** actor=%s; at=%s; reason=%s; before_sha256=%s", a.Actor, taskAmendNow().UTC().Format(time.RFC3339), a.Reason, digest)
+	audit := fmt.Sprintf("**Annotation Amendment:** actor=%s; at=%s; reason=%s; before_sha256=%s", a.Actor, now().UTC().Format(time.RFC3339), a.Reason, digest)
 	// The audit is append-only and stays within a plan task block (before next task/H2).
 	auditAt := len(kept)
 	if hasFinalNewline {

@@ -4169,10 +4169,7 @@ func TestTaskNew_WriteBoardError(t *testing.T) {
 	root := setupTaskProjectForNew(t)
 	withCwd(t, root)
 	boom := errors.New("atomic board commit failed")
-	orig := taskNewCommitBoardFn
-	taskNewCommitBoardFn = func(*lifecycle.ArtifactTransaction, []byte) error { return boom }
-	t.Cleanup(func() { taskNewCommitBoardFn = orig })
-	_, _, err := runTask(t, "new", "--task=wrfail", "--title=WR Fail")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{commitBoard: func(*lifecycle.ArtifactTransaction, []byte) error { return boom }}, "new", "--task=wrfail", "--title=WR Fail")
 	if err == nil || !errors.Is(err, boom) {
 		t.Fatalf("expected preserved atomic board commit error, got %v", err)
 	}
@@ -6445,16 +6442,14 @@ func TestTaskNew_WriteFileError(t *testing.T) {
 
 	// Let the prepared marker publish, then fail the exclusive README publish.
 	boom := errors.New("injected exclusive publish error")
-	old := taskNewPublishExclusiveFn
-	taskNewPublishExclusiveFn = func(name string, data []byte, perm os.FileMode) error {
+	publish := func(name string, data []byte, perm os.FileMode) error {
 		if filepath.Base(name) == "README.md" {
 			return boom
 		}
-		return old(name, data, perm)
+		return publishFileExclusive(name, data, perm)
 	}
-	t.Cleanup(func() { taskNewPublishExclusiveFn = old })
 
-	_, _, err := runTask(t, "new", "--task=inject-fail", "--title=Fail Task")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{publishExclusive: publish}, "new", "--task=inject-fail", "--title=Fail Task")
 	if err == nil || !errors.Is(err, boom) {
 		t.Fatalf("expected preserved exclusive publish failure, got %v", err)
 	}

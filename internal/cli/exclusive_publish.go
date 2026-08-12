@@ -96,16 +96,29 @@ func isExclusivePublishCollision(err error) bool {
 	return errors.Is(err, fs.ErrExist)
 }
 
-var (
-	ownedMarkerLinkFn    = os.Link
-	ownedMarkerRemoveFn  = os.Remove
-	ownedMarkerSyncDirFn = syncOwnedMarkerDir
-)
+type ownedMarkerOps struct {
+	link    func(string, string) error
+	remove  func(string) error
+	syncDir func(string) error
+}
+
+func defaultOwnedMarkerOps() ownedMarkerOps {
+	return ownedMarkerOps{link: os.Link, remove: os.Remove, syncDir: syncOwnedMarkerDir}
+}
 
 func committedMarkerPath(path string) string { return path + ".committed" }
 
+type syncCloseFile interface {
+	Sync() error
+	Close() error
+}
+
 func syncOwnedMarkerDir(dir string) error {
-	d, err := os.Open(dir)
+	return syncOwnedMarkerDirWithOpen(dir, func(path string) (syncCloseFile, error) { return os.Open(path) })
+}
+
+func syncOwnedMarkerDirWithOpen(dir string, open func(string) (syncCloseFile, error)) error {
+	d, err := open(dir)
 	if err != nil {
 		return err
 	}
@@ -125,6 +138,10 @@ func syncOwnedMarkerDir(dir string) error {
 // failure can at worst resurrect that harmless committed receipt after a
 // crash, so it is intentionally best-effort rather than a false recovery error.
 func removeOwnedFileDurable(path string, expected []byte) error {
+	return removeOwnedFileDurableWithOps(path, expected, defaultOwnedMarkerOps())
+}
+
+func removeOwnedFileDurableWithOps(path string, expected []byte, ops ownedMarkerOps) error {
 	finalPath := committedMarkerPath(path)
 	prepared, preparedErr := os.ReadFile(path)
 	committed, committedErr := os.ReadFile(finalPath)
@@ -144,31 +161,31 @@ func removeOwnedFileDurable(path string, expected []byte) error {
 	}
 	dir := filepath.Dir(path)
 	if !committedExists {
-		if err := ownedMarkerLinkFn(path, finalPath); err != nil {
+		if err := ops.link(path, finalPath); err != nil {
 			return err
 		}
 		committedExists = true
 	}
-	if err := ownedMarkerSyncDirFn(dir); err != nil {
+	if err := ops.syncDir(dir); err != nil {
 		return err
 	}
 	if preparedExists {
-		if err := ownedMarkerRemoveFn(path); err != nil {
+		if err := ops.remove(path); err != nil {
 			return err
 		}
-		if err := ownedMarkerSyncDirFn(dir); err != nil {
+		if err := ops.syncDir(dir); err != nil {
 			return err
 		}
 	}
 	if committedExists {
-		if err := ownedMarkerRemoveFn(finalPath); err != nil {
+		if err := ops.remove(finalPath); err != nil {
 			return err
 		}
 		// The committed receipt was durably established above. If this final
 		// cleanup fence fails, returning an error would demand a retry without
 		// leaving a currently visible ownership receipt. Treat deletion as done;
 		// a crash may only bring the harmless receipt back for later cleanup.
-		_ = ownedMarkerSyncDirFn(dir)
+		_ = ops.syncDir(dir)
 	}
 	return nil
 }

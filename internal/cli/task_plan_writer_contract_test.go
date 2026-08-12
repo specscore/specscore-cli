@@ -23,16 +23,16 @@ func TestTaskPlanBodyWriterInventoryHasNoUnclassifiedPath(t *testing.T) {
 		"internal/cli/task.go": {
 			class: "existing-task-and-plan-body-transactions-plus-prepared-task-publisher",
 			anchors: []string{
-				"func rewriteBoardTask(", "taskTransformArtifactFn(path",
-				"func runTaskChangeStatusPlanInline(", "taskTransformArtifactFn(planPath",
+				"func rewriteBoardTask(", "lifecycle.TransformArtifact(path",
+				"func runTaskChangeStatusPlanInline(", "deps.transformArtifact(planPath",
 				"func runTaskAmendProvenanceBoard(", "func runTaskAmendProvenancePlanInline(",
-				"func runTaskNew(", "taskWithArtifactTxFn(boardPath", "taskNewPublishExclusiveFn(markerPath",
-				"taskNewPublishExclusiveFn(taskFilePath", "taskNewCommitBoardFn(tx", "taskNewRemoveMarkerFn(markerPath",
+				"func runTaskNew(", "mutationDeps.withArtifactTx(boardPath", "mutationDeps.publishExclusive(markerPath",
+				"mutationDeps.publishExclusive(taskFilePath", "mutationDeps.commitBoard(tx", "deps.removeMarker(markerPath",
 			},
 		},
 		"internal/cli/task_amend.go": {
 			class:   "existing-task-and-inline-plan-annotation-transactions",
-			anchors: []string{"func amendPlanTask(", "func amendTaskArtifact(", "taskTransformArtifactFn(path"},
+			anchors: []string{"func amendPlanTask(", "func amendTaskArtifact(", "deps.transformArtifact(path"},
 		},
 		"internal/cli/plan.go": {
 			class:   "exclusive-new-plan-publisher-or-force-transaction",
@@ -40,11 +40,11 @@ func TestTaskPlanBodyWriterInventoryHasNoUnclassifiedPath(t *testing.T) {
 		},
 		"pkg/plan/transitions.go": {
 			class:   "existing-plan-change-status-transaction",
-			anchors: []string{"func ChangeStatus(", "planTransformArtifactFn(path", "lifecycle.CommittedError(path"},
+			anchors: []string{"func ChangeStatus(", "transformPlanArtifact(opts.transformArtifact, path", "lifecycle.CommittedError(path"},
 		},
 		"pkg/plan/reconcile.go": {
 			class:   "existing-plan-reconcile-transaction",
-			anchors: []string{"func Reconcile(", "planTransformArtifactFn(flatPath", "func reconcileBytes("},
+			anchors: []string{"func Reconcile(", "transformPlanArtifact(opts.transformArtifact, flatPath", "func reconcileBytes("},
 		},
 		"pkg/lint/legacy_status_fix.go": {
 			class:   "legacy-plan-body-status-transaction",

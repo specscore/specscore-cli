@@ -17,7 +17,11 @@ import (
 )
 
 func executeTaskNew(root, slug, title string) error {
-	cmd := taskCommand()
+	return executeTaskNewWithMutationDeps(root, slug, title, taskMutationDeps{})
+}
+
+func executeTaskNewWithMutationDeps(root, slug, title string, deps taskMutationDeps) error {
+	cmd := taskCommandWithDeps(deps)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"new", "--project", root, "--task", slug, "--title", title})
@@ -53,10 +57,7 @@ func TestTaskNew_PreparedBoundaryRecoveryMatrix(t *testing.T) {
 		root := setupTaskProjectForNew(t)
 		board, readme, marker := taskNewPaths(root, "bounded")
 		boom := errors.New("marker publication failed")
-		orig := taskNewPublishExclusiveFn
-		taskNewPublishExclusiveFn = func(string, []byte, os.FileMode) error { return boom }
-		t.Cleanup(func() { taskNewPublishExclusiveFn = orig })
-		err := executeTaskNew(root, "bounded", "Bounded")
+		err := executeTaskNewWithMutationDeps(root, "bounded", "Bounded", taskMutationDeps{publishExclusive: func(string, []byte, os.FileMode) error { return boom }})
 		if !errors.Is(err, boom) || exitCodeOfErr(err) != exitcode.Unexpected {
 			t.Fatalf("err=%v", err)
 		}
@@ -74,11 +75,7 @@ func TestTaskNew_PreparedBoundaryRecoveryMatrix(t *testing.T) {
 		root := setupTaskProjectForNew(t)
 		board, readme, marker := taskNewPaths(root, "retry")
 		boom := errors.New("board fence failed")
-		orig := taskNewCommitBoardFn
-		taskNewCommitBoardFn = func(*lifecycle.ArtifactTransaction, []byte) error { return boom }
-		err := executeTaskNew(root, "retry", "Retry")
-		taskNewCommitBoardFn = orig
-		t.Cleanup(func() { taskNewCommitBoardFn = orig })
+		err := executeTaskNewWithMutationDeps(root, "retry", "Retry", taskMutationDeps{commitBoard: func(*lifecycle.ArtifactTransaction, []byte) error { return boom }})
 		if !errors.Is(err, boom) || boardRowCount(t, board, "retry") != 0 {
 			t.Fatalf("first err=%v row=%d", err, boardRowCount(t, board, "retry"))
 		}
@@ -102,11 +99,7 @@ func TestTaskNew_PreparedBoundaryRecoveryMatrix(t *testing.T) {
 		root := setupTaskProjectForNew(t)
 		board, _, marker := taskNewPaths(root, "owned")
 		boom := errors.New("board commit failed")
-		orig := taskNewCommitBoardFn
-		taskNewCommitBoardFn = func(*lifecycle.ArtifactTransaction, []byte) error { return boom }
-		_ = executeTaskNew(root, "owned", "Original")
-		taskNewCommitBoardFn = orig
-		t.Cleanup(func() { taskNewCommitBoardFn = orig })
+		_ = executeTaskNewWithMutationDeps(root, "owned", "Original", taskMutationDeps{commitBoard: func(*lifecycle.ArtifactTransaction, []byte) error { return boom }})
 		beforeMarker, _ := os.ReadFile(marker)
 		err := executeTaskNew(root, "owned", "Different")
 		if exitCodeOfErr(err) != exitcode.Conflict || boardRowCount(t, board, "owned") != 0 {
@@ -121,11 +114,7 @@ func TestTaskNew_PreparedBoundaryRecoveryMatrix(t *testing.T) {
 		root := setupTaskProjectForNew(t)
 		board, _, marker := taskNewPaths(root, "finalize")
 		boom := errors.New("marker cleanup failed")
-		orig := taskNewRemoveMarkerFn
-		taskNewRemoveMarkerFn = func(string, []byte) error { return boom }
-		err := executeTaskNew(root, "finalize", "Finalize")
-		taskNewRemoveMarkerFn = orig
-		t.Cleanup(func() { taskNewRemoveMarkerFn = orig })
+		err := executeTaskNewWithMutationDeps(root, "finalize", "Finalize", taskMutationDeps{removeMarker: func(string, []byte) error { return boom }})
 		var committed *lifecycle.CommittedMutationError
 		if !errors.As(err, &committed) || !errors.Is(err, boom) || boardRowCount(t, board, "finalize") != 1 {
 			t.Fatalf("cleanup err=%v row=%d", err, boardRowCount(t, board, "finalize"))
@@ -148,16 +137,13 @@ func TestTaskNew_PreparedBoundaryRecoveryMatrix(t *testing.T) {
 		root := setupTaskProjectForNew(t)
 		board, _, marker := taskNewPaths(root, "foreign")
 		foreign := []byte("foreign replacement\n")
-		orig := taskNewRemoveMarkerFn
-		taskNewRemoveMarkerFn = func(path string, expected []byte) error {
+		removeMarker := func(path string, expected []byte) error {
 			if err := os.WriteFile(path, foreign, 0o600); err != nil {
 				return err
 			}
 			return removeOwnedFileDurable(path, expected)
 		}
-		err := executeTaskNew(root, "foreign", "Foreign")
-		taskNewRemoveMarkerFn = orig
-		t.Cleanup(func() { taskNewRemoveMarkerFn = orig })
+		err := executeTaskNewWithMutationDeps(root, "foreign", "Foreign", taskMutationDeps{removeMarker: removeMarker})
 		var committed *lifecycle.CommittedMutationError
 		if !errors.As(err, &committed) || boardRowCount(t, board, "foreign") != 1 {
 			t.Fatalf("err=%v row=%d", err, boardRowCount(t, board, "foreign"))
@@ -317,20 +303,17 @@ func TestTaskNew_DirectoryDependencyIsRevalidatedBeforeBoardCommit(t *testing.T)
 		t.Fatal(err)
 	}
 	board, readme, marker := taskNewPaths(root, "fresh")
-	orig := taskNewStatFn
 	calls := 0
-	taskNewStatFn = func(path string) (os.FileInfo, error) {
+	stat := func(path string) (os.FileInfo, error) {
 		if path == depDir {
 			calls++
 			if calls == 2 {
 				return nil, os.ErrNotExist
 			}
 		}
-		return orig(path)
+		return os.Stat(path)
 	}
-	err := executeTaskNewWithDeps(root, "fresh", "dep")
-	taskNewStatFn = orig
-	t.Cleanup(func() { taskNewStatFn = orig })
+	err := executeTaskNewWithDependenciesAndMutationDeps(root, "fresh", "dep", taskMutationDeps{stat: stat})
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Fatalf("exit=%d want=%d err=%v", got, exitcode.Unexpected, err)
 	}
@@ -389,47 +372,57 @@ func TestTaskNew_OutputFailureRetainsPreparedRecovery(t *testing.T) {
 func TestOwnedMarkerFinalizationFaultMatrixRetainsRetryReceipt(t *testing.T) {
 	boom := errors.New("injected finalization fault")
 	for _, tc := range []struct {
-		name   string
-		inject func(prepared, committed string)
+		name string
+		ops  func(prepared, committed string) ownedMarkerOps
 	}{
-		{name: "receipt-link", inject: func(_, _ string) {
-			ownedMarkerLinkFn = func(string, string) error { return boom }
+		{name: "receipt-link", ops: func(_, _ string) ownedMarkerOps {
+			ops := defaultOwnedMarkerOps()
+			ops.link = func(string, string) error { return boom }
+			return ops
 		}},
-		{name: "receipt-parent-sync", inject: func(_, _ string) {
+		{name: "receipt-parent-sync", ops: func(_, _ string) ownedMarkerOps {
+			ops := defaultOwnedMarkerOps()
 			calls := 0
-			ownedMarkerSyncDirFn = func(string) error {
+			ops.syncDir = func(string) error {
 				calls++
 				if calls == 1 {
 					return boom
 				}
 				return nil
 			}
+			return ops
 		}},
-		{name: "prepared-unlink", inject: func(prepared, _ string) {
-			ownedMarkerRemoveFn = func(path string) error {
+		{name: "prepared-unlink", ops: func(prepared, _ string) ownedMarkerOps {
+			ops := defaultOwnedMarkerOps()
+			ops.remove = func(path string) error {
 				if path == prepared {
 					return boom
 				}
 				return os.Remove(path)
 			}
+			return ops
 		}},
-		{name: "prepared-unlink-parent-sync", inject: func(_, _ string) {
+		{name: "prepared-unlink-parent-sync", ops: func(_, _ string) ownedMarkerOps {
+			ops := defaultOwnedMarkerOps()
 			calls := 0
-			ownedMarkerSyncDirFn = func(string) error {
+			ops.syncDir = func(string) error {
 				calls++
 				if calls == 2 {
 					return boom
 				}
 				return nil
 			}
+			return ops
 		}},
-		{name: "receipt-unlink", inject: func(_, committed string) {
-			ownedMarkerRemoveFn = func(path string) error {
+		{name: "receipt-unlink", ops: func(_, committed string) ownedMarkerOps {
+			ops := defaultOwnedMarkerOps()
+			ops.remove = func(path string) error {
 				if path == committed {
 					return boom
 				}
 				return os.Remove(path)
 			}
+			return ops
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -440,10 +433,7 @@ func TestOwnedMarkerFinalizationFaultMatrixRetainsRetryReceipt(t *testing.T) {
 			if err := os.WriteFile(prepared, expected, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			origLink, origRemove, origSync := ownedMarkerLinkFn, ownedMarkerRemoveFn, ownedMarkerSyncDirFn
-			t.Cleanup(func() { ownedMarkerLinkFn, ownedMarkerRemoveFn, ownedMarkerSyncDirFn = origLink, origRemove, origSync })
-			tc.inject(prepared, committed)
-			err := removeOwnedFileDurable(prepared, expected)
+			err := removeOwnedFileDurableWithOps(prepared, expected, tc.ops(prepared, committed))
 			if !errors.Is(err, boom) {
 				t.Fatalf("err=%v, want injected fault", err)
 			}
@@ -452,7 +442,6 @@ func TestOwnedMarkerFinalizationFaultMatrixRetainsRetryReceipt(t *testing.T) {
 			if (preparedErr != nil || !bytes.Equal(preparedBytes, expected)) && (committedErr != nil || !bytes.Equal(committedBytes, expected)) {
 				t.Fatalf("no exact retry receipt remains: prepared=%v committed=%v", preparedErr, committedErr)
 			}
-			ownedMarkerLinkFn, ownedMarkerRemoveFn, ownedMarkerSyncDirFn = os.Link, os.Remove, syncOwnedMarkerDir
 			if err := removeOwnedFileDurable(prepared, expected); err != nil {
 				t.Fatalf("idempotent retry: %v", err)
 			}
@@ -473,17 +462,16 @@ func TestOwnedMarkerFinalizationFinalCleanupFenceIsSafe(t *testing.T) {
 	if err := os.WriteFile(prepared, expected, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	orig := ownedMarkerSyncDirFn
 	calls := 0
-	ownedMarkerSyncDirFn = func(string) error {
+	ops := defaultOwnedMarkerOps()
+	ops.syncDir = func(string) error {
 		calls++
 		if calls == 3 {
 			return errors.New("final receipt cleanup fence failed")
 		}
 		return nil
 	}
-	t.Cleanup(func() { ownedMarkerSyncDirFn = orig })
-	if err := removeOwnedFileDurable(prepared, expected); err != nil {
+	if err := removeOwnedFileDurableWithOps(prepared, expected, ops); err != nil {
 		t.Fatalf("final receipt fence cannot manufacture an unretryable error: %v", err)
 	}
 	if calls != 3 {
@@ -501,18 +489,17 @@ func TestTaskNew_CommittedReceiptOnlyRetryAndForeignReceiptRefusal(t *testing.T)
 		root := setupTaskProjectForNew(t)
 		board, _, marker := taskNewPaths(root, "receipt-retry")
 		committed := committedMarkerPath(marker)
-		orig := ownedMarkerSyncDirFn
 		calls := 0
-		ownedMarkerSyncDirFn = func(string) error {
+		ops := defaultOwnedMarkerOps()
+		ops.syncDir = func(string) error {
 			calls++
 			if calls == 2 {
 				return errors.New("prepared unlink fence failed")
 			}
 			return nil
 		}
-		err := executeTaskNew(root, "receipt-retry", "Receipt Retry")
-		ownedMarkerSyncDirFn = orig
-		t.Cleanup(func() { ownedMarkerSyncDirFn = orig })
+		removeMarker := func(path string, expected []byte) error { return removeOwnedFileDurableWithOps(path, expected, ops) }
+		err := executeTaskNewWithMutationDeps(root, "receipt-retry", "Receipt Retry", taskMutationDeps{removeMarker: removeMarker})
 		var committedErr *lifecycle.CommittedMutationError
 		if !errors.As(err, &committedErr) || boardRowCount(t, board, "receipt-retry") != 1 {
 			t.Fatalf("err=%v rows=%d", err, boardRowCount(t, board, "receipt-retry"))
@@ -537,11 +524,7 @@ func TestTaskNew_CommittedReceiptOnlyRetryAndForeignReceiptRefusal(t *testing.T)
 	t.Run("foreign-receipt-mismatch", func(t *testing.T) {
 		root := setupTaskProjectForNew(t)
 		board, _, marker := taskNewPaths(root, "foreign-receipt")
-		orig := taskNewRemoveMarkerFn
-		taskNewRemoveMarkerFn = func(string, []byte) error { return errors.New("retain prepared") }
-		_ = executeTaskNew(root, "foreign-receipt", "Foreign Receipt")
-		taskNewRemoveMarkerFn = orig
-		t.Cleanup(func() { taskNewRemoveMarkerFn = orig })
+		_ = executeTaskNewWithMutationDeps(root, "foreign-receipt", "Foreign Receipt", taskMutationDeps{removeMarker: func(string, []byte) error { return errors.New("retain prepared") }})
 		foreign := []byte("foreign receipt\n")
 		if err := os.WriteFile(committedMarkerPath(marker), foreign, 0o600); err != nil {
 			t.Fatal(err)
@@ -559,11 +542,7 @@ func TestTaskNew_CommittedReceiptOnlyRetryAndForeignReceiptRefusal(t *testing.T)
 func TestTaskNew_CommittedRetryRequiresExactBoardRowAndBoundPostimage(t *testing.T) {
 	root := setupTaskProjectForNew(t)
 	board, _, marker := taskNewPaths(root, "row-bound")
-	orig := taskNewRemoveMarkerFn
-	taskNewRemoveMarkerFn = func(string, []byte) error { return errors.New("retain marker") }
-	_ = executeTaskNewWithDeps(root, "row-bound", "")
-	taskNewRemoveMarkerFn = orig
-	t.Cleanup(func() { taskNewRemoveMarkerFn = orig })
+	_ = executeTaskNewWithDependenciesAndMutationDeps(root, "row-bound", "", taskMutationDeps{removeMarker: func(string, []byte) error { return errors.New("retain marker") }})
 	markerBytes, err := os.ReadFile(marker)
 	if err != nil {
 		t.Fatal(err)
@@ -682,18 +661,17 @@ func TestTaskNew_CommittedReceiptOnlyRetryRefusesChangedVisibleState(t *testing.
 			root := setupTaskProjectForNew(t)
 			board, readme, marker := taskNewPaths(root, "receipt-bound")
 			receipt := committedMarkerPath(marker)
-			orig := ownedMarkerSyncDirFn
 			calls := 0
-			ownedMarkerSyncDirFn = func(string) error {
+			ops := defaultOwnedMarkerOps()
+			ops.syncDir = func(string) error {
 				calls++
 				if calls == 2 {
 					return errors.New("prepared unlink fence failed")
 				}
 				return nil
 			}
-			err := executeTaskNew(root, "receipt-bound", "Receipt Bound")
-			ownedMarkerSyncDirFn = orig
-			t.Cleanup(func() { ownedMarkerSyncDirFn = orig })
+			removeMarker := func(path string, expected []byte) error { return removeOwnedFileDurableWithOps(path, expected, ops) }
+			err := executeTaskNewWithMutationDeps(root, "receipt-bound", "Receipt Bound", taskMutationDeps{removeMarker: removeMarker})
 			var committedErr *lifecycle.CommittedMutationError
 			if !errors.As(err, &committedErr) {
 				t.Fatalf("initial finalization err=%v", err)
@@ -730,9 +708,13 @@ func TestTaskNew_CommittedReceiptOnlyRetryRefusesChangedVisibleState(t *testing.
 }
 
 func executeTaskNewWithDeps(root, slug, deps string) error {
-	cmd := taskCommand()
+	return executeTaskNewWithDependenciesAndMutationDeps(root, slug, deps, taskMutationDeps{})
+}
+
+func executeTaskNewWithDependenciesAndMutationDeps(root, slug, dependencies string, deps taskMutationDeps) error {
+	cmd := taskCommandWithDeps(deps)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"new", "--project", root, "--task", slug, "--title", "Fresh", "--depends-on", deps})
+	cmd.SetArgs([]string{"new", "--project", root, "--task", slug, "--title", "Fresh", "--depends-on", dependencies})
 	return cmd.Execute()
 }

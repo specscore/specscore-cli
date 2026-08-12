@@ -626,8 +626,7 @@ func TestTaskChangeStatus_ForceWarningIsCommitGated(t *testing.T) {
 	gitInitWithRemoteAndBranch(t, root, "https://github.com/specscore/specscore-cli.git", "some-other-branch")
 	before, _ := os.ReadFile(planPath)
 	boom := errors.New("atomic write failed")
-	orig := taskTransformArtifactFn
-	taskTransformArtifactFn = func(path string, transform func([]byte) ([]byte, error)) error {
+	transformArtifact := func(path string, transform func([]byte) ([]byte, error)) error {
 		current, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -637,8 +636,7 @@ func TestTaskChangeStatus_ForceWarningIsCommitGated(t *testing.T) {
 		}
 		return boom
 	}
-	t.Cleanup(func() { taskTransformArtifactFn = orig })
-	_, stderr, err := runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete", "--force-coordination")
+	_, stderr, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: transformArtifact}, "change-status", "setup", "--plan", "auth", "--to=complete", "--force-coordination")
 	if !errors.Is(err, boom) || strings.Contains(stderr, "warning:") {
 		t.Fatalf("err=%v stderr=%q", err, stderr)
 	}

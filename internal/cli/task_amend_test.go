@@ -22,9 +22,8 @@ func TestTaskAmend_BoardReplaceAndClearPreservesLifecycleAndAudit(t *testing.T) 
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(path)
-	taskAmendNow = func() time.Time { return time.Date(2026, 8, 12, 9, 30, 0, 0, time.UTC) }
-	t.Cleanup(func() { taskAmendNow = time.Now })
-	out, _, err := runTask(t, "amend", "auth", "--note", "merged", "--evidence", "main-sha, pr-140", "--actor", "codex", "--reason", "landed")
+	now := func() time.Time { return time.Date(2026, 8, 12, 9, 30, 0, 0, time.UTC) }
+	out, _, err := runTaskWithMutationDeps(t, taskMutationDeps{annotationAmendmentNow: now}, "amend", "auth", "--note", "merged", "--evidence", "main-sha, pr-140", "--actor", "codex", "--reason", "landed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,12 +234,10 @@ func TestTaskAmend_PlanInlineFinalBlockPreservesNoFinalNewline(t *testing.T) {
 
 func TestTaskChangeStatus_ConcurrentRewriteReturnsConflict(t *testing.T) {
 	_, path := stageTaskWithStatus(t, "auth", "planning")
-	orig := rewriteBoardTaskFn
-	rewriteBoardTaskFn = func(string, lifecycle.Status, []string) (lifecycle.Status, error) {
+	rewrite := func(string, lifecycle.Status, []string) (lifecycle.Status, error) {
 		return "", lifecycle.ErrConcurrentMutation
 	}
-	t.Cleanup(func() { rewriteBoardTaskFn = orig })
-	_, _, err := runTask(t, "change-status", "auth", "--to=queued")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{rewriteBoardTask: rewrite}, "change-status", "auth", "--to=queued")
 	if exitCodeOfErr(err) != exitcode.Conflict {
 		t.Fatalf("board conflict=%v", err)
 	}
@@ -252,12 +249,10 @@ func TestTaskChangeStatus_ConcurrentRewriteReturnsConflict(t *testing.T) {
 
 func TestTaskChangeStatus_ConcurrentExtraFieldsReturnsConflict(t *testing.T) {
 	_, path := stageTaskWithStatus(t, "auth", "in_progress")
-	orig := rewriteBoardTaskFn
-	rewriteBoardTaskFn = func(string, lifecycle.Status, []string) (lifecycle.Status, error) {
+	rewrite := func(string, lifecycle.Status, []string) (lifecycle.Status, error) {
 		return "", lifecycle.ErrConcurrentMutation
 	}
-	t.Cleanup(func() { rewriteBoardTaskFn = orig })
-	_, _, err := runTask(t, "change-status", "auth", "--to=complete", "--note=landed")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{rewriteBoardTask: rewrite}, "change-status", "auth", "--to=complete", "--note=landed")
 	if exitCodeOfErr(err) != exitcode.Conflict {
 		t.Fatalf("conflict=%v", err)
 	}

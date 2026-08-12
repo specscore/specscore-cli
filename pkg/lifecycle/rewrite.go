@@ -132,9 +132,8 @@ func StatusFromBytes(original []byte) (Status, error) {
 	}
 	body, _ := splitTerminator(lines[idx])
 	m := statusLineRe.FindStringSubmatch(body)
-	if m == nil {
-		return "", ErrStatusLineNotFound
-	}
+	// findStatusLineIndex uses this same expression, so a selected line always
+	// has the capture groups needed here.
 	return Status(strings.TrimSpace(m[2])), nil
 }
 

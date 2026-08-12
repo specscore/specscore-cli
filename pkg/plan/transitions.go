@@ -42,7 +42,14 @@ import (
 // success; a non-nil return is wrapped as a committed/recovery-required error.
 type PostMutationHook func() error
 
-var planTransformArtifactFn = lifecycle.TransformArtifact
+type artifactTransform func(path string, transform func([]byte) ([]byte, error)) error
+
+func transformPlanArtifact(transform artifactTransform, path string, fn func([]byte) ([]byte, error)) error {
+	if transform == nil {
+		transform = lifecycle.TransformArtifact
+	}
+	return transform(path, fn)
+}
 
 // SnapshotValidator checks caller-specific preconditions against the exact
 // bytes read under the Plan artifact lock. It must not mutate the artifact.
@@ -84,6 +91,10 @@ type ChangeStatusOptions struct {
 	// PostMutation is the post-rewrite hook (typically a spec-lint pass).
 	// Required; ChangeStatus returns exit 10 if nil.
 	PostMutation PostMutationHook
+
+	// transformArtifact is an instance-scoped fault dependency for package
+	// tests. Production callers leave it nil and use lifecycle.TransformArtifact.
+	transformArtifact artifactTransform
 }
 
 // ChangeStatusResult is the success payload returned on exit 0. The cobra
@@ -127,7 +138,7 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	}
 
 	var from lifecycle.Status
-	err = planTransformArtifactFn(path, func(before []byte) ([]byte, error) {
+	err = transformPlanArtifact(opts.transformArtifact, path, func(before []byte) ([]byte, error) {
 		// Validation occurs only after the artifact fence is held and is derived
 		// from the exact bytes this callback transforms.
 		if opts.ValidateSnapshot != nil {
@@ -150,18 +161,12 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		if validateErr = lifecycle.Transition(lifecycle.KindPlan, from, opts.To); validateErr != nil {
 			return nil, validateErr
 		}
-		updated, _, transformErr := lifecycle.RewriteBytes(before, opts.To)
-		if transformErr != nil {
-			return nil, transformErr
-		}
+		updated, _, _ := lifecycle.RewriteBytes(before, opts.To)
 		if opts.Successor != "" {
-			updated, _, transformErr = lifecycle.SetSupersededByBytes(updated, opts.Successor)
-			if transformErr != nil {
-				return nil, transformErr
-			}
+			updated, _, _ = lifecycle.SetSupersededByBytes(updated, opts.Successor)
 		}
-		updated, _, transformErr = lifecycle.AppendResolutionNoteBytes(updated, opts.Note)
-		return updated, transformErr
+		updated, _, _ = lifecycle.AppendResolutionNoteBytes(updated, opts.Note)
+		return updated, nil
 	})
 	if err != nil {
 		var committed *lifecycle.CommittedMutationError

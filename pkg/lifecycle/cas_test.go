@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -195,6 +196,100 @@ func TestWithArtifactTransaction_PostCommitCallbackFailureIsTyped(t *testing.T) 
 	var committed *CommittedMutationError
 	if !errors.As(err, &committed) || !errors.Is(err, boom) || committed.Phase != "post-commit transaction work" {
 		t.Fatalf("err=%T %v", err, err)
+	}
+}
+
+func TestCommittedMutationErrorAndNoOpCommit(t *testing.T) {
+	boom := errors.New("boom")
+	err := CommittedError("task.md", "fence", boom)
+	var committed *CommittedMutationError
+	if !errors.As(err, &committed) || !errors.Is(err, boom) || !strings.Contains(err.Error(), "task.md") || !strings.Contains(err.Error(), "fence") {
+		t.Fatalf("committed error identity/text lost: %v", err)
+	}
+	if CommittedError("task.md", "fence", nil) != nil {
+		t.Fatal("nil cause must not manufacture committed state")
+	}
+	tx := &ArtifactTransaction{before: []byte("same")}
+	if err := tx.Commit([]byte("same")); err != nil || !tx.committed {
+		t.Fatalf("no-op commit: committed=%v err=%v", tx.committed, err)
+	}
+}
+
+func TestWriteFileAtomicExpectedFaultsBeforeAndAfterVisibility(t *testing.T) {
+	t.Run("missing-destination", func(t *testing.T) {
+		err := writeFileAtomicExpected(filepath.Join(t.TempDir(), "missing.md"), nil, []byte("after"))
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	t.Run("final-identity-read", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "task.md")
+		if err := os.WriteFile(p, []byte("before"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		boom := errors.New("identity read failed")
+		orig := osReadBeforeRename
+		osReadBeforeRename = func(string) ([]byte, error) { return nil, boom }
+		t.Cleanup(func() { osReadBeforeRename = orig })
+		if err := writeFileAtomicExpected(p, []byte("before"), []byte("after")); !errors.Is(err, boom) {
+			t.Fatalf("err=%v", err)
+		}
+		if got, _ := os.ReadFile(p); string(got) != "before" {
+			t.Fatalf("pre-visibility fault wrote %q", got)
+		}
+	})
+	for _, tc := range []struct {
+		name  string
+		phase string
+		set   func(t *testing.T)
+	}{
+		{
+			name: "directory-sync", phase: "syncing artifact directory",
+			set: func(t *testing.T) {
+				orig := fileSync
+				calls := 0
+				fileSync = func(f *os.File) error {
+					calls++
+					if calls == 2 {
+						return errors.New("directory sync failed")
+					}
+					return f.Sync()
+				}
+				t.Cleanup(func() { fileSync = orig })
+			},
+		},
+		{
+			name: "directory-close", phase: "closing artifact directory",
+			set: func(t *testing.T) {
+				orig := fileClose
+				calls := 0
+				fileClose = func(f *os.File) error {
+					calls++
+					if calls == 2 {
+						_ = f.Close()
+						return errors.New("directory close failed")
+					}
+					return f.Close()
+				}
+				t.Cleanup(func() { fileClose = orig })
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "task.md")
+			if err := os.WriteFile(p, []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			tc.set(t)
+			err := writeFileAtomicExpected(p, []byte("before"), []byte("after"))
+			var committed *CommittedMutationError
+			if !errors.As(err, &committed) || committed.Phase != tc.phase {
+				t.Fatalf("err=%T %v", err, err)
+			}
+			if got, _ := os.ReadFile(p); string(got) != "after" {
+				t.Fatalf("committed bytes lost: %q", got)
+			}
+		})
 	}
 }
 

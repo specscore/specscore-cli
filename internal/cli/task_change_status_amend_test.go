@@ -217,11 +217,8 @@ func TestTaskChangeStatus_Board_AmendNoStatusLine(t *testing.T) {
 func TestTaskChangeStatus_Board_AmendWriteFailure(t *testing.T) {
 	stageTaskWithStatus(t, "auth", "complete")
 	boom := errors.New("atomic transaction boom")
-	orig := taskTransformArtifactFn
-	taskTransformArtifactFn = func(string, func([]byte) ([]byte, error)) error { return boom }
-	t.Cleanup(func() { taskTransformArtifactFn = orig })
 
-	_, _, err := runTask(t, "change-status", "auth", "--amend-provenance", "--commit", "a1b2c3d")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: func(string, func([]byte) ([]byte, error)) error { return boom }}, "change-status", "auth", "--amend-provenance", "--commit", "a1b2c3d")
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)
 	}
@@ -336,11 +333,8 @@ func TestTaskChangeStatus_PlanInline_AmendUnreadablePlan(t *testing.T) {
 func TestTaskChangeStatus_PlanInline_AmendWriteFailure(t *testing.T) {
 	stagePlanWithTasks(t, "auth", completeTaskPlanBody)
 	boom := errors.New("atomic transaction boom")
-	orig := taskTransformArtifactFn
-	taskTransformArtifactFn = func(string, func([]byte) ([]byte, error)) error { return boom }
-	t.Cleanup(func() { taskTransformArtifactFn = orig })
 
-	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth",
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: func(string, func([]byte) ([]byte, error)) error { return boom }}, "change-status", "setup", "--plan", "auth",
 		"--amend-provenance", "--commit", "a1b2c3d")
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)

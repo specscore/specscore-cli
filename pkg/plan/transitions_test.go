@@ -350,8 +350,7 @@ func TestChangeStatus_PostMutationFails_RetainsCommittedTransaction(t *testing.T
 func TestChangeStatus_AtomicFenceFailurePreservesCommittedTypeAndCause(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Draft")
 	boom := errors.New("directory fence failed")
-	orig := planTransformArtifactFn
-	planTransformArtifactFn = func(gotPath string, transform func([]byte) ([]byte, error)) error {
+	transformArtifact := func(gotPath string, transform func([]byte) ([]byte, error)) error {
 		before, err := os.ReadFile(gotPath)
 		if err != nil {
 			return err
@@ -365,11 +364,11 @@ func TestChangeStatus_AtomicFenceFailurePreservesCommittedTypeAndCause(t *testin
 		}
 		return lifecycle.CommittedError(gotPath, "directory durability fence", boom)
 	}
-	t.Cleanup(func() { planTransformArtifactFn = orig })
 	postCalled := false
 	result, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview,
-		PostMutation: func() error { postCalled = true; return nil },
+		PostMutation:      func() error { postCalled = true; return nil },
+		transformArtifact: transformArtifact,
 	})
 	var committed *lifecycle.CommittedMutationError
 	if !errors.As(err, &committed) || !errors.Is(err, boom) {

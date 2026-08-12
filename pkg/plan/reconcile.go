@@ -103,6 +103,10 @@ type ReconcileOptions struct {
 	// which also syncs the frontmatter `status:` mirror and the plans
 	// index). Required; Reconcile returns exit 10 if nil.
 	PostMutation PostMutationHook
+
+	// transformArtifact is an instance-scoped fault dependency for package
+	// tests. Production callers leave it nil and use lifecycle.TransformArtifact.
+	transformArtifact artifactTransform
 }
 
 // TaskOverride names an embedded task whose recorded terminal failure state
@@ -192,7 +196,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 			opts.Slug, opts.Slug)
 	}
 	var result ReconcileResult
-	err = planTransformArtifactFn(flatPath, func(before []byte) ([]byte, error) {
+	err = transformPlanArtifact(opts.transformArtifact, flatPath, func(before []byte) ([]byte, error) {
 		if opts.ValidateSnapshot != nil {
 			if validateErr := opts.ValidateSnapshot(flatPath, before); validateErr != nil {
 				return nil, validateErr
@@ -308,10 +312,7 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 		lines[p.StatusLine-1] = "**Status:** " + string(to)
 		lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
 		noteText := reconcileNoteTextWithTarget(from, to, changed, StatusBlocked, opts.Note, opts.Evidence, nil)
-		updated, _, err := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
-		if err != nil {
-			return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("building resolution note: %v", err)
-		}
+		updated, _, _ := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
 		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, updated, nil
 	}
 
@@ -380,10 +381,7 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
 
 	noteText := reconcileNoteTextWithTarget(from, to, changedTasks, StatusComplete, opts.Note, opts.Evidence, overrides)
-	updated, _, err := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
-	if err != nil {
-		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("building resolution note: %v", err)
-	}
+	updated, _, _ := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
 
 	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, updated, nil
 }

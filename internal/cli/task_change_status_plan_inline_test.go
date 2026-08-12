@@ -186,11 +186,8 @@ func TestTaskChangeStatus_PlanInline_UnreadablePlan(t *testing.T) {
 func TestTaskChangeStatus_PlanInline_RewriteFailure(t *testing.T) {
 	stagePlanWithTasks(t, "auth", twoTaskPlanBody)
 	boom := errors.New("atomic transaction boom")
-	orig := taskTransformArtifactFn
-	taskTransformArtifactFn = func(string, func([]byte) ([]byte, error)) error { return boom }
-	t.Cleanup(func() { taskTransformArtifactFn = orig })
 
-	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: func(string, func([]byte) ([]byte, error)) error { return boom }}, "change-status", "setup", "--plan", "auth", "--to=complete")
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)
 	}
