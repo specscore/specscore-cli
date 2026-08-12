@@ -192,7 +192,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 			opts.Slug, opts.Slug)
 	}
 	var result ReconcileResult
-	err = lifecycle.TransformArtifact(flatPath, func(before []byte) ([]byte, error) {
+	err = planTransformArtifactFn(flatPath, func(before []byte) ([]byte, error) {
 		if opts.ValidateSnapshot != nil {
 			if validateErr := opts.ValidateSnapshot(flatPath, before); validateErr != nil {
 				return nil, validateErr
@@ -213,7 +213,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		if errors.As(err, &coded) || errors.As(err, &committed) {
 			return result, err
 		}
-		return result, exitcode.UnexpectedErrorf("reconciling plan artifact transaction %s: %v", flatPath, err)
+		return result, exitcode.UnexpectedErrorCause(fmt.Sprintf("reconciling plan artifact transaction %s: %v", flatPath, err), err)
 	}
 	// Like ChangeStatus, the artifact transaction is durable before derived
 	// lint/index work begins. The ordinary hook may acquire Plan locks itself,
@@ -250,10 +250,22 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 		return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 			"plan %q has no embedded tasks; there is nothing for reconcile to derive a status from", opts.Slug)
 	}
+	taskNumbers := make(map[int]int, len(p.Tasks))
 	for _, t := range p.Tasks {
-		if t.StatusLine == 0 {
+		taskNumbers[t.Number]++
+		if t.StatusCount == 0 {
 			return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
 				"plan %q Task %d has no explicit **Status:** line; reconcile requires one on every task", opts.Slug, t.Number)
+		}
+		if t.StatusCount > 1 {
+			return ReconcileResult{}, nil, exitcode.InvalidArgsErrorf(
+				"plan %q Task %d must have exactly one **Status:** field; found %d", opts.Slug, t.Number, t.StatusCount)
+		}
+	}
+	for number, count := range taskNumbers {
+		if count > 1 {
+			return ReconcileResult{}, nil, exitcode.InvalidArgsErrorf(
+				"plan %q has duplicate Task number %d; reconciliation targets must be unique", opts.Slug, number)
 		}
 	}
 

@@ -45,7 +45,7 @@ Writes a new `tasks/<slug>/README.md` and appends the row to the board. New task
 
 ### Scope of this group
 
-Today the group covers the **read and seed** operations on the task board — no lifecycle transitions. That split is deliberate: transition semantics (who can claim, how conflicts are resolved, when status becomes terminal) warrant their own feature spec.
+Today the group covers read/seed operations plus the explicitly scoped local `change-status` and annotation-amendment surfaces. Distributed transition semantics (who can claim, sync policy, and multi-agent terminal agreement) warrant their own orchestrator-owned feature specs.
 
 #### REQ: no-lifecycle-in-mvp
 

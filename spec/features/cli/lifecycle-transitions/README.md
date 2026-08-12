@@ -12,15 +12,15 @@ status: Stable
 
 ## Summary
 
-This is **not a command group** — it has no CLI surface of its own. It is the shared cross-cutting contract every `specscore` verb that mutates the `Status` field of a SpecScore artifact MUST satisfy: atomicity, rollback, output format, exit-code mapping, and the scope boundary against coordination/concurrency concerns. Verb features (e.g., [`cli/idea/approve`](../idea/approve/README.md), planned `cli/idea/archive`, `cli/feature/approve`, etc.) reference this feature instead of restating these rules.
+This is **not a command group** — it has no CLI surface of its own. It is the shared cross-cutting contract every `specscore` verb that mutates the `Status` field of a SpecScore artifact MUST satisfy: atomic artifact mutation, declared post-commit recovery, output format, exit-code mapping, and the scope boundary between local file safety and distributed coordination. Verb features reference this feature instead of restating these rules.
 
 ## Problem
 
-Every lifecycle/state-transition verb has the same skeleton: read the artifact's current status, validate the source state against the verb's legal transitions, rewrite the `**Status:**` line, run `specscore spec lint --fix` to sync the corresponding index row, roll back on failure, print a uniform success line, map errors to standard exit codes. The [source Idea](../../../ideas/lifecycle-verbs-for-idea-and-feature.md) plans seven such verbs across two doc kinds. Restating the skeleton in seven feature specs would (a) bloat each spec, (b) guarantee drift over time as one verb's rules update without the others, and (c) make it harder for future doc kinds to inherit the contract. A single Meta feature, referenced by every verb, fixes all three.
+Every lifecycle/state-transition verb has the same core: under its local artifact transaction, read the current status, validate the source state against the verb's legal transitions, compose the `**Status:**` change and any same-artifact fields, commit once, then run any derived work declared by that verb. The [source Idea](../../../ideas/lifecycle-verbs-for-idea-and-feature.md) plans seven such verbs across two doc kinds. Restating the core in seven feature specs would guarantee drift; this Meta feature centralizes it while each verb still declares whether it has a derived lint/index hook.
 
 ## Behavior
 
-A note on REQ types in this contract: some REQs declare **runtime behavior** (e.g., `status-line-rewrite`, `index-sync-on-success`, `rollback-on-lint-failure`, `optional-transition-note`) and are verified by ACs in the verb specs that consume this contract. Others are **scoping or architectural** (e.g., `scope-status-mutation-only`, `no-coordination`, `scope-no-task-lifecycle`, `exit-code-fidelity`) — they constrain what this contract is and isn't, not what a verb does at runtime. Architectural REQs are verified by design adherence and code review rather than by per-verb ACs; per-verb specs MAY but need NOT cite them.
+A note on REQ types in this contract: some REQs declare **runtime behavior** (e.g., `status-line-rewrite`, `index-sync-on-success`, the historically named `rollback-on-lint-failure` recovery requirement, and `optional-transition-note`) and are verified by ACs in the verb specs that consume this contract. Others are **scoping or architectural** (e.g., `scope-status-mutation-only`, `no-coordination`, `scope-no-task-lifecycle`, `exit-code-fidelity`) — they constrain what this contract is and isn't, not what a verb does at runtime. Architectural REQs are verified by design adherence and code review rather than by per-verb ACs; per-verb specs MAY but need NOT cite them.
 
 ### Scope and applicability
 
@@ -32,15 +32,15 @@ A verb that mutates fields other than `Status` (e.g., a future `owner-change` ve
 
 ### Architectural positioning and scope
 
-`specscore` is a local-file mutation primitive. It does not provide concurrency control, sync policies, claim/release semantics, or multi-agent coordination. For doc kinds where local-file mutation IS the value (Idea, Feature) — transitions are deliberate, single-actor, contention-free — `specscore` is the canonical surface. For doc kinds whose lifecycle requires coordination (the `task` doc kind in particular), an external workflow orchestrator is the appropriate surface; lifecycle verbs governed by this contract MUST NOT target those kinds.
+`specscore` is a local-file mutation primitive. Every cooperating writer uses a fail-fast per-artifact advisory lock and an expected-byte pre-rename fence; those are local file-safety mechanisms, not a distributed coordination protocol. `specscore` does not provide sync policy, claim/release semantics, remote-git publication, or multi-agent terminal-state agreement. Those orchestration concerns remain external.
 
 #### REQ: no-coordination
 
-Lifecycle verbs MUST NOT acquire locks (advisory or mandatory), push to remote git, consult a sync policy, or assume any cross-process coordination. Concurrent modification of the target file by another process is undefined behavior. Callers needing coordinated workflows over the spec graph use an external workflow orchestrator.
+Lifecycle verbs MUST NOT push remote git, consult a sync policy, claim/release an actor, or assume distributed coordination. They MUST use the shared fail-fast local artifact transaction for cooperating-writer safety. A non-cooperating edit detected by the final expected-byte fence is a conflict, not a claim race. Callers needing coordinated workflows over the spec graph use an external workflow orchestrator.
 
 #### REQ: scope-no-task-lifecycle
 
-Lifecycle verbs governed by this contract MUST NOT target the `task` doc kind for any **coordination-bearing** transition — concurrency, claim/release, contention-resolved or conflict-aware semantics — which remains owned by external workflow orchestrators. The single permitted exception is a **single-actor** task status transition that performs pure file mutation with none of those coordination concerns: the [`cli/task/change-status`](../task/change-status/README.md) verb, governed by [cli/task/change-status#req:single-actor-task-lifecycle-permitted](../task/change-status/README.md#req-single-actor-task-lifecycle-permitted). That verb exists to provide the implementation-commit provenance capture point; it does not reopen the broader coordination lane this contract keeps out.
+Lifecycle verbs governed by this contract MUST NOT target the `task` doc kind for any **distributed coordination-bearing** transition — claim/release, sync policy, remote publication, or multi-agent terminal-state agreement — which remains owned by external workflow orchestrators. The permitted [`cli/task/change-status`](../task/change-status/README.md) verb performs only a local artifact transaction, including fail-fast lock contention and a final expected-byte conflict check. It does not reopen the distributed coordination lane this contract keeps out.
 
 ### State-machine semantics
 
@@ -56,7 +56,7 @@ Lifecycle verbs MUST NOT special-case the case where the artifact is already in 
 
 ### Atomic mutation and index sync
 
-A lifecycle transition is a two-step operation — file rewrite, then `spec lint --fix` to sync the corresponding index. Both MUST succeed for the verb to exit `0`. A failure in either step MUST leave the on-disk state observably identical to its pre-invocation state.
+A lifecycle transition commits its canonical artifact in one transaction. A verb that declares derived lint/index work runs it only after releasing the artifact lock, and exits `0` only after that callback succeeds. Task/Plan transaction-profile verbs retain an already-committed artifact when the callback fails and return a typed recovery-required error; they never restore a stale preimage. Historical compensating multi-artifact verbs retain their explicitly documented behavior until they are migrated and are outside this Task/Plan transaction amendment.
 
 #### REQ: status-line-rewrite
 
@@ -64,11 +64,15 @@ On valid transition, the artifact's `**Status:** <old>` line MUST be rewritten t
 
 #### REQ: index-sync-on-success
 
-After a successful file rewrite, the verb MUST invoke `specscore spec lint --fix` scoped to the project root (full-tree today; see Open Questions for future narrowing to the affected index row only). The lint pass picks up the relevant `*-index-row-sync` rule (e.g., `idea-index-row-sync` for Idea transitions) and rewrites the corresponding row in the artifact's index file. The verb's exit code MUST be `0` only if the file rewrite AND the lint pass BOTH succeed.
+When a verb's feature declares derived index synchronization, after a successful artifact transaction it MUST invoke `specscore spec lint --fix` scoped to the project root (full-tree today). The verb's exit code MUST be `0` only if the artifact transaction and declared lint pass both succeed. A verb with no derived index surface, including board Task mutation, MUST say so in its own feature rather than implying an unavailable callback.
 
 #### REQ: rollback-on-lint-failure
 
-If derived post-mutation work such as `spec lint --fix` reports an error after the artifact transaction commits, the verb exits `10` and retains the committed artifact as an explicit recovery-required state; it MUST NOT perform a later split rollback that could erase another writer. Fail-fast lifecycle-lock contention exits `1` and requires a re-read.
+The identifier is retained for compatibility with existing cross-references;
+for transaction-profile Task/Plan verbs the required outcome is retained
+commit plus recovery, not rollback.
+
+For Task/Plan transaction-profile verbs, if declared derived post-mutation work such as `spec lint --fix` reports an error after the artifact transaction commits, the verb exits `10` and retains the committed artifact as an explicit recovery-required state; it MUST NOT perform a later split rollback that could erase another writer. Fail-fast lifecycle-lock contention exits `1` and requires a re-read. Historical compensating verbs are not silently reclassified by this requirement; their own feature specs remain authoritative until migration.
 
 ### Argument shape and output
 
@@ -101,7 +105,7 @@ Every lifecycle verb MAY accept an optional `--note <markdown>` flag carrying fr
 - If a `## Resolution` H2 section already exists, the markdown is appended as a new trailing paragraph within it; the section is never relocated or reordered.
 - If absent, the verb creates the `## Resolution` section immediately before the artifact's footer line (`*This document follows the …*`) when one is present, else at end-of-file.
 
-The markdown is written verbatim except for trailing-newline normalization; the verb MUST NOT reflow, wrap, truncate, or sanitize it. An empty or whitespace-only `--note` value is treated as absent — no section is written and no error is raised (unless the transition is reason-required; see below). The body write participates in the same atomicity guarantee as the status rewrite: if the note write fails, or any subsequent step (index sync, kind-specific relocation) fails, the verb MUST restore the body to its exact pre-invocation content together with the `**Status:**` line per [REQ: rollback-on-lint-failure](#req-rollback-on-lint-failure), and exit `10`. `--note` does not alter the single-line [success output](#req-success-output-format) — the note is a body mutation, not stdout. Per-verb specs that consume this contract carry the ACs exercising `--note` for their kind.
+The markdown is written verbatim except for trailing-newline normalization; the verb MUST NOT reflow, wrap, truncate, or sanitize it. An empty or whitespace-only `--note` value is treated as absent — no section is written and no error is raised (unless the transition is reason-required; see below). A transaction-profile verb composes the note and status in the same in-memory transform and publishes them with one atomic durable write. Failure before commit leaves the original bytes; failure in declared post-commit derived work retains both committed fields and reports recovery required per [REQ: rollback-on-lint-failure](#req-rollback-on-lint-failure). `--note` does not alter the single-line [success output](#req-success-output-format). Historical compensating verbs continue to follow their own explicit relocation/rollback contract until migration.
 
 #### REQ: reason-required-transitions
 
@@ -111,7 +115,8 @@ A verb MAY designate a subset of its legal transitions as **reason-required** �
 
 | Exit code | Condition |
 |---|---|
-| `0` | Transition succeeded and index synced. |
+| `0` | The artifact transaction and any derived work declared by the verb succeeded. |
+| `1` | Fail-fast artifact-lock contention, a final expected-byte mismatch, or a verb-specific coordination precondition conflict. |
 | `2` | Missing or malformed positional slug, an unknown flag, or a missing/empty `--note` on a reason-required transition. |
 | `3` | No artifact file found at the expected path. |
 | `4` | Source status was not in the verb's legal-source set (illegal transition, including re-running on the target status). |
@@ -119,14 +124,14 @@ A verb MAY designate a subset of its legal transitions as **reason-required** �
 
 #### REQ: exit-code-fidelity
 
-A lifecycle verb MUST map errors to the codes above per their declared meanings. Codes `1` (Conflict) and `5–9` are NOT used by this contract: lifecycle verbs have no notion of concurrent-modification conflict (see [REQ: no-coordination](#req-no-coordination)), and `5–9` are reserved for future standard codes per the [CLI exit-code contract](../README.md#shared-exit-code-contract).
+A lifecycle verb MUST map errors to the codes above per their declared meanings. Code `1` is the local transaction/precondition conflict code; it does not imply distributed claim ownership. Codes `5–9` are reserved for other standard meanings per the [CLI exit-code contract](../README.md#shared-exit-code-contract).
 
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
 | [CLI](../README.md) | Inherits the shared exit-code contract, including the pre-reserved code `4` for invalid state transitions and code `10` for unexpected/runtime errors. Inherits the `--project` autodetect rule. Inherits `REQ: error-on-stderr`. |
-| [spec lint](../spec/lint/README.md) | Invoked after the committed lifecycle artifact transaction to sync derived indexes. A failure is reported as recovery-required; the committed artifact is retained. |
+| [spec lint](../spec/lint/README.md) | Invoked after the committed lifecycle artifact transaction only by verbs that declare derived lint/index work. For transaction-profile Task/Plan verbs, failure is recovery-required and the committed artifact is retained. |
 | [idea](../../idea/README.md), [feature](../../feature/README.md) | Sources of truth for the artifact document structures, including the `**Status:**` header line that lifecycle verbs rewrite, and the legal status enumerations per doc kind. |
 | Source Idea: [lifecycle-verbs-for-idea-and-feature](../../../ideas/lifecycle-verbs-for-idea-and-feature.md) | This feature realizes the shared-infrastructure half of the source Idea. Per-verb features realize the kind-specific halves. |
 | [`cli/idea/change-status`](../idea/change-status/README.md) | Verb implementing this contract for the Idea kind. Encodes the Idea legal-transition matrix (`Draft → Approved`, `Approved → Specifying`, `Specifying → Specified`, `Specified → Implementing`, `Implementing → Implemented`, `{Draft, In Review, Approved, Specifying, Specified, Implementing} → Rejected`, `{Draft, In Review, Approved, Specifying, Specified, Implementing} → Stale`; `{Draft, Under Review, Approved, Specifying, Specified, Implementing, Implemented} → Archived`) and extends the Meta with a `--to=archived` file-relocation side effect. Every pre-terminal status now has both a `Rejected` and a `Stale` exit — the disposition vocabulary is complete. Change-request ideas have all transitions author-managed (not derived from Feature status). |
@@ -139,7 +144,7 @@ A lifecycle verb MUST map errors to the codes above per their declared meanings.
 - Should `--format yaml|json` be added in a future revision so tooling consumes structured output (returning the artifact's full front-matter)? Currently text-only.
 - Is `spec lint --fix` scope narrowed to only the affected index row (faster on large repos) or kept full-tree (safer)? Today's lint is fast enough that full-tree is acceptable, but measurement on representative consumer repos will decide if a narrow-scope path is worth the complexity.
 - When a new doc kind grows lifecycle verbs (e.g., the planned `entity` and `property` Doc-Kinds from the meta-spec's [entity-and-property-definitions](https://github.com/specscore/specscore/blob/main/spec/ideas/entity-and-property-definitions.md) Idea), does it inherit this contract directly, or does the contract abstract a shared "index sync rule" parameter? Today every supported doc kind uses a `*-index-row-sync` rule, so direct inheritance works.
-- Batch transitions (`specscore idea approve <slug-1> <slug-2> ...`) are out of MVP. If they land later, are they atomic-per-slug or all-or-nothing? This affects whether [REQ: rollback-on-lint-failure](#req-rollback-on-lint-failure) extends partial-batch rollback or only single-slug.
+- Batch transitions (`specscore idea approve <slug-1> <slug-2> ...`) are out of MVP. If they land later, are they atomic-per-slug or all-or-nothing, and what explicit committed/recovery outcome applies to a partially published batch?
 
 ---
 *This document follows the https://specscore.md/feature-specification*

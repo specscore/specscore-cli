@@ -102,6 +102,38 @@ func TestTaskAmend_RejectsDuplicateMalformedAndInvalidArgsWithoutWrites(t *testi
 	}
 }
 
+func TestTaskAmend_AnnotationBeforeStatusIsFoundAndNeverDuplicated(t *testing.T) {
+	_, path := stageTaskWithStatus(t, "auth", "blocked")
+	seeded := strings.Replace(string(mustRead(path)), "**Status:** blocked", "**Note:** old\n**Evidence:** old-ref\n**Status:** blocked", 1)
+	if err := os.WriteFile(path, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runTask(t, "amend", "auth", "--note", "new", "--clear-evidence", "--actor", "a", "--reason", "correct"); err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(path))
+	if strings.Count(got, "**Note:**") != 1 || !strings.Contains(got, "**Note:** new") || strings.Contains(got, "**Evidence:**") {
+		t.Fatalf("pre-status annotations were not corrected as singletons:\n%s", got)
+	}
+}
+
+func TestTaskAmend_RejectsPathTraversalSlugsWriteFree(t *testing.T) {
+	root, path := stageTaskWithStatus(t, "auth", "blocked")
+	before := string(mustRead(path))
+	for _, args := range [][]string{
+		{"amend", "../auth", "--note", "x", "--actor", "a", "--reason", "r"},
+		{"amend", "auth", "--plan", "../release", "--note", "x", "--actor", "a", "--reason", "r", "--project", root},
+	} {
+		_, _, err := runTask(t, args...)
+		if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+			t.Fatalf("args=%v exit=%d err=%v", args, got, err)
+		}
+	}
+	if string(mustRead(path)) != before {
+		t.Fatal("invalid slug mutated board task")
+	}
+}
+
 func TestTaskAmend_FlagAndResolutionFailuresAreWriteFree(t *testing.T) {
 	root, path := stageTaskWithStatus(t, "auth", "blocked")
 	before := string(mustRead(path))
@@ -135,13 +167,20 @@ func TestTaskAmend_FlagAndResolutionFailuresAreWriteFree(t *testing.T) {
 
 func TestTaskAmend_MalformedStatusIsWriteFree(t *testing.T) {
 	_, path := stageTaskWithStatus(t, "auth", "blocked")
-	for _, body := range []string{"# Auth\n\nNo status\n", "# Auth\n\n**Status:** blocked\n**Status:** blocked\n"} {
+	for _, tc := range []struct {
+		body string
+		code int
+	}{
+		{body: "# Auth\n\nNo status\n", code: exitcode.Unexpected},
+		{body: "# Auth\n\n**Status:** blocked\n**Status:** blocked\n", code: exitcode.InvalidArgs},
+	} {
+		body := tc.body
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		before := string(mustRead(path))
 		_, _, err := runTask(t, "amend", "auth", "--note", "fixed", "--actor", "a", "--reason", "r")
-		if exitCodeOfErr(err) != exitcode.Unexpected {
+		if exitCodeOfErr(err) != tc.code {
 			t.Fatalf("status body=%q err=%v", body, err)
 		}
 		if string(mustRead(path)) != before {

@@ -248,6 +248,36 @@ func TestReconcile_DuplicatePlanStatusRejectedUnderTransaction(t *testing.T) {
 	}
 }
 
+func TestReconcile_DuplicateTaskStatusAndNumberRejectedWriteFree(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		patch func(string) string
+	}{
+		{name: "task-status", patch: func(s string) string {
+			return strings.Replace(s, "**Status:** planning", "**Status:** planning\n**Status:** blocked", 1)
+		}},
+		{name: "task-number", patch: func(s string) string {
+			return strings.Replace(s, "## Open Questions", "### Task 1: Duplicate\n\n**Status:** planning\n\n## Open Questions", 1)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, path := stageReconcilePlan(t, "auth", "Draft", "planning", "planning")
+			seeded := tc.patch(string(mustPlanBytes(t, path)))
+			if err := os.WriteFile(path, []byte(seeded), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: func() error { called = true; return nil }})
+			if got := codeOf(t, err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit=%d err=%v", got, err)
+			}
+			if called || string(mustPlanBytes(t, path)) != seeded {
+				t.Fatal("ambiguous task record was not write-free")
+			}
+		})
+	}
+}
+
 // AC: disposition-not-resurrected — a plan in any terminal disposition status
 // is refused; reconcile does not resurrect dispositions.
 func TestReconcile_DispositionStatus_Refused(t *testing.T) {
@@ -557,7 +587,7 @@ func TestReconcile_ReopenCompleteTasksToBlocked(t *testing.T) {
 	}
 }
 
-func TestReconcile_ReopenValidationAndRollback(t *testing.T) {
+func TestReconcile_ReopenValidationAndCommittedRecovery(t *testing.T) {
 	t.Run("invalid-number", func(t *testing.T) {
 		root, _ := stageReconcilePlan(t, "auth", "Implemented", "complete")
 		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{0}, PostMutation: okHook})

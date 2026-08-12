@@ -13,13 +13,14 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/task"
 	"github.com/spf13/cobra"
 )
 
 var taskAmendNow = time.Now
 
 func taskAmendCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "amend <task>", Short: "Correct Task Note/Evidence without changing Status", Long: `Replaces or removes the singleton **Note:** and **Evidence:** fields without changing task Status or **Implemented-by:** provenance. Every successful correction appends an **Annotation Amendment:** audit line carrying the supplied actor and reason, UTC time, and SHA-256 digest of the exact prior artifact.`, Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runTaskAmend}
+	cmd := &cobra.Command{Use: "amend <task>", Short: "Correct Task Note/Evidence without changing Status", Long: `Replaces or removes the singleton **Note:** and **Evidence:** fields without changing task Status or **Implemented-by:** provenance. Every successful correction appends an **Annotation Amendment:** audit line carrying the supplied actor and reason, UTC time, and SHA-256 digest of the exact prior artifact. The command uses one fail-fast artifact transaction; lock contention or a changed preimage exits 1 without overwriting another writer.`, Args: cobra.ExactArgs(1), SilenceUsage: true, SilenceErrors: true, RunE: runTaskAmend}
 	cmd.Flags().String("note", "", "replacement **Note:** value")
 	cmd.Flags().Bool("clear-note", false, "remove the singleton **Note:** field")
 	cmd.Flags().String("evidence", "", "replacement comma-separated **Evidence:** values")
@@ -38,22 +39,30 @@ type annotationAmendment struct {
 }
 
 func runTaskAmend(cmd *cobra.Command, args []string) error {
+	taskSlug := strings.TrimSpace(args[0])
+	if err := task.ValidateSlug(taskSlug); err != nil {
+		return exitcode.InvalidArgsErrorf("invalid task slug: %v", err)
+	}
 	a, err := amendmentFromFlags(cmd)
 	if err != nil {
 		return err
 	}
 	if slug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(slug) != "" {
-		return amendPlanTask(cmd, args[0], strings.TrimSpace(slug), a)
+		planSlug := strings.TrimSpace(slug)
+		if err := plan.ValidateSlug(planSlug); err != nil {
+			return exitcode.InvalidArgsErrorf("invalid plan slug: %v", err)
+		}
+		return amendPlanTask(cmd, taskSlug, planSlug, a)
 	}
 	dir, err := resolveTasksDir(flagString(cmd, "project"))
 	if err != nil {
 		return err
 	}
-	path, err := resolveBoardTaskPath(dir, args[0])
+	path, err := resolveBoardTaskPath(dir, taskSlug)
 	if err != nil {
 		return err
 	}
-	return amendTaskArtifact(cmd, path, args[0], 0, -1, a)
+	return amendTaskArtifact(cmd, path, taskSlug, 0, -1, a)
 }
 
 func amendmentFromFlags(cmd *cobra.Command) (annotationAmendment, error) {
@@ -99,6 +108,8 @@ func resolveBoardTaskPath(dir, slug string) (string, error) {
 	for _, p := range []string{filepath.Join(dir, slug, "README.md"), filepath.Join(dir, slug+".md")} {
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
+		} else if !os.IsNotExist(err) {
+			return "", exitcode.UnexpectedErrorCause(fmt.Sprintf("checking task artifact %s: %v", p, err), err)
 		}
 	}
 	return "", exitcode.NotFoundErrorf("task not found: %s", slug)
@@ -114,6 +125,8 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 		if _, e := os.Stat(p); e == nil {
 			path = p
 			break
+		} else if !os.IsNotExist(e) {
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking plan artifact %s: %v", p, e), e)
 		}
 	}
 	if path == "" {
@@ -164,7 +177,7 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 	if err := taskTransformArtifactFn(path, func(before []byte) ([]byte, error) {
 		return amendTaskBytes(before, slug, start, end, a)
 	}); err != nil {
-		if err == lifecycle.ErrConcurrentMutation {
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", slug)
 		}
 		var coded *exitcode.Error
@@ -187,23 +200,20 @@ func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmen
 	if end < 0 || end > len(lines) {
 		end = len(lines)
 	}
-	status, statusCount := -1, 0
-	for i := start; i < end; i++ {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "**Status:**") {
-			status = i
-			statusCount++
+	status, err := validateTaskSingletonLines(lines, start, end, "task "+slug)
+	if err != nil {
+		if errors.Is(err, errNoStatusForProvenance) {
+			return nil, exitcode.UnexpectedErrorf("task %s must have exactly one **Status:** line", slug)
 		}
-	}
-	if statusCount != 1 {
-		return nil, exitcode.UnexpectedErrorf("task %s must have exactly one **Status:** line", slug)
+		return nil, err
 	}
 	fields := map[string]int{}
-	for i := status + 1; i < end; i++ {
+	for i := start; i < end; i++ {
 		s := strings.TrimSpace(lines[i])
 		for _, name := range []string{"Note", "Evidence"} {
 			prefix := "**" + name + ":**"
 			if strings.HasPrefix(s, prefix) {
-				if strings.TrimSpace(strings.TrimPrefix(s, prefix)) == "" || fields[name] != 0 {
+				if strings.TrimSpace(strings.TrimPrefix(s, prefix)) == "" {
 					return nil, exitcode.InvalidArgsErrorf("task %s has ambiguous or malformed **%s:** fields", slug, name)
 				}
 				fields[name] = i + 1

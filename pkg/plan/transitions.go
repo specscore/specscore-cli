@@ -42,6 +42,8 @@ import (
 // success; a non-nil return is wrapped as a committed/recovery-required error.
 type PostMutationHook func() error
 
+var planTransformArtifactFn = lifecycle.TransformArtifact
+
 // SnapshotValidator checks caller-specific preconditions against the exact
 // bytes read under the Plan artifact lock. It must not mutate the artifact.
 type SnapshotValidator func(path string, before []byte) error
@@ -125,7 +127,7 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	}
 
 	var from lifecycle.Status
-	err = lifecycle.TransformArtifact(path, func(before []byte) ([]byte, error) {
+	err = planTransformArtifactFn(path, func(before []byte) ([]byte, error) {
 		// Validation occurs only after the artifact fence is held and is derived
 		// from the exact bytes this callback transforms.
 		if opts.ValidateSnapshot != nil {
@@ -162,6 +164,10 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return updated, transformErr
 	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, err
+		}
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			return ChangeStatusResult{}, exitcode.Wrap(exitcode.Conflict,
 				fmt.Sprintf("plan %s is busy; retry from fresh state", opts.Slug), err)
@@ -186,7 +192,7 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
 				"plan %s has no **Status:** line", path)
 		}
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading plan status: %v", err)
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorCause(fmt.Sprintf("reading plan status: %v", err), err)
 	}
 
 	// The artifact commit is now durable. Post-mutation derived work runs after
@@ -209,14 +215,14 @@ func resolvePlanFile(plansDir, slug string) (string, error) {
 	if _, err := os.Stat(flat); err == nil {
 		return flat, nil
 	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorf("stat %s: %v", flat, err)
+		return "", exitcode.UnexpectedErrorCause(fmt.Sprintf("stat %s: %v", flat, err), err)
 	}
 
 	dir := filepath.Join(plansDir, slug, "README.md")
 	if _, err := os.Stat(dir); err == nil {
 		return dir, nil
 	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorf("stat %s: %v", dir, err)
+		return "", exitcode.UnexpectedErrorCause(fmt.Sprintf("stat %s: %v", dir, err), err)
 	}
 
 	return "", exitcode.NotFoundErrorf("plan not found at %s", flat)

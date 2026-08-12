@@ -76,6 +76,13 @@ coordinated plan from anywhere else is a process violation, not a merge
 chore. --force-coordination bypasses the check for this invocation only,
 printing a warning naming what was bypassed.
 
+The Plan status, every selected Task status, the reconciliation marker, and
+the Resolution audit are composed under one fail-fast Plan artifact lock and
+published with one atomic durable write. Lint/index work begins only after the
+lock is released. If it fails, the committed reconciliation remains visible
+and the command returns a recovery-required error; it never rolls back stale
+bytes.
+
 Examples:
 
   specscore plan reconcile auth --tasks=complete --note "implemented directly during the incident; tracked flow was skipped"
@@ -199,6 +206,7 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		var committed *lifecycle.CommittedMutationError
 		if errors.As(err, &committed) {
 			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+			return exitcode.UnexpectedErrorCause(err.Error(), err)
 		}
 		return err
 	}

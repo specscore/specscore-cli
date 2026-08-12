@@ -225,10 +225,10 @@ func runIdeaUnarchive(cmd *cobra.Command, args []string) error {
 // index rows touched by the status rewrite, then re-runs lint in
 // verify mode to surface any remaining error-severity violations.
 //
-// Per lifecycle-transitions#REQ:rollback-on-lint-failure, ANY error-
-// severity violation after the fix pass triggers rollback — not just
-// violations touching the mutated file. The filter here is `severity
-// == "error"` across the whole tree.
+// Any error-severity violation after the fix pass fails the callback — not
+// just violations touching the mutated file. The caller's declared mutation
+// profile determines recovery: historical Idea/Feature callers compensate;
+// transaction-profile Plan callers retain the committed artifact.
 //
 // Returned error is wrapped via exitcode.UnexpectedErrorf (exit 10) so
 // the caller surfaces a uniform exit code regardless of which lint
@@ -250,7 +250,7 @@ func lintPostMutationHook(specSub string) idea.PostMutationHook {
 		}
 		if len(errs) > 0 {
 			var sb strings.Builder
-			sb.WriteString("lint failed after status rewrite (rollback applied):\n")
+			sb.WriteString("lint failed after status rewrite:\n")
 			for _, v := range errs {
 				fmt.Fprintf(&sb, "  %s:%d [%s] %s\n", v.File, v.Line, v.Rule, v.Message)
 			}

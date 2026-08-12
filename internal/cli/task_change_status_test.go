@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,6 +166,30 @@ func TestTaskChangeStatus_TooManyArgs(t *testing.T) {
 	_, _, err := runTask(t, "change-status", "auth", "extra", "--to=queued")
 	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
 		t.Errorf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+	}
+}
+
+func TestTaskChangeStatus_InvalidSlugsAreWriteFree(t *testing.T) {
+	_, taskFile := stageTaskWithStatus(t, "auth", "planning")
+	before, err := os.ReadFile(taskFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"change-status", "../auth", "--to=queued"},
+		{"change-status", "auth", "--plan=../escape", "--to=queued"},
+	} {
+		_, _, err := runTask(t, args...)
+		if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+			t.Fatalf("args=%v exit=%d err=%v", args, got, err)
+		}
+	}
+	after, err := os.ReadFile(taskFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("invalid slug mutated task")
 	}
 }
 

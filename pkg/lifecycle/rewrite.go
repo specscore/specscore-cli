@@ -50,18 +50,17 @@ var fmStatusLineRe = regexp.MustCompile(`^([ \t]*)status:[ \t]*([^\r\n]*?)([ \t]
 // does not contain a recognizable `**Status:**` line.
 var ErrStatusLineNotFound = errors.New("lifecycle: artifact has no **Status:** line")
 
-// Validate reads artifactPath, extracts its current Status, and checks that
-// the (kind, current, to) transition is legal. It does NOT mutate the file.
+// Validate is a legacy convenience that reads artifactPath, extracts its
+// current Status, and checks that the transition is legal. It does not mutate.
+// Transaction-profile writers MUST instead parse and call Transition from the
+// exact bytes supplied by TransformArtifact; stitching Validate and Rewrite
+// together would validate outside the artifact lock.
 //
 // It returns the from status on success. On failure it returns one of:
 //
 //   - an os error if the file cannot be opened or read
 //   - ErrStatusLineNotFound if the file has no recognizable **Status:** line
 //   - an *InvalidTransitionError if the transition is illegal in kind's matrix
-//
-// Validate is the primitive that the CLI verb runs FIRST, before any
-// mutation; it is the single check that guarantees REQ:
-// state-machine-strictness.
 func Validate(kind Kind, artifactPath string, to Status) (Status, error) {
 	from, err := readStatus(artifactPath)
 	if err != nil {
@@ -77,10 +76,10 @@ func Validate(kind Kind, artifactPath string, to Status) (Status, error) {
 // the value text. Every other byte of the file (line ordering, indentation,
 // line endings, trailing whitespace) is preserved (REQ: status-line-rewrite).
 //
-// The returned string is the ORIGINAL line content (including any line
-// terminator that was attached to it), suitable for passing to Rollback to
-// undo the mutation. The caller is responsible for retaining this value
-// until index sync is confirmed successful.
+// Rewrite is retained for historical single-field callers. The returned
+// string is the original line content for their explicitly documented legacy
+// compensation path. Transaction-profile Task/Plan writers use RewriteBytes
+// inside one TransformArtifact callback and never perform a late rollback.
 //
 // If the file has no `**Status:**` line, Rewrite returns ErrStatusLineNotFound
 // and the file is left untouched.
@@ -139,9 +138,9 @@ func StatusFromBytes(original []byte) (Status, error) {
 	return Status(strings.TrimSpace(m[2])), nil
 }
 
-// Rollback restores the artifact's `**Status:**` line to its
-// pre-Rewrite content, identified by the originalStatusLine returned from
-// the prior Rewrite call.
+// Rollback is the explicit legacy compensating status-line writer. It is not
+// part of the Task/Plan transaction profile and MUST NOT be used after their
+// artifact commit or post-mutation callback failure.
 //
 // Rollback locates the file's current `**Status:**` line (which is now the
 // MUTATED value), replaces that single line with originalStatusLine, and
@@ -150,8 +149,8 @@ func StatusFromBytes(original []byte) (Status, error) {
 //
 // If the file has been mutated externally between Rewrite and Rollback such
 // that no `**Status:**` line remains, Rollback returns ErrStatusLineNotFound.
-// Concurrent modification is outside the contract (REQ: no-coordination in
-// the lifecycle-transitions Meta spec).
+// It does not prove ownership of unrelated current bytes; callers that have
+// migrated to ArtifactTransaction must retain committed state instead.
 func Rollback(artifactPath string, originalStatusLine string) error {
 	return TransformArtifact(artifactPath, func(current []byte) ([]byte, error) {
 		return RollbackBytes(current, originalStatusLine)

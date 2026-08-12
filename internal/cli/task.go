@@ -29,6 +29,7 @@ type taskNewPrepared struct {
 	TaskPath          string `json:"task_path"`
 	ContentSHA256     string `json:"content_sha256"`
 	BoardBeforeSHA256 string `json:"board_before_sha256"`
+	BoardAfterSHA256  string `json:"board_after_sha256"`
 }
 
 func (p taskNewPrepared) bytes() []byte {
@@ -67,7 +68,7 @@ func taskCommand() *cobra.Command {
 func taskChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "change-status <task> --to=<status>",
-		Short: "Transition a task's Status (single-actor, no coordination)",
+		Short: "Transition a task's Status (local transaction; no distributed coordination)",
 		Long: `Transitions tasks/<task>/README.md from its current **Status:** to the
 value named by --to. The transition is validated against the strict task
 legal-transition matrix:
@@ -81,8 +82,10 @@ legal-transition matrix:
 --to is case-insensitive and must name one of the seven task statuses
 (planning, queued, in_progress, blocked, complete, failed, aborted); a missing
 or unrecognized value exits 2. An illegal (from, to) pair — including re-running
-on the current status — exits 4. On success the verb performs one atomic file
-transaction for the **Status:** line and prints "<task>: <from> → <to>".
+on the current status — exits 4. The verb uses one fail-fast local artifact
+transaction for Status and every supplied adjacent field. Lock contention or
+a changed preimage exits 1; on success it prints "<task>: <from> → <to>".
+It does not invoke a derived lint/index callback.
 
 --note and --evidence are optional annotations, valid on ANY transition (not
 restricted to --to=complete like the provenance flags): --note records a
@@ -143,6 +146,16 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 			"too many positional arguments: change-status accepts exactly one <task>, got %d", len(args))
 	}
 	taskSlug := args[0]
+	if err := task.ValidateSlug(taskSlug); err != nil {
+		return exitcode.InvalidArgsErrorf("invalid task slug: %v", err)
+	}
+	planSlug, _ := cmd.Flags().GetString("plan")
+	planSlug = strings.TrimSpace(planSlug)
+	if planSlug != "" {
+		if err := plan.ValidateSlug(planSlug); err != nil {
+			return exitcode.InvalidArgsErrorf("invalid plan slug: %v", err)
+		}
+	}
 
 	// --amend-provenance corrects/clears the **Implemented-by:** field on an
 	// already-complete task WITHOUT a status transition. It is mutually exclusive
@@ -169,8 +182,8 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 		if err := validateProvenanceFlags(cmd, lifecycle.TaskComplete); err != nil {
 			return err
 		}
-		if planSlug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(planSlug) != "" {
-			return runTaskAmendProvenancePlanInline(cmd, taskSlug, strings.TrimSpace(planSlug))
+		if planSlug != "" {
+			return runTaskAmendProvenancePlanInline(cmd, taskSlug, planSlug)
 		}
 		return runTaskAmendProvenanceBoard(cmd, taskSlug)
 	}
@@ -197,8 +210,8 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 	// --plan selects plan-inline mode: the task is addressed by its **Id:**
 	// field on a `### Task N:` block inside spec/plans/<plan>.md. Without --plan
 	// the verb stays in board mode (tasks/<task>/README.md), unchanged.
-	if planSlug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(planSlug) != "" {
-		return runTaskChangeStatusPlanInline(cmd, taskSlug, strings.TrimSpace(planSlug), to)
+	if planSlug != "" {
+		return runTaskChangeStatusPlanInline(cmd, taskSlug, planSlug, to)
 	}
 
 	projectFlag, _ := cmd.Flags().GetString("project")
@@ -229,7 +242,7 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 		case errors.Is(err, os.ErrNotExist):
 			return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
 		default:
-			return exitcode.UnexpectedErrorf("rewriting task: %v", err)
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("rewriting task: %v", err), err)
 		}
 	}
 
@@ -1107,10 +1120,13 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 		if err := validateTaskNewDependencies(tasksDir, taskFlag, deps, bv.Rows); err != nil {
 			return err
 		}
+		intendedRow := task.BoardRow{Task: taskFlag, Status: task.StatusPlanning, DependsOn: deps}
+		intendedBoard := *bv
+		intendedBoard.Rows = append(append([]task.BoardRow(nil), bv.Rows...), intendedRow)
+		boardAfter := task.RenderBoard(&intendedBoard)
 
-		existingMarker, markerErr := os.ReadFile(markerPath)
-		markerExists := markerErr == nil
-		if markerErr != nil && !os.IsNotExist(markerErr) {
+		existingMarker, markerExists, committedReceiptExists, markerErr := readTaskNewRecoveryMarker(markerPath)
+		if markerErr != nil {
 			return markerErr
 		}
 		_, taskDirErr := os.Stat(taskDir)
@@ -1135,20 +1151,27 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 			if rowCount != 0 || taskDirExists || readmeExists {
 				return exitcode.ConflictErrorf("task already exists: %s", taskFlag)
 			}
-			marker = taskNewPrepared{SchemaVersion: 1, TaskID: taskFlag, TaskPath: filepath.ToSlash(filepath.Join(taskFlag, "README.md")), ContentSHA256: taskNewDigest(taskBytes), BoardBeforeSHA256: taskNewDigest(boardData)}
+			marker = taskNewPrepared{SchemaVersion: 2, TaskID: taskFlag, TaskPath: filepath.ToSlash(filepath.Join(taskFlag, "README.md")), ContentSHA256: taskNewDigest(taskBytes), BoardBeforeSHA256: taskNewDigest(boardData), BoardAfterSHA256: taskNewDigest(boardAfter)}
 			markerBytes = marker.bytes()
 			if err := taskNewPublishExclusiveFn(markerPath, markerBytes, 0o600); err != nil {
 				return fmt.Errorf("publishing prepared task marker: %w", err)
 			}
 		} else {
-			if err := json.Unmarshal(existingMarker, &marker); err != nil || marker.SchemaVersion != 1 || marker.TaskID != taskFlag || marker.TaskPath != filepath.ToSlash(filepath.Join(taskFlag, "README.md")) || marker.ContentSHA256 != taskNewDigest(taskBytes) {
+			if err := json.Unmarshal(existingMarker, &marker); err != nil || marker.SchemaVersion != 2 || marker.TaskID != taskFlag || marker.TaskPath != filepath.ToSlash(filepath.Join(taskFlag, "README.md")) || marker.ContentSHA256 != taskNewDigest(taskBytes) {
 				return exitcode.ConflictErrorf("task creation recovery marker belongs to a different intent: %s", taskFlag)
 			}
 			markerBytes = existingMarker
 		}
 
+		// A committed receipt means finalization began only after the board row
+		// was visible. It is cleanup evidence, never authority to reconstruct a
+		// missing or changed commit. Fail closed unless every visible byte still
+		// matches the postimage bound into that receipt.
+		if committedReceiptExists && rowCount != 1 {
+			return exitcode.ConflictErrorf("committed task %s is missing its exact board postimage", taskFlag)
+		}
 		if rowCount == 1 {
-			if !readmeExists || taskNewDigest(readme) != marker.ContentSHA256 {
+			if !readmeExists || taskNewDigest(readme) != marker.ContentSHA256 || !taskNewRowMatches(bv.Rows, intendedRow) || taskNewDigest(boardData) != marker.BoardAfterSHA256 {
 				return exitcode.ConflictErrorf("committed task %s does not match its prepared content", taskFlag)
 			}
 			return finishTaskNewVisibleTransaction(cmd, formatFlag, out, markerPath, markerBytes)
@@ -1169,8 +1192,10 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 		if err := validateTaskNewDependencies(tasksDir, taskFlag, deps, bv.Rows); err != nil {
 			return lifecycle.CommittedError(markerPath, "revalidating prepared task dependencies", err)
 		}
-		bv.Rows = append(bv.Rows, task.BoardRow{Task: taskFlag, Status: task.StatusPlanning, DependsOn: deps})
-		if err := taskNewCommitBoardFn(tx, task.RenderBoard(bv)); err != nil {
+		if taskNewDigest(boardAfter) != marker.BoardAfterSHA256 {
+			return lifecycle.CommittedError(markerPath, "validating prepared task board postimage", lifecycle.ErrConcurrentMutation)
+		}
+		if err := taskNewCommitBoardFn(tx, boardAfter); err != nil {
 			return lifecycle.CommittedError(markerPath, "committing prepared task board", err)
 		}
 		return finishTaskNewVisibleTransaction(cmd, formatFlag, out, markerPath, markerBytes)
@@ -1193,6 +1218,47 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 	}
 
 	return nil
+}
+
+func taskNewRowMatches(rows []task.BoardRow, expected task.BoardRow) bool {
+	for _, row := range rows {
+		if row.Task != expected.Task {
+			continue
+		}
+		if row.Status != expected.Status || row.Branch != "" || row.Agent != "" || row.Requester != "" || row.Time != "" || len(row.DependsOn) != len(expected.DependsOn) {
+			return false
+		}
+		for i := range row.DependsOn {
+			if row.DependsOn[i] != expected.DependsOn[i] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func readTaskNewRecoveryMarker(markerPath string) ([]byte, bool, bool, error) {
+	prepared, preparedErr := os.ReadFile(markerPath)
+	committed, committedErr := os.ReadFile(committedMarkerPath(markerPath))
+	preparedExists := preparedErr == nil
+	committedExists := committedErr == nil
+	if preparedErr != nil && !os.IsNotExist(preparedErr) {
+		return nil, false, false, preparedErr
+	}
+	if committedErr != nil && !os.IsNotExist(committedErr) {
+		return nil, false, false, committedErr
+	}
+	if preparedExists && committedExists && !bytes.Equal(prepared, committed) {
+		return nil, false, false, exitcode.ConflictError("task creation prepared and committed receipts disagree")
+	}
+	if preparedExists {
+		return prepared, true, committedExists, nil
+	}
+	if committedExists {
+		return committed, true, true, nil
+	}
+	return nil, false, false, nil
 }
 
 func validateTaskNewDependencies(tasksDir, taskSlug string, deps []string, rows []task.BoardRow) error {

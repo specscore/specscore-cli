@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -382,6 +383,349 @@ func TestTaskNew_OutputFailureRetainsPreparedRecovery(t *testing.T) {
 	}
 	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
 		t.Fatalf("marker not finalized after output retry: %v", statErr)
+	}
+}
+
+func TestOwnedMarkerFinalizationFaultMatrixRetainsRetryReceipt(t *testing.T) {
+	boom := errors.New("injected finalization fault")
+	for _, tc := range []struct {
+		name   string
+		inject func(prepared, committed string)
+	}{
+		{name: "receipt-link", inject: func(_, _ string) {
+			ownedMarkerLinkFn = func(string, string) error { return boom }
+		}},
+		{name: "receipt-parent-sync", inject: func(_, _ string) {
+			calls := 0
+			ownedMarkerSyncDirFn = func(string) error {
+				calls++
+				if calls == 1 {
+					return boom
+				}
+				return nil
+			}
+		}},
+		{name: "prepared-unlink", inject: func(prepared, _ string) {
+			ownedMarkerRemoveFn = func(path string) error {
+				if path == prepared {
+					return boom
+				}
+				return os.Remove(path)
+			}
+		}},
+		{name: "prepared-unlink-parent-sync", inject: func(_, _ string) {
+			calls := 0
+			ownedMarkerSyncDirFn = func(string) error {
+				calls++
+				if calls == 2 {
+					return boom
+				}
+				return nil
+			}
+		}},
+		{name: "receipt-unlink", inject: func(_, committed string) {
+			ownedMarkerRemoveFn = func(path string) error {
+				if path == committed {
+					return boom
+				}
+				return os.Remove(path)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			prepared := filepath.Join(dir, "task.prepared")
+			committed := committedMarkerPath(prepared)
+			expected := []byte(`{"schema_version":2,"task_id":"owned","board_after_sha256":"post"}` + "\n")
+			if err := os.WriteFile(prepared, expected, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			origLink, origRemove, origSync := ownedMarkerLinkFn, ownedMarkerRemoveFn, ownedMarkerSyncDirFn
+			t.Cleanup(func() { ownedMarkerLinkFn, ownedMarkerRemoveFn, ownedMarkerSyncDirFn = origLink, origRemove, origSync })
+			tc.inject(prepared, committed)
+			err := removeOwnedFileDurable(prepared, expected)
+			if !errors.Is(err, boom) {
+				t.Fatalf("err=%v, want injected fault", err)
+			}
+			preparedBytes, preparedErr := os.ReadFile(prepared)
+			committedBytes, committedErr := os.ReadFile(committed)
+			if (preparedErr != nil || !bytes.Equal(preparedBytes, expected)) && (committedErr != nil || !bytes.Equal(committedBytes, expected)) {
+				t.Fatalf("no exact retry receipt remains: prepared=%v committed=%v", preparedErr, committedErr)
+			}
+			ownedMarkerLinkFn, ownedMarkerRemoveFn, ownedMarkerSyncDirFn = os.Link, os.Remove, syncOwnedMarkerDir
+			if err := removeOwnedFileDurable(prepared, expected); err != nil {
+				t.Fatalf("idempotent retry: %v", err)
+			}
+			for _, path := range []string{prepared, committed} {
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Fatalf("receipt not finalized %s: %v", path, statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestOwnedMarkerFinalizationFinalCleanupFenceIsSafe(t *testing.T) {
+	dir := t.TempDir()
+	prepared := filepath.Join(dir, "task.prepared")
+	committed := committedMarkerPath(prepared)
+	expected := []byte("owned\n")
+	if err := os.WriteFile(prepared, expected, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := ownedMarkerSyncDirFn
+	calls := 0
+	ownedMarkerSyncDirFn = func(string) error {
+		calls++
+		if calls == 3 {
+			return errors.New("final receipt cleanup fence failed")
+		}
+		return nil
+	}
+	t.Cleanup(func() { ownedMarkerSyncDirFn = orig })
+	if err := removeOwnedFileDurable(prepared, expected); err != nil {
+		t.Fatalf("final receipt fence cannot manufacture an unretryable error: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("sync calls=%d want=3", calls)
+	}
+	for _, path := range []string{prepared, committed} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("cleanup path remains %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestTaskNew_CommittedReceiptOnlyRetryAndForeignReceiptRefusal(t *testing.T) {
+	t.Run("receipt-only-exact-retry", func(t *testing.T) {
+		root := setupTaskProjectForNew(t)
+		board, _, marker := taskNewPaths(root, "receipt-retry")
+		committed := committedMarkerPath(marker)
+		orig := ownedMarkerSyncDirFn
+		calls := 0
+		ownedMarkerSyncDirFn = func(string) error {
+			calls++
+			if calls == 2 {
+				return errors.New("prepared unlink fence failed")
+			}
+			return nil
+		}
+		err := executeTaskNew(root, "receipt-retry", "Receipt Retry")
+		ownedMarkerSyncDirFn = orig
+		t.Cleanup(func() { ownedMarkerSyncDirFn = orig })
+		var committedErr *lifecycle.CommittedMutationError
+		if !errors.As(err, &committedErr) || boardRowCount(t, board, "receipt-retry") != 1 {
+			t.Fatalf("err=%v rows=%d", err, boardRowCount(t, board, "receipt-retry"))
+		}
+		if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+			t.Fatalf("prepared marker survived injected boundary: %v", statErr)
+		}
+		if _, statErr := os.Stat(committed); statErr != nil {
+			t.Fatalf("committed receipt missing: %v", statErr)
+		}
+		if err := executeTaskNew(root, "receipt-retry", "Receipt Retry"); err != nil {
+			t.Fatalf("receipt-only exact retry: %v", err)
+		}
+		if boardRowCount(t, board, "receipt-retry") != 1 {
+			t.Fatal("receipt retry duplicated board row")
+		}
+		if _, statErr := os.Stat(committed); !os.IsNotExist(statErr) {
+			t.Fatalf("committed receipt not finalized: %v", statErr)
+		}
+	})
+
+	t.Run("foreign-receipt-mismatch", func(t *testing.T) {
+		root := setupTaskProjectForNew(t)
+		board, _, marker := taskNewPaths(root, "foreign-receipt")
+		orig := taskNewRemoveMarkerFn
+		taskNewRemoveMarkerFn = func(string, []byte) error { return errors.New("retain prepared") }
+		_ = executeTaskNew(root, "foreign-receipt", "Foreign Receipt")
+		taskNewRemoveMarkerFn = orig
+		t.Cleanup(func() { taskNewRemoveMarkerFn = orig })
+		foreign := []byte("foreign receipt\n")
+		if err := os.WriteFile(committedMarkerPath(marker), foreign, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := executeTaskNew(root, "foreign-receipt", "Foreign Receipt")
+		if exitCodeOfErr(err) != exitcode.Conflict || boardRowCount(t, board, "foreign-receipt") != 1 {
+			t.Fatalf("err=%v rows=%d", err, boardRowCount(t, board, "foreign-receipt"))
+		}
+		if got, _ := os.ReadFile(committedMarkerPath(marker)); !bytes.Equal(got, foreign) {
+			t.Fatal("foreign receipt was changed or removed")
+		}
+	})
+}
+
+func TestTaskNew_CommittedRetryRequiresExactBoardRowAndBoundPostimage(t *testing.T) {
+	root := setupTaskProjectForNew(t)
+	board, _, marker := taskNewPaths(root, "row-bound")
+	orig := taskNewRemoveMarkerFn
+	taskNewRemoveMarkerFn = func(string, []byte) error { return errors.New("retain marker") }
+	_ = executeTaskNewWithDeps(root, "row-bound", "")
+	taskNewRemoveMarkerFn = orig
+	t.Cleanup(func() { taskNewRemoveMarkerFn = orig })
+	markerBytes, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt taskNewPrepared
+	if err := json.Unmarshal(markerBytes, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.SchemaVersion != 2 || receipt.BoardAfterSHA256 == "" || receipt.BoardBeforeSHA256 == receipt.BoardAfterSHA256 {
+		t.Fatalf("receipt does not bind pre/post board identity: %+v", receipt)
+	}
+	boardBytes, _ := os.ReadFile(board)
+	v, err := task.ParseBoard(boardBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range v.Rows {
+		if v.Rows[i].Task == "row-bound" {
+			v.Rows[i].Status = task.StatusQueued
+		}
+	}
+	if err := os.WriteFile(board, task.RenderBoard(v), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = executeTaskNewWithDeps(root, "row-bound", "")
+	if exitCodeOfErr(err) != exitcode.Conflict {
+		t.Fatalf("mutated committed row retry err=%v", err)
+	}
+	if got, _ := os.ReadFile(marker); !bytes.Equal(got, markerBytes) {
+		t.Fatal("row mismatch changed owned marker")
+	}
+}
+
+func TestTaskNew_CommittedReceiptOnlyRetryRefusesChangedVisibleState(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, board, readme string)
+	}{
+		{
+			name: "row-absent",
+			mutate: func(t *testing.T, board, _ string) {
+				b, err := os.ReadFile(board)
+				if err != nil {
+					t.Fatal(err)
+				}
+				v, err := task.ParseBoard(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows := v.Rows[:0]
+				for _, row := range v.Rows {
+					if row.Task != "receipt-bound" {
+						rows = append(rows, row)
+					}
+				}
+				v.Rows = rows
+				if err := os.WriteFile(board, task.RenderBoard(v), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "unrelated-row-added",
+			mutate: func(t *testing.T, board, _ string) {
+				b, err := os.ReadFile(board)
+				if err != nil {
+					t.Fatal(err)
+				}
+				v, err := task.ParseBoard(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				v.Rows = append(v.Rows, task.BoardRow{Task: "unrelated", Status: task.StatusPlanning})
+				if err := os.WriteFile(board, task.RenderBoard(v), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "row-mutated",
+			mutate: func(t *testing.T, board, _ string) {
+				b, err := os.ReadFile(board)
+				if err != nil {
+					t.Fatal(err)
+				}
+				v, err := task.ParseBoard(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range v.Rows {
+					if v.Rows[i].Task == "receipt-bound" {
+						v.Rows[i].Status = task.StatusQueued
+					}
+				}
+				if err := os.WriteFile(board, task.RenderBoard(v), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "readme-mutated",
+			mutate: func(t *testing.T, _, readme string) {
+				b, err := os.ReadFile(readme)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(readme, append(b, []byte("foreign edit\n")...), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := setupTaskProjectForNew(t)
+			board, readme, marker := taskNewPaths(root, "receipt-bound")
+			receipt := committedMarkerPath(marker)
+			orig := ownedMarkerSyncDirFn
+			calls := 0
+			ownedMarkerSyncDirFn = func(string) error {
+				calls++
+				if calls == 2 {
+					return errors.New("prepared unlink fence failed")
+				}
+				return nil
+			}
+			err := executeTaskNew(root, "receipt-bound", "Receipt Bound")
+			ownedMarkerSyncDirFn = orig
+			t.Cleanup(func() { ownedMarkerSyncDirFn = orig })
+			var committedErr *lifecycle.CommittedMutationError
+			if !errors.As(err, &committedErr) {
+				t.Fatalf("initial finalization err=%v", err)
+			}
+			if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+				t.Fatalf("prepared marker survived: %v", statErr)
+			}
+			receiptBefore, err := os.ReadFile(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			tc.mutate(t, board, readme)
+			boardBefore, _ := os.ReadFile(board)
+			readmeBefore, _ := os.ReadFile(readme)
+			err = executeTaskNew(root, "receipt-bound", "Receipt Bound")
+			if exitCodeOfErr(err) != exitcode.Conflict {
+				t.Fatalf("changed committed retry err=%v", err)
+			}
+			boardAfter, _ := os.ReadFile(board)
+			readmeAfter, _ := os.ReadFile(readme)
+			receiptAfter, receiptErr := os.ReadFile(receipt)
+			if !bytes.Equal(boardAfter, boardBefore) || !bytes.Equal(readmeAfter, readmeBefore) {
+				t.Fatal("failed retry rewrote changed committed state")
+			}
+			if receiptErr != nil || !bytes.Equal(receiptAfter, receiptBefore) {
+				t.Fatalf("failed retry changed committed receipt: %v", receiptErr)
+			}
+			if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+				t.Fatalf("failed retry recreated prepared marker: %v", statErr)
+			}
+		})
 	}
 }
 

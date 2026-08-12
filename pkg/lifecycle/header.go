@@ -17,8 +17,9 @@ var supersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*`)
 
 // SetSupersededBy writes a `**Superseded By:** <successor>` reference into the
 // artifact's header block, mirroring the Decision "Superseded By" convention.
-// It is the structured counterpart to the `--note` text and participates in
-// the same atomic-transition + rollback path as AppendResolutionNote.
+// It is retained as a legacy single-field wrapper. Transaction-profile
+// Task/Plan writers call SetSupersededByBytes inside their one artifact
+// transaction and do not stitch this wrapper into a multi-write sequence.
 //
 // Semantics:
 //
@@ -31,8 +32,8 @@ var supersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*`)
 //     A file with neither anchor returns ErrStatusLineNotFound and is left
 //     untouched.
 //
-// On a write, original holds the exact pre-invocation file bytes so the caller
-// can roll back via RestoreBody as part of the surrounding atomic transition.
+// On a write, original holds the exact pre-invocation bytes for historical
+// compensating callers only; it is not a post-commit rollback authority.
 func SetSupersededBy(artifactPath, successor string) (original []byte, wrote bool, err error) {
 	if strings.TrimSpace(successor) == "" {
 		return nil, false, nil

@@ -96,28 +96,79 @@ func isExclusivePublishCollision(err error) bool {
 	return errors.Is(err, fs.ErrExist)
 }
 
-// removeOwnedFileDurable removes a private prepared marker only while its
-// bytes still match the owning transaction, then syncs the containing
-// directory. A mismatch is retained for explicit recovery rather than deleting
-// a foreign replacement.
-func removeOwnedFileDurable(path string, expected []byte) error {
-	current, err := os.ReadFile(path)
+var (
+	ownedMarkerLinkFn    = os.Link
+	ownedMarkerRemoveFn  = os.Remove
+	ownedMarkerSyncDirFn = syncOwnedMarkerDir
+)
+
+func committedMarkerPath(path string) string { return path + ".committed" }
+
+func syncOwnedMarkerDir(dir string) error {
+	d, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(current, expected) {
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
+}
+
+// removeOwnedFileDurable finalizes a private prepared marker without an
+// unrecoverable remove-then-sync gap. It first creates and durably fences an
+// exclusive hard-linked committed receipt carrying the same owned bytes. Only
+// then may it remove the prepared name. Any failure before cleanup leaves at
+// least one exact receipt for retry; a foreign receipt is never overwritten.
+// Once removal of the final receipt succeeds, a following directory-sync
+// failure can at worst resurrect that harmless committed receipt after a
+// crash, so it is intentionally best-effort rather than a false recovery error.
+func removeOwnedFileDurable(path string, expected []byte) error {
+	finalPath := committedMarkerPath(path)
+	prepared, preparedErr := os.ReadFile(path)
+	committed, committedErr := os.ReadFile(finalPath)
+	preparedExists := preparedErr == nil
+	committedExists := committedErr == nil
+	if preparedErr != nil && !os.IsNotExist(preparedErr) {
+		return preparedErr
+	}
+	if committedErr != nil && !os.IsNotExist(committedErr) {
+		return committedErr
+	}
+	if !preparedExists && !committedExists {
+		return os.ErrNotExist
+	}
+	if (preparedExists && !bytes.Equal(prepared, expected)) || (committedExists && !bytes.Equal(committed, expected)) {
 		return fmt.Errorf("prepared marker changed before finalization")
 	}
-	if err := os.Remove(path); err != nil {
+	dir := filepath.Dir(path)
+	if !committedExists {
+		if err := ownedMarkerLinkFn(path, finalPath); err != nil {
+			return err
+		}
+		committedExists = true
+	}
+	if err := ownedMarkerSyncDirFn(dir); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
+	if preparedExists {
+		if err := ownedMarkerRemoveFn(path); err != nil {
+			return err
+		}
+		if err := ownedMarkerSyncDirFn(dir); err != nil {
+			return err
+		}
 	}
-	if err := dir.Sync(); err != nil {
-		_ = dir.Close()
-		return err
+	if committedExists {
+		if err := ownedMarkerRemoveFn(finalPath); err != nil {
+			return err
+		}
+		// The committed receipt was durably established above. If this final
+		// cleanup fence fails, returning an error would demand a retry without
+		// leaving a currently visible ownership receipt. Treat deletion as done;
+		// a crash may only bring the harmless receipt back for later cleanup.
+		_ = ownedMarkerSyncDirFn(dir)
 	}
-	return dir.Close()
+	return nil
 }

@@ -39,13 +39,13 @@ That left two gaps. First, tasks reached `complete` only by hand-editing Markdow
 
 ## Behavior
 
-This verb satisfies the cross-cutting lifecycle contract: one locked artifact transaction, fail-fast contention, retained recovery-required derived-work failure, and strict non-idempotent state-machine semantics.
+This verb satisfies the cross-cutting lifecycle contract's local transaction and strict non-idempotent state-machine semantics. Board Task mutation has no derived index callback. Plan-inline mutation changes the Task block only; a later explicit lint pass may reconcile the Plan execution-band status.
 
 ### Scope amendment: a single-actor task lifecycle is permitted
 
 #### REQ: single-actor-task-lifecycle-permitted
 
-This feature **narrows** two previously-blanket exclusions: [`cli/lifecycle-transitions#req:scope-no-task-lifecycle`](../../lifecycle-transitions/README.md#req-scope-no-task-lifecycle) and [`cli/task#req:no-lifecycle-in-mvp`](../README.md#req-no-lifecycle-in-mvp). A **single-actor** `task change-status` verb is permitted: it MUST perform pure status-field mutation (plus optional provenance write) with **no** claim/release, locking, sync policy, or conflict-aware exit codes. Multi-agent coordination of the task board — claim races, contention resolution, distributed terminal-state agreement — remains **out of scope** and orchestrator-owned. The two amended REQs are updated to reference this exception; this REQ is the canonical statement of the narrowed boundary.
+This feature **narrows** two previously-blanket exclusions: [`cli/lifecycle-transitions#req:scope-no-task-lifecycle`](../../lifecycle-transitions/README.md#req-scope-no-task-lifecycle) and [`cli/task#req:no-lifecycle-in-mvp`](../README.md#req-no-lifecycle-in-mvp). A **single-actor** `task change-status` verb is permitted: it MUST perform one fail-fast local artifact transaction for status plus optional provenance/annotations, with contention or a changed preimage exiting `1`. It has no claim/release, sync policy, remote publication, or distributed terminal-state agreement. Those multi-agent coordination concerns remain orchestrator-owned.
 
 ### Task status transitions
 
@@ -169,8 +169,8 @@ The verb MUST accept a `--force-coordination` boolean flag, honored only in plan
 
 | Code | Condition |
 |---|---|
-| `0` | Transition succeeded (status rewritten; provenance/note/evidence written if supplied; index synced) — OR — provenance amended via `--amend-provenance`. |
-| `1` | Plan-inline mode only: the target plan declares `**Coordination:** <owner>/<repo>@<branch>` and the current invocation's git repo/branch does not match (or the value is malformed) — refused BEFORE any mutation. Not reached when `--force-coordination` is set. |
+| `0` | Transition succeeded (status rewritten; provenance/note/evidence written if supplied) — OR — provenance amended via `--amend-provenance`. Board Task mutation has no derived index callback. |
+| `1` | Artifact-lock contention or a final expected-byte mismatch; additionally, in plan-inline mode, a coordination repo/branch mismatch or malformed declaration refused before mutation. `--force-coordination` bypasses only that declaration mismatch, never the local transaction conflict. |
 | `2` | Missing/unknown `--to`; a provenance flag with non-`complete` `--to`; a provenance flag set without `--commit`; `--amend-provenance` combined with `--to`; `--note`/`--evidence` combined with `--amend-provenance`. |
 | `3` | `<task>` resolves to no task in the requested store (plan-inline: no block with matching `**Id:**`). |
 | `4` | `(current_status, --to)` not a legal transition; or `--amend-provenance` on a task not in `complete`. |
@@ -184,7 +184,7 @@ The verb MUST accept a `--force-coordination` boolean flag, honored only in plan
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Cross-cutting contract this verb satisfies; its `scope-no-task-lifecycle` REQ is narrowed by [single-actor-task-lifecycle-permitted](#req-single-actor-task-lifecycle-permitted). |
 | [cli/task](../README.md) | Parent group (`info`/`list`/`new`); its `no-lifecycle-in-mvp` REQ is narrowed to admit this verb. |
 | [cli/plan/change-status](../../plan/change-status/README.md) | Sibling. The plan execution band stays lint-derived; this verb sets **task** status, which is the rollup *input* (`lint --fix` then derives the plan's `Executing`/`Implemented`). It also shares this verb's `--force-coordination`-bypassable coordination-branch enforcement (REQ:plan-inline-coordination-branch-enforcement mirrors its REQ:coordination-branch-enforcement). |
-| [spec lint](../../spec/lint/README.md) | Invoked post-mutation for index/rollup sync; also owns syntactic validation of the provenance reference format, and (rule P-010) of the `**Coordination:**` field this verb enforces at runtime in plan-inline mode. |
+| [spec lint](../../spec/lint/README.md) | Not invoked by this command. A later explicit lint pass may reconcile a plan-inline Task's derived Plan execution band and validates provenance/P-010 syntax. |
 | [plan (upstream Feature)](https://specscore.md/plan-specification) | [plan#coordination-branch](https://specscore.md/plan-specification#coordination-branch) is the source of truth for the `**Coordination:**` field this verb enforces in plan-inline mode. |
 
 ## Not Doing / Out of Scope
@@ -280,7 +280,7 @@ CLI behavior is testable. Rehearse stubs SHOULD be scaffolded for the happy-path
 
 **Given** a plan `spec/plans/auth.md` containing a task block with `**Id:** setup`
 **When** the user runs `specscore task change-status setup --plan auth --to=complete --commit a1b2c3d`
-**Then** the command resolves the task by its `**Id:**` inside `spec/plans/auth.md` (not the board), sets it `complete`, writes the provenance reference, and the subsequent `lint --fix` recomputes the plan's execution-band status from the task rollup.
+**Then** the command resolves the task by its `**Id:**` inside `spec/plans/auth.md` (not the board), sets it `complete`, and writes the provenance reference in one artifact transaction. A later explicit `specscore spec lint --fix` may recompute the Plan's execution-band status from the task rollup; this command does not run a second body write.
 
 ### AC: corrective-restamp
 

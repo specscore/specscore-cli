@@ -152,6 +152,9 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 			return exitcode.InvalidArgsError(
 				"transition to Superseded requires --successor naming the plan that replaces this one")
 		}
+		if err := plan.ValidateSlug(strings.TrimSpace(successor)); err != nil {
+			return exitcode.InvalidArgsErrorf("invalid successor plan slug: %v", err)
+		}
 	} else if strings.TrimSpace(successor) != "" {
 		return exitcode.InvalidArgsErrorf(
 			"--successor is only valid with --to=superseded (got --to=%s)", string(to))
@@ -199,6 +202,7 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 		var committed *lifecycle.CommittedMutationError
 		if errors.As(err, &committed) {
 			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+			return exitcode.UnexpectedErrorCause(err.Error(), err)
 		}
 		return err
 	}

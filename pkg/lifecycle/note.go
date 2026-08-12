@@ -22,8 +22,10 @@ const resolutionHeading = "## Resolution"
 // The markdown is written verbatim except for trailing-newline normalization;
 // it is never reflowed, wrapped, truncated, or sanitized.
 //
-// On a write, original holds the exact pre-invocation file bytes so the caller
-// can roll back via RestoreBody as part of the surrounding atomic transition.
+// This wrapper is retained for historical compensating callers. On a write,
+// original holds its exact pre-invocation bytes, but that snapshot is not
+// post-commit rollback authority. Transaction-profile Task/Plan writers call
+// AppendResolutionNoteBytes inside their single artifact transaction.
 func AppendResolutionNote(artifactPath, note string) (original []byte, wrote bool, err error) {
 	if strings.TrimSpace(note) == "" {
 		return nil, false, nil
@@ -46,10 +48,9 @@ func AppendResolutionNoteBytes(orig []byte, note string) ([]byte, bool, error) {
 	return joinLines(insertResolutionNote(splitKeepTerminators(orig), para)), true, nil
 }
 
-// RestoreBody rewrites the artifact with original (the bytes returned by a
-// prior AppendResolutionNote call), restoring it byte-for-byte. It is the
-// body-mutation counterpart to lifecycle.Rollback and participates in the same
-// rollback path.
+// RestoreBody is the explicit legacy whole-body compensating writer. It is not
+// part of the Task/Plan transaction profile and MUST NOT be used after their
+// artifact commit or post-mutation callback failure.
 func RestoreBody(artifactPath string, original []byte) error {
 	return TransformArtifact(artifactPath, func([]byte) ([]byte, error) {
 		return append([]byte(nil), original...), nil
