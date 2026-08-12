@@ -123,15 +123,27 @@ func TestCIAggregateWorkflowContract(t *testing.T) {
 	triggers := mappingValue(t, workflow, "on")
 	for _, event := range []string{"pull_request", "push"} {
 		eventNode := mappingValue(t, triggers, event)
-		if eventNode.Kind == yaml.MappingNode && mappingOptional(eventNode, "paths") != nil {
-			t.Fatalf("%s must not use a paths filter: CI must be emitted for every event", event)
+		for _, filter := range []string{"paths", "paths-ignore"} {
+			if eventNode.Kind == yaml.MappingNode && mappingOptional(eventNode, filter) != nil {
+				t.Fatalf("%s must not use a %s filter: CI must be emitted for every event", event, filter)
+			}
 		}
+	}
+	if mappingOptional(triggers, "workflow_dispatch") == nil {
+		t.Fatal("workflow_dispatch trigger must be preserved")
 	}
 
 	push := mappingValue(t, triggers, "push")
 	branches := mappingValue(t, push, "branches")
 	if len(branches.Content) != 1 || branches.Content[0].Value != "main" {
 		t.Fatalf("push trigger must remain limited to main, got %#v", branches.Content)
+	}
+	concurrency := mappingValue(t, workflow, "concurrency")
+	if got := mappingValue(t, concurrency, "group").Value; got != "go-ci-${{ github.workflow }}-${{ github.ref }}" {
+		t.Fatalf("concurrency group = %q, want preserved Go CI group", got)
+	}
+	if got := mappingValue(t, concurrency, "cancel-in-progress").Value; got != "true" {
+		t.Fatalf("cancel-in-progress = %q, want true", got)
 	}
 
 	jobs := mappingValue(t, workflow, "jobs")
@@ -163,13 +175,23 @@ func TestCIAggregateWorkflowContract(t *testing.T) {
 			t.Fatalf("aggregate does not need %s", required)
 		}
 	}
-	run := mappingValue(t, mappingValue(t, aggregate, "steps").Content[0], "run").Value
-	if !strings.Contains(run, "success|skipped)") {
-		t.Fatal("aggregate must allow only successful or genuinely inapplicable skipped jobs")
+	step := mappingValue(t, aggregate, "steps").Content[0]
+	if got := mappingValue(t, step, "run").Value; got != "./scripts/ci-aggregate.sh" {
+		t.Fatalf("aggregate command = %q, want the executable aggregate contract", got)
 	}
-	for _, rejected := range []string{"failure", "cancelled", "timed_out", "unknown"} {
-		if strings.Contains(run, "success|skipped|"+rejected) {
-			t.Fatalf("aggregate incorrectly accepts %s", rejected)
+	environment := mappingValue(t, step, "env")
+	for key, want := range map[string]string{
+		"CLASSIFY_RESULT":        "${{ needs.classify.result }}",
+		"GO_APPLICABLE":          "${{ needs.classify.outputs.go }}",
+		"DOGFOOD_APPLICABLE":     "${{ needs.classify.outputs.dogfood }}",
+		"TEST_RESULT":            "${{ needs.test.result }}",
+		"WINDOWS_RESULT":         "${{ needs.windows-event-process-tree.result }}",
+		"RELEASE_TARGETS_RESULT": "${{ needs.release-targets.result }}",
+		"REHEARSE_CORPUS_RESULT": "${{ needs.rehearse-corpus.result }}",
+		"DOGFOOD_RESULT":         "${{ needs.dogfood.result }}",
+	} {
+		if got := mappingValue(t, environment, key).Value; got != want {
+			t.Fatalf("aggregate %s = %q, want %q", key, got, want)
 		}
 	}
 
@@ -182,6 +204,99 @@ func TestCIAggregateWorkflowContract(t *testing.T) {
 	}
 	if strings.Contains(string(readme), "actions/workflows/dogfood.yml") {
 		t.Fatal("README must not retain a badge for the removed standalone dogfood workflow")
+	}
+}
+
+func TestCIAggregateResultContract(t *testing.T) {
+	accepted := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"all gates applicable and successful", aggregateEnvironment("true", "true", "success", "success")},
+		{"docs-only gates inapplicable and skipped", aggregateEnvironment("false", "false", "skipped", "skipped")},
+		{"Go-only gates successful and dogfood skipped", aggregateEnvironment("true", "false", "success", "skipped")},
+		{"spec-only Go gates skipped and dogfood successful", aggregateEnvironment("false", "true", "skipped", "success")},
+	}
+	for _, test := range accepted {
+		t.Run(test.name, func(t *testing.T) {
+			if output, err := runAggregate(t, test.env); err != nil {
+				t.Fatalf("aggregate rejected valid results: %v\n%s", err, output)
+			}
+		})
+	}
+
+	for _, result := range []string{"skipped", "failure", "cancelled", "timed_out", "unknown", ""} {
+		t.Run("classifier rejects "+result, func(t *testing.T) {
+			environment := aggregateEnvironment("true", "true", "success", "success")
+			environment["CLASSIFY_RESULT"] = result
+			if output, err := runAggregate(t, environment); err == nil {
+				t.Fatalf("aggregate accepted classifier result %q\n%s", result, output)
+			}
+		})
+	}
+
+	for _, result := range []string{"skipped", "failure", "cancelled", "timed_out", "unknown", ""} {
+		t.Run("applicable result rejects "+result, func(t *testing.T) {
+			environment := aggregateEnvironment("true", "false", "success", "skipped")
+			environment["TEST_RESULT"] = result
+			if output, err := runAggregate(t, environment); err == nil {
+				t.Fatalf("aggregate accepted applicable gate result %q\n%s", result, output)
+			}
+		})
+	}
+
+	for _, result := range []string{"success", "failure", "cancelled", "timed_out", "unknown", ""} {
+		t.Run("inapplicable result rejects "+result, func(t *testing.T) {
+			environment := aggregateEnvironment("false", "true", "skipped", "success")
+			environment["TEST_RESULT"] = result
+			if output, err := runAggregate(t, environment); err == nil {
+				t.Fatalf("aggregate accepted inapplicable gate result %q\n%s", result, output)
+			}
+		})
+	}
+
+	for _, applicabilityKey := range []string{"GO_APPLICABLE", "DOGFOOD_APPLICABLE"} {
+		for _, applicability := range []string{"yes", "", "TRUE"} {
+			t.Run("invalid "+applicabilityKey+" rejects "+applicability, func(t *testing.T) {
+				environment := aggregateEnvironment("true", "true", "success", "success")
+				environment[applicabilityKey] = applicability
+				if output, err := runAggregate(t, environment); err == nil {
+					t.Fatalf("aggregate accepted %s %q\n%s", applicabilityKey, applicability, output)
+				}
+			})
+		}
+	}
+
+	for _, gate := range []struct {
+		name string
+		key  string
+		kind string
+	}{
+		{"test", "TEST_RESULT", "go"},
+		{"windows", "WINDOWS_RESULT", "go"},
+		{"release targets", "RELEASE_TARGETS_RESULT", "go"},
+		{"Rehearse corpus", "REHEARSE_CORPUS_RESULT", "go"},
+		{"dogfood", "DOGFOOD_RESULT", "dogfood"},
+	} {
+		t.Run(gate.name+" applicable skipped is rejected", func(t *testing.T) {
+			environment := aggregateEnvironment("true", "true", "success", "success")
+			environment[gate.key] = "skipped"
+			if output, err := runAggregate(t, environment); err == nil {
+				t.Fatalf("aggregate accepted applicable skipped %s\n%s", gate.name, output)
+			}
+		})
+		t.Run(gate.name+" inapplicable success is rejected", func(t *testing.T) {
+			var environment map[string]string
+			if gate.kind == "go" {
+				environment = aggregateEnvironment("false", "true", "skipped", "success")
+			} else {
+				environment = aggregateEnvironment("true", "false", "success", "skipped")
+			}
+			environment[gate.key] = "success"
+			if output, err := runAggregate(t, environment); err == nil {
+				t.Fatalf("aggregate accepted inapplicable successful %s\n%s", gate.name, output)
+			}
+		})
 	}
 }
 
@@ -238,6 +353,59 @@ func TestCIPathClassifierContract(t *testing.T) {
 	}
 }
 
+func TestCIPathClassifierUsesBothRenameAndCopyPathsAndDeletedPaths(t *testing.T) {
+	t.Run("rename from Go into docs still runs the source-path Go gate", func(t *testing.T) {
+		repo, base, head := classifierFixtureWithMutation(t,
+			map[string]string{"source\nname.go": "package specscore_cli\n"},
+			func(repo string) {
+				writeTestFile(t, filepath.Join(repo, "docs", ".keep"), "keep\n")
+				if err := os.Rename(
+					filepath.Join(repo, "source\nname.go"),
+					filepath.Join(repo, "docs", "renamed\nfile.md"),
+				); err != nil {
+					t.Fatal(err)
+				}
+			},
+		)
+		got := runClassifier(t, repo, base, head)
+		if got["go"] != "true" || got["dogfood"] != "false" {
+			t.Fatalf("rename classifier = %#v, want source-path Go gate only", got)
+		}
+	})
+
+	t.Run("copy from Go into docs still runs Go gates", func(t *testing.T) {
+		repo, base, head := classifierFixtureWithMutation(t,
+			map[string]string{"tool.go": "package specscore_cli\n"},
+			func(repo string) {
+				data, err := os.ReadFile(filepath.Join(repo, "tool.go"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(repo, "docs", "copied.md"), string(data))
+			},
+		)
+		got := runClassifier(t, repo, base, head)
+		if got["go"] != "true" || got["dogfood"] != "false" {
+			t.Fatalf("copy classifier = %#v, want source-path Go gate only", got)
+		}
+	})
+
+	t.Run("deleted Go path still runs the Go gate", func(t *testing.T) {
+		repo, base, head := classifierFixtureWithMutation(t,
+			map[string]string{"deleted.go": "package specscore_cli\n"},
+			func(repo string) {
+				if err := os.Remove(filepath.Join(repo, "deleted.go")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		)
+		got := runClassifier(t, repo, base, head)
+		if got["go"] != "true" || got["dogfood"] != "false" {
+			t.Fatalf("deletion classifier = %#v, want deleted-path Go gate only", got)
+		}
+	})
+}
+
 func readWorkflowNode(t *testing.T, path string) *yaml.Node {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -286,21 +454,63 @@ func sequenceContains(node *yaml.Node, want string) bool {
 
 func classifierFixture(t *testing.T, changes map[string]string) (repo, base, head string) {
 	t.Helper()
+	return classifierFixtureWithMutation(t, nil, func(repo string) {
+		for path, contents := range changes {
+			writeTestFile(t, filepath.Join(repo, path), contents)
+		}
+	})
+}
+
+func classifierFixtureWithMutation(
+	t *testing.T,
+	baseFiles map[string]string,
+	mutate func(repo string),
+) (repo, base, head string) {
+	t.Helper()
 	repo = t.TempDir()
 	runCommand(t, repo, "git", "init", "-q")
 	runCommand(t, repo, "git", "config", "user.email", "ci@example.test")
 	runCommand(t, repo, "git", "config", "user.name", "CI contract test")
 	writeTestFile(t, filepath.Join(repo, "README.md"), "initial\n")
-	runCommand(t, repo, "git", "add", ".")
-	runCommand(t, repo, "git", "commit", "-qm", "initial")
-	base = strings.TrimSpace(runCommand(t, repo, "git", "rev-parse", "HEAD"))
-	for path, contents := range changes {
+	for path, contents := range baseFiles {
 		writeTestFile(t, filepath.Join(repo, path), contents)
 	}
 	runCommand(t, repo, "git", "add", ".")
+	runCommand(t, repo, "git", "commit", "-qm", "initial")
+	base = strings.TrimSpace(runCommand(t, repo, "git", "rev-parse", "HEAD"))
+	mutate(repo)
+	runCommand(t, repo, "git", "add", "-A")
 	runCommand(t, repo, "git", "commit", "-qm", "change")
 	head = strings.TrimSpace(runCommand(t, repo, "git", "rev-parse", "HEAD"))
 	return repo, base, head
+}
+
+func aggregateEnvironment(goApplicable, dogfoodApplicable, goResult, dogfoodResult string) map[string]string {
+	return map[string]string{
+		"CLASSIFY_RESULT":        "success",
+		"GO_APPLICABLE":          goApplicable,
+		"DOGFOOD_APPLICABLE":     dogfoodApplicable,
+		"TEST_RESULT":            goResult,
+		"WINDOWS_RESULT":         goResult,
+		"RELEASE_TARGETS_RESULT": goResult,
+		"REHEARSE_CORPUS_RESULT": goResult,
+		"DOGFOOD_RESULT":         dogfoodResult,
+	}
+}
+
+func runAggregate(t *testing.T, environment map[string]string) (string, error) {
+	t.Helper()
+	script, err := filepath.Abs("scripts/ci-aggregate.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(script)
+	command.Env = os.Environ()
+	for key, value := range environment {
+		command.Env = append(command.Env, key+"="+value)
+	}
+	output, runErr := command.CombinedOutput()
+	return string(output), runErr
 }
 
 func runClassifier(t *testing.T, repo, base, head string) map[string]string {

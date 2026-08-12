@@ -37,16 +37,21 @@ if ! git cat-file -e "${base}^{commit}" 2>/dev/null || ! git cat-file -e "${head
   exit 0
 fi
 
-if ! changed="$(git diff --name-only "$base" "$head")"; then
+changed="$(mktemp "${TMPDIR:-/tmp}/specscore-ci-paths.XXXXXX")"
+trap 'rm -f "$changed"' EXIT
+if ! git diff --name-status -z --find-renames --find-copies --find-copies-harder \
+  --no-ext-diff --no-textconv "$base" "$head" >"$changed"; then
   emit_all
   exit 0
 fi
 
 go=false
 dogfood=false
-while IFS= read -r path || [[ -n "$path" ]]; do
+
+classify_path() {
+  local path="$1"
   case "$path" in
-  .github/workflows/go-ci.yml|.github/workflows/dogfood.yml|scripts/ci-classify-paths.sh)
+  .github/workflows/go-ci.yml|.github/workflows/dogfood.yml|scripts/ci-classify-paths.sh|scripts/ci-aggregate.sh)
     go=true
     dogfood=true
     ;;
@@ -60,6 +65,35 @@ while IFS= read -r path || [[ -n "$path" ]]; do
     dogfood=true
     ;;
   esac
-done <<<"$changed"
+}
+
+# --name-status -z emits status, then one path for ordinary changes and both
+# source and destination paths for renames/copies. Reading each NUL-delimited
+# field keeps whitespace and newlines in valid Git paths unambiguous.
+while IFS= read -r -d '' status; do
+  case "$status" in
+  R*|C*)
+    if ! IFS= read -r -d '' source_path || ! IFS= read -r -d '' destination_path; then
+      emit_all
+      exit 0
+    fi
+    classify_path "$source_path"
+    classify_path "$destination_path"
+    ;;
+  A|D|M|T|U|X|B)
+    if ! IFS= read -r -d '' path; then
+      emit_all
+      exit 0
+    fi
+    classify_path "$path"
+    ;;
+  *)
+    # Git adding a status we do not understand must make CI more conservative,
+    # never silently reduce the applicable gate set.
+    emit_all
+    exit 0
+    ;;
+  esac
+done <"$changed"
 
 printf 'go=%s\ndogfood=%s\n' "$go" "$dogfood" >>"${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"

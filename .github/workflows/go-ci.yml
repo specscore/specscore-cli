@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: go-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -252,28 +252,11 @@ jobs:
       - name: Require every applicable gate to pass
         env:
           CLASSIFY_RESULT: ${{ needs.classify.result }}
+          GO_APPLICABLE: ${{ needs.classify.outputs.go }}
+          DOGFOOD_APPLICABLE: ${{ needs.classify.outputs.dogfood }}
           TEST_RESULT: ${{ needs.test.result }}
           WINDOWS_RESULT: ${{ needs.windows-event-process-tree.result }}
           RELEASE_TARGETS_RESULT: ${{ needs.release-targets.result }}
           REHEARSE_CORPUS_RESULT: ${{ needs.rehearse-corpus.result }}
           DOGFOOD_RESULT: ${{ needs.dogfood.result }}
-        run: |
-          set -euo pipefail
-          for result in \
-            "$CLASSIFY_RESULT" \
-            "$TEST_RESULT" \
-            "$WINDOWS_RESULT" \
-            "$RELEASE_TARGETS_RESULT" \
-            "$REHEARSE_CORPUS_RESULT" \
-            "$DOGFOOD_RESULT"; do
-            # A skipped gate is allowed only when the classifier made it
-            # inapplicable. Any failure, cancellation, timeout, or unknown
-            # result fails the one stable required check.
-            case "$result" in
-            success|skipped) ;;
-            *)
-              echo "CI gate did not pass: $result"
-              exit 1
-              ;;
-            esac
-          done
+        run: ./scripts/ci-aggregate.sh
