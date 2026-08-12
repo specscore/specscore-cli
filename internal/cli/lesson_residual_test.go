@@ -438,7 +438,7 @@ func TestLessonReadAdaptersRejectBrokenInputs(t *testing.T) {
 	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
 	requireCLIError(t, runLessonAgents(cmd, []string{"bad"}))
 	t.Setenv(lessonAgentsHookEnv, "/bin/true")
-	requireCLIError(t, invokeLessonAgentsHookWithRunner(cmd, "refresh", root, filepath.Join(root, "missing"), "bad", "", "", runLessonAgentsHook))
+	requireCLIError(t, invokeLessonAgentsHookWithRunner(cmd, "refresh", root, filepath.Join(root, "missing"), "", "", runLessonAgentsHook))
 
 	root = canonicalLessonProject(t)
 	occDir := filepath.Join(root, "spec", "lessons", "review-before-merge", "occurrences")
