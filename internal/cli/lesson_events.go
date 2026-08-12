@@ -56,6 +56,32 @@ func prepareLessonEvent(root, name, slug string, payload map[string]any, at time
 	return prepareLessonEventWithID(root, name, slug, payload, at, uuid.NewString())
 }
 
+func resumePreparedLessonEvent(root, name, slug string, payload map[string]any) (*preparedLessonEvent, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	o := event.NewOutbox(root)
+	intent := event.Event{
+		Name: name, Version: 1,
+		Actor:    event.Actor{Kind: "external", ID: "specscore"},
+		Artifact: event.Artifact{Type: "lesson", ID: slug, Path: filepath.ToSlash(filepath.Join("spec", "lessons", slug)), Revision: "uncommitted"},
+		Payload:  body,
+	}
+	match, err := o.FindPreparedIntent(intent)
+	if err != nil {
+		return nil, err
+	}
+	if match == nil {
+		return nil, nil
+	}
+	subscribers, err := event.LoadSubscribers(root)
+	if err != nil {
+		return nil, err
+	}
+	return &preparedLessonEvent{outbox: o, subscribers: subscribers, event: *match}, nil
+}
+
 // prepareLessonEventWithID lets deterministic migrations bind their durable
 // artifact transaction to one stable event envelope across crash recovery.
 func prepareLessonEventWithID(root, name, slug string, payload map[string]any, at time.Time, id string) (*preparedLessonEvent, error) {

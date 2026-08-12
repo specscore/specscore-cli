@@ -65,11 +65,15 @@ func TestLessonClassificationShapesAndNewFailures(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
 	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
-	for _, phase := range []string{"prepare", "parse", "index", "lint", "commit"} {
+	for _, phase := range []string{"resume", "prepare", "parse", "index", "lint", "commit"} {
 		t.Run(phase, func(t *testing.T) {
 			deps := defaultLessonCLIDeps()
 			slug := "new-" + phase
 			switch phase {
+			case "resume":
+				deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+					return nil, errors.New("resume")
+				}
 			case "prepare":
 				deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 					return nil, errors.New("prepare")
@@ -233,37 +237,60 @@ func TestLessonRelationAdapterFailures(t *testing.T) {
 	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
 	requireCLISuccess(t, ensureLessonAncestorIndexes(root))
 	from, typ, to := "one", "related", "two"
-	for _, phase := range []string{"root", "post-preflight", "prepare", "add-compensated", "add-uncertain", "commit", "delivery"} {
+	for _, phase := range []string{"root", "post-preflight", "resume", "resume-prepared", "prepare", "add-compensated", "add-prepared-compensated", "add-uncertain", "commit", "delivery"} {
 		cmd := lessonRelationAddCommand()
 		flags := map[string]string{"project": root, "type": typ, "confirm": lesson.RelationToken(from, typ, to)}
 		deps := defaultLessonCLIDeps()
+		deps.addRelationTransaction = func(_ string, _, _, _ string, hooks lesson.RelationTransactionHooks) (bool, error) {
+			if hooks.BeforeMutation != nil {
+				if err := hooks.BeforeMutation(); err != nil {
+					return false, err
+				}
+			}
+			return true, nil
+		}
 		switch phase {
 		case "root":
 			flags["project"] = filepath.Join(t.TempDir(), "missing")
 		case "post-preflight":
 			deps.fs.stat = func(string) (os.FileInfo, error) { return nil, errors.New("index preflight") }
+		case "resume":
+			deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+				return nil, errors.New("resume")
+			}
+		case "resume-prepared":
+			deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+				return &preparedLessonEvent{disabled: true}, nil
+			}
 		case "prepare":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")
 			}
 		case "add-compensated":
-			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error {
-				return &lesson.MutationError{Outcome: lesson.MutationCompensated, Err: errors.New("add")}
+			deps.addRelationTransaction = func(string, string, string, string, lesson.RelationTransactionHooks) (bool, error) {
+				return false, &lesson.MutationError{Outcome: lesson.MutationCompensated, Err: errors.New("add")}
+			}
+		case "add-prepared-compensated":
+			deps.addRelationTransaction = func(_ string, _, _, _ string, hooks lesson.RelationTransactionHooks) (bool, error) {
+				if err := hooks.BeforeMutation(); err != nil {
+					return false, err
+				}
+				return false, &lesson.MutationError{Outcome: lesson.MutationCompensated, Err: errors.New("add")}
 			}
 		case "add-uncertain":
-			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error { return errors.New("add") }
+			deps.addRelationTransaction = func(string, string, string, string, lesson.RelationTransactionHooks) (bool, error) {
+				return false, errors.New("add")
+			}
 		case "commit":
-			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error { return nil }
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return &preparedLessonEvent{outbox: event.NewOutbox(root), event: event.Event{UUID: "missing"}}, nil
 			}
 		case "delivery":
-			deps.addRelationWithPostMutation = func(string, string, string, string, lesson.RelationPostMutationHook) error { return nil }
 			configureFailingLessonEvents(t, root)
 		}
 		setLessonCommandFlags(t, cmd, flags)
 		err := runLessonRelationAddWithDeps(cmd, []string{from, to}, deps)
-		if phase == "delivery" {
+		if phase == "delivery" || phase == "resume-prepared" {
 			requireCLISuccess(t, err)
 		} else if err == nil {
 			t.Fatalf("%s failure was accepted", phase)
@@ -642,14 +669,19 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 		cmd := lessonImportLegacyCommand()
 		setLessonCommandFlags(t, cmd, map[string]string{"source": "source", "apply": "true", "mapping": mapping, "project": root})
 		deps := defaultLessonCLIDeps()
-		deps.inventoryLegacy = func(string) (lesson.LegacyInventory, error) { return lesson.LegacyInventory{}, nil }
+		deps.inventoryLegacy = func(string) (lesson.LegacyInventory, error) {
+			return lesson.LegacyInventory{Source: lesson.LegacySourceRef{CommittedAt: "2026-08-10T12:00:00Z"}}, nil
+		}
 		deps.preflightLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) error { return nil }
+		deps.inspectLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyInspection, error) {
+			return lesson.LegacyApplyInspection{MutationRequired: true}, nil
+		}
 		deps.applyLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyResult, error) {
 			return lesson.LegacyApplyResult{}, nil
 		}
 		return cmd, deps, root
 	}
-	for _, phase := range []string{"root", "mapping-required", "mapping-read", "mapping-parse", "mapping-trailing", "config", "vocabulary", "preflight", "index-preflight", "lock", "prepare", "apply-compensated", "reconcile", "commit", "delivery", "output"} {
+	for _, phase := range []string{"root", "mapping-required", "mapping-read", "mapping-parse", "mapping-trailing", "config", "vocabulary", "preflight", "index-preflight", "lock", "inspect", "resume", "timestamp", "prepare", "apply-compensated", "reconcile", "commit", "delivery", "output"} {
 		cmd, deps, root := base(t)
 		switch phase {
 		case "root":
@@ -674,6 +706,18 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 			_ = os.Remove(filepath.Join(root, "spec", "lessons", "README.md"))
 		case "lock":
 			deps.withMutationLocks = func(string, []string, func() error) error { return errors.New("lock") }
+		case "inspect":
+			deps.inspectLegacy = func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) (lesson.LegacyApplyInspection, error) {
+				return lesson.LegacyApplyInspection{}, errors.New("inspect")
+			}
+		case "resume":
+			deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+				return nil, errors.New("resume")
+			}
+		case "timestamp":
+			deps.inventoryLegacy = func(string) (lesson.LegacyInventory, error) {
+				return lesson.LegacyInventory{Source: lesson.LegacySourceRef{CommittedAt: "invalid"}}, nil
+			}
 		case "prepare":
 			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")

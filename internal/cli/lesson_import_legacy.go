@@ -109,17 +109,40 @@ func runLessonImportLegacyWithDeps(cmd *cobra.Command, deps lessonCLIDeps) error
 		if err := preflightOccurrenceIndex(root); err != nil {
 			return exitcode.InvalidStateErrorf("legacy import requires a readable lessons index: %v", err)
 		}
-		prepared, err := deps.prepareEvent(root, "lesson.legacy-import-applied", "legacy-import", map[string]any{"source_sha256": inv.Source.SHA256, "source_revision": inv.Source.Revision, "mapping_count": len(mapping.Entries)}, time.Time{})
+		inspection, err := deps.inspectLegacy(dir, allowedClassifications, inv, mapping)
 		if err != nil {
-			return exitcode.UnexpectedErrorf("preparing import event: %v", err)
+			return exitcode.InvalidStateErrorf("legacy import inspection refused: %v", err)
 		}
-		result, err = deps.applyLegacy(dir, allowedClassifications, inv, mapping)
+		result = inspection.Result
+		eventPayload := map[string]any{"source_sha256": inv.Source.SHA256, "source_revision": inv.Source.Revision, "mapping_count": len(mapping.Entries)}
+		prepared, err := deps.resumeEvent(root, "lesson.legacy-import-applied", "legacy-import", eventPayload)
 		if err != nil {
-			recovery, resolved := prepared.ResolveMutationFailure("applying legacy import", err)
-			if recovery {
-				return exitcode.UnexpectedErrorf("%v", resolved)
+			return exitcode.UnexpectedErrorf("inspecting prepared import event: %v", err)
+		}
+		if !inspection.MutationRequired && prepared == nil {
+			// A fully completed retry is observation-only. Index repair is a
+			// distinct mutation and must not be smuggled into an event-free no-op.
+			return nil
+		}
+		if inspection.MutationRequired {
+			if prepared == nil {
+				committedAt, parseErr := time.Parse(time.RFC3339, inv.Source.CommittedAt)
+				if parseErr != nil {
+					return exitcode.UnexpectedErrorf("parsing validated legacy source timestamp: %v", parseErr)
+				}
+				prepared, err = deps.prepareEvent(root, "lesson.legacy-import-applied", "legacy-import", eventPayload, committedAt)
+				if err != nil {
+					return exitcode.UnexpectedErrorf("preparing import event: %v", err)
+				}
 			}
-			return exitcode.InvalidStateErrorf("legacy import refused: %v", resolved)
+			result, err = deps.applyLegacy(dir, allowedClassifications, inv, mapping)
+			if err != nil {
+				recovery, resolved := prepared.ResolveMutationFailure("applying legacy import", err)
+				if recovery {
+					return exitcode.UnexpectedErrorf("%v", resolved)
+				}
+				return exitcode.InvalidStateErrorf("legacy import refused: %v", resolved)
+			}
 		}
 		extraFence := []string{result.Manifest}
 		for _, slug := range affected {
@@ -137,12 +160,14 @@ func runLessonImportLegacyWithDeps(cmd *cobra.Command, deps lessonCLIDeps) error
 			_, resolved := prepared.ResolveMutationFailure("reconciling legacy import", failure)
 			return exitcode.UnexpectedErrorf("%v", resolved)
 		}
-		delivery, commitErr := prepared.Commit(cmd.Context())
-		if commitErr != nil {
-			return exitcode.UnexpectedErrorf("legacy import applied but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
-		}
-		for _, failure := range delivery.Failed {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
+		if prepared != nil {
+			delivery, commitErr := prepared.Commit(cmd.Context())
+			if commitErr != nil {
+				return exitcode.UnexpectedErrorf("legacy import applied but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
+			}
+			for _, failure := range delivery.Failed {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
+			}
 		}
 		return nil
 	})

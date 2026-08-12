@@ -1,7 +1,9 @@
 package event
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type faultOutboxFS struct {
@@ -573,6 +576,100 @@ func TestOutbox_DecisionRetriesReadExistingCASWinnerWithoutOverwritingIt(t *test
 	}
 	if err := o.decide(e.UUID, abortedState); err == nil || !strings.Contains(err.Error(), "already committed") {
 		t.Fatalf("conflicting durable decision must be refused: %v", err)
+	}
+}
+
+func TestOutbox_FindPreparedIntentCanonicalizesPrivatelyAndFailsClosed(t *testing.T) {
+	if found, err := NewOutbox(t.TempDir()).FindPreparedIntent(validEvent()); err != nil || found != nil {
+		t.Fatalf("empty prepared intent lookup = %#v, %v", found, err)
+	}
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	e.Payload = json.RawMessage(`{"z":1,"nested":{"b":2,"a":1}}`)
+	if err := o.Prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(o.Root, "ledger", "ignored.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(o.Root, "ledger", "ignored.txt"), []byte("ignored"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	decided := validEvent()
+	decided.UUID = "00000000-0000-4000-8000-000000000031"
+	if err := o.Prepare(decided, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Commit(decided.UUID); err != nil {
+		t.Fatal(err)
+	}
+	intent := e
+	intent.UUID = ""
+	intent.Timestamp = time.Time{}
+	intent.Payload = json.RawMessage(` { "nested" : { "a" : 1, "b" : 2 }, "z" : 1 } `)
+	found, err := o.FindPreparedIntent(intent)
+	if err != nil || found == nil || found.UUID != e.UUID {
+		t.Fatalf("canonical prepared intent lookup = %#v, %v", found, err)
+	}
+	prepared, err := o.Prepared()
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := json.Marshal(prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(public, []byte("intent_fingerprint")) || bytes.Contains(public, []byte("nested")) {
+		t.Fatalf("prepared reconciliation output exposed private intent material: %s", public)
+	}
+
+	different := intent
+	different.Name = "lesson.different"
+	if found, err := o.FindPreparedIntent(different); err != nil || found != nil {
+		t.Fatalf("cross-command intent matched = %#v, %v", found, err)
+	}
+	readFault := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "read-file"}}
+	if _, err := readFault.findPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "injected read-file") {
+		t.Fatalf("prepared intent state read failure = %v", err)
+	}
+	constantHash := func([]byte) [sha256.Size]byte { return [sha256.Size]byte{} }
+	if _, err := o.operation().findPreparedIntentWithHash(different, constantHash); err == nil || !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("full tuple did not reject a fingerprint collision: %v", err)
+	}
+
+	second := e
+	second.UUID = "00000000-0000-4000-8000-000000000032"
+	second.Timestamp = second.Timestamp.Add(time.Second)
+	if err := o.Prepare(second, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.FindPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "multiple prepared") {
+		t.Fatalf("ambiguous prepared intents were accepted: %v", err)
+	}
+
+	bad := intent
+	bad.Payload = json.RawMessage(`{}` + `{}`)
+	if _, err := o.FindPreparedIntent(bad); err == nil || !strings.Contains(err.Error(), "trailing JSON") {
+		t.Fatalf("non-canonicalizable intent was accepted: %v", err)
+	}
+	bad.Payload = json.RawMessage(`{`)
+	if _, err := o.FindPreparedIntent(bad); err == nil {
+		t.Fatal("invalid intent payload was accepted")
+	}
+	readFault = outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "read-dir"}}
+	if _, err := readFault.findPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "injected read-dir") {
+		t.Fatalf("prepared intent directory failure = %v", err)
+	}
+	corrupt := NewOutbox(t.TempDir())
+	corruptID := "00000000-0000-4000-8000-000000000033"
+	if err := os.MkdirAll(filepath.Dir(corrupt.ledgerPath(corruptID)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(corrupt.ledgerPath(corruptID), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := corrupt.FindPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "invalid event ledger") {
+		t.Fatalf("corrupt prepared intent ledger = %v", err)
 	}
 }
 

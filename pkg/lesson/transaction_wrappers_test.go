@@ -66,3 +66,95 @@ func TestAddRelationPostMutationAndNewValidationBranches(t *testing.T) {
 		t.Fatalf("terminal supersedes target = %v", err)
 	}
 }
+
+func TestPublicInspectionAndRelationTransactionWrappersClassifyNoops(t *testing.T) {
+	root := t.TempDir()
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "legacy.md")
+	if err := os.WriteFile(source, []byte("## L1 — reviewed rule\n\n**Status:** Recorded\n\ntext\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventoryLegacyForApply(t, source)
+	mapping := legacyMapping(inv, reviewedNew("L1#1", "reviewed-rule"))
+	inspection, err := InspectLegacyApply(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil || !inspection.MutationRequired {
+		t.Fatalf("initial legacy inspection = %#v, %v", inspection, err)
+	}
+	if _, err := InspectLegacyApply(lessonsDir, nil, inv, mapping); err == nil {
+		t.Fatal("legacy inspection accepted an empty classification vocabulary")
+	}
+	if _, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err = InspectLegacyApply(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil || inspection.MutationRequired || len(inspection.Result.Skipped) != 1 {
+		t.Fatalf("completed legacy inspection = %#v, %v", inspection, err)
+	}
+	if err := os.Remove(filepath.Join(lessonsDir, "reviewed-rule", ".legacy-import-owner")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InspectLegacyApply(lessonsDir, []string{"process"}, inv, mapping); err == nil {
+		t.Fatal("legacy inspection accepted a completed target without its ownership marker")
+	}
+
+	for _, typ := range []string{"related", "duplicates", "supersedes"} {
+		t.Run(typ, func(t *testing.T) {
+			dir := relationFixture(t, "from", "to")
+			beforeCalls, postCalls := 0, 0
+			hooks := RelationTransactionHooks{
+				BeforeMutation: func() error { beforeCalls++; return nil },
+				PostMutation:   func() error { postCalls++; return nil },
+			}
+			mutated, err := AddRelationTransaction(dir, "from", typ, "to", hooks)
+			if err != nil || !mutated || beforeCalls != 1 || postCalls != 1 {
+				t.Fatalf("first transaction = mutated %v, before %d, post %d, err %v", mutated, beforeCalls, postCalls, err)
+			}
+			mutated, err = AddRelationTransaction(dir, "from", typ, "to", hooks)
+			if err != nil || mutated || beforeCalls != 1 || postCalls != 1 {
+				t.Fatalf("second transaction = mutated %v, before %d, post %d, err %v", mutated, beforeCalls, postCalls, err)
+			}
+		})
+	}
+}
+
+func TestRelationTransactionsRefusePreparationBeforePublication(t *testing.T) {
+	prepareErr := errors.New("prepare")
+	for _, typ := range []string{"related", "duplicates", "supersedes"} {
+		t.Run(typ, func(t *testing.T) {
+			dir := relationFixture(t, "from", "to")
+			beforeFrom, err := os.ReadFile(filepath.Join(dir, "from", "README.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeTo, err := os.ReadFile(filepath.Join(dir, "to", "README.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutated, err := AddRelationTransaction(dir, "from", typ, "to", RelationTransactionHooks{
+				BeforeMutation: func() error { return prepareErr },
+			})
+			if mutated || !errors.Is(err, prepareErr) || MutationOutcomeOf(err) != MutationPrePublication {
+				t.Fatalf("preparation failure = mutated %v, outcome %v, err %v", mutated, MutationOutcomeOf(err), err)
+			}
+			afterFrom, readErr := os.ReadFile(filepath.Join(dir, "from", "README.md"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			afterTo, readErr := os.ReadFile(filepath.Join(dir, "to", "README.md"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(afterFrom) != string(beforeFrom) || string(afterTo) != string(beforeTo) {
+				t.Fatal("preparation failure changed a Lesson")
+			}
+			if typ == "related" {
+				if _, statErr := os.Stat(filepath.Join(dir, relatedRelationsFile)); !os.IsNotExist(statErr) {
+					t.Fatalf("preparation failure published a relation sidecar: %v", statErr)
+				}
+			}
+		})
+	}
+}

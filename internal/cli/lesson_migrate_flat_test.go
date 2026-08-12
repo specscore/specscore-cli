@@ -50,6 +50,7 @@ func TestLessonMigrateFlat_EndToEndIsLintCleanAndBounded(t *testing.T) {
 	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
 		t.Fatal(err)
 	}
+	configureNoopLessonEvents(t, root)
 	lessonsDir := filepath.Join(root, "spec", "lessons")
 	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -145,11 +146,20 @@ Historical tracking.
 	}
 
 	beforeSecond := treeDigestForCLI(t, lessonsDir)
+	outboxRoot := filepath.Join(root, ".specscore", "event-outbox")
+	outboxBeforeSecond := treeDigestForCLI(t, outboxRoot)
+	ledgerBeforeSecond := treeDigestForCLI(t, filepath.Join(outboxRoot, "ledger"))
 	if _, _, err := runLesson(t, "migrate-flat", "validate-before-publishing", "--classification", "process", "--project", root); err != nil {
 		t.Fatal(err)
 	}
 	if afterSecond := treeDigestForCLI(t, lessonsDir); !bytes.Equal(beforeSecond, afterSecond) {
 		t.Fatal("second migration changed Lesson artifacts")
+	}
+	if afterSecond := treeDigestForCLI(t, outboxRoot); !bytes.Equal(outboxBeforeSecond, afterSecond) {
+		t.Fatal("second migration changed outbox bytes")
+	}
+	if afterSecond := treeDigestForCLI(t, filepath.Join(outboxRoot, "ledger")); !bytes.Equal(ledgerBeforeSecond, afterSecond) {
+		t.Fatal("second migration created or changed an event ledger")
 	}
 }
 

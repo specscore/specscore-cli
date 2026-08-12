@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lint"
@@ -190,6 +191,64 @@ func TestLessonNew_Collision(t *testing.T) {
 	}
 	if !strings.Contains(readLesson(t, root, "dup"), "# Lesson: Duplicate Again") {
 		t.Error("--force should overwrite with the new title")
+	}
+}
+
+func TestLessonNewForceCompletedSecondRunIsByteAndEventNoop(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	configureNoopLessonEvents(t, root)
+	args := []string{"new", "stable-force", "--title", "Stable Force", "--owner", "tester"}
+	if _, stderr, err := runLesson(t, args...); err != nil {
+		t.Fatalf("first create: %v\nstderr=%s", err, stderr)
+	}
+	lessonsBefore := treeDigestForCLI(t, filepath.Join(root, "spec", "lessons"))
+	outboxRoot := filepath.Join(root, ".specscore", "event-outbox")
+	outboxBefore := treeDigestForCLI(t, outboxRoot)
+	ledgerBefore := treeDigestForCLI(t, filepath.Join(outboxRoot, "ledger"))
+	args = append(args, "--force")
+	if _, stderr, err := runLesson(t, args...); err != nil {
+		t.Fatalf("byte-identical force: %v\nstderr=%s", err, stderr)
+	}
+	if got := treeDigestForCLI(t, filepath.Join(root, "spec", "lessons")); !bytes.Equal(got, lessonsBefore) {
+		t.Fatal("byte-identical force changed Lesson artifacts or index")
+	}
+	if got := treeDigestForCLI(t, outboxRoot); !bytes.Equal(got, outboxBefore) {
+		t.Fatal("byte-identical force changed outbox bytes")
+	}
+	if got := treeDigestForCLI(t, filepath.Join(outboxRoot, "ledger")); !bytes.Equal(got, ledgerBefore) {
+		t.Fatal("byte-identical force created or changed an event ledger")
+	}
+}
+
+func TestLessonNewForceCompletedArtifactRetryFinishesOriginalPreparedEvent(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	configureNoopLessonEvents(t, root)
+	cmd := lessonNewCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"title": "Recover Force", "owner": "tester"})
+	deps := defaultLessonCLIDeps()
+	deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("injected post-publication index interruption") }
+	if err := runLessonNewWithDeps(cmd, []string{"recover-force"}, deps); err == nil || !strings.Contains(err.Error(), "prepared event") {
+		t.Fatalf("first interrupted create = %v", err)
+	}
+	outbox := event.NewOutbox(root)
+	prepared, err := outbox.Prepared()
+	requireCLISuccess(t, err)
+	if len(prepared) != 1 || prepared[0].EventName != "lesson.created" {
+		t.Fatalf("interrupted create prepared events = %#v", prepared)
+	}
+	ledgerBeforeRetry := treeDigestForCLI(t, filepath.Join(outbox.Root, "ledger"))
+	if _, stderr, err := runLesson(t, "new", "recover-force", "--title", "Recover Force", "--owner", "tester", "--force"); err != nil {
+		t.Fatalf("force recovery retry: %v\nstderr=%s", err, stderr)
+	}
+	if got := treeDigestForCLI(t, filepath.Join(outbox.Root, "ledger")); !bytes.Equal(got, ledgerBeforeRetry) {
+		t.Fatal("force recovery retry created or changed a second ledger")
+	}
+	prepared, err = outbox.Prepared()
+	requireCLISuccess(t, err)
+	if len(prepared) != 0 {
+		t.Fatalf("force recovery retry did not finish original event: %#v", prepared)
 	}
 }
 

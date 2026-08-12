@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -479,6 +480,104 @@ func (o outboxOperations) prepared() ([]PreparedRecord, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EventUUID < out[j].EventUUID })
 	return out, nil
+}
+
+// FindPreparedIntent locates the one unresolved event for a logical mutation.
+// UUID and timestamp are intentionally excluded because a retry must recover
+// the original random UUIDv4. The versioned, domain-separated fingerprint is
+// private acceleration only: a match is accepted only after comparing the
+// complete canonical non-secret intent tuple, and ambiguity fails closed.
+func (o Outbox) FindPreparedIntent(intent Event) (*Event, error) {
+	return o.operation().findPreparedIntent(intent)
+}
+
+func (o outboxOperations) findPreparedIntent(intent Event) (*Event, error) {
+	return o.findPreparedIntentWithHash(intent, sha256.Sum256)
+}
+
+func (o outboxOperations) findPreparedIntentWithHash(intent Event, fingerprint func([]byte) [sha256.Size]byte) (*Event, error) {
+	want, err := canonicalPreparedIntent(intent)
+	if err != nil {
+		return nil, err
+	}
+	wantHash := fingerprint(want)
+	entries, err := o.operations().ReadDir(filepath.Join(o.Root, "ledger"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var found *Event
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		state, err := o.readState(id)
+		if err != nil {
+			return nil, err
+		}
+		if state != preparedState {
+			continue
+		}
+		record, err := o.readRecord(id)
+		if err != nil {
+			return nil, err
+		}
+		// readRecord validates the stored envelope and payload before returning,
+		// so canonicalization cannot fail for this candidate.
+		candidate, _ := canonicalPreparedIntent(record.Event)
+		candidateHash := fingerprint(candidate)
+		if candidateHash != wantHash {
+			continue
+		}
+		if !bytes.Equal(candidate, want) {
+			return nil, fmt.Errorf("prepared event intent fingerprint collision")
+		}
+		if found != nil {
+			return nil, fmt.Errorf("multiple prepared events match one mutation intent")
+		}
+		copy := record.Event
+		found = &copy
+	}
+	return found, nil
+}
+
+func canonicalPreparedIntent(e Event) ([]byte, error) {
+	payload, err := canonicalJSON(e.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalizing prepared event intent payload: %w", err)
+	}
+	fields := [][]byte{
+		[]byte("specscore:event-prepared-intent:v1"),
+		[]byte(e.Name), []byte(fmt.Sprint(e.Version)),
+		[]byte(e.Actor.Kind), []byte(e.Actor.ID),
+		[]byte(e.Artifact.Type), []byte(e.Artifact.ID), []byte(e.Artifact.Path), []byte(e.Artifact.Revision),
+		payload,
+	}
+	var encoded bytes.Buffer
+	var size [8]byte
+	for _, field := range fields {
+		binary.BigEndian.PutUint64(size[:], uint64(len(field)))
+		_, _ = encoded.Write(size[:])
+		_, _ = encoded.Write(field)
+	}
+	return encoded.Bytes(), nil
+}
+
+func canonicalJSON(data json.RawMessage) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("trailing JSON")
+	}
+	return json.Marshal(value)
 }
 
 func safeArtifactEvidencePath(path string) bool {

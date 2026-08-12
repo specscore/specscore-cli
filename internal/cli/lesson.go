@@ -150,11 +150,14 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 	if err := preflightLessonScaffoldWriteSetWithOps(root, target, deps.fs); err != nil {
 		return exitcode.UnexpectedErrorf("preflighting declared write set: %v", err)
 	}
-	prepared, err := deps.prepareEvent(root, "lesson.created", slug, map[string]any{"classifications": classifications}, time.Time{})
+	eventPayload := map[string]any{"classifications": classifications}
+	prepared, err := deps.resumeEvent(root, "lesson.created", slug, eventPayload)
 	if err != nil {
-		return exitcode.UnexpectedErrorf("preparing lesson event: %v", err)
+		return exitcode.UnexpectedErrorf("inspecting prepared lesson event: %v", err)
 	}
 	transaction := newLessonMutationCoordinator(prepared, deps.durable)
+	var prepareErr error
+	noOp := false
 	fail := func(message string, cause error) error {
 		// Every failure after this point may follow a visible file or directory.
 		// Retain it with the prepared event; a whole-tree restore cannot prove
@@ -176,6 +179,17 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 			if !bytes.Equal(current, targetBefore) {
 				return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: fmt.Errorf("lesson changed after --force preflight; retry against the current artifact")}
 			}
+			if bytes.Equal(current, body) && prepared == nil {
+				noOp = true
+				return nil
+			}
+		}
+		if prepared == nil {
+			prepared, prepareErr = deps.prepareEvent(root, "lesson.created", slug, eventPayload, time.Time{})
+			if prepareErr != nil {
+				return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: prepareErr}
+			}
+			transaction = newLessonMutationCoordinator(prepared, deps.durable)
 		}
 		// Materialize only the two declared ancestor indexes. Existing files are
 		// byte-preserved; the narrow row upsert below owns this Lesson's row.
@@ -188,14 +202,16 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		if err := deps.fs.mkdirAll(filepath.Join(filepath.Dir(target), "occurrences"), 0o755); err != nil {
 			return fmt.Errorf("creating occurrences directory: %w", err)
 		}
-		var publishErr error
-		if targetExisted {
-			publishErr = deps.rewriteAtomic(target, body)
-		} else {
-			publishErr = deps.publishExclusive(target, body, 0o644)
-		}
-		if publishErr != nil {
-			return fmt.Errorf("writing Lesson: %w", publishErr)
+		if !targetExisted || !bytes.Equal(targetBefore, body) {
+			var publishErr error
+			if targetExisted {
+				publishErr = deps.rewriteAtomic(target, body)
+			} else {
+				publishErr = deps.publishExclusive(target, body, 0o644)
+			}
+			if publishErr != nil {
+				return fmt.Errorf("writing Lesson: %w", publishErr)
+			}
 		}
 		parsed, err := deps.parse(target)
 		if err != nil {
@@ -227,7 +243,14 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		)
 	})
 	if mutationErr != nil {
+		if prepareErr != nil {
+			return exitcode.UnexpectedErrorf("preparing lesson event: %v", prepareErr)
+		}
 		return fail("creating Lesson transaction", mutationErr)
+	}
+	if noOp {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", target)
+		return nil
 	}
 	result, commitErr := transaction.Commit(cmd.Context())
 	if commitErr != nil {

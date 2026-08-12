@@ -97,6 +97,15 @@ type LegacyApplyResult struct {
 	Manifest           string                 `json:"manifest"`
 }
 
+// LegacyApplyInspection is the write-free result of validating a reviewed
+// import against its current canonical targets. MutationRequired is false only
+// when every Lesson, occurrence, and manifest is already present and owned by
+// the exact reviewed import.
+type LegacyApplyInspection struct {
+	MutationRequired bool
+	Result           LegacyApplyResult
+}
+
 type LegacyStatusDecision struct {
 	Key            string `json:"key"`
 	SourceStatus   string `json:"source_status,omitempty"`
@@ -468,6 +477,11 @@ type legacyApplyPlan struct {
 	manifestExists bool
 }
 
+type legacyApplyState struct {
+	lessonAlready     map[string]bool
+	occurrenceAlready map[string]bool
+}
+
 // PreflightLegacyApply validates the complete reviewed mapping, configured
 // classification vocabulary, immutable source bytes, targets, and manifest
 // collisions without writing. CLI adapters call it before preparing an event;
@@ -475,6 +489,22 @@ type legacyApplyPlan struct {
 func PreflightLegacyApply(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping) error {
 	_, err := preflightLegacyApply(lessonsDir, allowedClassifications, inv, mapping)
 	return err
+}
+
+// InspectLegacyApply performs the complete reviewed-import validation and
+// classifies a completed second run without writing even private staging data.
+// Callers must hold every affected per-Lesson lock from inspection through any
+// subsequent ApplyLegacy call.
+func InspectLegacyApply(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping) (LegacyApplyInspection, error) {
+	plan, err := preflightLegacyApply(lessonsDir, allowedClassifications, inv, mapping)
+	if err != nil {
+		return LegacyApplyInspection{}, err
+	}
+	state, err := inspectLegacyApplyPlan(lessonsDir, inv, plan, osLessonFS{}, findOccurrenceWithFS)
+	if err != nil {
+		return LegacyApplyInspection{}, err
+	}
+	return legacyApplyInspection(plan, state), nil
 }
 
 func preflightLegacyApply(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping) (legacyApplyPlan, error) {
@@ -676,6 +706,72 @@ func preflightLegacyApplyWithRuntime(lessonsDir string, allowedClassifications [
 	return plan, nil
 }
 
+func inspectLegacyApplyPlan(lessonsDir string, inv LegacyInventory, plan legacyApplyPlan, fs lessonFS, findOccurrence func(string, string, lessonFS) (Occurrence, error)) (legacyApplyState, error) {
+	state := legacyApplyState{lessonAlready: map[string]bool{}, occurrenceAlready: map[string]bool{}}
+	for _, key := range plan.keys {
+		e, m := plan.byKey[key], plan.byMap[key]
+		switch m.Action {
+		case "new":
+			target := filepath.Join(lessonsDir, m.Slug, "README.md")
+			if _, err := fs.Stat(target); err == nil {
+				state.lessonAlready[key] = true
+			} else if !os.IsNotExist(err) {
+				return state, err
+			}
+			if state.lessonAlready[key] {
+				id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
+				if existing, err := findOccurrence(target, id, fs); err == nil {
+					if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
+						return state, fmt.Errorf("mapping %s provider occurrence collision: %w", key, err)
+					}
+					state.occurrenceAlready[key] = true
+				} else if !os.IsNotExist(err) {
+					return state, err
+				}
+			}
+		case "occurrence":
+			if newKey, createdThisRun := plan.newTargets[m.Slug]; createdThisRun && !state.lessonAlready[newKey] {
+				continue
+			}
+			id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
+			path, resolveErr := ResolveLessonFile(lessonsDir, m.Slug)
+			if resolveErr != nil {
+				return state, resolveErr
+			}
+			if existing, err := findOccurrence(path, id, fs); err == nil {
+				if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
+					return state, fmt.Errorf("mapping %s occurrence collision: %w", key, err)
+				}
+				state.occurrenceAlready[key] = true
+			} else if !os.IsNotExist(err) {
+				return state, err
+			}
+		}
+	}
+	return state, nil
+}
+
+func legacyApplyInspection(plan legacyApplyPlan, state legacyApplyState) LegacyApplyInspection {
+	result := LegacyApplyResult{Manifest: plan.manifestPath}
+	required := !plan.manifestExists
+	for _, key := range plan.keys {
+		m := plan.byMap[key]
+		if (m.Action == "occurrence" && state.occurrenceAlready[key]) || (m.Action == "new" && state.lessonAlready[key] && state.occurrenceAlready[key]) {
+			result.Skipped = append(result.Skipped, key)
+		}
+		if (m.Action == "new" && (!state.lessonAlready[key] || !state.occurrenceAlready[key])) || (m.Action == "occurrence" && !state.occurrenceAlready[key]) {
+			required = true
+		}
+		if m.Action == "new" {
+			result.StatusDecisions = append(result.StatusDecisions, LegacyStatusDecision{
+				Key: key, SourceStatus: plan.byKey[key].RawStatus, ImportedStatus: "Recorded",
+				Reason: "canonical enforcement was not explicitly reviewed as control, verification, and evidence",
+			})
+		}
+	}
+	return LegacyApplyInspection{MutationRequired: required, Result: result}
+}
+
 func ApplyLegacy(lessonsDir string, allowedClassifications []string, inv LegacyInventory, mapping LegacyMapping) (LegacyApplyResult, error) {
 	return applyLegacyWithDeps(lessonsDir, allowedClassifications, inv, mapping, defaultLegacyImportDeps())
 }
@@ -688,8 +784,13 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 	if deps.afterPreflight != nil {
 		deps.afterPreflight()
 	}
-	byKey, byMap, keys, newTargets := plan.byKey, plan.byMap, plan.keys, plan.newTargets
-	result := LegacyApplyResult{}
+	byKey, byMap, keys := plan.byKey, plan.byMap, plan.keys
+	state, err := inspectLegacyApplyPlan(lessonsDir, inv, plan, deps.fs, deps.findOccurrence)
+	if err != nil {
+		return LegacyApplyResult{}, err
+	}
+	inspection := legacyApplyInspection(plan, state)
+	result := inspection.Result
 	manifestPath, manifestBytes, manifestExists := plan.manifestPath, plan.manifestBytes, plan.manifestExists
 	stageDir, err := deps.fs.MkdirTemp(lessonsDir, ".legacy-import-stage-")
 	if err != nil {
@@ -701,54 +802,16 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 			return result, err
 		}
 	}
-	result.Manifest = manifestPath
-	lessonAlready := map[string]bool{}
-	occurrenceAlready := map[string]bool{}
+	lessonAlready := state.lessonAlready
+	occurrenceAlready := state.occurrenceAlready
 	for _, key := range keys {
 		e, m := byKey[key], byMap[key]
-		switch m.Action {
-		case "new":
-			target := filepath.Join(lessonsDir, m.Slug, "README.md")
-			if _, err := deps.fs.Stat(target); err == nil {
-				lessonAlready[key] = true
-			} else if os.IsNotExist(err) {
-				title := strings.TrimSpace(m.Title)
-				if title == "" {
-					title = strings.TrimSpace(e.Title)
-				}
-				if err := writeImportedLessonWithFS(filepath.Join(stageDir, m.Slug, "README.md"), m.Slug, title, m, e, inv, deps.fs); err != nil {
-					return result, err
-				}
-			} else {
-				return result, err
+		if m.Action == "new" && !lessonAlready[key] {
+			title := strings.TrimSpace(m.Title)
+			if title == "" {
+				title = strings.TrimSpace(e.Title)
 			}
-			if lessonAlready[key] {
-				id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
-				if existing, err := deps.findOccurrence(target, id, deps.fs); err == nil {
-					if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
-						return result, fmt.Errorf("mapping %s provider occurrence collision: %w", key, err)
-					}
-					occurrenceAlready[key] = true
-				} else if !os.IsNotExist(err) {
-					return result, err
-				}
-			}
-		case "occurrence":
-			id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
-			path, resolveErr := ResolveLessonFile(lessonsDir, m.Slug)
-			if resolveErr != nil {
-				if _, createdThisRun := newTargets[m.Slug]; createdThisRun {
-					continue
-				}
-				return result, resolveErr
-			}
-			if existing, err := deps.findOccurrence(path, id, deps.fs); err == nil {
-				if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
-					return result, fmt.Errorf("mapping %s occurrence collision: %w", key, err)
-				}
-				occurrenceAlready[key] = true
-				continue
-			} else if !os.IsNotExist(err) {
+			if err := writeImportedLessonWithFS(filepath.Join(stageDir, m.Slug, "README.md"), m.Slug, title, m, e, inv, deps.fs); err != nil {
 				return result, err
 			}
 		}
@@ -814,22 +877,6 @@ func applyLegacyWithDeps(lessonsDir string, allowedClassifications []string, inv
 		}
 		published = true
 		result.CreatedOccurrences = append(result.CreatedOccurrences, o.ID)
-	}
-	for _, key := range keys {
-		m := byMap[key]
-		if (m.Action == "occurrence" && occurrenceAlready[key]) || (m.Action == "new" && lessonAlready[key] && occurrenceAlready[key]) {
-			result.Skipped = append(result.Skipped, key)
-		}
-	}
-	for _, key := range keys {
-		m := byMap[key]
-		if m.Action != "new" {
-			continue
-		}
-		result.StatusDecisions = append(result.StatusDecisions, LegacyStatusDecision{
-			Key: key, SourceStatus: byKey[key].RawStatus, ImportedStatus: "Recorded",
-			Reason: "canonical enforcement was not explicitly reviewed as control, verification, and evidence",
-		})
 	}
 	return result, nil
 }

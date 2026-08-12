@@ -31,6 +31,17 @@ type Relation struct {
 // acquire only the shared Lesson-index lock, which is last in the total order.
 type RelationPostMutationHook func() error
 
+// RelationTransactionHooks place event preparation immediately before the
+// first visible relation write and reconciliation after it while all endpoint
+// and relation-project locks remain held. ReconcileNoop is reserved for a
+// retry that found the relation complete but still has its original prepared
+// event to finish.
+type RelationTransactionHooks struct {
+	BeforeMutation func() error
+	PostMutation   RelationPostMutationHook
+	ReconcileNoop  bool
+}
+
 const relatedRelationsFile = ".relations.json"
 
 type relationLocker interface {
@@ -169,21 +180,36 @@ func AddRelationWithPostMutation(lessonsDir, from, typ, to string, postMutation 
 	return addRelationWithPostMutationWithDeps(lessonsDir, from, typ, to, postMutation, defaultRelationDeps(), defaultLessonMutationLockDeps())
 }
 
+// AddRelationTransaction returns false without invoking BeforeMutation when
+// the exact reviewed relation is already present. This lets CLI adapters avoid
+// creating a second event for a completed idempotent command while still
+// reconciling a retained prepared event through ReconcileNoop.
+func AddRelationTransaction(lessonsDir, from, typ, to string, hooks RelationTransactionHooks) (bool, error) {
+	return addRelationTransactionWithDeps(lessonsDir, from, typ, to, hooks, defaultRelationDeps(), defaultLessonMutationLockDeps())
+}
+
 func addRelationWithDeps(lessonsDir, from, typ, to string, deps relationDeps) error {
 	return addRelationWithPostMutationWithDeps(lessonsDir, from, typ, to, nil, deps, defaultLessonMutationLockDeps())
 }
 
 func addRelationWithPostMutationWithDeps(lessonsDir, from, typ, to string, postMutation RelationPostMutationHook, deps relationDeps, lockDeps lessonMutationLockDeps) error {
+	_, err := addRelationTransactionWithDeps(lessonsDir, from, typ, to, RelationTransactionHooks{PostMutation: postMutation}, deps, lockDeps)
+	return err
+}
+
+func addRelationTransactionWithDeps(lessonsDir, from, typ, to string, hooks RelationTransactionHooks, deps relationDeps, lockDeps lessonMutationLockDeps) (bool, error) {
 	if err := ValidateRelation(from, typ, to); err != nil {
-		return mutationFailure(MutationPrePublication, err)
+		return false, mutationFailure(MutationPrePublication, err)
 	}
 	projectRoot, err := relationProjectRootWithDeps(lessonsDir, deps)
 	if err != nil {
-		return mutationFailure(MutationPrePublication, err)
+		return false, mutationFailure(MutationPrePublication, err)
 	}
-	return withLessonMutationLocks(projectRoot, []string{from, to}, lockDeps, func() error {
+	mutated := false
+	err = withLessonMutationLocks(projectRoot, []string{from, to}, lockDeps, func() error {
 		return withRelationLockWithDeps(lessonsDir, deps, func() error {
-			err := addRelationLockedWithDeps(lessonsDir, from, typ, to, deps)
+			var err error
+			mutated, err = addRelationLockedTransactionWithDeps(lessonsDir, from, typ, to, hooks.BeforeMutation, deps)
 			if err != nil {
 				// Every untyped failure returned by the locked implementation occurs
 				// before its first rename/link publication. Preserve explicit outcomes
@@ -194,14 +220,15 @@ func addRelationWithPostMutationWithDeps(lessonsDir, from, typ, to string, postM
 				}
 				return mutationFailure(MutationPrePublication, err)
 			}
-			if postMutation != nil {
-				if err := postMutation(); err != nil {
+			if hooks.PostMutation != nil && (mutated || hooks.ReconcileNoop) {
+				if err := hooks.PostMutation(); err != nil {
 					return mutationFailure(MutationUncertain, fmt.Errorf("reconciling published relation: %w", err))
 				}
 			}
 			return nil
 		})
 	})
+	return mutated, err
 }
 
 // withRelationLock serializes cooperating SpecScore relation writers across
@@ -258,127 +285,154 @@ func relationProjectRootWithDeps(lessonsDir string, deps relationDeps) (string, 
 }
 
 func addRelationLockedWithDeps(lessonsDir, from, typ, to string, deps relationDeps) error {
+	_, err := addRelationLockedTransactionWithDeps(lessonsDir, from, typ, to, nil, deps)
+	return err
+}
+
+func addRelationLockedTransactionWithDeps(lessonsDir, from, typ, to string, beforeMutation func() error, deps relationDeps) (bool, error) {
 	if err := ValidateRelation(from, typ, to); err != nil {
-		return err
+		return false, err
 	}
 	fromPath, err := ResolveLessonFile(lessonsDir, from)
 	if err != nil {
-		return err
+		return false, err
 	}
 	toPath, err := ResolveLessonFile(lessonsDir, to)
 	if err != nil {
-		return err
+		return false, err
 	}
 	fromLesson, err := Parse(fromPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	toLesson, err := Parse(toPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !fromLesson.Canonical || !toLesson.Canonical {
-		return fmt.Errorf("relations require canonical directory Lessons")
+		return false, fmt.Errorf("relations require canonical directory Lessons")
 	}
 
 	if typ == "related" {
-		return appendRelatedRelationWithDeps(lessonsDir, Relation{From: from, Type: typ, To: to}, deps)
+		return appendRelatedRelationTransactionWithDeps(lessonsDir, Relation{From: from, Type: typ, To: to}, beforeMutation, deps)
 	}
 	if typ == "supersedes" {
 		cycle, err := wouldCycleWithFS(lessonsDir, from, to, deps.fs)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if cycle {
-			return fmt.Errorf("supersedes relation would form a cycle: %s -> %s", from, to)
+			return false, fmt.Errorf("supersedes relation would form a cycle: %s -> %s", from, to)
 		}
 	}
 	if typ == "duplicates" {
 		if fromLesson.Status != "Recorded" && fromLesson.Status != "Stated" && fromLesson.Status != "Superseded" {
-			return fmt.Errorf("Lesson %q in status %q cannot transition to Superseded as a duplicate", from, fromLesson.Status)
+			return false, fmt.Errorf("Lesson %q in status %q cannot transition to Superseded as a duplicate", from, fromLesson.Status)
 		}
 		if fromLesson.Supersedes != "" && fromLesson.Supersedes != "—" {
-			return fmt.Errorf("Lesson %q cannot be both a retained duplicate and a superseding Lesson", from)
+			return false, fmt.Errorf("Lesson %q cannot be both a retained duplicate and a superseding Lesson", from)
 		}
 		cycle, err := wouldCycleWithFS(lessonsDir, from, to, deps.fs)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if cycle {
-			return fmt.Errorf("duplicate relation would form a cycle: %s -> %s", from, to)
+			return false, fmt.Errorf("duplicate relation would form a cycle: %s -> %s", from, to)
 		}
 		if err := ensureRelationFieldAvailableWithFS(fromPath, "Duplicate Of", to, deps.fs); err != nil {
-			return err
+			return false, err
 		}
 		if err := ensureRelationFieldAvailableWithFS(fromPath, "Superseded By", to, deps.fs); err != nil {
-			return err
+			return false, err
 		}
 		before, err := deps.fs.ReadFile(fromPath)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := ensureRelationFieldsAvailable(before, map[string]string{"Duplicate Of": to, "Superseded By": to}); err != nil {
-			return err
+			return false, err
 		}
 		if relationField(before, "Status") == "Enforced" {
-			return fmt.Errorf("enforced Lesson %q cannot be retained as a duplicate", from)
+			return false, fmt.Errorf("enforced Lesson %q cannot be retained as a duplicate", from)
 		}
 		after, err := deps.rewrite(before, fromPath, map[string]string{"Duplicate Of": to, "Superseded By": to, "Status": "Superseded"})
 		if err != nil {
-			return err
+			return false, err
 		}
-		return replaceRelationCASWithDeps(fromPath, before, after, "duplicates", deps)
+		if bytes.Equal(before, after) {
+			return false, nil
+		}
+		if err := prepareRelationMutation(beforeMutation); err != nil {
+			return false, err
+		}
+		return true, replaceRelationCASWithDeps(fromPath, before, after, "duplicates", deps)
 	}
 	if err := ensureRelationFieldAvailableWithFS(fromPath, "Supersedes", to, deps.fs); err != nil {
-		return err
+		return false, err
 	}
 	if err := ensureRelationFieldAvailableWithFS(toPath, "Superseded By", from, deps.fs); err != nil {
-		return err
+		return false, err
 	}
 	if toLesson.Status != "Recorded" && toLesson.Status != "Stated" && toLesson.Status != "Superseded" {
-		return fmt.Errorf("Lesson %q in status %q cannot transition to Superseded", to, toLesson.Status)
+		return false, fmt.Errorf("Lesson %q in status %q cannot transition to Superseded", to, toLesson.Status)
 	}
 	// A successor declares the forward relation; the predecessor gains the
 	// derived backwards pointer and status.  Snapshot both files so a partial
 	// I/O failure is restored, not left as an asymmetric edge.
 	a, err := deps.fs.ReadFile(fromPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	b, err := deps.fs.ReadFile(toPath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := ensureRelationFieldsAvailable(a, map[string]string{"Supersedes": to}); err != nil {
-		return err
+		return false, err
 	}
 	if err := ensureRelationFieldsAvailable(b, map[string]string{"Superseded By": from}); err != nil {
-		return err
+		return false, err
 	}
 	newA, err := deps.rewrite(a, fromPath, map[string]string{"Supersedes": to})
 	if err != nil {
-		return err
+		return false, err
 	}
 	newB, err := deps.rewrite(b, toPath, map[string]string{"Superseded By": from, "Status": "Superseded"})
 	if err != nil {
-		return err
+		return false, err
+	}
+	if bytes.Equal(a, newA) && bytes.Equal(b, newB) {
+		return false, nil
 	}
 	if err := relationPublicationHookWithDeps("supersedes", deps); err != nil {
-		return mutationFailure(MutationPrePublication, err)
+		return false, mutationFailure(MutationPrePublication, err)
 	}
 	if err := relationSnapshotsMatchWithFS(map[string][]byte{fromPath: a, toPath: b}, deps.fs); err != nil {
-		return mutationFailure(MutationPrePublication, err)
+		return false, mutationFailure(MutationPrePublication, err)
+	}
+	if err := prepareRelationMutation(beforeMutation); err != nil {
+		return false, err
 	}
 	if err := atomicReplaceWithDeps(fromPath, newA, deps); err != nil {
-		return err
+		return false, err
 	}
 	if err := atomicReplaceWithDeps(toPath, newB, deps); err != nil {
 		if MutationOutcomeOf(err) == MutationUncertain {
 			// The second rename may already be visible. Do not call the first
 			// rollback "compensated" while the pair can be asymmetric.
-			return mutationFailure(MutationUncertain, fmt.Errorf("publishing superseding relation: %w", err))
+			return false, mutationFailure(MutationUncertain, fmt.Errorf("publishing superseding relation: %w", err))
 		}
-		return CompensatePublication(func() error { return replaceRelationCASWithDeps(fromPath, newA, a, "supersedes-rollback", deps) }, err)
+		return false, CompensatePublication(func() error { return replaceRelationCASWithDeps(fromPath, newA, a, "supersedes-rollback", deps) }, err)
+	}
+	return true, nil
+}
+
+func prepareRelationMutation(beforeMutation func() error) error {
+	if beforeMutation == nil {
+		return nil
+	}
+	if err := beforeMutation(); err != nil {
+		return mutationFailure(MutationPrePublication, err)
 	}
 	return nil
 }
@@ -537,24 +591,29 @@ func decodeRelatedRelations(lessonsDir string, b []byte) ([]Relation, error) {
 // from the same bytes. In particular, it never computes an "after" value
 // from an older read and then overwrites a newer sidecar at the CAS boundary.
 func appendRelatedRelationWithDeps(lessonsDir string, relation Relation, deps relationDeps) error {
+	_, err := appendRelatedRelationTransactionWithDeps(lessonsDir, relation, nil, deps)
+	return err
+}
+
+func appendRelatedRelationTransactionWithDeps(lessonsDir string, relation Relation, beforeMutation func() error, deps relationDeps) (bool, error) {
 	path := filepath.Join(lessonsDir, relatedRelationsFile)
 	before, err := deps.fs.ReadFile(path)
 	sidecarExists := err == nil
 	if os.IsNotExist(err) {
 		before = nil
 	} else if err != nil {
-		return err
+		return false, err
 	}
 	var relations []Relation
 	if sidecarExists {
 		relations, err = decodeRelatedRelations(lessonsDir, before)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 	for _, existing := range relations {
 		if (existing.From == relation.From && existing.To == relation.To) || (existing.From == relation.To && existing.To == relation.From) {
-			return nil
+			return false, nil
 		}
 	}
 	relations = append(relations, relation)
@@ -567,9 +626,12 @@ func appendRelatedRelationWithDeps(lessonsDir string, relation Relation, deps re
 	})
 	b, err := deps.marshal(relations, "", "  ")
 	if err != nil {
-		return err
+		return false, err
 	}
-	return replaceRelationCASWithDeps(path, before, append(b, '\n'), "related", deps)
+	if err := prepareRelationMutation(beforeMutation); err != nil {
+		return false, err
+	}
+	return true, replaceRelationCASWithDeps(path, before, append(b, '\n'), "related", deps)
 }
 
 func relationPublicationHookWithDeps(kind string, deps relationDeps) error {

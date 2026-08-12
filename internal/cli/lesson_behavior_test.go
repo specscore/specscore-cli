@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -69,6 +70,86 @@ func TestLessonRelationAndOccurrenceReadJourneysAreParseable(t *testing.T) {
 	}
 	if _, _, err := runLesson(t, "occurrence", "list", "review-before-merge"); err == nil {
 		t.Fatal("malformed occurrence list was accepted")
+	}
+}
+
+func TestLessonRelationCompletedSecondRunIsByteAndEventNoop(t *testing.T) {
+	for _, typ := range []string{"related", "duplicates", "supersedes"} {
+		t.Run(typ, func(t *testing.T) {
+			root := canonicalLessonProject(t)
+			configureNoopLessonEvents(t, root)
+			if _, stderr, err := runLesson(t, "new", "second-rule", "--owner", "tester"); err != nil {
+				t.Fatalf("second Lesson: %v\nstderr=%s", err, stderr)
+			}
+			from, to := "review-before-merge", "second-rule"
+			token := lesson.RelationToken(from, typ, to)
+			if _, stderr, err := runLesson(t, "relation", "add", from, to, "--type", typ, "--confirm", token); err != nil {
+				t.Fatalf("first relation: %v\nstderr=%s", err, stderr)
+			}
+			lessonsBefore := treeDigestForCLI(t, filepath.Join(root, "spec", "lessons"))
+			outboxRoot := filepath.Join(root, ".specscore", "event-outbox")
+			outboxBefore := treeDigestForCLI(t, outboxRoot)
+			ledgerBefore := treeDigestForCLI(t, filepath.Join(outboxRoot, "ledger"))
+			if _, stderr, err := runLesson(t, "relation", "add", from, to, "--type", typ, "--confirm", token); err != nil {
+				t.Fatalf("completed second relation: %v\nstderr=%s", err, stderr)
+			}
+			if got := treeDigestForCLI(t, filepath.Join(root, "spec", "lessons")); !bytes.Equal(got, lessonsBefore) {
+				t.Fatal("completed second relation changed Lesson artifacts or index bytes")
+			}
+			if got := treeDigestForCLI(t, outboxRoot); !bytes.Equal(got, outboxBefore) {
+				t.Fatal("completed second relation changed outbox bytes")
+			}
+			if got := treeDigestForCLI(t, filepath.Join(outboxRoot, "ledger")); !bytes.Equal(got, ledgerBefore) {
+				t.Fatal("completed second relation created or changed an event ledger")
+			}
+			if typ == "related" {
+				reversed := lesson.RelationToken(to, typ, from)
+				if _, stderr, err := runLesson(t, "relation", "add", to, from, "--type", typ, "--confirm", reversed); err != nil {
+					t.Fatalf("reversed completed relation: %v\nstderr=%s", err, stderr)
+				}
+				if got := treeDigestForCLI(t, outboxRoot); !bytes.Equal(got, outboxBefore) {
+					t.Fatal("reversed completed relation changed outbox bytes")
+				}
+			}
+		})
+	}
+}
+
+func TestLessonRelationCompletedArtifactRetryFinishesOriginalPreparedEvent(t *testing.T) {
+	root := canonicalLessonProject(t)
+	configureNoopLessonEvents(t, root)
+	if _, stderr, err := runLesson(t, "new", "second-rule", "--owner", "tester"); err != nil {
+		t.Fatalf("second Lesson: %v\nstderr=%s", err, stderr)
+	}
+	from, to, typ := "review-before-merge", "second-rule", "related"
+	cmd := lessonRelationAddCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "type": typ, "confirm": lesson.RelationToken(from, typ, to)})
+	deps := defaultLessonCLIDeps()
+	realTransaction := deps.addRelationTransaction
+	deps.addRelationTransaction = func(dir, gotFrom, gotType, gotTo string, hooks lesson.RelationTransactionHooks) (bool, error) {
+		hooks.PostMutation = func() error { return errors.New("injected reconciliation interruption after relation publication") }
+		return realTransaction(dir, gotFrom, gotType, gotTo, hooks)
+	}
+	if err := runLessonRelationAddWithDeps(cmd, []string{from, to}, deps); err == nil || !strings.Contains(err.Error(), "prepared event") {
+		t.Fatalf("first interrupted relation = %v", err)
+	}
+	outbox := event.NewOutbox(root)
+	prepared, err := outbox.Prepared()
+	requireCLISuccess(t, err)
+	if len(prepared) != 1 || prepared[0].EventName != "lesson.relation-recorded" {
+		t.Fatalf("interrupted relation prepared events = %#v", prepared)
+	}
+	ledgerBeforeRetry := treeDigestForCLI(t, filepath.Join(outbox.Root, "ledger"))
+	if _, stderr, err := runLesson(t, "relation", "add", from, to, "--type", typ, "--confirm", lesson.RelationToken(from, typ, to)); err != nil {
+		t.Fatalf("relation recovery retry: %v\nstderr=%s", err, stderr)
+	}
+	if got := treeDigestForCLI(t, filepath.Join(outbox.Root, "ledger")); !bytes.Equal(got, ledgerBeforeRetry) {
+		t.Fatal("relation recovery retry created or changed a second ledger")
+	}
+	prepared, err = outbox.Prepared()
+	requireCLISuccess(t, err)
+	if len(prepared) != 0 {
+		t.Fatalf("relation recovery retry did not finish original event: %#v", prepared)
 	}
 }
 

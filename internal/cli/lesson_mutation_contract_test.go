@@ -18,6 +18,9 @@ type lessonMutationActionContract struct {
 	boundedLint      bool
 	durableFence     bool
 	eventResolution  bool
+	byteStableNoop   bool
+	noNewEvent       bool
+	reusesPrepared   bool
 	anchors          map[string][]string
 }
 
@@ -27,12 +30,12 @@ func TestLessonMutationActionMatrixMatchesCallGraph(t *testing.T) {
 	contracts := []lessonMutationActionContract{
 		coordinatedLessonAction("lesson new", map[string][]string{"internal/cli/lesson.go": {"mutationErr := deps.withMutationLock", "deps.publishExclusive", "deps.indexUpsert", "deps.lint", "transaction.Fence", "transaction.Commit"}}),
 		coordinatedLessonAction("lesson new --force", map[string][]string{"internal/cli/lesson.go": {"mutationErr := deps.withMutationLock", "deps.rewriteAtomic", "deps.indexUpsert", "deps.lint", "transaction.Fence", "transaction.Commit"}}),
-		coordinatedLessonAction("lesson import-legacy --apply", map[string][]string{"internal/cli/lesson_import_legacy.go": {"transactionErr := deps.withMutationLocks", "deps.applyLegacy", "reconcileLockedLessons", "prepared.Commit"}}),
+		coordinatedLessonAction("lesson import-legacy --apply", map[string][]string{"internal/cli/lesson_import_legacy.go": {"transactionErr := deps.withMutationLocks", "deps.inspectLegacy", "deps.applyLegacy", "reconcileLockedLessons", "prepared.Commit"}}),
 		coordinatedLessonAction("lesson migrate-flat", map[string][]string{"internal/cli/lesson_migrate_flat.go": {"return deps.withMutationLock", "deps.migrateFlat", "reconcileLockedLessons", "prepared.Commit", "deps.finalizeFlat"}}),
 		coordinatedLessonAction("lesson occurrence add", map[string][]string{"internal/cli/lesson_occurrence.go": {"lockErr := deps.withMutationLock", "deps.addOccurrence", "reconcileLockedLessons", "prepared.Commit"}}),
 		coordinatedLessonAction("lesson recur (canonical)", map[string][]string{"internal/cli/lesson_recur.go": {"publishCanonicalOccurrence"}, "internal/cli/lesson_occurrence.go": {"lockErr := deps.withMutationLock", "deps.addOccurrence", "reconcileLockedLessons", "prepared.Commit"}}),
 		coordinatedLessonAction("lesson recur (legacy)", map[string][]string{"internal/cli/lesson_recur.go": {"deps.recurWithPostMutation", "reconcileLockedLessons", "prepared.Commit"}, "pkg/lesson/recur.go": {"withLessonMutationLock"}}),
-		coordinatedLessonAction("lesson relation add", map[string][]string{"internal/cli/lesson_relation.go": {"deps.addRelationWithPostMutation", "deps.indexUpsert", "deps.lint", "newLessonMutationCoordinator", "prepared.Commit"}, "pkg/lesson/relation.go": {"withLessonMutationLocks"}}),
+		coordinatedLessonAction("lesson relation add", map[string][]string{"internal/cli/lesson_relation.go": {"deps.addRelationTransaction", "deps.indexUpsert", "deps.lint", "newLessonMutationCoordinator", "prepared.Commit"}, "pkg/lesson/relation.go": {"withLessonMutationLocks"}}),
 		coordinatedLessonAction("lesson change-status / enforcement", map[string][]string{"internal/cli/lesson.go": {"prepareLessonPostMutationWithDeps", "deps.changeStatus", "deps.indexUpsert", "deps.lint", "newLessonMutationCoordinator", "transaction.Commit"}, "pkg/lesson/transitions.go": {"withLessonMutationLock"}}),
 		{
 			action: "lesson occurrence remove", class: "explicit-library-deletion",
@@ -42,12 +45,46 @@ func TestLessonMutationActionMatrixMatchesCallGraph(t *testing.T) {
 			action: "event recovery / replay", class: "event-recovery", eventResolution: true,
 			anchors: map[string][]string{"internal/cli/event.go": {"eventReplayCommand", "eventReconcileCommand", ".ReplayFrom(", ".Commit(", ".Abort("}},
 		},
+		{
+			action: "lesson new --force (byte-identical second run)", class: "idempotent-second-run",
+			byteStableNoop: true, noNewEvent: true, reusesPrepared: true,
+			anchors: map[string][]string{
+				"internal/cli/lesson.go":          {"bytes.Equal(current, body)", "deps.resumeEvent", "if noOp"},
+				"internal/cli/lesson_new_test.go": {"TestLessonNewForceCompletedSecondRunIsByteAndEventNoop", "TestLessonNewForceCompletedArtifactRetryFinishesOriginalPreparedEvent"},
+			},
+		},
+		{
+			action: "lesson import-legacy --apply (completed second run)", class: "idempotent-second-run",
+			byteStableNoop: true, noNewEvent: true, reusesPrepared: true,
+			anchors: map[string][]string{
+				"internal/cli/lesson_import_legacy.go":      {"inspection.MutationRequired", "deps.resumeEvent", "if prepared != nil"},
+				"internal/cli/lesson_import_legacy_test.go": {"TestLessonImportLegacy_ApplyReconcilesIndexAndRetriesCleanly", "TestLessonImportLegacy_UncertainCompletedArtifactsReusePreparedEventOnRetry"},
+			},
+		},
+		{
+			action: "lesson migrate-flat (completed second run)", class: "idempotent-second-run",
+			byteStableNoop: true, noNewEvent: true, reusesPrepared: true,
+			anchors: map[string][]string{
+				"internal/cli/lesson_migrate_flat.go":      {"if preflight.AlreadyMigrated", "return writeLegacyOutput"},
+				"internal/cli/lesson_migrate_flat_test.go": {"beforeSecond := treeDigestForCLI", "ledgerBeforeSecond"},
+			},
+		},
+		{
+			action: "lesson relation add (completed second run)", class: "idempotent-second-run",
+			byteStableNoop: true, noNewEvent: true, reusesPrepared: true,
+			anchors: map[string][]string{
+				"internal/cli/lesson_relation.go":      {"deps.resumeEvent", "if !mutated && prepared == nil"},
+				"pkg/lesson/relation.go":               {"return false, nil", "ReconcileNoop"},
+				"internal/cli/lesson_behavior_test.go": {"TestLessonRelationCompletedSecondRunIsByteAndEventNoop", "TestLessonRelationCompletedArtifactRetryFinishesOriginalPreparedEvent"},
+			},
+		},
 	}
 
 	wantActions := []string{
 		"event recovery / replay", "lesson change-status / enforcement", "lesson import-legacy --apply",
-		"lesson migrate-flat", "lesson new", "lesson new --force", "lesson occurrence add",
-		"lesson occurrence remove", "lesson recur (canonical)", "lesson recur (legacy)", "lesson relation add",
+		"lesson import-legacy --apply (completed second run)",
+		"lesson migrate-flat", "lesson migrate-flat (completed second run)", "lesson new", "lesson new --force", "lesson new --force (byte-identical second run)", "lesson occurrence add",
+		"lesson occurrence remove", "lesson recur (canonical)", "lesson recur (legacy)", "lesson relation add", "lesson relation add (completed second run)",
 	}
 	gotActions := make([]string, 0, len(contracts))
 	for _, contract := range contracts {
@@ -64,6 +101,10 @@ func TestLessonMutationActionMatrixMatchesCallGraph(t *testing.T) {
 		case "event-recovery":
 			if contract.artifactMutation || contract.rowReconcile || contract.boundedLint || contract.durableFence || !contract.eventResolution {
 				t.Errorf("%s must resolve only durable event state", contract.action)
+			}
+		case "idempotent-second-run":
+			if !contract.byteStableNoop || !contract.noNewEvent || !contract.reusesPrepared || contract.artifactMutation || contract.rowReconcile {
+				t.Errorf("%s must prove a byte-stable completed no-op and reuse retained recovery: %#v", contract.action, contract)
 			}
 		default:
 			t.Errorf("%s has unknown mutation class %q", contract.action, contract.class)

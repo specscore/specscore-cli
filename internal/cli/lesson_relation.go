@@ -52,16 +52,42 @@ func runLessonRelationAddWithDeps(cmd *cobra.Command, args []string, deps lesson
 	if err != nil {
 		return err
 	}
-	prepared, err := deps.prepareEvent(root, "lesson.relation-recorded", from, map[string]any{"type": typ, "to": to}, time.Time{})
-	if err != nil {
-		return exitcode.UnexpectedErrorf("preparing relation event: %v", err)
+	eventSlug, eventTarget := from, to
+	if typ == "related" && eventTarget < eventSlug {
+		eventSlug, eventTarget = eventTarget, eventSlug
 	}
-	if err := deps.addRelationWithPostMutation(dir, from, typ, to, postMutation); err != nil {
+	eventPayload := map[string]any{"type": typ, "to": eventTarget}
+	prepared, err := deps.resumeEvent(root, "lesson.relation-recorded", eventSlug, eventPayload)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("inspecting prepared relation event: %v", err)
+	}
+	var prepareErr error
+	mutated, err := deps.addRelationTransaction(dir, from, typ, to, lesson.RelationTransactionHooks{
+		BeforeMutation: func() error {
+			if prepared != nil {
+				return nil
+			}
+			prepared, prepareErr = deps.prepareEvent(root, "lesson.relation-recorded", eventSlug, eventPayload, time.Time{})
+			return prepareErr
+		},
+		PostMutation:  postMutation,
+		ReconcileNoop: prepared != nil,
+	})
+	if err != nil {
+		if prepareErr != nil {
+			return exitcode.UnexpectedErrorf("preparing relation event: %v", prepareErr)
+		}
+		if prepared == nil {
+			return exitcode.InvalidStateErrorf("adding relation: %v", err)
+		}
 		if recovery, resolved := prepared.ResolveMutationFailure("adding relation", err); recovery {
 			return exitcode.UnexpectedErrorf("%v", resolved)
 		} else {
 			return exitcode.InvalidStateErrorf("adding relation: %v", resolved)
 		}
+	}
+	if !mutated && prepared == nil {
+		return nil
 	}
 	delivery, commitErr := prepared.Commit(cmd.Context())
 	if commitErr != nil {
