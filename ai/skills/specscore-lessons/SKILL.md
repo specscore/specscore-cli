@@ -94,7 +94,7 @@ Writers and guidance emit `Open Questions`; compatibility parsing may still diag
 `event emit` durably records the complete nonempty subscriber set before delivery; an explicitly empty configured set opts out without creating a recipientless ledger. Each sink has an independent acknowledgement; one success never masks another failure. Delivery is at-least-once, so subscriber handlers must deduplicate `event.uuid`. Replay one sink, and explicitly reconcile an interrupted prepared event only after inspecting the preview evidence.
 
 ```sh
-specscore event emit --name lesson.observed --actor-kind skill --actor-id skill:specscore-lessons --artifact-type feature --artifact-id lesson --artifact-path spec/features/lesson/README.md --payload-json '{}'
+specscore event emit --name lesson.observed --actor-kind skill --actor-id skill:specscore-lessons --artifact-type lesson --artifact-id lesson --artifact-path spec/lessons/lesson/README.md --payload-json '{}'
 specscore event replay --subscriber audit-sink --limit 100
 specscore event replay --subscriber audit-sink --from 123e4567-e89b-42d3-a456-426614174000 --limit 100
 specscore event reconcile 123e4567-e89b-42d3-a456-426614174000 --decision commit

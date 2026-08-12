@@ -156328,9 +156328,9 @@ null
 25
 25
 1
-93
+103
 ""
-"= []string{\"idea\", \"feature\", \"plan\", \"task\", \"idea-seed\", \"consilium-review\"}"
+"= []string{\"idea\", \"feature\", \"plan\", \"task\", \"lesson\", \"idea-seed\", \"consilium-review\"}"
 null
 false
 false

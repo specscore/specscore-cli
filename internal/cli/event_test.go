@@ -182,6 +182,9 @@ func TestEventCommand_HelpShowsEnvelopeFlags(t *testing.T) {
 			t.Errorf("expected `event emit --help` to mention %s; got:\n%s", flag, out)
 		}
 	}
+	if !strings.Contains(out, "idea|feature|plan|task|lesson|idea-seed|consilium-review") {
+		t.Fatalf("event emit help does not mirror the complete artifact-type enum:\n%s", out)
+	}
 }
 
 // AC: required-flag-missing-fails-2.

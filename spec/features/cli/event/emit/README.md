@@ -45,7 +45,7 @@ The CLI supplies the envelope's stable fields and auto-fills the bookkeeping fie
 | `--name` | event name (e.g. `idea.drafted`) | `name` |
 | `--actor-kind` | one of `skill`, `user`, `external` | `actor.kind` |
 | `--actor-id` | string | `actor.id` |
-| `--artifact-type` | one of `idea`, `feature`, `plan`, `task`, `idea-seed`, `consilium-review` | `artifact.type` |
+| `--artifact-type` | one of `idea`, `feature`, `plan`, `task`, `lesson`, `idea-seed`, `consilium-review` | `artifact.type` |
 | `--artifact-id` | string | `artifact.id` |
 | `--artifact-path` | repo-relative path string | `artifact.path` |
 | `--artifact-revision` (optional) | git SHA or the literal `uncommitted` | `artifact.revision` (overrides auto-fill — see REQ:envelope-auto-fill) |

@@ -145,7 +145,7 @@ Before any subscriber's `Deliver` is called, the dispatcher MUST validate that t
 - `timestamp` parses as RFC 3339 with a UTC offset (the `Z` suffix is canonical; explicit `+00:00` is accepted).
 - `actor.kind` is one of `skill`, `user`, `external`. (`external` is the value used by automations that drive the CLI without being a skill or a human at a terminal.)
 - `actor.id` is a non-empty string.
-- `artifact.type` is one of `idea`, `feature`, `plan`, `task`, `idea-seed`, `consilium-review`. Future event-emitting callers MAY extend this enum by amending this REQ.
+- `artifact.type` is one of `idea`, `feature`, `plan`, `task`, `lesson`, `idea-seed`, `consilium-review`. Future event-emitting callers MAY extend this enum by amending this REQ.
 - `artifact.id` is a non-empty string.
 - `artifact.path` is a non-empty string.
 - `artifact.revision` is a non-empty string. The literal `uncommitted` is accepted for pre-commit emissions.

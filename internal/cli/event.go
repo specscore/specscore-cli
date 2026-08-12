@@ -212,7 +212,7 @@ Docs: https://specscore.md/event-emit
 	cmd.Flags().String("name", "", "event name (e.g. idea.drafted); supplies envelope field `name` (required)")
 	cmd.Flags().String("actor-kind", "", "one of skill|user|external; supplies envelope field `actor.kind` (required)")
 	cmd.Flags().String("actor-id", "", "actor identifier; supplies envelope field `actor.id` (required)")
-	cmd.Flags().String("artifact-type", "", "one of idea|feature|plan|task|idea-seed|consilium-review; supplies envelope field `artifact.type` (required)")
+	cmd.Flags().String("artifact-type", "", "one of idea|feature|plan|task|lesson|idea-seed|consilium-review; supplies envelope field `artifact.type` (required)")
 	cmd.Flags().String("artifact-id", "", "artifact slug or id; supplies envelope field `artifact.id` (required)")
 	cmd.Flags().String("artifact-path", "", "repo-relative path to the artifact; supplies envelope field `artifact.path` (required)")
 	cmd.Flags().String("artifact-revision", "", "git SHA or the literal `uncommitted`; supplies envelope field `artifact.revision` (optional; overrides auto-fill)")

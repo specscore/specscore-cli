@@ -143,7 +143,7 @@ fields. All fields are required.
 | `timestamp`         | RFC 3339 timestamp in UTC (must end with `Z` or `+00:00`).                                                           |
 | `actor.kind`        | One of `skill`, `user`, `external`.                                                                                  |
 | `actor.id`          | Non-empty string identifying the actor (e.g. skill name, user handle, integration slug).                             |
-| `artifact.type`     | One of `idea`, `feature`, `plan`, `task`, `idea-seed`, `consilium-review`.                                           |
+| `artifact.type`     | One of `idea`, `feature`, `plan`, `task`, `lesson`, `idea-seed`, `consilium-review`.                                 |
 | `artifact.id`       | Non-empty string identifying the artifact (typically its slug or ID).                                                |
 | `artifact.path`     | Non-empty repo-relative path to the artifact file.                                                                   |
 | `artifact.revision` | Non-empty string; the git revision the artifact was read at. The literal value `uncommitted` is permitted.           |
