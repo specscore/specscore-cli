@@ -318,6 +318,53 @@ func TestUpsertLessonIndexRow_IsBoundedIdempotentAndRejectsDuplicateOwnership(t 
 	}
 }
 
+// A flat Lesson already listed in the six-column table owns exactly one row,
+// linked as <slug>.md. Migrating it to directory form rewrites that same row —
+// the index contract is one row per slug, not one row per link shape.
+func TestUpsertLessonIndexRow_RewritesStaleFlatRowForTheSameSlug(t *testing.T) {
+	specRoot := t.TempDir()
+	lessonsDir := filepath.Join(specRoot, "lessons")
+	lessonPath := filepath.Join(lessonsDir, "migrated-boundary", "README.md")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(lessonPath), "occurrences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: "migrated-boundary", Owner: "codex", Date: "2026-08-10"}, []string{"process"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lessonPath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(lessonsDir, "README.md")
+	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n" +
+		"| [untouched](untouched.md) | Recorded | Legacy | 0 |  | — |\n" +
+		"| [migrated-boundary](migrated-boundary.md) | Recorded | Legacy | 1 |  | — |\n\n" +
+		"## Open Questions\n\nNone at this time.\n"
+	if err := os.WriteFile(indexPath, []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l, err := lesson.Parse(lessonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertLessonIndexRow(specRoot, l); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(after), "[migrated-boundary]"); got != 1 {
+		t.Fatalf("expected exactly one migrated-boundary row, got %d:\n%s", got, after)
+	}
+	if !strings.Contains(string(after), "| [migrated-boundary](migrated-boundary/README.md) | Recorded | process | 0 |  | — |") {
+		t.Fatalf("canonical projection missing after flat-row rewrite:\n%s", after)
+	}
+	if !strings.Contains(string(after), "| [untouched](untouched.md) | Recorded | Legacy | 0 |  | — |") {
+		t.Fatalf("bounded upsert disturbed an unrelated flat row:\n%s", after)
+	}
+}
+
 func TestLessonRules_EvidenceAndRelationsRequirePortableVerifiableReferences(t *testing.T) {
 	projectRoot := t.TempDir()
 	specRoot := filepath.Join(projectRoot, "spec")

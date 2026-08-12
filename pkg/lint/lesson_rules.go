@@ -815,7 +815,7 @@ func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 			separator = i
 			continue
 		}
-		if label, link, ok := parseMarkdownLink(firstMarkdownCell(trimmed)); ok && label == l.Slug && link == l.Slug+"/README.md" {
+		if lessonIndexRowOwnsSlug(trimmed, l.Slug) {
 			if found >= 0 {
 				return fmt.Errorf("lessons index contains duplicate row for %q", l.Slug)
 			}
@@ -853,7 +853,7 @@ func upsertLegacyLessonIndexRow(path string, b []byte, row lessonIndexRow) error
 			separator = i
 			continue
 		}
-		if label, link, ok := parseMarkdownLink(firstMarkdownCell(trimmed)); ok && label == row.slug && link == row.link {
+		if lessonIndexRowOwnsSlug(trimmed, row.slug) {
 			if found >= 0 {
 				return fmt.Errorf("lessons index contains duplicate row for %q", row.slug)
 			}
@@ -934,4 +934,15 @@ func firstMarkdownCell(line string) string {
 		return ""
 	}
 	return parts[0]
+}
+
+// lessonIndexRowOwnsSlug reports whether line is the index row for slug. Both
+// link shapes are the same row because the index holds one row per slug, not
+// one per layout: a migrating Lesson is re-linked in place from <slug>.md to
+// <slug>/README.md. This must stay identical to the slug readLessonIndexRows
+// derives, or an upsert appends a row that L-003/L-004 then reads as a
+// duplicate.
+func lessonIndexRowOwnsSlug(line, slug string) bool {
+	label, link, ok := parseMarkdownLink(firstMarkdownCell(line))
+	return ok && label == slug && (link == slug+"/README.md" || link == slug+".md")
 }
