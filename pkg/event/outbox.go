@@ -65,8 +65,9 @@ func (osOutboxFS) Remove(path string) error           { return os.Remove(path) }
 // the exported Outbox representation or another operation's behavior.
 type outboxOperations struct {
 	Outbox
-	fs    outboxFS
-	codec outboxLedgerCodec
+	fs         outboxFS
+	codec      outboxLedgerCodec
+	intentHash func([]byte) [sha256.Size]byte
 }
 
 func (o Outbox) operation() outboxOperations { return outboxOperations{Outbox: o, fs: osOutboxFS{}} }
@@ -113,6 +114,13 @@ func (o outboxOperations) ledgerCodec() outboxLedgerCodec {
 	return jsonOutboxLedgerCodec{}
 }
 
+func (o outboxOperations) preparedIntentHash(data []byte) [sha256.Size]byte {
+	if o.intentHash != nil {
+		return o.intentHash(data)
+	}
+	return sha256.Sum256(data)
+}
+
 func NewOutbox(projectRoot string) Outbox {
 	return Outbox{Root: filepath.Join(projectRoot, ".specscore", "event-outbox")}
 }
@@ -130,9 +138,11 @@ func (o Outbox) ackPath(name, id string) string {
 func (o Outbox) statePath(id string) string { return filepath.Join(o.Root, "state", id) }
 
 type ledgerRecord struct {
-	Event       Event    `json:"event"`
-	Subscribers []string `json:"subscribers"`
-	State       string   `json:"state"`
+	Event             Event           `json:"event"`
+	Subscribers       []string        `json:"subscribers"`
+	State             string          `json:"state"`
+	IntentFacts       json.RawMessage `json:"intent_facts,omitempty"`
+	IntentFingerprint string          `json:"intent_fingerprint,omitempty"`
 }
 
 const preparedState = "prepared"
@@ -143,10 +153,21 @@ const abortedState = "aborted"
 // an artifact mutation. Prepared records are visible/recoverable but not
 // delivered until Commit.
 func (o Outbox) Prepare(e Event, subscribers []Subscriber) error {
-	return o.operation().prepare(e, subscribers)
+	return o.operation().prepareIntent(e, subscribers, nil)
 }
 
 func (o outboxOperations) prepare(e Event, subscribers []Subscriber) error {
+	return o.prepareIntent(e, subscribers, nil)
+}
+
+// PrepareIntent records private, non-secret mutation facts alongside the
+// immutable event envelope. The facts and their fingerprint never enter the
+// subscriber Event or public Prepared reconciliation projection.
+func (o Outbox) PrepareIntent(e Event, subscribers []Subscriber, facts json.RawMessage) error {
+	return o.operation().prepareIntent(e, subscribers, facts)
+}
+
+func (o outboxOperations) prepareIntent(e Event, subscribers []Subscriber, facts json.RawMessage) error {
 	if err := Validate(e); err != nil {
 		return err
 	}
@@ -154,7 +175,18 @@ func (o outboxOperations) prepare(e Event, subscribers []Subscriber) error {
 	if err != nil {
 		return err
 	}
-	record := ledgerRecord{Event: e, Subscribers: names, State: preparedState}
+	canonicalFacts, err := canonicalPreparedIntentFacts(facts)
+	if err != nil {
+		return err
+	}
+	intent, err := canonicalPreparedIntent(e, canonicalFacts)
+	if err != nil {
+		return err
+	}
+	record := ledgerRecord{
+		Event: e, Subscribers: names, State: preparedState,
+		IntentFacts: canonicalFacts, IntentFingerprint: formatPreparedIntentFingerprint(o.preparedIntentHash(intent)),
+	}
 	b, err := o.ledgerCodec().Marshal(record)
 	if err != nil {
 		return err
@@ -284,6 +316,22 @@ func (o outboxOperations) readRecord(id string) (ledgerRecord, error) {
 	if err := validateLedgerSubscriberNames(r.Subscribers); err != nil {
 		return r, fmt.Errorf("event ledger %s contains invalid subscribers: %w", id, err)
 	}
+	if len(r.IntentFacts) == 0 || r.IntentFingerprint == "" {
+		return r, fmt.Errorf("event ledger %s lacks private prepared-intent identity; explicit recovery is required", id)
+	}
+	canonicalFacts, err := canonicalPreparedIntentFacts(r.IntentFacts)
+	if err != nil {
+		return r, fmt.Errorf("event ledger %s contains invalid private intent facts: %w", id, err)
+	}
+	intent, err := canonicalPreparedIntent(r.Event, canonicalFacts)
+	if err != nil {
+		return r, fmt.Errorf("event ledger %s contains an invalid private intent tuple: %w", id, err)
+	}
+	wantFingerprint := formatPreparedIntentFingerprint(o.preparedIntentHash(intent))
+	if r.IntentFingerprint != wantFingerprint {
+		return r, fmt.Errorf("event ledger %s private intent fingerprint does not match its envelope and facts", id)
+	}
+	r.IntentFacts = canonicalFacts
 	return r, nil
 }
 
@@ -485,22 +533,23 @@ func (o outboxOperations) prepared() ([]PreparedRecord, error) {
 // FindPreparedIntent locates the one unresolved event for a logical mutation.
 // UUID and timestamp are intentionally excluded because a retry must recover
 // the original random UUIDv4. The versioned, domain-separated fingerprint is
-// private acceleration only: a match is accepted only after comparing the
-// complete canonical non-secret intent tuple, and ambiguity fails closed.
-func (o Outbox) FindPreparedIntent(intent Event) (*Event, error) {
-	return o.operation().findPreparedIntent(intent)
+// stored only in the private ledger and used only as acceleration: a match is
+// accepted after comparing the complete canonical envelope and private facts.
+// A different intent in the same command/artifact scope fails closed.
+func (o Outbox) FindPreparedIntent(intent Event, facts json.RawMessage) (*Event, error) {
+	return o.operation().findPreparedIntent(intent, facts)
 }
 
-func (o outboxOperations) findPreparedIntent(intent Event) (*Event, error) {
-	return o.findPreparedIntentWithHash(intent, sha256.Sum256)
-}
-
-func (o outboxOperations) findPreparedIntentWithHash(intent Event, fingerprint func([]byte) [sha256.Size]byte) (*Event, error) {
-	want, err := canonicalPreparedIntent(intent)
+func (o outboxOperations) findPreparedIntent(intent Event, facts json.RawMessage) (*Event, error) {
+	canonicalFacts, err := canonicalPreparedIntentFacts(facts)
 	if err != nil {
 		return nil, err
 	}
-	wantHash := fingerprint(want)
+	want, err := canonicalPreparedIntent(intent, canonicalFacts)
+	if err != nil {
+		return nil, err
+	}
+	wantFingerprint := formatPreparedIntentFingerprint(o.preparedIntentHash(want))
 	entries, err := o.operations().ReadDir(filepath.Join(o.Root, "ledger"))
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -527,9 +576,11 @@ func (o outboxOperations) findPreparedIntentWithHash(intent Event, fingerprint f
 		}
 		// readRecord validates the stored envelope and payload before returning,
 		// so canonicalization cannot fail for this candidate.
-		candidate, _ := canonicalPreparedIntent(record.Event)
-		candidateHash := fingerprint(candidate)
-		if candidateHash != wantHash {
+		candidate, _ := canonicalPreparedIntent(record.Event, record.IntentFacts)
+		if record.IntentFingerprint != wantFingerprint {
+			if samePreparedIntentScope(record.Event, intent) {
+				return nil, fmt.Errorf("prepared event %s exists for the same mutation scope with different intent; reconcile it explicitly", id)
+			}
 			continue
 		}
 		if !bytes.Equal(candidate, want) {
@@ -544,17 +595,23 @@ func (o outboxOperations) findPreparedIntentWithHash(intent Event, fingerprint f
 	return found, nil
 }
 
-func canonicalPreparedIntent(e Event) ([]byte, error) {
+const preparedIntentDomain = "specscore:event-prepared-intent:v1"
+
+func canonicalPreparedIntent(e Event, facts json.RawMessage) ([]byte, error) {
 	payload, err := canonicalJSON(e.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalizing prepared event intent payload: %w", err)
 	}
+	canonicalFacts, err := canonicalPreparedIntentFacts(facts)
+	if err != nil {
+		return nil, err
+	}
 	fields := [][]byte{
-		[]byte("specscore:event-prepared-intent:v1"),
+		[]byte(preparedIntentDomain),
 		[]byte(e.Name), []byte(fmt.Sprint(e.Version)),
 		[]byte(e.Actor.Kind), []byte(e.Actor.ID),
 		[]byte(e.Artifact.Type), []byte(e.Artifact.ID), []byte(e.Artifact.Path), []byte(e.Artifact.Revision),
-		payload,
+		payload, canonicalFacts,
 	}
 	var encoded bytes.Buffer
 	var size [8]byte
@@ -566,18 +623,88 @@ func canonicalPreparedIntent(e Event) ([]byte, error) {
 	return encoded.Bytes(), nil
 }
 
+func canonicalPreparedIntentFacts(facts json.RawMessage) (json.RawMessage, error) {
+	if len(facts) == 0 {
+		facts = json.RawMessage(`{}`)
+	}
+	canonical, err := canonicalJSON(facts)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalizing private prepared event intent facts: %w", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(canonical, &object); err != nil || object == nil {
+		return nil, fmt.Errorf("private prepared event intent facts must be a JSON object")
+	}
+	return canonical, nil
+}
+
+func formatPreparedIntentFingerprint(sum [sha256.Size]byte) string {
+	return preparedIntentDomain + ":sha256:" + hex.EncodeToString(sum[:])
+}
+
+func samePreparedIntentScope(a, b Event) bool {
+	return a.Name == b.Name && a.Version == b.Version && a.Actor == b.Actor && a.Artifact == b.Artifact
+}
+
 func canonicalJSON(data json.RawMessage) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	var value any
-	if err := dec.Decode(&value); err != nil {
+	value, err := decodeUniqueJSONValue(dec)
+	if err != nil {
 		return nil, err
 	}
-	var trailing any
-	if err := dec.Decode(&trailing); err != io.EOF {
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, fmt.Errorf("trailing JSON")
 	}
 	return json.Marshal(value)
+}
+
+func decodeUniqueJSONValue(dec *json.Decoder) (any, error) {
+	token, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	delim, composite := token.(json.Delim)
+	if !composite {
+		return token, nil
+	}
+	switch delim {
+	case '{':
+		object := map[string]any{}
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			// encoding/json guarantees a string token at an object-key boundary.
+			key := keyToken.(string)
+			if _, duplicate := object[key]; duplicate {
+				return nil, fmt.Errorf("duplicate JSON object key %q", key)
+			}
+			value, err := decodeUniqueJSONValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = value
+		}
+		if _, err := dec.Token(); err != nil {
+			return nil, fmt.Errorf("closing JSON object: %w", err)
+		}
+		return object, nil
+	default: // encoding/json exposes only '{' and '[' at a value boundary.
+		array := make([]any, 0)
+		for dec.More() {
+			value, err := decodeUniqueJSONValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			array = append(array, value)
+		}
+		if _, err := dec.Token(); err != nil {
+			return nil, fmt.Errorf("closing JSON array: %w", err)
+		}
+		return array, nil
+	}
 }
 
 func safeArtifactEvidencePath(path string) bool {

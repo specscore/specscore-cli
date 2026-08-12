@@ -71,11 +71,11 @@ func TestLessonClassificationShapesAndNewFailures(t *testing.T) {
 			slug := "new-" + phase
 			switch phase {
 			case "resume":
-				deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+				deps.resumeEvent = func(string, string, string, map[string]any, map[string]any) (*preparedLessonEvent, error) {
 					return nil, errors.New("resume")
 				}
 			case "prepare":
-				deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
+				deps.prepareIntentEvent = func(string, string, string, map[string]any, map[string]any, time.Time) (*preparedLessonEvent, error) {
 					return nil, errors.New("prepare")
 				}
 			case "parse":
@@ -85,7 +85,7 @@ func TestLessonClassificationShapesAndNewFailures(t *testing.T) {
 			case "lint":
 				deps.lint = func(lint.Options) ([]lint.Violation, error) { return nil, errors.New("lint") }
 			case "commit":
-				deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
+				deps.prepareIntentEvent = func(string, string, string, map[string]any, map[string]any, time.Time) (*preparedLessonEvent, error) {
 					return &preparedLessonEvent{outbox: event.NewOutbox(root), event: event.Event{UUID: uuid.NewString()}}, nil
 				}
 			}
@@ -255,15 +255,15 @@ func TestLessonRelationAdapterFailures(t *testing.T) {
 		case "post-preflight":
 			deps.fs.stat = func(string) (os.FileInfo, error) { return nil, errors.New("index preflight") }
 		case "resume":
-			deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+			deps.resumeEvent = func(string, string, string, map[string]any, map[string]any) (*preparedLessonEvent, error) {
 				return nil, errors.New("resume")
 			}
 		case "resume-prepared":
-			deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+			deps.resumeEvent = func(string, string, string, map[string]any, map[string]any) (*preparedLessonEvent, error) {
 				return &preparedLessonEvent{disabled: true}, nil
 			}
 		case "prepare":
-			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
+			deps.prepareIntentEvent = func(string, string, string, map[string]any, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")
 			}
 		case "add-compensated":
@@ -282,7 +282,7 @@ func TestLessonRelationAdapterFailures(t *testing.T) {
 				return false, errors.New("add")
 			}
 		case "commit":
-			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
+			deps.prepareIntentEvent = func(string, string, string, map[string]any, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return &preparedLessonEvent{outbox: event.NewOutbox(root), event: event.Event{UUID: "missing"}}, nil
 			}
 		case "delivery":
@@ -711,7 +711,7 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 				return lesson.LegacyApplyInspection{}, errors.New("inspect")
 			}
 		case "resume":
-			deps.resumeEvent = func(string, string, string, map[string]any) (*preparedLessonEvent, error) {
+			deps.resumeEvent = func(string, string, string, map[string]any, map[string]any) (*preparedLessonEvent, error) {
 				return nil, errors.New("resume")
 			}
 		case "timestamp":
@@ -719,7 +719,7 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 				return lesson.LegacyInventory{Source: lesson.LegacySourceRef{CommittedAt: "invalid"}}, nil
 			}
 		case "prepare":
-			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
+			deps.prepareIntentEvent = func(string, string, string, map[string]any, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return nil, errors.New("prepare")
 			}
 		case "apply-compensated":
@@ -729,7 +729,7 @@ func exerciseLegacyImportApplyAdapterEdges(t *testing.T) {
 		case "reconcile":
 			deps.lint = func(lint.Options) ([]lint.Violation, error) { return nil, errors.New("reconcile") }
 		case "commit":
-			deps.prepareEvent = func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error) {
+			deps.prepareIntentEvent = func(string, string, string, map[string]any, map[string]any, time.Time) (*preparedLessonEvent, error) {
 				return &preparedLessonEvent{outbox: event.NewOutbox(root), event: event.Event{UUID: "missing"}}, nil
 			}
 		case "delivery":

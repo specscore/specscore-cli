@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -249,6 +250,61 @@ func TestLessonNewForceCompletedArtifactRetryFinishesOriginalPreparedEvent(t *te
 	requireCLISuccess(t, err)
 	if len(prepared) != 0 {
 		t.Fatalf("force recovery retry did not finish original event: %#v", prepared)
+	}
+}
+
+func TestLessonNewForceCrossIntentAndLaterPreflightFailureRetainOriginalPreparedEvent(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	configureNoopLessonEvents(t, root)
+	if _, stderr, err := runLesson(t, "new", "retained-force", "--title", "Original Intent", "--owner", "tester"); err != nil {
+		t.Fatalf("fixture create: %v\nstderr=%s", err, stderr)
+	}
+	target := filepath.Join(root, "spec", "lessons", "retained-force", "README.md")
+	original, err := os.ReadFile(target)
+	requireCLISuccess(t, err)
+	cfg, err := projectdef.ReadSpecConfig(root)
+	requireCLISuccess(t, err)
+	p, err := prepareLessonIntentEvent(
+		root, "lesson.created", "retained-force",
+		map[string]any{"classifications": lessonClassificationsFromConfig(cfg)},
+		map[string]any{"content_sha256": lessonIntentDigest(original)}, time.Time{},
+	)
+	requireCLISuccess(t, err)
+	ledgerBefore := treeDigestForCLI(t, filepath.Join(root, ".specscore", "event-outbox", "ledger"))
+	if _, _, err := runLesson(t, "new", "retained-force", "--title", "Different Intent", "--owner", "tester", "--force"); err == nil || !strings.Contains(err.Error(), "different intent") {
+		t.Fatalf("cross-intent force retry = %v", err)
+	}
+	got, err := os.ReadFile(target)
+	requireCLISuccess(t, err)
+	if !bytes.Equal(got, original) {
+		t.Fatal("cross-intent force changed the existing Lesson")
+	}
+	if gotDigest := treeDigestForCLI(t, filepath.Join(root, ".specscore", "event-outbox", "ledger")); !bytes.Equal(gotDigest, ledgerBefore) {
+		t.Fatal("cross-intent force created or changed an event ledger")
+	}
+
+	foreign := []byte("foreign concurrent Lesson bytes\n")
+	deps := defaultLessonCLIDeps()
+	realLock := deps.withMutationLock
+	deps.withMutationLock = func(projectRoot, slug string, mutate func() error) error {
+		requireCLISuccess(t, os.WriteFile(target, foreign, 0o644))
+		return realLock(projectRoot, slug, mutate)
+	}
+	cmd := lessonNewCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "title": "Original Intent", "owner": "tester", "force": "true"})
+	if err := runLessonNewWithDeps(cmd, []string{"retained-force"}, deps); err == nil || !strings.Contains(err.Error(), "resumed prepared event") {
+		t.Fatalf("resumed force preflight conflict = %v", err)
+	}
+	got, err = os.ReadFile(target)
+	requireCLISuccess(t, err)
+	if !bytes.Equal(got, foreign) {
+		t.Fatal("resumed force conflict overwrote the concurrent bytes")
+	}
+	prepared, err := event.NewOutbox(root).Prepared()
+	requireCLISuccess(t, err)
+	if len(prepared) != 1 || prepared[0].EventUUID != p.event.UUID {
+		t.Fatalf("resumed force conflict aborted original recovery evidence: %#v", prepared)
 	}
 }
 

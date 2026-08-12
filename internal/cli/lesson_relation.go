@@ -57,7 +57,7 @@ func runLessonRelationAddWithDeps(cmd *cobra.Command, args []string, deps lesson
 		eventSlug, eventTarget = eventTarget, eventSlug
 	}
 	eventPayload := map[string]any{"type": typ, "to": eventTarget}
-	prepared, err := deps.resumeEvent(root, "lesson.relation-recorded", eventSlug, eventPayload)
+	prepared, err := deps.resumeEvent(root, "lesson.relation-recorded", eventSlug, eventPayload, nil)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("inspecting prepared relation event: %v", err)
 	}
@@ -67,7 +67,7 @@ func runLessonRelationAddWithDeps(cmd *cobra.Command, args []string, deps lesson
 			if prepared != nil {
 				return nil
 			}
-			prepared, prepareErr = deps.prepareEvent(root, "lesson.relation-recorded", eventSlug, eventPayload, time.Time{})
+			prepared, prepareErr = deps.prepareIntentEvent(root, "lesson.relation-recorded", eventSlug, eventPayload, nil, time.Time{})
 			return prepareErr
 		},
 		PostMutation:  postMutation,

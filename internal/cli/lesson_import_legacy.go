@@ -115,7 +115,12 @@ func runLessonImportLegacyWithDeps(cmd *cobra.Command, deps lessonCLIDeps) error
 		}
 		result = inspection.Result
 		eventPayload := map[string]any{"source_sha256": inv.Source.SHA256, "source_revision": inv.Source.Revision, "mapping_count": len(mapping.Entries)}
-		prepared, err := deps.resumeEvent(root, "lesson.legacy-import-applied", "legacy-import", eventPayload)
+		// LegacyMapping contains only JSON-native values. Typed re-encoding makes
+		// object ordering deterministic while retaining the mutation-significant
+		// entry and classification order.
+		normalizedMapping, _ := json.Marshal(mapping)
+		intentFacts := map[string]any{"mapping_sha256": lessonIntentDigest(normalizedMapping)}
+		prepared, err := deps.resumeEvent(root, "lesson.legacy-import-applied", "legacy-import", eventPayload, intentFacts)
 		if err != nil {
 			return exitcode.UnexpectedErrorf("inspecting prepared import event: %v", err)
 		}
@@ -130,7 +135,7 @@ func runLessonImportLegacyWithDeps(cmd *cobra.Command, deps lessonCLIDeps) error
 				if parseErr != nil {
 					return exitcode.UnexpectedErrorf("parsing validated legacy source timestamp: %v", parseErr)
 				}
-				prepared, err = deps.prepareEvent(root, "lesson.legacy-import-applied", "legacy-import", eventPayload, committedAt)
+				prepared, err = deps.prepareIntentEvent(root, "lesson.legacy-import-applied", "legacy-import", eventPayload, intentFacts, committedAt)
 				if err != nil {
 					return exitcode.UnexpectedErrorf("preparing import event: %v", err)
 				}

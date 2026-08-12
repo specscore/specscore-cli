@@ -151,7 +151,8 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		return exitcode.UnexpectedErrorf("preflighting declared write set: %v", err)
 	}
 	eventPayload := map[string]any{"classifications": classifications}
-	prepared, err := deps.resumeEvent(root, "lesson.created", slug, eventPayload)
+	intentFacts := map[string]any{"content_sha256": lessonIntentDigest(body)}
+	prepared, err := deps.resumeEvent(root, "lesson.created", slug, eventPayload, intentFacts)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("inspecting prepared lesson event: %v", err)
 	}
@@ -185,7 +186,7 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 			}
 		}
 		if prepared == nil {
-			prepared, prepareErr = deps.prepareEvent(root, "lesson.created", slug, eventPayload, time.Time{})
+			prepared, prepareErr = deps.prepareIntentEvent(root, "lesson.created", slug, eventPayload, intentFacts, time.Time{})
 			if prepareErr != nil {
 				return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: prepareErr}
 			}

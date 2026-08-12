@@ -35,8 +35,9 @@ type lessonCLIDeps struct {
 	indexUpsert            func(string, *lesson.Lesson) error
 	lint                   func(lint.Options) ([]lint.Violation, error)
 	prepareEvent           func(string, string, string, map[string]any, time.Time) (*preparedLessonEvent, error)
+	prepareIntentEvent     func(string, string, string, map[string]any, map[string]any, time.Time) (*preparedLessonEvent, error)
 	prepareEventWithID     func(string, string, string, map[string]any, time.Time, string) (*preparedLessonEvent, error)
-	resumeEvent            func(string, string, string, map[string]any) (*preparedLessonEvent, error)
+	resumeEvent            func(string, string, string, map[string]any, map[string]any) (*preparedLessonEvent, error)
 	finalizeFlat           func(lesson.FlatMigrationOptions, string) error
 	preflightFlat          func(lesson.FlatMigrationOptions) (lesson.FlatMigrationPreflight, error)
 	migrateFlat            func(lesson.FlatMigrationOptions) (lesson.FlatMigrationResult, error)
@@ -67,6 +68,7 @@ func defaultLessonCLIDeps() lessonCLIDeps {
 		indexUpsert:            lint.UpsertLessonIndexRow,
 		lint:                   lint.Lint,
 		prepareEvent:           prepareLessonEvent,
+		prepareIntentEvent:     prepareLessonIntentEvent,
 		prepareEventWithID:     prepareLessonEventWithID,
 		resumeEvent:            resumePreparedLessonEvent,
 		finalizeFlat:           lesson.FinalizeFlatMigration,

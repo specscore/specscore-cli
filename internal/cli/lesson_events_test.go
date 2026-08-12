@@ -68,15 +68,21 @@ func TestPreparedLessonEventBoundaries(t *testing.T) {
 }
 
 func TestResumePreparedLessonEventFailsClosedAndReloadsSubscribers(t *testing.T) {
-	if _, err := resumePreparedLessonEvent(t.TempDir(), "lesson.test", "x", map[string]any{"bad": make(chan int)}); err == nil {
+	if _, err := resumePreparedLessonEvent(t.TempDir(), "lesson.test", "x", map[string]any{"bad": make(chan int)}, nil); err == nil {
 		t.Fatal("uncanonicalizable resume payload was accepted")
+	}
+	if _, err := resumePreparedLessonEvent(t.TempDir(), "lesson.test", "x", nil, map[string]any{"bad": make(chan int)}); err == nil {
+		t.Fatal("uncanonicalizable private resume facts were accepted")
+	}
+	if _, err := prepareLessonIntentEvent(t.TempDir(), "lesson.test", "x", nil, map[string]any{"bad": make(chan int)}, time.Time{}); err == nil {
+		t.Fatal("uncanonicalizable private prepare facts were accepted")
 	}
 
 	corruptRoot := setupSpecRoot(t)
 	ledgerPath := filepath.Join(corruptRoot, ".specscore", "event-outbox", "ledger", uuid.NewString()+".json")
 	requireCLISuccess(t, os.MkdirAll(filepath.Dir(ledgerPath), 0o755))
 	requireCLISuccess(t, os.WriteFile(ledgerPath, []byte("{"), 0o644))
-	if _, err := resumePreparedLessonEvent(corruptRoot, "lesson.test", "x", map[string]any{}); err == nil {
+	if _, err := resumePreparedLessonEvent(corruptRoot, "lesson.test", "x", map[string]any{}, nil); err == nil {
 		t.Fatal("corrupt prepared ledger was ignored")
 	}
 
@@ -85,11 +91,11 @@ func TestResumePreparedLessonEventFailsClosedAndReloadsSubscribers(t *testing.T)
 	p, err := prepareLessonEvent(root, "lesson.test", "x", map[string]any{"value": 1}, time.Time{})
 	requireCLISuccess(t, err)
 	requireCLISuccess(t, os.WriteFile(filepath.Join(root, "specscore.yaml"), []byte("events: ["), 0o644))
-	if _, err := resumePreparedLessonEvent(root, "lesson.test", "x", map[string]any{"value": 1}); err == nil {
+	if _, err := resumePreparedLessonEvent(root, "lesson.test", "x", map[string]any{"value": 1}, nil); err == nil {
 		t.Fatal("subscriber configuration failure was ignored during resume")
 	}
 	requireCLISuccess(t, os.WriteFile(filepath.Join(root, "specscore.yaml"), []byte("events:\n  subscribers:\n    - type: noop\n"), 0o644))
-	resumed, err := resumePreparedLessonEvent(root, "lesson.test", "x", map[string]any{"value": 1})
+	resumed, err := resumePreparedLessonEvent(root, "lesson.test", "x", map[string]any{"value": 1}, nil)
 	if err != nil || resumed == nil || resumed.event.UUID != p.event.UUID || len(resumed.subscribers) != 1 {
 		t.Fatalf("resumed event = %#v, %v", resumed, err)
 	}
@@ -97,5 +103,24 @@ func TestResumePreparedLessonEventFailsClosedAndReloadsSubscribers(t *testing.T)
 	requireCLISuccess(t, err)
 	if len(prepared) != 1 || prepared[0].EventUUID != p.event.UUID {
 		t.Fatalf("resume changed prepared ledger set: %#v", prepared)
+	}
+}
+
+func TestResumedPreparedLessonEventIsNeverAbortedByLaterAttempt(t *testing.T) {
+	root := setupSpecRoot(t)
+	requireCLISuccess(t, os.WriteFile(filepath.Join(root, "specscore.yaml"), []byte("events:\n  subscribers:\n    - type: noop\n"), 0o644))
+	p, err := prepareLessonEvent(root, "lesson.test", "x", map[string]any{"value": 1}, time.Time{})
+	requireCLISuccess(t, err)
+	p.resumed = true
+	for _, outcome := range []lesson.MutationOutcome{lesson.MutationPrePublication, lesson.MutationCompensated} {
+		recovery, resolveErr := p.ResolveMutationFailure("retry", &lesson.MutationError{Outcome: outcome, Err: errors.New("later attempt")})
+		if !recovery || !strings.Contains(resolveErr.Error(), "resumed prepared event") {
+			t.Fatalf("resumed %v resolution = (%t, %v)", outcome, recovery, resolveErr)
+		}
+	}
+	prepared, err := event.NewOutbox(root).Prepared()
+	requireCLISuccess(t, err)
+	if len(prepared) != 1 || prepared[0].EventUUID != p.event.UUID {
+		t.Fatalf("later attempt aborted retained recovery evidence: %#v", prepared)
 	}
 }

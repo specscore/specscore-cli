@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -12,11 +13,23 @@ import (
 	"github.com/specscore/specscore-cli/pkg/lesson"
 )
 
+func lessonIntentDigest(data []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func marshalLessonIntentFacts(facts map[string]any) ([]byte, error) {
+	if facts == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(facts)
+}
+
 type preparedLessonEvent struct {
 	outbox      event.Outbox
 	subscribers []event.Subscriber
 	event       event.Event
 	disabled    bool
+	resumed     bool
 }
 
 // lessonMutationCoordinator is the common fail-closed boundary for Lesson
@@ -56,8 +69,16 @@ func prepareLessonEvent(root, name, slug string, payload map[string]any, at time
 	return prepareLessonEventWithID(root, name, slug, payload, at, uuid.NewString())
 }
 
-func resumePreparedLessonEvent(root, name, slug string, payload map[string]any) (*preparedLessonEvent, error) {
+func prepareLessonIntentEvent(root, name, slug string, payload, intentFacts map[string]any, at time.Time) (*preparedLessonEvent, error) {
+	return prepareLessonEventWithIntentID(root, name, slug, payload, intentFacts, at, uuid.NewString())
+}
+
+func resumePreparedLessonEvent(root, name, slug string, payload, intentFacts map[string]any) (*preparedLessonEvent, error) {
 	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := marshalLessonIntentFacts(intentFacts)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +89,7 @@ func resumePreparedLessonEvent(root, name, slug string, payload map[string]any) 
 		Artifact: event.Artifact{Type: "lesson", ID: slug, Path: filepath.ToSlash(filepath.Join("spec", "lessons", slug)), Revision: "uncommitted"},
 		Payload:  body,
 	}
-	match, err := o.FindPreparedIntent(intent)
+	match, err := o.FindPreparedIntent(intent, facts)
 	if err != nil {
 		return nil, err
 	}
@@ -79,13 +100,21 @@ func resumePreparedLessonEvent(root, name, slug string, payload map[string]any) 
 	if err != nil {
 		return nil, err
 	}
-	return &preparedLessonEvent{outbox: o, subscribers: subscribers, event: *match}, nil
+	return &preparedLessonEvent{outbox: o, subscribers: subscribers, event: *match, resumed: true}, nil
 }
 
 // prepareLessonEventWithID lets deterministic migrations bind their durable
 // artifact transaction to one stable event envelope across crash recovery.
 func prepareLessonEventWithID(root, name, slug string, payload map[string]any, at time.Time, id string) (*preparedLessonEvent, error) {
+	return prepareLessonEventWithIntentID(root, name, slug, payload, nil, at, id)
+}
+
+func prepareLessonEventWithIntentID(root, name, slug string, payload, intentFacts map[string]any, at time.Time, id string) (*preparedLessonEvent, error) {
 	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := marshalLessonIntentFacts(intentFacts)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +132,7 @@ func prepareLessonEventWithID(root, name, slug string, payload map[string]any, a
 		return &preparedLessonEvent{subscribers: subs, event: e, disabled: true}, nil
 	}
 	o := event.NewOutbox(root)
-	if err := o.Prepare(e, subs); err != nil {
+	if err := o.PrepareIntent(e, subs, facts); err != nil {
 		return nil, err
 	}
 	return &preparedLessonEvent{outbox: o, subscribers: subs, event: e}, nil
@@ -133,6 +162,12 @@ func (p *preparedLessonEvent) ResolveMutationFailure(operation string, cause err
 			ledger = "event delivery was disabled, so there is no durable event record"
 		}
 		return true, fmt.Errorf("%s: %w; recovery required: artifact state is uncertain; %s; inspect the artifact before retrying", operation, cause, ledger)
+	}
+	if p.resumed {
+		// This record predates the current attempt and may evidence publication
+		// from that earlier attempt. A later prepublication/compensated failure
+		// does not prove ownership of — or absence of — the earlier artifact.
+		return true, fmt.Errorf("%s: %w; recovery required: resumed prepared event %s remains inspectable because this retry cannot abort an earlier attempt", operation, cause, p.event.UUID)
 	}
 	if outcome == lesson.MutationPrePublication || outcome == lesson.MutationCompensated {
 		if err := p.Abort(); err == nil {

@@ -98,6 +98,14 @@ type collisionLinkFS struct {
 
 type absentCollisionLinkFS struct{ faultOutboxFS }
 
+type captureIntentSubscriber struct{ got Event }
+
+func (s *captureIntentSubscriber) Name() string { return "capture" }
+func (s *captureIntentSubscriber) Deliver(_ context.Context, e Event) error {
+	s.got = e
+	return nil
+}
+
 func (absentCollisionLinkFS) Link(string, string) error { return fs.ErrExist }
 
 type existingMarkerFaultFS struct {
@@ -521,7 +529,18 @@ func TestOutbox_DurabilityFileFailuresStopPublicationBeforeStateChange(t *testin
 func TestOutbox_ReadRecordRejectsEveryUnsafeDurableLedgerShape(t *testing.T) {
 	o := NewOutbox(t.TempDir())
 	id := validEvent().UUID
-	valid := ledgerRecord{Event: validEvent(), Subscribers: []string{"sink"}, State: preparedState}
+	facts, err := canonicalPreparedIntentFacts(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := canonicalPreparedIntent(validEvent(), facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := ledgerRecord{
+		Event: validEvent(), Subscribers: []string{"sink"}, State: preparedState,
+		IntentFacts: facts, IntentFingerprint: formatPreparedIntentFingerprint(sha256.Sum256(intent)),
+	}
 	encode := func(t *testing.T, record ledgerRecord) []byte {
 		t.Helper()
 		b, err := json.Marshal(record)
@@ -542,6 +561,16 @@ func TestOutbox_ReadRecordRejectsEveryUnsafeDurableLedgerShape(t *testing.T) {
 	if _, err := o.readRecord("not-a-uuid"); err == nil {
 		t.Fatal("invalid event UUID must be rejected before a filesystem read")
 	}
+	missingFacts := valid
+	missingFacts.IntentFacts = nil
+	missingFingerprint := valid
+	missingFingerprint.IntentFingerprint = ""
+	nonObjectFacts := valid
+	nonObjectFacts.IntentFacts = json.RawMessage(`[]`)
+	duplicatePayload := valid
+	duplicatePayload.Event.Payload = json.RawMessage(`{"k":1,"k":2}`)
+	mismatchedFingerprint := valid
+	mismatchedFingerprint.IntentFingerprint = preparedIntentDomain + ":sha256:" + strings.Repeat("0", sha256.Size*2)
 	for _, tc := range []struct {
 		name string
 		body []byte
@@ -552,6 +581,11 @@ func TestOutbox_ReadRecordRejectsEveryUnsafeDurableLedgerShape(t *testing.T) {
 		{"non-prepared-record", encode(t, ledgerRecord{Event: valid.Event, Subscribers: valid.Subscribers, State: committedState})},
 		{"invalid-envelope", encode(t, ledgerRecord{Event: Event{UUID: id}, Subscribers: valid.Subscribers, State: preparedState})},
 		{"unsorted-subscribers", encode(t, ledgerRecord{Event: valid.Event, Subscribers: []string{"z", "a"}, State: preparedState})},
+		{"missing-intent-facts", encode(t, missingFacts)},
+		{"missing-intent-fingerprint", encode(t, missingFingerprint)},
+		{"non-object-intent-facts", encode(t, nonObjectFacts)},
+		{"duplicate-key-intent-payload", encode(t, duplicatePayload)},
+		{"mismatched-intent-fingerprint", encode(t, mismatchedFingerprint)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			write(t, tc.body)
@@ -559,6 +593,10 @@ func TestOutbox_ReadRecordRejectsEveryUnsafeDurableLedgerShape(t *testing.T) {
 				t.Fatal("unsafe ledger must be rejected")
 			}
 		})
+	}
+	write(t, encode(t, missingFacts))
+	if _, err := o.Prepared(); err == nil || !strings.Contains(err.Error(), "explicit recovery is required") {
+		t.Fatalf("legacy private-intent ledger did not fail closed through public reconciliation: %v", err)
 	}
 }
 
@@ -580,14 +618,23 @@ func TestOutbox_DecisionRetriesReadExistingCASWinnerWithoutOverwritingIt(t *test
 }
 
 func TestOutbox_FindPreparedIntentCanonicalizesPrivatelyAndFailsClosed(t *testing.T) {
-	if found, err := NewOutbox(t.TempDir()).FindPreparedIntent(validEvent()); err != nil || found != nil {
+	if found, err := NewOutbox(t.TempDir()).FindPreparedIntent(validEvent(), nil); err != nil || found != nil {
 		t.Fatalf("empty prepared intent lookup = %#v, %v", found, err)
 	}
 	o := NewOutbox(t.TempDir())
 	e := validEvent()
 	e.Payload = json.RawMessage(`{"z":1,"nested":{"b":2,"a":1}}`)
-	if err := o.Prepare(e, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+	facts := json.RawMessage(`{"content_sha256":"private-digest"}`)
+	if err := o.PrepareIntent(e, []Subscriber{&outboxSub{name: "sink"}}, facts); err != nil {
 		t.Fatal(err)
+	}
+	ledgerInfo, err := os.Stat(o.ledgerPath(e.UUID))
+	if err != nil || ledgerInfo.Mode().Perm() != 0o600 || filepath.Dir(o.ledgerPath(e.UUID)) != filepath.Join(o.Root, "ledger") {
+		t.Fatalf("private intent ledger path/permissions = %s %v, %v", o.ledgerPath(e.UUID), ledgerInfo, err)
+	}
+	privateLedger, err := os.ReadFile(o.ledgerPath(e.UUID))
+	if err != nil || !bytes.Contains(privateLedger, []byte(`"intent_facts"`)) || !bytes.Contains(privateLedger, []byte(`"intent_fingerprint":"`+preparedIntentDomain+`:sha256:`)) {
+		t.Fatalf("private intent identity was not persisted in the ledger: %s, %v", privateLedger, err)
 	}
 	if err := os.Mkdir(filepath.Join(o.Root, "ledger", "ignored.json"), 0o755); err != nil {
 		t.Fatal(err)
@@ -607,7 +654,7 @@ func TestOutbox_FindPreparedIntentCanonicalizesPrivatelyAndFailsClosed(t *testin
 	intent.UUID = ""
 	intent.Timestamp = time.Time{}
 	intent.Payload = json.RawMessage(` { "nested" : { "a" : 1, "b" : 2 }, "z" : 1 } `)
-	found, err := o.FindPreparedIntent(intent)
+	found, err := o.FindPreparedIntent(intent, json.RawMessage(` { "content_sha256" : "private-digest" } `))
 	if err != nil || found == nil || found.UUID != e.UUID {
 		t.Fatalf("canonical prepared intent lookup = %#v, %v", found, err)
 	}
@@ -619,45 +666,104 @@ func TestOutbox_FindPreparedIntentCanonicalizesPrivatelyAndFailsClosed(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(public, []byte("intent_fingerprint")) || bytes.Contains(public, []byte("nested")) {
+	if bytes.Contains(public, []byte("intent_fingerprint")) || bytes.Contains(public, []byte("private-digest")) || bytes.Contains(public, []byte("nested")) {
 		t.Fatalf("prepared reconciliation output exposed private intent material: %s", public)
 	}
 
 	different := intent
 	different.Name = "lesson.different"
-	if found, err := o.FindPreparedIntent(different); err != nil || found != nil {
+	if found, err := o.FindPreparedIntent(different, facts); err != nil || found != nil {
 		t.Fatalf("cross-command intent matched = %#v, %v", found, err)
 	}
+	if _, err := o.FindPreparedIntent(intent, json.RawMessage(`{"content_sha256":"different"}`)); err == nil || !strings.Contains(err.Error(), "same mutation scope with different intent") {
+		t.Fatalf("same-scope cross-intent retry was accepted: %v", err)
+	}
 	readFault := outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "read-file"}}
-	if _, err := readFault.findPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "injected read-file") {
+	if _, err := readFault.findPreparedIntent(intent, facts); err == nil || !strings.Contains(err.Error(), "injected read-file") {
 		t.Fatalf("prepared intent state read failure = %v", err)
 	}
 	constantHash := func([]byte) [sha256.Size]byte { return [sha256.Size]byte{} }
-	if _, err := o.operation().findPreparedIntentWithHash(different, constantHash); err == nil || !strings.Contains(err.Error(), "collision") {
+	collision := NewOutbox(t.TempDir())
+	collisionOps := collision.operation()
+	collisionOps.intentHash = constantHash
+	if err := collisionOps.prepareIntent(e, []Subscriber{&outboxSub{name: "sink"}}, facts); err != nil {
+		t.Fatal(err)
+	}
+	colliding := intent
+	colliding.Payload = json.RawMessage(`{"z":2,"nested":{"a":1,"b":2}}`)
+	if _, err := collisionOps.findPreparedIntent(colliding, facts); err == nil || !strings.Contains(err.Error(), "collision") {
 		t.Fatalf("full tuple did not reject a fingerprint collision: %v", err)
 	}
 
 	second := e
 	second.UUID = "00000000-0000-4000-8000-000000000032"
 	second.Timestamp = second.Timestamp.Add(time.Second)
-	if err := o.Prepare(second, []Subscriber{&outboxSub{name: "sink"}}); err != nil {
+	if err := o.PrepareIntent(second, []Subscriber{&outboxSub{name: "sink"}}, facts); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := o.FindPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "multiple prepared") {
+	if _, err := o.FindPreparedIntent(intent, facts); err == nil || !strings.Contains(err.Error(), "multiple prepared") {
 		t.Fatalf("ambiguous prepared intents were accepted: %v", err)
 	}
 
 	bad := intent
 	bad.Payload = json.RawMessage(`{}` + `{}`)
-	if _, err := o.FindPreparedIntent(bad); err == nil || !strings.Contains(err.Error(), "trailing JSON") {
+	if _, err := o.FindPreparedIntent(bad, facts); err == nil || !strings.Contains(err.Error(), "trailing JSON") {
 		t.Fatalf("non-canonicalizable intent was accepted: %v", err)
 	}
 	bad.Payload = json.RawMessage(`{`)
-	if _, err := o.FindPreparedIntent(bad); err == nil {
+	if _, err := o.FindPreparedIntent(bad, facts); err == nil {
 		t.Fatal("invalid intent payload was accepted")
 	}
+	for _, tc := range []struct {
+		name    string
+		payload json.RawMessage
+		facts   json.RawMessage
+	}{
+		{"payload-top", json.RawMessage(`{"k":1,"k":2}`), facts},
+		{"payload-nested", json.RawMessage(`{"nested":{"k":1,"k":2}}`), facts},
+		{"payload-array-object", json.RawMessage(`{"items":[{"k":1,"k":2}]}`), facts},
+		{"facts-top", intent.Payload, json.RawMessage(`{"k":1,"k":2}`)},
+		{"facts-nested", intent.Payload, json.RawMessage(`{"nested":{"k":1,"k":2}}`)},
+		{"facts-array-object", intent.Payload, json.RawMessage(`{"items":[{"k":1,"k":2}]}`)},
+	} {
+		t.Run("duplicate-"+tc.name, func(t *testing.T) {
+			duplicate := intent
+			duplicate.Payload = tc.payload
+			publicEvent := duplicate
+			publicEvent.UUID = e.UUID
+			publicEvent.Timestamp = e.Timestamp
+			if err := Validate(publicEvent); err != nil {
+				t.Fatalf("public Event validation contract changed for valid duplicate-key JSON: %v", err)
+			}
+			if _, err := o.FindPreparedIntent(duplicate, tc.facts); err == nil || !strings.Contains(err.Error(), "duplicate JSON object key") {
+				t.Fatalf("private intent canonicalizer accepted duplicate keys: %v", err)
+			}
+		})
+	}
+	duplicatePrepare := validEvent()
+	duplicatePrepare.Payload = json.RawMessage(`{"k":1,"k":2}`)
+	if err := Validate(duplicatePrepare); err != nil {
+		t.Fatalf("public Event validation contract changed: %v", err)
+	}
+	if err := NewOutbox(t.TempDir()).PrepareIntent(duplicatePrepare, []Subscriber{&outboxSub{name: "sink"}}, facts); err == nil || !strings.Contains(err.Error(), "duplicate JSON object key") {
+		t.Fatalf("durable private intent accepted ambiguous duplicate-key payload: %v", err)
+	}
+	if err := NewOutbox(t.TempDir()).PrepareIntent(validEvent(), []Subscriber{&outboxSub{name: "sink"}}, json.RawMessage(`[]`)); err == nil || !strings.Contains(err.Error(), "must be a JSON object") {
+		t.Fatalf("durable private intent accepted non-object facts: %v", err)
+	}
+	if _, err := canonicalPreparedIntent(validEvent(), json.RawMessage(`[]`)); err == nil || !strings.Contains(err.Error(), "must be a JSON object") {
+		t.Fatalf("intent tuple accepted non-object facts: %v", err)
+	}
+	for _, malformed := range []json.RawMessage{json.RawMessage(`{"x":`), json.RawMessage(`{"x":[1`), json.RawMessage(`{"x":1,`)} {
+		if _, err := canonicalJSON(malformed); err == nil {
+			t.Fatalf("truncated composite private intent was accepted: %s", malformed)
+		}
+	}
+	if _, err := o.FindPreparedIntent(intent, json.RawMessage(`[]`)); err == nil || !strings.Contains(err.Error(), "must be a JSON object") {
+		t.Fatalf("non-object private intent facts were accepted: %v", err)
+	}
 	readFault = outboxOperations{Outbox: o, fs: faultOutboxFS{fail: "read-dir"}}
-	if _, err := readFault.findPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "injected read-dir") {
+	if _, err := readFault.findPreparedIntent(intent, facts); err == nil || !strings.Contains(err.Error(), "injected read-dir") {
 		t.Fatalf("prepared intent directory failure = %v", err)
 	}
 	corrupt := NewOutbox(t.TempDir())
@@ -668,8 +774,31 @@ func TestOutbox_FindPreparedIntentCanonicalizesPrivatelyAndFailsClosed(t *testin
 	if err := os.WriteFile(corrupt.ledgerPath(corruptID), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := corrupt.FindPreparedIntent(intent); err == nil || !strings.Contains(err.Error(), "invalid event ledger") {
+	if _, err := corrupt.FindPreparedIntent(intent, facts); err == nil || !strings.Contains(err.Error(), "invalid event ledger") {
 		t.Fatalf("corrupt prepared intent ledger = %v", err)
+	}
+}
+
+func TestOutbox_PrivateIntentFactsNeverEnterSubscriberEvent(t *testing.T) {
+	o := NewOutbox(t.TempDir())
+	e := validEvent()
+	subscriber := &captureIntentSubscriber{}
+	private := json.RawMessage(`{"content_sha256":"private-digest"}`)
+	if err := o.PrepareIntent(e, []Subscriber{subscriber}, private); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Commit(e.UUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Replay(context.Background(), []Subscriber{subscriber}, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	public, err := json.Marshal(subscriber.got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subscriber.got.UUID != e.UUID || bytes.Contains(public, []byte("private-digest")) || bytes.Contains(public, []byte("intent_fingerprint")) {
+		t.Fatalf("subscriber Event exposed private prepared intent: %s", public)
 	}
 }
 
@@ -960,7 +1089,18 @@ func TestOutbox_ReconciliationViewsExposeCorruptionAndReplayLimits(t *testing.T)
 func TestOutbox_PrepareAndDecideResolveCompetingDurablePublications(t *testing.T) {
 	root := t.TempDir()
 	e := validEvent()
-	record := ledgerRecord{Event: e, Subscribers: []string{"sink"}, State: preparedState}
+	facts, err := canonicalPreparedIntentFacts(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := canonicalPreparedIntent(e, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := ledgerRecord{
+		Event: e, Subscribers: []string{"sink"}, State: preparedState,
+		IntentFacts: facts, IntentFingerprint: formatPreparedIntentFingerprint(sha256.Sum256(intent)),
+	}
 	data, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)

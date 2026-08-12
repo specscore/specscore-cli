@@ -267,6 +267,30 @@ func TestLessonImportLegacy_UncertainCompletedArtifactsReusePreparedEventOnRetry
 		t.Fatalf("interrupted import prepared intents = %#v", prepared)
 	}
 	ledgerBeforeRetry := treeDigestForCLI(t, filepath.Join(outbox.Root, "ledger"))
+	differentMapping := mapping
+	differentMapping.Entries = append([]lesson.LegacyMappingEntry(nil), mapping.Entries...)
+	differentMapping.Entries[0].Slug = "different-import"
+	differentMapping.Entries[0].Lesson = "Apply a different reviewed import intent."
+	differentMappingBody, err := json.Marshal(differentMapping)
+	requireCLISuccess(t, err)
+	differentMappingPath := filepath.Join(root, "different-mapping.json")
+	requireCLISuccess(t, os.WriteFile(differentMappingPath, differentMappingBody, 0o644))
+	manifestPath := filepath.Join(root, "spec", "lessons", ".legacy-import", inv.Source.SHA256+".json")
+	requireCLISuccess(t, os.Remove(manifestPath))
+	if _, _, err := runLesson(t, "import-legacy", "--source", source, "--apply", "--mapping", differentMappingPath, "--project", root, "--format", "json"); err == nil || !strings.Contains(err.Error(), "different intent") {
+		t.Fatalf("same-count cross-intent import retry = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "different-import")); !os.IsNotExist(statErr) {
+		t.Fatalf("cross-intent import published a different Lesson: %v", statErr)
+	}
+	if got := treeDigestForCLI(t, filepath.Join(outbox.Root, "ledger")); !bytes.Equal(got, ledgerBeforeRetry) {
+		t.Fatal("cross-intent import created or changed a second ledger record")
+	}
+	stillPrepared, err := outbox.Prepared()
+	requireCLISuccess(t, err)
+	if len(stillPrepared) != 1 || stillPrepared[0].EventUUID != prepared[0].EventUUID {
+		t.Fatalf("cross-intent import lost original recovery evidence: %#v", stillPrepared)
+	}
 	_, stderr, err := runLesson(t, "import-legacy", "--source", source, "--apply", "--mapping", mappingPath, "--project", root, "--format", "json")
 	if err != nil {
 		t.Fatalf("recovery retry: %v\nstderr=%s", err, stderr)
