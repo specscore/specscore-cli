@@ -538,6 +538,130 @@ func TestApplyLegacy_CreatesReviewedMarkerOccurrenceUnderNewLesson(t *testing.T)
 	}
 }
 
+func TestApplyLegacy_ReappliesOccurrenceKeySortedBeforeItsNewLesson(t *testing.T) {
+	dir := t.TempDir()
+	lessonsDir := filepath.Join(dir, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "legacy.md")
+	raw := "## L111 — the same gap recurred\n\n**Status:** Recorded\n\nlater evidence\n\n## L80b — durable ordering rule\n\n**Status:** Recorded\n\nrule body\n"
+	if err := os.WriteFile(source, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventoryLegacyForApply(t, source)
+	occurrenceKey, newKey := "L111#1", "L80b#1"
+	if len(inv.Entries) != 2 || inv.Entries[0].Key != occurrenceKey || inv.Entries[1].Key != newKey {
+		t.Fatalf("inventory = %#v", inv.Entries)
+	}
+	// The reconciliation must not depend on mapping key order: here the
+	// occurrence row sorts before the new Lesson row that creates its target.
+	if occurrenceKey >= newKey {
+		t.Fatalf("regression requires %s to sort before %s", occurrenceKey, newKey)
+	}
+	mapping := legacyMapping(inv,
+		reviewedNew(newKey, "durable-ordering-rule"),
+		LegacyMappingEntry{Key: occurrenceKey, Action: "occurrence", Slug: "durable-ordering-rule"},
+	)
+	first, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.CreatedLessons) != 1 || len(first.CreatedOccurrences) != 2 {
+		t.Fatalf("first = %#v", first)
+	}
+	before := snapshotTree(t, lessonsDir)
+	inspection, err := InspectLegacyApply(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.MutationRequired {
+		t.Fatalf("write-free inspection still requires mutation after a completed apply: %#v", inspection)
+	}
+	if len(inspection.Result.Skipped) != 2 {
+		t.Fatalf("inspection skipped = %#v", inspection.Result.Skipped)
+	}
+	second, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.CreatedLessons) != 0 || len(second.CreatedOccurrences) != 0 || len(second.Skipped) != 2 {
+		t.Fatalf("second = %#v", second)
+	}
+	for _, key := range []string{occurrenceKey, newKey} {
+		if !containsString(second.Skipped, key) {
+			t.Fatalf("second apply did not skip %s: %#v", key, second.Skipped)
+		}
+	}
+	if !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
+		t.Fatal("second apply changed repository bytes")
+	}
+}
+
+func TestApplyLegacy_ReappliesOccurrenceGroupSortedBeforeItsNewLesson(t *testing.T) {
+	dir := t.TempDir()
+	lessonsDir := filepath.Join(dir, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "legacy.md")
+	raw := "## L100 — an earlier recurrence\n\n**Status:** Recorded\n\nearlier evidence\n\n" +
+		"## L111 — the same gap recurred\n\n**Status:** Recorded\n\nlater evidence\n\n" +
+		"## L80b — durable ordering rule\n\n**Status:** Recorded\n\nrule body\n"
+	if err := os.WriteFile(source, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventoryLegacyForApply(t, source)
+	earlierKey, laterKey, newKey := "L100#1", "L111#1", "L80b#1"
+	if len(inv.Entries) != 3 || inv.Entries[0].Key != earlierKey || inv.Entries[1].Key != laterKey || inv.Entries[2].Key != newKey {
+		t.Fatalf("inventory = %#v", inv.Entries)
+	}
+	// A whole same-Lesson group must reconcile regardless of key order: both
+	// occurrence keys sort before the new-Lesson row that creates their shared
+	// target.
+	if earlierKey >= laterKey || laterKey >= newKey {
+		t.Fatalf("regression requires %s and %s to sort before %s", earlierKey, laterKey, newKey)
+	}
+	mapping := legacyMapping(inv,
+		reviewedNew(newKey, "grouped-ordering-rule"),
+		LegacyMappingEntry{Key: earlierKey, Action: "occurrence", Slug: "grouped-ordering-rule"},
+		LegacyMappingEntry{Key: laterKey, Action: "occurrence", Slug: "grouped-ordering-rule"},
+	)
+	first, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.CreatedLessons) != 1 || len(first.CreatedOccurrences) != 3 {
+		t.Fatalf("first = %#v", first)
+	}
+	before := snapshotTree(t, lessonsDir)
+	inspection, err := InspectLegacyApply(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.MutationRequired {
+		t.Fatalf("write-free inspection still requires mutation after a completed apply: %#v", inspection)
+	}
+	if len(inspection.Result.Skipped) != 3 {
+		t.Fatalf("inspection skipped = %#v", inspection.Result.Skipped)
+	}
+	second, err := ApplyLegacy(lessonsDir, []string{"process"}, inv, mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.CreatedLessons) != 0 || len(second.CreatedOccurrences) != 0 || len(second.Skipped) != 3 {
+		t.Fatalf("second = %#v", second)
+	}
+	for _, key := range []string{earlierKey, laterKey, newKey} {
+		if !containsString(second.Skipped, key) {
+			t.Fatalf("second apply did not skip %s: %#v", key, second.Skipped)
+		}
+	}
+	if !bytes.Equal(before, snapshotTree(t, lessonsDir)) {
+		t.Fatal("second apply changed repository bytes")
+	}
+}
+
 func TestApplyLegacy_OccurrenceSecondRunIsByteIdentical(t *testing.T) {
 	dir := t.TempDir()
 	lessonsDir := filepath.Join(dir, "spec", "lessons")

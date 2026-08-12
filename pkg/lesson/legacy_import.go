@@ -708,44 +708,55 @@ func preflightLegacyApplyWithRuntime(lessonsDir string, allowedClassifications [
 
 func inspectLegacyApplyPlan(lessonsDir string, inv LegacyInventory, plan legacyApplyPlan, fs lessonFS, findOccurrence func(string, string, lessonFS) (Occurrence, error)) (legacyApplyState, error) {
 	state := legacyApplyState{lessonAlready: map[string]bool{}, occurrenceAlready: map[string]bool{}}
+	// Resolve every "new" row before any "occurrence" row. An occurrence row
+	// whose target is created by a "new" row in this same mapping must know
+	// whether that Lesson already exists on disk, and plan.keys is sorted, so a
+	// single pass would read an unvisited (zero-value) lessonAlready entry
+	// whenever the occurrence key sorts first. Preflight already guarantees at
+	// most one "new" row per slug, so no "new" row depends on another.
 	for _, key := range plan.keys {
 		e, m := plan.byKey[key], plan.byMap[key]
-		switch m.Action {
-		case "new":
-			target := filepath.Join(lessonsDir, m.Slug, "README.md")
-			if _, err := fs.Stat(target); err == nil {
-				state.lessonAlready[key] = true
-			} else if !os.IsNotExist(err) {
-				return state, err
-			}
-			if state.lessonAlready[key] {
-				id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
-				if existing, err := findOccurrence(target, id, fs); err == nil {
-					if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
-						return state, fmt.Errorf("mapping %s provider occurrence collision: %w", key, err)
-					}
-					state.occurrenceAlready[key] = true
-				} else if !os.IsNotExist(err) {
-					return state, err
-				}
-			}
-		case "occurrence":
-			if newKey, createdThisRun := plan.newTargets[m.Slug]; createdThisRun && !state.lessonAlready[newKey] {
-				continue
-			}
+		if m.Action != "new" {
+			continue
+		}
+		target := filepath.Join(lessonsDir, m.Slug, "README.md")
+		if _, err := fs.Stat(target); err == nil {
+			state.lessonAlready[key] = true
+		} else if !os.IsNotExist(err) {
+			return state, err
+		}
+		if state.lessonAlready[key] {
 			id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
-			path, resolveErr := ResolveLessonFile(lessonsDir, m.Slug)
-			if resolveErr != nil {
-				return state, resolveErr
-			}
-			if existing, err := findOccurrence(path, id, fs); err == nil {
+			if existing, err := findOccurrence(target, id, fs); err == nil {
 				if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
-					return state, fmt.Errorf("mapping %s occurrence collision: %w", key, err)
+					return state, fmt.Errorf("mapping %s provider occurrence collision: %w", key, err)
 				}
 				state.occurrenceAlready[key] = true
 			} else if !os.IsNotExist(err) {
 				return state, err
 			}
+		}
+	}
+	for _, key := range plan.keys {
+		e, m := plan.byKey[key], plan.byMap[key]
+		if m.Action != "occurrence" {
+			continue
+		}
+		if newKey, createdThisRun := plan.newTargets[m.Slug]; createdThisRun && !state.lessonAlready[newKey] {
+			continue
+		}
+		id := legacyOccurrenceID(inv.Source.SHA256, e.Key, m.Slug)
+		path, resolveErr := ResolveLessonFile(lessonsDir, m.Slug)
+		if resolveErr != nil {
+			return state, resolveErr
+		}
+		if existing, err := findOccurrence(path, id, fs); err == nil {
+			if err := validateLegacyOccurrence(existing, inv, e, m.Slug); err != nil {
+				return state, fmt.Errorf("mapping %s occurrence collision: %w", key, err)
+			}
+			state.occurrenceAlready[key] = true
+		} else if !os.IsNotExist(err) {
+			return state, err
 		}
 	}
 	return state, nil
