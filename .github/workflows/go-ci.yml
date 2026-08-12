@@ -249,6 +249,8 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
       - name: Require every applicable gate to pass
         env:
           CLASSIFY_RESULT: ${{ needs.classify.result }}

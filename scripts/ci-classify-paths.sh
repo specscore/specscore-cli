@@ -55,7 +55,7 @@ classify_path() {
     go=true
     dogfood=true
     ;;
-  .goreleaser.yml|go.mod|go.sum|*.go|spec/features/*/_tests/*)
+  .goreleaser.yml|go.mod|go.sum|scripts/coverage-gate.sh|*.go|spec/features/*/_tests/*)
     go=true
     ;;
   esac
@@ -70,18 +70,39 @@ classify_path() {
 # --name-status -z emits status, then one path for ordinary changes and both
 # source and destination paths for renames/copies. Reading each NUL-delimited
 # field keeps whitespace and newlines in valid Git paths unambiguous.
-while IFS= read -r -d '' status; do
+# A clean EOF is allowed only between complete records. `read -d ''` leaves a
+# partial unterminated field in the variable while returning non-zero, so check
+# that variable before accepting EOF.
+while true; do
+  status=
+  if ! IFS= read -r -d '' status; then
+    if [[ -n "$status" ]]; then
+      emit_all
+      exit 0
+    fi
+    break
+  fi
+
   case "$status" in
-  R*|C*)
-    if ! IFS= read -r -d '' source_path || ! IFS= read -r -d '' destination_path; then
+  R[0-9][0-9][0-9]|C[0-9][0-9][0-9])
+    score="${status:1}"
+    if ((10#$score > 100)); then
+      emit_all
+      exit 0
+    fi
+    source_path=
+    destination_path=
+    if ! IFS= read -r -d '' source_path || [[ -z "$source_path" ]] || \
+      ! IFS= read -r -d '' destination_path || [[ -z "$destination_path" ]]; then
       emit_all
       exit 0
     fi
     classify_path "$source_path"
     classify_path "$destination_path"
     ;;
-  A|D|M|T|U|X|B)
-    if ! IFS= read -r -d '' path; then
+  A|D|M|T|U|B)
+    path=
+    if ! IFS= read -r -d '' path || [[ -z "$path" ]]; then
       emit_all
       exit 0
     fi

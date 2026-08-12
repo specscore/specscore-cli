@@ -175,7 +175,15 @@ func TestCIAggregateWorkflowContract(t *testing.T) {
 			t.Fatalf("aggregate does not need %s", required)
 		}
 	}
-	step := mappingValue(t, aggregate, "steps").Content[0]
+	steps := mappingValue(t, aggregate, "steps")
+	if steps.Kind != yaml.SequenceNode || len(steps.Content) != 2 {
+		t.Fatalf("aggregate steps must be checkout then reducer, got %d entries", len(steps.Content))
+	}
+	checkout := steps.Content[0]
+	if got := mappingValue(t, checkout, "uses").Value; got != "actions/checkout@v6" {
+		t.Fatalf("aggregate first step = %q, want checkout before the repository script", got)
+	}
+	step := steps.Content[1]
 	if got := mappingValue(t, step, "run").Value; got != "./scripts/ci-aggregate.sh" {
 		t.Fatalf("aggregate command = %q, want the executable aggregate contract", got)
 	}
@@ -321,6 +329,12 @@ func TestCIPathClassifierContract(t *testing.T) {
 			wantDogfood: "false",
 		},
 		{
+			name:        "coverage gate changes run every Go gate",
+			changes:     map[string]string{"scripts/coverage-gate.sh": "#!/usr/bin/env bash\n"},
+			wantGo:      "true",
+			wantDogfood: "false",
+		},
+		{
 			name:        "spec-only runs dogfood",
 			changes:     map[string]string{"spec/features/cli/README.md": "# changed\n"},
 			wantGo:      "false",
@@ -348,6 +362,32 @@ func TestCIPathClassifierContract(t *testing.T) {
 			got := runClassifier(t, repo, base, head)
 			if got["go"] != test.wantGo || got["dogfood"] != test.wantDogfood {
 				t.Fatalf("classifier = %#v, want go=%s dogfood=%s", got, test.wantGo, test.wantDogfood)
+			}
+		})
+	}
+}
+
+func TestCIPathClassifierFailsClosedOnMalformedStatusStream(t *testing.T) {
+	tests := []struct {
+		name   string
+		stream []byte
+	}{
+		{"unknown X status", nulFields("X", "docs/guide.md")},
+		{"unknown status word", nulFields("unknown", "docs/guide.md")},
+		{"rename score omitted", nulFields("R", "old.go", "docs/new.md")},
+		{"rename score too short", nulFields("R10", "old.go", "docs/new.md")},
+		{"copy score too long", nulFields("C1000", "old.go", "docs/new.md")},
+		{"rename score exceeds 100", nulFields("R101", "old.go", "docs/new.md")},
+		{"partial unterminated status", []byte("M")},
+		{"partial unterminated ordinary path", append(nulFields("M"), []byte("docs/guide.md")...)},
+		{"partial unterminated rename destination", append(nulFields("R100", "old.go"), []byte("docs/new.md")...)},
+		{"partial record after complete record", append(nulFields("M", "docs/guide.md"), []byte("partial")...)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := runClassifierWithDiffStream(t, test.stream)
+			if got["go"] != "true" || got["dogfood"] != "true" {
+				t.Fatalf("malformed stream classifier = %#v, want fail-closed both gates", got)
 			}
 		})
 	}
@@ -515,6 +555,43 @@ func runAggregate(t *testing.T, environment map[string]string) (string, error) {
 
 func runClassifier(t *testing.T, repo, base, head string) map[string]string {
 	t.Helper()
+	return runClassifierCommand(t, repo, []string{
+		"EVENT_NAME=pull_request",
+		"PR_BASE_SHA=" + base,
+		"HEAD_SHA=" + head,
+	})
+}
+
+func runClassifierWithDiffStream(t *testing.T, stream []byte) map[string]string {
+	t.Helper()
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	writeTestFile(t, fakeGit, `#!/usr/bin/env bash
+set -eu
+case "${1:-}" in
+cat-file) exit 0 ;;
+diff) /bin/cat "${FAKE_GIT_DIFF_STREAM:?}" ;;
+*) exit 64 ;;
+esac
+`)
+	if err := os.Chmod(fakeGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	streamFile := filepath.Join(t.TempDir(), "diff-stream")
+	if err := os.WriteFile(streamFile, stream, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return runClassifierCommand(t, t.TempDir(), []string{
+		"PATH=" + fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"FAKE_GIT_DIFF_STREAM=" + streamFile,
+		"EVENT_NAME=pull_request",
+		"PR_BASE_SHA=base",
+		"HEAD_SHA=head",
+	})
+}
+
+func runClassifierCommand(t *testing.T, repo string, environment []string) map[string]string {
+	t.Helper()
 	script, err := filepath.Abs("scripts/ci-classify-paths.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -522,12 +599,8 @@ func runClassifier(t *testing.T, repo, base, head string) map[string]string {
 	output := filepath.Join(t.TempDir(), "github-output")
 	command := exec.Command(script)
 	command.Dir = repo
-	command.Env = append(os.Environ(),
-		"EVENT_NAME=pull_request",
-		"PR_BASE_SHA="+base,
-		"HEAD_SHA="+head,
-		"GITHUB_OUTPUT="+output,
-	)
+	command.Env = append(os.Environ(), environment...)
+	command.Env = append(command.Env, "GITHUB_OUTPUT="+output)
 	if combined, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("classifier failed: %v\n%s", err, combined)
 	}
@@ -544,6 +617,15 @@ func runClassifier(t *testing.T, repo, base, head string) map[string]string {
 		values[key] = value
 	}
 	return values
+}
+
+func nulFields(fields ...string) []byte {
+	var result []byte
+	for _, field := range fields {
+		result = append(result, field...)
+		result = append(result, 0)
+	}
+	return result
 }
 
 func writeTestFile(t *testing.T, path, contents string) {
