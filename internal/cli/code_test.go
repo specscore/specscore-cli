@@ -66,7 +66,15 @@ func TestCodeDeps_CheckCrossRepoRequirementCitation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mirror, "spec", "features", "contract", "README.md"), []byte("# Feature: Contract\n\n#### REQ: retained\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "cli@example.test"}, {"config", "user.name", "cli test"}, {"add", "."}, {"commit", "-m", "fixture"}} {
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "cli@example.test"},
+		{"config", "user.name", "cli test"},
+		{"config", "gc.auto", "0"},
+		{"config", "maintenance.auto", "false"},
+		{"add", "."},
+		{"commit", "-m", "fixture"},
+	} {
 		if out, err := exec.Command("git", append([]string{"-C", mirror}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}

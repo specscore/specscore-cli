@@ -339,14 +339,12 @@ func TestExecCancellationTerminatesHungProcessTreeHelper(t *testing.T) {
 // SpecScore releases its final job handle.
 func TestExecSuccessfulCommandLeavesBackgroundProcessRunning(t *testing.T) {
 	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
-	script := `$child = Start-Process -FilePath "$env:SystemRoot\System32\ping.exe" ` +
-		`-ArgumentList '-n','31','127.0.0.1' ` +
-		`-PassThru; ` +
-		`[System.IO.File]::WriteAllText($env:SPECSCORE_CHILD_PID_FILE, [string]$child.Id); ` +
-		`exit 0`
 	sub := NewExec(
-		[]string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script},
-		map[string]string{"SPECSCORE_CHILD_PID_FILE": childPIDFile},
+		[]string{os.Args[0], "-test.run=^TestExecSuccessfulCommandLeavesBackgroundProcessRunningHelper$"},
+		map[string]string{
+			"SPECSCORE_CHILD_PID_FILE":                    childPIDFile,
+			"SPECSCORE_WINDOWS_SUCCESS_BACKGROUND_HELPER": "1",
+		},
 		10*time.Second,
 	)
 
@@ -381,6 +379,38 @@ func TestExecSuccessfulCommandLeavesBackgroundProcessRunning(t *testing.T) {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// TestExecSuccessfulCommandLeavesBackgroundProcessRunningHelper is the
+// job-owned direct child for TestExecSuccessfulCommandLeavesBackgroundProcessRunning.
+// Its ping descendant receives nil standard streams (the Windows NUL device), so
+// the descendant cannot retain Exec's stdin/stdout/stderr pipes after this helper
+// exits. Because the helper itself is assigned to Exec's Job Object before it
+// runs, Windows places the ping child in that same Job Object.
+func TestExecSuccessfulCommandLeavesBackgroundProcessRunningHelper(t *testing.T) {
+	if os.Getenv("SPECSCORE_WINDOWS_SUCCESS_BACKGROUND_HELPER") != "1" {
+		return
+	}
+	childPIDFile := os.Getenv("SPECSCORE_CHILD_PID_FILE")
+	if childPIDFile == "" {
+		t.Fatal("SPECSCORE_CHILD_PID_FILE is required")
+	}
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" {
+		t.Fatal("SystemRoot is required")
+	}
+	child := exec.Command(filepath.Join(systemRoot, "System32", "ping.exe"), "-n", "31", "127.0.0.1")
+	if err := child.Start(); err != nil {
+		t.Fatalf("start ping child: %v", err)
+	}
+	if err := os.WriteFile(childPIDFile, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+		t.Fatalf("write child PID: %v", err)
+	}
+	if err := child.Process.Release(); err != nil {
+		t.Fatalf("release ping child handle: %v", err)
 	}
 }
 
