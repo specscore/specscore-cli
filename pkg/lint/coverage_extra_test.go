@@ -1,11 +1,14 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
 // =============================================================================
@@ -1704,5 +1707,21 @@ func TestRewriteTaskStatusLines_Errors(t *testing.T) {
 	defer func() { _ = os.Chmod(f, 0o644) }()
 	if err := rewriteTaskStatusLines(f, map[int]string{1: "complete"}); err == nil {
 		t.Skip("write to read-only file unexpectedly succeeded (likely running as root)")
+	}
+}
+
+func TestRewriteTaskStatusLines_ConcurrentTaskWriterIsFenced(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "p.md")
+	if err := os.WriteFile(f, []byte("**Status:** planning\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := lifecycle.WithArtifactMutationLock(f, func() error {
+		if err := rewriteTaskStatusLines(f, map[int]string{1: "complete"}); !errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			t.Fatalf("err=%v, want concurrent mutation", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

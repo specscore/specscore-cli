@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -113,5 +114,22 @@ func TestWithArtifactMutationLock_IsBoundedAndReleases(t *testing.T) {
 	}
 	if err := WithArtifactMutationLock(p, func() error { return nil }); err != nil {
 		t.Fatalf("release=%v", err)
+	}
+}
+
+func TestRewrite_LockFaultLeavesArtifactUntouched(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "task.md")
+	before := []byte("**Status:** Draft\n")
+	if err := os.WriteFile(p, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := newCASLock
+	newCASLock = func(string) casLock { return failingCASLock{err: errors.New("lock fault")} }
+	t.Cleanup(func() { newCASLock = orig })
+	if _, err := Rewrite(p, IdeaApproved); err == nil {
+		t.Fatal("expected lock fault")
+	}
+	if got, _ := os.ReadFile(p); !bytes.Equal(got, before) {
+		t.Fatalf("lock fault wrote %q", got)
 	}
 }

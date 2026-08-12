@@ -191,3 +191,111 @@ func TestTaskAmend_PreservesNoFinalNewlineCRLFAndPlanSectionBoundary(t *testing.
 		t.Fatalf("trailing section was touched: %s", got)
 	}
 }
+
+func TestTaskChangeStatus_ConcurrentRewriteReturnsConflict(t *testing.T) {
+	_, path := stageTaskWithStatus(t, "auth", "planning")
+	orig := rewriteBoardTaskFn
+	rewriteBoardTaskFn = func(string, lifecycle.Status, []string) (lifecycle.Status, error) {
+		return "", lifecycle.ErrConcurrentMutation
+	}
+	t.Cleanup(func() { rewriteBoardTaskFn = orig })
+	_, _, err := runTask(t, "change-status", "auth", "--to=queued")
+	if exitCodeOfErr(err) != exitcode.Conflict {
+		t.Fatalf("board conflict=%v", err)
+	}
+	if got := taskFileStatus(t, path); got != "planning" {
+		t.Fatalf("status=%s", got)
+	}
+
+	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
+	origPlan := rewritePlanTaskStatusLineFn
+	rewritePlanTaskStatusLineFn = func(string, int, lifecycle.Status, []string) error { return lifecycle.ErrConcurrentMutation }
+	t.Cleanup(func() { rewritePlanTaskStatusLineFn = origPlan })
+	_, _, err = runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete")
+	if exitCodeOfErr(err) != exitcode.Conflict {
+		t.Fatalf("plan conflict=%v", err)
+	}
+	if got := planTaskStatus(t, planPath, "setup"); got != "in_progress" {
+		t.Fatalf("plan status=%s", got)
+	}
+}
+
+func TestTaskChangeStatus_ConcurrentExtraFieldsReturnsConflict(t *testing.T) {
+	_, path := stageTaskWithStatus(t, "auth", "in_progress")
+	orig := rewriteBoardTaskFn
+	rewriteBoardTaskFn = func(string, lifecycle.Status, []string) (lifecycle.Status, error) {
+		return "", lifecycle.ErrConcurrentMutation
+	}
+	t.Cleanup(func() { rewriteBoardTaskFn = orig })
+	_, _, err := runTask(t, "change-status", "auth", "--to=complete", "--note=landed")
+	if exitCodeOfErr(err) != exitcode.Conflict {
+		t.Fatalf("conflict=%v", err)
+	}
+	if got := taskFileStatus(t, path); got != "in_progress" {
+		t.Fatalf("status=%s", got)
+	}
+}
+
+// TestTaskWriterFenceMatrix proves every CLI writer of an existing Task body
+// fails closed while another lifecycle transaction owns that artifact. New-task
+// scaffolding is intentionally absent: it creates a new path, not a mutation
+// of an existing Task artifact.
+func TestTaskWriterFenceMatrix(t *testing.T) {
+	_, boardPath := stageTaskWithStatus(t, "auth", "in_progress")
+	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
+
+	cases := []struct {
+		name  string
+		path  string
+		write func() error
+	}{
+		{
+			name: "board status plus fields",
+			path: boardPath,
+			write: func() error {
+				_, err := rewriteBoardTask(boardPath, lifecycle.TaskComplete, []string{"**Note:** landed"})
+				return err
+			},
+		},
+		{
+			name: "board provenance amendment",
+			path: boardPath,
+			write: func() error {
+				return amendBoardImplementedBy(boardPath, "repo@abc1234")
+			},
+		},
+		{
+			name: "board annotation amendment",
+			path: boardPath,
+			write: func() error {
+				return taskAmendCAS(boardPath, []byte("different"), []byte("after"))
+			},
+		},
+		{
+			name: "plan inline status plus fields",
+			path: planPath,
+			write: func() error {
+				return rewritePlanTaskStatusLine(planPath, 10, lifecycle.TaskComplete, []string{"**Note:** landed"})
+			},
+		},
+		{
+			name: "plan inline annotation amendment",
+			path: planPath,
+			write: func() error {
+				return taskAmendCAS(planPath, []byte("different"), []byte("after"))
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := lifecycle.WithArtifactMutationLock(tc.path, func() error {
+				if err := tc.write(); !errors.Is(err, lifecycle.ErrConcurrentMutation) {
+					t.Fatalf("err=%v, want concurrent mutation", err)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

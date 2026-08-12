@@ -57,6 +57,11 @@ var reconcileTodayUTC = func() string { return time.Now().UTC().Format("2006-01-
 // timing.
 var reconcileReadOriginalFn = os.ReadFile
 
+// reconcileAppendNoteUnderLockFn is separate from the ordinary transition
+// seam because Reconcile owns its plan artifact lock across its status rewrite
+// and its audit append.
+var reconcileAppendNoteUnderLockFn = lifecycle.AppendResolutionNoteUnderLock
+
 // ReconcileOptions packages the inputs to Reconcile.
 type ReconcileOptions struct {
 	// SpecRoot is the project root that contains the `spec/` subtree (NOT the
@@ -188,6 +193,19 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 
 	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
 	flatPath := filepath.Join(plansDir, opts.Slug+".md")
+	var result ReconcileResult
+	err := lifecycle.WithArtifactMutationLock(flatPath, func() error {
+		var reconcileErr error
+		result, reconcileErr = reconcileUnderLock(opts, plansDir, flatPath)
+		return reconcileErr
+	})
+	return result, err
+}
+
+// reconcileUnderLock performs the full plan and embedded-Task transaction
+// while the caller owns flatPath's lifecycle fence. It must not call a public
+// lifecycle writer that would acquire that fence again.
+func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (ReconcileResult, error) {
 	resolved, err := resolvePlanFile(plansDir, opts.Slug)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -271,7 +289,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 			return ReconcileResult{}, exitcode.UnexpectedErrorf("writing plan: %v", err)
 		}
 		noteText := reconcileNoteTextWithTarget(from, to, changed, StatusBlocked, opts.Note, opts.Evidence, nil)
-		if _, _, err := appendNoteFn(flatPath, noteText); err != nil {
+		if _, _, err := reconcileAppendNoteUnderLockFn(flatPath, noteText); err != nil {
 			rollback()
 			return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
 		}
@@ -357,7 +375,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 	}
 
 	noteText := reconcileNoteTextWithTarget(from, to, changedTasks, StatusComplete, opts.Note, opts.Evidence, overrides)
-	if _, _, err := appendNoteFn(flatPath, noteText); err != nil {
+	if _, _, err := reconcileAppendNoteUnderLockFn(flatPath, noteText); err != nil {
 		rollback()
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
 	}

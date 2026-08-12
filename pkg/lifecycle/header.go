@@ -35,6 +35,14 @@ var supersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*`)
 // On a write, original holds the exact pre-invocation file bytes so the caller
 // can roll back via RestoreBody as part of the surrounding atomic transition.
 func SetSupersededBy(artifactPath, successor string) (original []byte, wrote bool, err error) {
+	err = WithArtifactMutationLock(artifactPath, func() error {
+		original, wrote, err = setSupersededByUnderLock(artifactPath, successor)
+		return err
+	})
+	return original, wrote, err
+}
+
+func setSupersededByUnderLock(artifactPath, successor string) (original []byte, wrote bool, err error) {
 	successor = strings.TrimSpace(successor)
 	if successor == "" {
 		return nil, false, nil
@@ -125,6 +133,14 @@ var fullSupersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*[ \t]
 // caller can roll back via RestoreBody as part of the surrounding atomic
 // transition.
 func SetSupersedes(artifactPath, target string) (original []byte, wrote bool, err error) {
+	err = WithArtifactMutationLock(artifactPath, func() error {
+		original, wrote, err = setSupersedesUnderLock(artifactPath, target)
+		return err
+	})
+	return original, wrote, err
+}
+
+func setSupersedesUnderLock(artifactPath, target string) (original []byte, wrote bool, err error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return nil, false, nil

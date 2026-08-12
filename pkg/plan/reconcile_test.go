@@ -474,17 +474,31 @@ func TestReconcile_PostMutationFails_RollsBack(t *testing.T) {
 	}
 }
 
+func TestReconcile_ConcurrentTaskWriterIsFenced(t *testing.T) {
+	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
+	err := lifecycle.WithArtifactMutationLock(path, func() error {
+		_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
+		if !errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			t.Fatalf("err=%v, want concurrent mutation", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // AC: note-write-failure-rolls-back — injects a failure into the shared
 // appendNoteFn seam (also used by ChangeStatus) to cover the resolution-note
 // rollback branch.
 func TestReconcile_NoteWriteFails_RollsBack(t *testing.T) {
 	root, path := stageReconcilePlan(t, "auth", "Draft", "planning")
 	before, _ := os.ReadFile(path)
-	orig := appendNoteFn
-	appendNoteFn = func(string, string) ([]byte, bool, error) {
+	orig := reconcileAppendNoteUnderLockFn
+	reconcileAppendNoteUnderLockFn = func(string, string) ([]byte, bool, error) {
 		return nil, false, errors.New("note write boom")
 	}
-	t.Cleanup(func() { appendNoteFn = orig })
+	t.Cleanup(func() { reconcileAppendNoteUnderLockFn = orig })
 
 	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
 	if got := codeOf(t, err); got != exitcode.Unexpected {
@@ -611,10 +625,10 @@ func TestReconcile_ReopenValidationAndRollback(t *testing.T) {
 		if got := codeOf(t, err); got != exitcode.Unexpected {
 			t.Fatalf("read failure exit = %d, want %d: %v", got, exitcode.Unexpected, err)
 		}
-		originalAppend := appendNoteFn
-		appendNoteFn = func(string, string) ([]byte, bool, error) { return nil, false, errors.New("note boom") }
+		originalAppend := reconcileAppendNoteUnderLockFn
+		reconcileAppendNoteUnderLockFn = func(string, string) ([]byte, bool, error) { return nil, false, errors.New("note boom") }
 		_, err = Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", ReopenTasks: []int{1}, PostMutation: okHook})
-		appendNoteFn = originalAppend
+		reconcileAppendNoteUnderLockFn = originalAppend
 		if got := codeOf(t, err); got != exitcode.Unexpected {
 			t.Fatalf("note failure exit = %d, want %d: %v", got, exitcode.Unexpected, err)
 		}

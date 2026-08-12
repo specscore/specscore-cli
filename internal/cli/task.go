@@ -186,40 +186,24 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
-	from, err := lifecycle.Validate(lifecycle.KindTask, taskFilePath, to)
-	if err != nil {
-		switch {
-		case errors.Is(err, lifecycle.ErrInvalidTransition):
-			return exitcode.InvalidStateErrorf("%v", err)
-		case errors.Is(err, lifecycle.ErrStatusLineNotFound):
-			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
-		default:
-			return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
-		}
-	}
-
-	// Pure single-actor mutation: rewrite the **Status:** line (and the
-	// frontmatter status: mirror if present). No claim/release, lock, or
-	// conflict-resolution step (cli/task/change-status#ac:single-actor-no-coordination).
-	if _, err := lifecycle.Rewrite(taskFilePath, to); err != nil {
-		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
-			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
-		}
-		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
-	}
-
-	// Implementation-commit provenance is written ONLY when completing, and only
-	// from explicit flags — the verb NEVER reads ambient git HEAD
-	// (cli/task/change-status#ac:provenance-not-derived-from-head). --note and
-	// --evidence are independent optional annotations, valid on ANY transition,
-	// written in the same atomic pass alongside provenance when both are given.
 	ref := ""
 	if to == lifecycle.TaskComplete {
 		ref = implementedByRefFromFlags(cmd)
 	}
-	if fields := buildExtraTaskFieldLines(ref, noteFromFlags(cmd), evidenceFromFlags(cmd)); len(fields) > 0 {
-		if err := writeBoardExtraFields(taskFilePath, fields); err != nil {
-			return exitcode.UnexpectedErrorf("writing task fields: %v", err)
+	fields := buildExtraTaskFieldLines(ref, noteFromFlags(cmd), evidenceFromFlags(cmd))
+	from, err := rewriteBoardTaskFn(taskFilePath, to, fields)
+	if err != nil {
+		switch {
+		case errors.Is(err, lifecycle.ErrConcurrentMutation):
+			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
+		case errors.Is(err, lifecycle.ErrInvalidTransition):
+			return exitcode.InvalidStateErrorf("%v", err)
+		case errors.Is(err, lifecycle.ErrStatusLineNotFound):
+			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
+		case errors.Is(err, os.ErrNotExist):
+			return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
+		default:
+			return exitcode.UnexpectedErrorf("rewriting task: %v", err)
 		}
 	}
 
@@ -337,9 +321,39 @@ var errNoStatusForProvenance = errors.New("task file has no **Status:** line for
 // writeBoardExtraFields inserts fields (already formatted "**Name:** value"
 // lines, in caller-supplied order — see buildExtraTaskFieldLines) into the
 // board task file at path, immediately after its `**Status:**` line, in ONE
-// atomic write. Every other byte is preserved. Covers provenance
+// atomic write. It shares the lifecycle mutation fence with status rewrites
+// and annotation amendments, so a stale read-modify-write can never erase a
+// concurrent amendment. Every other byte is preserved. Covers provenance
 // (**Implemented-by:**) and the optional **Note:**/**Evidence:** annotations.
 func writeBoardExtraFields(path string, fields []string) error {
+	return lifecycle.WithArtifactMutationLock(path, func() error {
+		return writeBoardExtraFieldsUnlocked(path, fields)
+	})
+}
+
+// rewriteBoardTask applies status, provenance, and transition annotations in
+// one lifecycle critical section. The Validate read is deliberately inside the
+// fence: no writer may validate an old task body then overwrite an amendment.
+func rewriteBoardTask(path string, to lifecycle.Status, fields []string) (lifecycle.Status, error) {
+	var from lifecycle.Status
+	err := lifecycle.WithArtifactMutationLock(path, func() error {
+		var err error
+		from, err = lifecycle.Validate(lifecycle.KindTask, path, to)
+		if err != nil {
+			return err
+		}
+		if _, err = lifecycle.RewriteUnderLock(path, to); err != nil {
+			return err
+		}
+		if len(fields) == 0 {
+			return nil
+		}
+		return writeBoardExtraFieldsUnlocked(path, fields)
+	})
+	return from, err
+}
+
+func writeBoardExtraFieldsUnlocked(path string, fields []string) error {
 	data, err := osReadFileFn(path)
 	if err != nil {
 		return err
@@ -456,7 +470,7 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 		implementedBy = implementedByRefFromFlags(cmd)
 	}
 	extraFields := buildExtraTaskFieldLines(implementedBy, noteFromFlags(cmd), evidenceFromFlags(cmd))
-	if err := rewritePlanTaskStatusLine(planPath, target.StatusLine, to, extraFields); err != nil {
+	if err := rewritePlanTaskStatusLineFn(planPath, target.StatusLine, to, extraFields); err != nil {
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
 			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
 		}
@@ -533,6 +547,12 @@ func boardTaskStatus(path string) (string, error) {
 // amendBoardImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
 // in the board task file at path, anchored to its `**Status:**` line.
 func amendBoardImplementedBy(path, ref string) error {
+	return lifecycle.WithArtifactMutationLock(path, func() error {
+		return amendBoardImplementedByUnlocked(path, ref)
+	})
+}
+
+func amendBoardImplementedByUnlocked(path, ref string) error {
 	data, err := osReadFileFn(path)
 	if err != nil {
 		return err
@@ -634,13 +654,18 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 // amendPlanImplementedBy re-stamps (or clears) the `**Implemented-by:**` field
 // adjacent to the 1-based statusLine of a plan file, preserving every other line.
 func amendPlanImplementedBy(path string, statusLine int, ref string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(data), "\n")
-	lines = withAmendedImplementedBy(lines, statusLine-1, ref)
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return lifecycle.WithArtifactMutationLock(path, func() error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(data), "\n")
+		if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
+			return lifecycle.ErrConcurrentMutation
+		}
+		lines = withAmendedImplementedBy(lines, statusLine-1, ref)
+		return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	})
 }
 
 // resolveTasksDir resolves the tasks directory from a --project flag or CWD.

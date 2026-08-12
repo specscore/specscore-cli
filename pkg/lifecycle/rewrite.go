@@ -88,6 +88,13 @@ func Rewrite(artifactPath string, newStatus Status) (string, error) {
 		return "", err
 	}
 	defer func() { _ = lock.Unlock() }()
+	return RewriteUnderLock(artifactPath, newStatus)
+}
+
+// RewriteUnderLock rewrites a status while the caller owns the artifact's
+// WithArtifactMutationLock fence. It is for compound lifecycle transactions;
+// callers without that fence must use Rewrite.
+func RewriteUnderLock(artifactPath string, newStatus Status) (string, error) {
 	original, err := os.ReadFile(artifactPath)
 	if err != nil {
 		return "", err
@@ -135,6 +142,14 @@ func Rewrite(artifactPath string, newStatus Status) (string, error) {
 // Concurrent modification is outside the contract (REQ: no-coordination in
 // the lifecycle-transitions Meta spec).
 func Rollback(artifactPath string, originalStatusLine string) error {
+	return WithArtifactMutationLock(artifactPath, func() error {
+		return RollbackUnderLock(artifactPath, originalStatusLine)
+	})
+}
+
+// RollbackUnderLock restores a status while the caller owns the artifact
+// lifecycle fence. Callers without the fence must use Rollback.
+func RollbackUnderLock(artifactPath string, originalStatusLine string) error {
 	current, err := os.ReadFile(artifactPath)
 	if err != nil {
 		return err
