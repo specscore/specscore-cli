@@ -199,7 +199,16 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		result, reconcileErr = reconcileUnderLock(opts, plansDir, flatPath)
 		return reconcileErr
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	// Like ChangeStatus, the artifact transaction is durable before derived
+	// lint/index work begins. The ordinary hook may acquire Plan locks itself,
+	// so it must never run while flatPath's non-reentrant fence is held.
+	if err := opts.PostMutation(); err != nil {
+		return ReconcileResult{}, err
+	}
+	return result, nil
 }
 
 // reconcileUnderLock performs the full plan and embedded-Task transaction
@@ -293,10 +302,6 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 			rollback()
 			return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
 		}
-		if err := opts.PostMutation(); err != nil {
-			rollback()
-			return ReconcileResult{}, err
-		}
 		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, nil
 	}
 
@@ -378,11 +383,6 @@ func reconcileUnderLock(opts ReconcileOptions, plansDir, flatPath string) (Recon
 	if _, _, err := reconcileAppendNoteUnderLockFn(flatPath, noteText); err != nil {
 		rollback()
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
-	}
-
-	if err := opts.PostMutation(); err != nil {
-		rollback()
-		return ReconcileResult{}, err
 	}
 
 	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, nil

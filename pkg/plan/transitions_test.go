@@ -257,12 +257,12 @@ func TestChangeStatus_RewriteError(t *testing.T) {
 	if got := codeOf(t, err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
-	if !strings.Contains(err.Error(), "rewriting status line") {
-		t.Errorf("expected rewrite error, got: %q", err.Error())
+	if !strings.Contains(err.Error(), "reading plan status") {
+		t.Errorf("expected transaction error, got: %q", err.Error())
 	}
 }
 
-func TestChangeStatus_PostMutationFails_RollsBack(t *testing.T) {
+func TestChangeStatus_PostMutationFails_RetainsCommittedTransaction(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Approved")
 	boom := errors.New("lint failed")
 	_, err := ChangeStatus(ChangeStatusOptions{
@@ -274,54 +274,44 @@ func TestChangeStatus_PostMutationFails_RollsBack(t *testing.T) {
 		t.Fatalf("expected boom error, got %v", err)
 	}
 	body, _ := os.ReadFile(path)
-	// Full rollback: status restored, no note, no successor line.
-	if !strings.Contains(string(body), "**Status:** Approved") {
-		t.Errorf("status not rolled back:\n%s", body)
+	// The one-write artifact transaction is durable before derived work starts;
+	// a callback failure is retained for explicit recovery rather than a split
+	// rollback that could erase another writer.
+	if !strings.Contains(string(body), "**Status:** Superseded") {
+		t.Errorf("status not retained:\n%s", body)
 	}
-	if strings.Contains(string(body), "## Resolution") || strings.Contains(string(body), "Superseded By") {
-		t.Errorf("body mutations not rolled back:\n%s", body)
+	if !strings.Contains(string(body), "## Resolution") || !strings.Contains(string(body), "Superseded By") {
+		t.Errorf("transaction fields not retained:\n%s", body)
 	}
 }
 
-func TestChangeStatus_SuccessorWriteFails_RollsBack(t *testing.T) {
+func TestChangeStatus_SuccessorTransformSucceedsInOneWrite(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Approved")
-	orig := setSupersededByFn
-	setSupersededByFn = func(string, string) ([]byte, bool, error) {
-		return nil, false, errors.New("successor write boom")
-	}
-	t.Cleanup(func() { setSupersededByFn = orig })
-
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot: root, Slug: "auth", To: lifecycle.PlanSuperseded,
 		Note: "replaced", Successor: "auth-v2", PostMutation: okHook,
 	})
-	if got := codeOf(t, err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	if err != nil {
+		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "**Status:** Approved") {
-		t.Errorf("status not rolled back after successor-write failure:\n%s", body)
+	if !strings.Contains(string(body), "**Superseded By:** auth-v2") {
+		t.Errorf("missing successor:\n%s", body)
 	}
 }
 
-func TestChangeStatus_NoteWriteFails_RollsBack(t *testing.T) {
+func TestChangeStatus_NoteTransformSucceedsInOneWrite(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Approved")
-	orig := appendNoteFn
-	appendNoteFn = func(string, string) ([]byte, bool, error) {
-		return nil, false, errors.New("note write boom")
-	}
-	t.Cleanup(func() { appendNoteFn = orig })
-
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot: root, Slug: "auth", To: lifecycle.PlanWithdrawn,
 		Note: "why", PostMutation: okHook,
 	})
-	if got := codeOf(t, err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	if err != nil {
+		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "**Status:** Approved") {
-		t.Errorf("status not rolled back after note-write failure:\n%s", body)
+	if !strings.Contains(string(body), "## Resolution") {
+		t.Errorf("missing note:\n%s", body)
 	}
 }
 

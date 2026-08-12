@@ -208,9 +208,9 @@ func TestTaskChangeStatus_ConcurrentRewriteReturnsConflict(t *testing.T) {
 	}
 
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
-	origPlan := rewritePlanTaskStatusLineFn
-	rewritePlanTaskStatusLineFn = func(string, int, lifecycle.Status, []string) error { return lifecycle.ErrConcurrentMutation }
-	t.Cleanup(func() { rewritePlanTaskStatusLineFn = origPlan })
+	origPlan := rewritePlanTaskStatusLineUnderLockFn
+	rewritePlanTaskStatusLineUnderLockFn = func(string, int, lifecycle.Status, []string) error { return lifecycle.ErrConcurrentMutation }
+	t.Cleanup(func() { rewritePlanTaskStatusLineUnderLockFn = origPlan })
 	_, _, err = runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete")
 	if exitCodeOfErr(err) != exitcode.Conflict {
 		t.Fatalf("plan conflict=%v", err)

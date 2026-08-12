@@ -119,29 +119,39 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 	if path == "" {
 		return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
 	}
-	p, err := plan.Parse(path)
+	err = lifecycle.WithArtifactMutationLock(path, func() error {
+		p, err := plan.Parse(path)
+		if err != nil {
+			return err
+		}
+		force, _ := cmd.Flags().GetBool(coordinationForceFlagName)
+		if err := enforceCoordinationBranch(p, root, force, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+		target, err := uniquePlanTaskByID(p, taskSlug)
+		if err != nil {
+			return err
+		}
+		before, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(before), "\n")
+		end := len(lines)
+		for line := target.HeadingLine; line < len(lines); line++ {
+			trimmed := strings.TrimSpace(lines[line])
+			if strings.HasPrefix(trimmed, "### Task ") || strings.HasPrefix(trimmed, "## ") {
+				end = line
+				break
+			}
+		}
+		return lifecycle.TransformArtifactUnderLock(path, before, func(b []byte) ([]byte, error) { return amendTaskBytes(b, taskSlug, target.HeadingLine-1, end, a) })
+	})
 	if err != nil {
-		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
-	}
-	force, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-	if err := enforceCoordinationBranch(p, root, force, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
-	for i := range p.Tasks {
-		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
-			lines := strings.Split(string(mustRead(path)), "\n")
-			end := len(lines)
-			for line := p.Tasks[i].HeadingLine; line < len(lines); line++ {
-				trimmed := strings.TrimSpace(lines[line])
-				if strings.HasPrefix(trimmed, "### Task ") || strings.HasPrefix(trimmed, "## ") {
-					end = line
-					break
-				}
-			}
-			return amendTaskArtifact(cmd, path, taskSlug, p.Tasks[i].HeadingLine-1, end, a)
-		}
-	}
-	return exitcode.NotFoundErrorf("task %q not found by **Id:** in plan %s", taskSlug, planSlug)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: annotations amended\n", taskSlug)
+	return nil
 }
 func mustRead(path string) []byte { b, _ := os.ReadFile(path); return b }
 
@@ -151,6 +161,21 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 	if err != nil {
 		return exitcode.UnexpectedErrorf("reading task: %v", err)
 	}
+	after, err := amendTaskBytes(before, slug, start, end, a)
+	if err != nil {
+		return err
+	}
+	if err := taskAmendCAS(path, before, after); err != nil {
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", slug)
+		}
+		return exitcode.UnexpectedErrorf("writing amendment: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: annotations amended\n", slug)
+	return nil
+}
+
+func amendTaskBytes(before []byte, slug string, start, end int, a annotationAmendment) ([]byte, error) {
 	newline := "\n"
 	if strings.Contains(string(before), "\r\n") {
 		newline = "\r\n"
@@ -168,7 +193,7 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 		}
 	}
 	if statusCount != 1 {
-		return exitcode.UnexpectedErrorf("task %s must have exactly one **Status:** line", slug)
+		return nil, exitcode.UnexpectedErrorf("task %s must have exactly one **Status:** line", slug)
 	}
 	fields := map[string]int{}
 	for i := status + 1; i < end; i++ {
@@ -177,7 +202,7 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 			prefix := "**" + name + ":**"
 			if strings.HasPrefix(s, prefix) {
 				if strings.TrimSpace(strings.TrimPrefix(s, prefix)) == "" || fields[name] != 0 {
-					return exitcode.InvalidArgsErrorf("task %s has ambiguous or malformed **%s:** fields", slug, name)
+					return nil, exitcode.InvalidArgsErrorf("task %s has ambiguous or malformed **%s:** fields", slug, name)
 				}
 				fields[name] = i + 1
 			}
@@ -209,7 +234,7 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 		}
 	}
 	if status < 0 {
-		return exitcode.UnexpectedErrorf("task %s lost its **Status:** line during amendment", slug)
+		return nil, exitcode.UnexpectedErrorf("task %s lost its **Status:** line during amendment", slug)
 	}
 	insert = status + 1
 	for insert < len(kept) && (strings.HasPrefix(strings.TrimSpace(kept[insert]), "**Implemented-by:**") || strings.HasPrefix(strings.TrimSpace(kept[insert]), "**Note:**") || strings.HasPrefix(strings.TrimSpace(kept[insert]), "**Evidence:")) {
@@ -242,13 +267,5 @@ func amendTaskArtifact(cmd *cobra.Command, path, slug string, start, end int, a 
 		auditAt = len(kept)
 	}
 	kept = append(kept[:auditAt], append([]string{audit}, kept[auditAt:]...)...)
-	after := []byte(strings.Join(kept, newline))
-	if err := taskAmendCAS(path, before, after); err != nil {
-		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
-			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before amending", slug)
-		}
-		return exitcode.UnexpectedErrorf("writing amendment: %v", err)
-	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: annotations amended\n", slug)
-	return nil
+	return []byte(strings.Join(kept, newline)), nil
 }

@@ -422,10 +422,28 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 	}
 
 	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
-	p, err := plan.Parse(planPath)
+	var from lifecycle.Status
+	err = lifecycle.WithArtifactMutationLock(planPath, func() error {
+		return changePlanTaskStatusUnderLock(cmd, planPath, taskSlug, planSlug, specRoot, to, &from)
+	})
 	if err != nil {
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
+		}
 		if os.IsNotExist(err) {
 			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
+		}
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
+	return nil
+}
+
+func changePlanTaskStatusUnderLock(cmd *cobra.Command, planPath, taskSlug, planSlug, specRoot string, to lifecycle.Status, fromOut *lifecycle.Status) error {
+	p, err := plan.Parse(planPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
 	}
@@ -470,14 +488,13 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 		implementedBy = implementedByRefFromFlags(cmd)
 	}
 	extraFields := buildExtraTaskFieldLines(implementedBy, noteFromFlags(cmd), evidenceFromFlags(cmd))
-	if err := rewritePlanTaskStatusLineFn(planPath, target.StatusLine, to, extraFields); err != nil {
+	if err := rewritePlanTaskStatusLineUnderLockFn(planPath, target.StatusLine, to, extraFields); err != nil {
 		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
-			return exitcode.ConflictErrorf("task %s changed concurrently; re-read before changing status", taskSlug)
+			return err
 		}
 		return exitcode.UnexpectedErrorf("rewriting status: %v", err)
 	}
-
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
+	*fromOut = from
 	return nil
 }
 
@@ -493,15 +510,22 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 // pure status rewrite.
 func rewritePlanTaskStatusLine(path string, statusLine int, to lifecycle.Status, extraFields []string) error {
 	return lifecycle.WithArtifactMutationLock(path, func() error {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		lines := strings.Split(string(data), "\n")
-		lines[statusLine-1] = "**Status:** " + string(to)
-		lines = withExtraFieldLines(lines, statusLine-1, extraFields)
-		return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+		return rewritePlanTaskStatusLineUnderLock(path, statusLine, to, extraFields)
 	})
+}
+
+func rewritePlanTaskStatusLineUnderLock(path string, statusLine int, to lifecycle.Status, extraFields []string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
+		return lifecycle.ErrConcurrentMutation
+	}
+	lines[statusLine-1] = "**Status:** " + string(to)
+	lines = withExtraFieldLines(lines, statusLine-1, extraFields)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 // isImplementedByLine reports whether ln is an `**Implemented-by:**` field line.
@@ -584,19 +608,26 @@ func runTaskAmendProvenanceBoard(cmd *cobra.Command, taskSlug string) error {
 	}
 
 	taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
-	status, err := boardTaskStatus(taskFilePath)
-	if err != nil {
+	if err := lifecycle.WithArtifactMutationLock(taskFilePath, func() error {
+		status, err := boardTaskStatus(taskFilePath)
+		if err != nil {
+			return err
+		}
+		if status != string(lifecycle.TaskComplete) {
+			return exitcode.InvalidStateErrorf("--amend-provenance requires task %s to be complete, but it is %s", taskSlug, status)
+		}
+		return amendBoardImplementedByUnlocked(taskFilePath, implementedByRefFromFlags(cmd))
+	}); err != nil {
 		if errors.Is(err, errNoStatusForProvenance) {
 			return exitcode.UnexpectedErrorf("task %s has no **Status:** line", taskSlug)
 		}
-		return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
-	}
-	if status != string(lifecycle.TaskComplete) {
-		return exitcode.InvalidStateErrorf(
-			"--amend-provenance requires task %s to be complete, but it is %s", taskSlug, status)
-	}
-
-	if err := amendBoardImplementedBy(taskFilePath, implementedByRefFromFlags(cmd)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return exitcode.NotFoundErrorf("task not found: %s", taskSlug)
+		}
+		var stateErr *exitcode.Error
+		if errors.As(err, &stateErr) && stateErr.ExitCode() == exitcode.InvalidState {
+			return err
+		}
 		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
@@ -614,37 +645,32 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 	}
 
 	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
-	p, err := plan.Parse(planPath)
+	err = lifecycle.WithArtifactMutationLock(planPath, func() error {
+		p, err := plan.Parse(planPath)
+		if err != nil {
+			return err
+		}
+		forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
+		if err := enforceCoordinationBranch(p, specRoot, forceCoordination, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+		target, err := uniquePlanTaskByID(p, taskSlug)
+		if err != nil {
+			return err
+		}
+		if string(target.Status) != string(lifecycle.TaskComplete) {
+			return exitcode.InvalidStateErrorf("--amend-provenance requires task %q to be complete, but it is %s", taskSlug, target.Status)
+		}
+		return amendPlanImplementedByUnderLock(planPath, target.StatusLine, implementedByRefFromFlags(cmd))
+	})
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
 		}
-		return exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
-	}
-
-	// Coordination-branch enforcement: see runTaskChangeStatusPlanInline.
-	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-	if cerr := enforceCoordinationBranch(p, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
-		return cerr
-	}
-
-	var target *plan.Task
-	for i := range p.Tasks {
-		if p.Tasks[i].IdPresent && p.Tasks[i].Id == taskSlug {
-			target = &p.Tasks[i]
-			break
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return err
 		}
-	}
-	if target == nil {
-		return exitcode.NotFoundErrorf("task %q not found by **Id:** in plan %s", taskSlug, planSlug)
-	}
-
-	if string(target.Status) != string(lifecycle.TaskComplete) {
-		return exitcode.InvalidStateErrorf(
-			"--amend-provenance requires task %q to be complete, but it is %s", taskSlug, string(target.Status))
-	}
-
-	if err := amendPlanImplementedBy(planPath, target.StatusLine, implementedByRefFromFlags(cmd)); err != nil {
 		return exitcode.UnexpectedErrorf("amending provenance: %v", err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: provenance amended\n", taskSlug)
@@ -655,17 +681,37 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 // adjacent to the 1-based statusLine of a plan file, preserving every other line.
 func amendPlanImplementedBy(path string, statusLine int, ref string) error {
 	return lifecycle.WithArtifactMutationLock(path, func() error {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		lines := strings.Split(string(data), "\n")
-		if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
-			return lifecycle.ErrConcurrentMutation
-		}
-		lines = withAmendedImplementedBy(lines, statusLine-1, ref)
-		return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+		return amendPlanImplementedByUnderLock(path, statusLine, ref)
 	})
+}
+
+func amendPlanImplementedByUnderLock(path string, statusLine int, ref string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
+		return lifecycle.ErrConcurrentMutation
+	}
+	lines = withAmendedImplementedBy(lines, statusLine-1, ref)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+func uniquePlanTaskByID(p *plan.Plan, id string) (*plan.Task, error) {
+	var found *plan.Task
+	for i := range p.Tasks {
+		if p.Tasks[i].IdPresent && p.Tasks[i].Id == id {
+			if found != nil {
+				return nil, exitcode.InvalidArgsErrorf("plan has duplicate Task **Id:** %q", id)
+			}
+			found = &p.Tasks[i]
+		}
+	}
+	if found == nil {
+		return nil, exitcode.NotFoundErrorf("task %q not found by **Id:** in plan", id)
+	}
+	return found, nil
 }
 
 // resolveTasksDir resolves the tasks directory from a --project flag or CWD.
@@ -928,47 +974,53 @@ func runTaskNew(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Check if task already exists.
 	taskDir := filepath.Join(tasksDir, taskFlag)
-	if _, err := os.Stat(taskDir); err == nil {
-		return exitcode.InvalidArgsErrorf("task already exists: %s", taskFlag)
-	}
-
-	// Create task directory and README.
-	if err := os.MkdirAll(taskDir, 0o755); err != nil {
-		return exitcode.UnexpectedErrorf("creating task directory: %v", err)
-	}
-
 	tfd := task.TaskFileData{
 		Title:       titleFlag,
 		Description: descFlag,
 		DependsOn:   deps,
 	}
 	taskFilePath := filepath.Join(taskDir, "README.md")
-	if err := osWriteFileFn(taskFilePath, task.RenderTaskFile(tfd), 0o644); err != nil {
-		return exitcode.UnexpectedErrorf("writing task file: %v", err)
-	}
-
-	// Update board: read, append row, write back.
 	boardPath := filepath.Join(tasksDir, "README.md")
-	boardData, err := osReadFileFn(boardPath)
-	if err != nil {
-		return exitcode.NotFoundErrorf("reading board: %v", err)
-	}
-
-	bv, err := task.ParseBoard(boardData)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("parsing board: %v", err)
-	}
-
-	newRow := task.BoardRow{
-		Task:      taskFlag,
-		Status:    task.StatusPlanning,
-		DependsOn: deps,
-	}
-	bv.Rows = append(bv.Rows, newRow)
-
-	if err := os.WriteFile(boardPath, task.RenderBoard(bv), 0o644); err != nil {
+	// The board path lock exists even before its README does. It fences the
+	// complete allocation/publication transaction, so concurrent creators cannot
+	// leave an unlisted README or lose an appended row.
+	if err := lifecycle.WithArtifactMutationLock(boardPath, func() error {
+		if _, err := os.Stat(taskDir); err == nil {
+			return exitcode.ConflictErrorf("task already exists: %s", taskFlag)
+		}
+		boardData, err := osReadFileFn(boardPath)
+		if err != nil {
+			return err
+		}
+		bv, err := task.ParseBoard(boardData)
+		if err != nil {
+			return err
+		}
+		for _, row := range bv.Rows {
+			if row.Task == taskFlag {
+				return exitcode.ConflictErrorf("task already exists: %s", taskFlag)
+			}
+		}
+		if err := os.MkdirAll(taskDir, 0o755); err != nil {
+			return err
+		}
+		if err := osWriteFileFn(taskFilePath, task.RenderTaskFile(tfd), 0o644); err != nil {
+			return err
+		}
+		bv.Rows = append(bv.Rows, task.BoardRow{Task: taskFlag, Status: task.StatusPlanning, DependsOn: deps})
+		if err := os.WriteFile(boardPath, task.RenderBoard(bv), 0o644); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return err
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return exitcode.NotFoundErrorf("reading board: %v", err)
+		}
 		return exitcode.UnexpectedErrorf("writing board: %v", err)
 	}
 

@@ -126,8 +126,31 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, err
 	}
 
-	// (2) State-machine validation.
-	from, err := lifecycle.Validate(lifecycle.KindPlan, path, opts.To)
+	var from lifecycle.Status
+	err = lifecycle.TransformArtifact(path, func(before []byte) ([]byte, error) {
+		// Validation occurs only after the artifact fence is held and is derived
+		// from the exact bytes this callback transforms.
+		var validateErr error
+		from, validateErr = lifecycle.StatusFromBytes(before)
+		if validateErr != nil {
+			return nil, validateErr
+		}
+		if validateErr = lifecycle.Transition(lifecycle.KindPlan, from, opts.To); validateErr != nil {
+			return nil, validateErr
+		}
+		updated, _, transformErr := lifecycle.RewriteBytes(before, opts.To)
+		if transformErr != nil {
+			return nil, transformErr
+		}
+		if opts.Successor != "" {
+			updated, _, transformErr = lifecycle.SetSupersededByBytes(updated, opts.Successor)
+			if transformErr != nil {
+				return nil, transformErr
+			}
+		}
+		updated, _, transformErr = lifecycle.AppendResolutionNoteBytes(updated, opts.Note)
+		return updated, transformErr
+	})
 	if err != nil {
 		var ite *lifecycle.InvalidTransitionError
 		if errors.As(err, &ite) {
@@ -148,46 +171,10 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading plan status: %v", err)
 	}
 
-	// (3) Status line rewrite.
-	origLine, err := lifecycle.Rewrite(path, opts.To)
-	if err != nil {
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("rewriting status line: %v", err)
-	}
-	fullRollback := func() {
-		_ = lifecycle.Rollback(path, origLine)
-	}
-
-	// (4a) Optional structured `**Superseded By:**` successor reference.
-	origSucc, succWritten, err := setSupersededByFn(path, opts.Successor)
-	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing successor reference: %v", err)
-	}
-	if succWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origSucc)
-			prev()
-		}
-	}
-
-	// (4b) Optional transition note → `## Resolution` section.
-	origBody, noteWritten, err := appendNoteFn(path, opts.Note)
-	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing transition note: %v", err)
-	}
-	if noteWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origBody)
-			prev()
-		}
-	}
-
-	// (5) PostMutation hook — typically `spec lint --fix` + verify.
+	// The artifact commit is now durable. Post-mutation derived work runs after
+	// release so it may take its own ordered artifact/index locks. A failure is
+	// deliberately retained rather than attempting an unsafe split rollback.
 	if err := opts.PostMutation(); err != nil {
-		fullRollback()
 		return ChangeStatusResult{}, err
 	}
 

@@ -99,11 +99,24 @@ func RewriteUnderLock(artifactPath string, newStatus Status) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	updated, originalLine, err := RewriteBytes(original, newStatus)
+	if err != nil {
+		return "", err
+	}
+	if err := writeFileAtomic(artifactPath, updated); err != nil {
+		return "", err
+	}
+	return originalLine, nil
+}
+
+// RewriteBytes rewrites Status (and its frontmatter mirror) in memory. It is
+// the pure transform used by compound artifact transactions.
+func RewriteBytes(original []byte, newStatus Status) ([]byte, string, error) {
 	lines := splitKeepTerminators(original)
 
 	idx := findStatusLineIndex(lines)
 	if idx < 0 {
-		return "", ErrStatusLineNotFound
+		return nil, "", ErrStatusLineNotFound
 	}
 
 	originalLine := lines[idx]
@@ -122,10 +135,23 @@ func RewriteUnderLock(artifactPath string, newStatus Status) (string, error) {
 		setFrontmatterStatusLine(lines, fmIdx, string(newStatus))
 	}
 
-	if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
-		return "", err
+	return joinLines(lines), originalLine, nil
+}
+
+// StatusFromBytes returns the body Status parsed from bytes held by a compound
+// transaction. It never reads from disk.
+func StatusFromBytes(original []byte) (Status, error) {
+	lines := splitKeepTerminators(original)
+	idx := findStatusLineIndex(lines)
+	if idx < 0 {
+		return "", ErrStatusLineNotFound
 	}
-	return originalLine, nil
+	body, _ := splitTerminator(lines[idx])
+	m := statusLineRe.FindStringSubmatch(body)
+	if m == nil {
+		return "", ErrStatusLineNotFound
+	}
+	return Status(strings.TrimSpace(m[2])), nil
 }
 
 // Rollback restores the artifact's `**Status:**` line to its

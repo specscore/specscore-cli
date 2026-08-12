@@ -170,16 +170,16 @@ func (c *planRulesChecker) fixNoSourceLines(specRoot string) error {
 			continue
 		}
 		planPath := filepath.Join(plansDir, name)
-		p, parseErr := plan.Parse(planPath)
-		if parseErr != nil {
-			return fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
-		}
-		// Only a fully-absent source line is fixable: no `**Source Feature:**`
-		// and no `**Source:**` line of any kind.
-		if !p.HasPlanTitle || p.SourceFeature != "" || p.SourceLine != 0 {
-			continue
-		}
-		if err := insertSourceNone(planPath, p); err != nil {
+		if err := lifecycle.WithArtifactMutationLock(planPath, func() error {
+			p, parseErr := plan.Parse(planPath)
+			if parseErr != nil {
+				return fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
+			}
+			if !p.HasPlanTitle || p.SourceFeature != "" || p.SourceLine != 0 {
+				return nil
+			}
+			return insertSourceNoneUnderLock(planPath, p)
+		}); err != nil {
 			return fmt.Errorf("fixing %s: %w", planPath, err)
 		}
 	}
@@ -191,24 +191,25 @@ func (c *planRulesChecker) fixNoSourceLines(specRoot string) error {
 // the canonical header order) or, absent that, just after the title.
 func insertSourceNone(path string, p *plan.Plan) error {
 	return lifecycle.WithArtifactMutationLock(path, func() error {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		lines := strings.Split(string(data), "\n")
-		anchor := p.TitleLine // 1-based line to insert AFTER
-		if p.StatusLine > 0 {
-			anchor = p.StatusLine
-		}
-		if anchor <= 0 || anchor > len(lines) {
-			anchor = len(lines)
-		}
-		out := make([]string, 0, len(lines)+1)
-		out = append(out, lines[:anchor]...)
-		out = append(out, "**Source:** none")
-		out = append(out, lines[anchor:]...)
-		return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
+		return insertSourceNoneUnderLock(path, p)
 	})
+}
+
+func insertSourceNoneUnderLock(path string, p *plan.Plan) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	anchor := p.TitleLine
+	if p.StatusLine > 0 {
+		anchor = p.StatusLine
+	}
+	if anchor <= 0 || anchor > len(lines) {
+		anchor = len(lines)
+	}
+	out := append(append([]string{}, lines[:anchor]...), append([]string{"**Source:** none"}, lines[anchor:]...)...)
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
 }
 
 // lintPlan runs all four rules against a single parsed Plan. relPath is the
@@ -908,18 +909,20 @@ func fixP007(specRoot string) error {
 			continue
 		}
 		planPath := filepath.Join(plansDir, name)
-		p, parseErr := plan.Parse(planPath)
-		if parseErr != nil {
-			return fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
-		}
-		if !p.HasPlanTitle || p.StatusLine == 0 || !derivationEligibleStatuses[p.Status] {
-			continue
-		}
-		band, ok := p.DeriveExecutionBand()
-		if !ok || band == p.Status {
-			continue
-		}
-		if err := rewritePlanStatusLine(planPath, p.StatusLine, band); err != nil {
+		if err := lifecycle.WithArtifactMutationLock(planPath, func() error {
+			p, parseErr := plan.Parse(planPath)
+			if parseErr != nil {
+				return fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
+			}
+			if !p.HasPlanTitle || p.StatusLine == 0 || !derivationEligibleStatuses[p.Status] {
+				return nil
+			}
+			band, ok := p.DeriveExecutionBand()
+			if !ok || band == p.Status {
+				return nil
+			}
+			return rewritePlanStatusLineUnderLock(planPath, p.StatusLine, band)
+		}); err != nil {
 			return fmt.Errorf("fixing %s: %w", planPath, err)
 		}
 	}
@@ -931,17 +934,21 @@ func fixP007(specRoot string) error {
 // from the parse pass over the same file, so it is always in range.
 func rewritePlanStatusLine(path string, statusLine int, band string) error {
 	return lifecycle.WithArtifactMutationLock(path, func() error {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		lines := strings.Split(string(data), "\n")
-		if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
-			return lifecycle.ErrConcurrentMutation
-		}
-		lines[statusLine-1] = "**Status:** " + band
-		return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+		return rewritePlanStatusLineUnderLock(path, statusLine, band)
 	})
+}
+
+func rewritePlanStatusLineUnderLock(path string, statusLine int, band string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	if statusLine < 1 || statusLine > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[statusLine-1]), "**Status:**") {
+		return lifecycle.ErrConcurrentMutation
+	}
+	lines[statusLine-1] = "**Status:** " + band
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 // ----- P-008 implementation-commit-provenance ref format -----

@@ -49,17 +49,23 @@ func AppendResolutionNoteUnderLock(artifactPath, note string) (original []byte, 
 		return nil, false, err
 	}
 
-	// Normalize the note's trailing whitespace/newlines; preserve internal
-	// content verbatim.
-	para := strings.TrimRight(note, "\n\r \t")
-
-	lines := splitKeepTerminators(orig)
-	newLines := insertResolutionNote(lines, para)
-
-	if err := writeFileAtomic(artifactPath, joinLines(newLines)); err != nil {
+	updated, wrote, err := AppendResolutionNoteBytes(orig, note)
+	if err != nil || !wrote {
+		return orig, wrote, err
+	}
+	if err := writeFileAtomic(artifactPath, updated); err != nil {
 		return nil, false, err
 	}
 	return orig, true, nil
+}
+
+// AppendResolutionNoteBytes appends a resolution paragraph in memory.
+func AppendResolutionNoteBytes(orig []byte, note string) ([]byte, bool, error) {
+	if strings.TrimSpace(note) == "" {
+		return orig, false, nil
+	}
+	para := strings.TrimRight(note, "\n\r \t")
+	return joinLines(insertResolutionNote(splitKeepTerminators(orig), para)), true, nil
 }
 
 // RestoreBody rewrites the artifact with original (the bytes returned by a

@@ -52,6 +52,22 @@ func setSupersededByUnderLock(artifactPath, successor string) (original []byte, 
 	if err != nil {
 		return nil, false, err
 	}
+	updated, wrote, err := SetSupersededByBytes(orig, successor)
+	if err != nil || !wrote {
+		return orig, wrote, err
+	}
+	if err := writeFileAtomic(artifactPath, updated); err != nil {
+		return nil, false, err
+	}
+	return orig, true, nil
+}
+
+// SetSupersededByBytes applies the successor header transform in memory.
+func SetSupersededByBytes(orig []byte, successor string) ([]byte, bool, error) {
+	successor = strings.TrimSpace(successor)
+	if successor == "" {
+		return orig, false, nil
+	}
 	lines := splitKeepTerminators(orig)
 
 	// Rewrite an existing line in place.
@@ -59,10 +75,7 @@ func setSupersededByUnderLock(artifactPath, successor string) (original []byte, 
 		body, terminator := splitTerminator(ln)
 		if m := supersededByLineRe.FindStringSubmatch(body); m != nil {
 			lines[i] = fmt.Sprintf("%s**Superseded By:** %s%s", m[1], successor, m[3]) + terminator
-			if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
-				return nil, false, err
-			}
-			return orig, true, nil
+			return joinLines(lines), true, nil
 		}
 	}
 
@@ -86,10 +99,7 @@ func setSupersededByUnderLock(artifactPath, successor string) (original []byte, 
 	newLine := fmt.Sprintf("**Superseded By:** %s%s", successor, terminator)
 	lines = insertAt(lines, anchor+1, []string{newLine})
 
-	if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
-		return nil, false, err
-	}
-	return orig, true, nil
+	return joinLines(lines), true, nil
 }
 
 // findSupersedesLineIndex returns the index of the `**Supersedes:**` header

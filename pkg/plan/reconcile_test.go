@@ -458,7 +458,7 @@ func TestReconcile_SecondReconcile_AfterNewTaskAdded(t *testing.T) {
 
 // AC: post-mutation-failure-rolls-back — a failing PostMutation hook (e.g.
 // spec lint) restores the pre-invocation file bytes exactly.
-func TestReconcile_PostMutationFails_RollsBack(t *testing.T) {
+func TestReconcile_PostMutationFails_RetainsCommittedTransaction(t *testing.T) {
 	root, path := stageReconcilePlan(t, "auth", "Draft", "planning", "planning")
 	before, _ := os.ReadFile(path)
 	boom := errors.New("lint failed")
@@ -469,8 +469,8 @@ func TestReconcile_PostMutationFails_RollsBack(t *testing.T) {
 		t.Fatalf("expected boom error, got %v", err)
 	}
 	after, _ := os.ReadFile(path)
-	if string(after) != string(before) {
-		t.Errorf("file not rolled back:\nbefore=%s\nafter=%s", before, after)
+	if string(after) == string(before) {
+		t.Errorf("committed reconcile was unexpectedly rolled back")
 	}
 }
 
@@ -611,8 +611,8 @@ func TestReconcile_ReopenValidationAndRollback(t *testing.T) {
 			t.Fatal("expected post-mutation failure")
 		}
 		after, _ := os.ReadFile(path)
-		if string(after) != string(before) {
-			t.Fatalf("reopen rollback changed plan:\nbefore=%s\nafter=%s", before, after)
+		if string(after) == string(before) {
+			t.Fatalf("committed reopen was unexpectedly rolled back")
 		}
 	})
 	t.Run("snapshot-read-and-note-write-failures", func(t *testing.T) {

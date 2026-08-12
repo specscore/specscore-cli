@@ -27,6 +27,35 @@ func WithArtifactMutationLock(path string, mutate func() error) error {
 	return mutate()
 }
 
+// TransformArtifact runs one complete existing-artifact transaction: acquire
+// the per-artifact lifecycle fence, read the exact current bytes, resolve and
+// validate against those bytes in transform, then atomically replace them when
+// transform returns changed bytes. Transform must be pure: it must not call a
+// public lifecycle writer (which would acquire the same non-reentrant lock).
+func TransformArtifact(path string, transform func(before []byte) (after []byte, err error)) error {
+	return WithArtifactMutationLock(path, func() error {
+		before, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return TransformArtifactUnderLock(path, before, transform)
+	})
+}
+
+// TransformArtifactUnderLock transforms the supplied exact current bytes while
+// the caller owns path's lifecycle lock. It is the compound-transaction form
+// of TransformArtifact and must not be called without that lock.
+func TransformArtifactUnderLock(path string, before []byte, transform func(before []byte) (after []byte, err error)) error {
+	after, err := transform(before)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(before, after) {
+		return nil
+	}
+	return writeFileAtomic(path, after)
+}
+
 // CompareAndSwap replaces path only when it still contains before. A sibling
 // non-blocking advisory lock makes the read/compare/rename sequence one critical section for
 // every SpecScore lifecycle writer. The lock is intentionally adjacent to the
