@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "github.com/sneat-co/backstage",
+    "path": "LESSONS-LEARNED.md",
+    "revision": "91238f86dbe6b8effdbaa8f034d58e1ccf94c9aa",
+    "committed_at": "2026-08-10T12:20:12Z",
+    "sha256": "4641e3561d8db3c50e919a23c9d2975d06dd51058f1e4838c6b65dfc4d9838a8",
+    "byte_count": 478835
+  },
+  "lesson_count": 175,
+  "recurrence_marker_count": 35,
+  "entry_count": 210,
+  "entry_projection_sha256": "cb19d7c1ed6dc432ff21fe0998bb77fe651fc29cc076517b0cc7ab1c750b9e93",
+  "entry_fixture_sha256": "679c7a65a6363f4a1c1c1e7871f89fa57b63ce58eb0d83b750c207b79b8de452",
+  "collisions": [
+    {
+      "legacy_id": "L157",
+      "keys": ["L157#1", "L157#2"]
+    },
+    {
+      "legacy_id": "L22",
+      "keys": ["L22#1", "L22#2"]
+    },
+    {
+      "legacy_id": "L34",
+      "keys": ["L34#1", "L34#2"]
+    },
+    {
+      "legacy_id": "L35",
+      "keys": ["L35#1", "L35#2"]
+    },
+    {
+      "legacy_id": "L51",
+      "keys": ["L51#1", "L51#2", "L51#3"]
+    }
+  ],
+  "unmatched_candidate_count": 0
+}

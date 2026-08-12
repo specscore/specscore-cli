@@ -1,4 +1,5 @@
-// Package lesson parses and scaffolds single-file Lesson artifacts at
+// Package lesson parses and scaffolds canonical directory Lessons at
+// spec/lessons/<slug>/README.md and compatibility flat Lessons at
 // spec/lessons/<slug>.md.
 //
 // A Lesson records a gap in process — a missing check, gate, convention, or
@@ -6,16 +7,16 @@
 // enforcement ladder (Recorded -> Stated -> Enforced) as the gap is closed by
 // an increasingly binding mechanism. It is deliberately the flattest kind in
 // the spec tree: no hierarchy, no source-Feature dependency, a single status
-// line, and a free-form prose body whose only structural requirement is that
-// four sections exist (lint checks presence, never content) — Incident,
-// Process gap, Check, Enforcement — matching the append-only lessons-learned
-// convention this artifact kind formalizes.
+// line. Canonical READMEs keep the durable rule compact while immutable child
+// occurrences hold manifestation history; compatibility flat files retain the
+// historical four-section prose contract until explicit migration.
 package lesson
 
 import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,10 +37,33 @@ const FormatURL = "https://specscore.md/lesson-specification"
 // refusal.
 var RequiredSections = []string{"Incident", "Process gap", "Check", "Enforcement"}
 
+// RequiredSectionsFor preserves legacy compatibility while exposing the
+// canonical compact Lesson's actual contract to readers.
+func RequiredSectionsFor(l *Lesson) []string {
+	if l != nil && l.Canonical {
+		return []string{"Lesson", "Process Gap", "Tracking", "Enforcement", "Open Questions"}
+	}
+	return RequiredSections
+}
+
+func (l *Lesson) MissingRequiredSectionsForLayout() []string {
+	var missing []string
+	for _, req := range RequiredSectionsFor(l) {
+		if !l.HasSection(req) {
+			missing = append(missing, req)
+		}
+	}
+	return missing
+}
+
 // Lesson is a parsed single-file Lesson artifact.
 type Lesson struct {
 	Path string // absolute path on disk
 	Slug string // filename without `.md`
+	// Canonical is true when Path is spec/lessons/<slug>/README.md.
+	Canonical bool
+	// OccurrencesDir is non-empty only for canonical directory lessons.
+	OccurrencesDir string
 
 	HasLessonTitle bool   // first H1 line was `# Lesson: <title>`
 	TitleLine      int    // 1-based line number of the title (0 when absent)
@@ -54,13 +78,32 @@ type Lesson struct {
 	Owner     string // value of `**Owner:**` (empty when missing)
 	OwnerLine int    // 1-based line of the field; 0 when absent
 
+	Classifications      []string
+	ClassificationsLine  int
+	LegacyProvenance     string
+	LegacyProvenanceLine int
+	DuplicateOf          string
+	DuplicateOfLine      int
+	Supersedes           string
+	SupersedesLine       int
+
 	Recurred      int    // parsed `**Recurred:**` count; 0 when absent or unparsable
 	RecurredRaw   string // raw value as written
 	RecurredLine  int    // 1-based line of the field; 0 when absent
 	RecurredValid bool   // true when RecurredRaw parsed cleanly as a non-negative integer
 
-	SupersededBy     string // value of `**Superseded By:**` (empty when missing)
-	SupersededByLine int    // 1-based line of the field; 0 when absent
+	SupersededBy          string // value of `**Superseded By:**` (empty when missing)
+	SupersededByLine      int    // 1-based line of the field; 0 when absent
+	Control               string
+	ControlLine           int
+	Verification          string
+	VerificationLine      int
+	Evidence              string
+	EvidenceLine          int
+	FrontmatterStatus     string
+	FrontmatterStatusLine int
+	FieldCounts           map[string]int
+	SectionSequence       []string
 
 	// SectionLines maps a present H2 section title to its 1-based heading
 	// line. Only sections found in the body appear here; callers check
@@ -131,7 +174,15 @@ func Parse(path string) (*Lesson, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	l := &Lesson{Path: path, Slug: slugFromPath(path), SectionLines: map[string]int{}}
+	slug := slugFromPath(path)
+	canonical := filepath.Base(path) == "README.md" && filepath.Base(filepath.Dir(filepath.Dir(path))) == "lessons"
+	if canonical {
+		slug = filepath.Base(filepath.Dir(path))
+	}
+	l := &Lesson{Path: path, Slug: slug, Canonical: canonical, SectionLines: map[string]int{}, FieldCounts: map[string]int{}}
+	if canonical {
+		l.OccurrencesDir = filepath.Join(filepath.Dir(path), "occurrences")
+	}
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
@@ -139,9 +190,16 @@ func Parse(path string) (*Lesson, error) {
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
 	for i, raw := range lines {
 		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "status:") && l.FrontmatterStatusLine == 0 {
+			l.FrontmatterStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "status:"))
+			l.FrontmatterStatusLine = i + 1
+		}
 		if rest, ok := strings.CutPrefix(trimmed, "# "); !l.HasLessonTitle && ok {
 			if title, ok := strings.CutPrefix(rest, "Lesson:"); ok {
 				l.HasLessonTitle = true
@@ -152,12 +210,14 @@ func Parse(path string) (*Lesson, error) {
 		}
 		if title, ok := strings.CutPrefix(trimmed, "## "); ok {
 			t := strings.TrimSpace(title)
+			l.SectionSequence = append(l.SectionSequence, t)
 			if _, seen := l.SectionLines[t]; !seen {
 				l.SectionLines[t] = i + 1
 			}
 			continue
 		}
 		if name, val, ok := matchBoldField(trimmed); ok {
+			l.FieldCounts[name]++
 			switch name {
 			case "Status":
 				l.Status = val
@@ -168,6 +228,20 @@ func Parse(path string) (*Lesson, error) {
 			case "Owner":
 				l.Owner = val
 				l.OwnerLine = i + 1
+			case "Classifications":
+				l.ClassificationsLine = i + 1
+				for _, value := range strings.Split(val, ",") {
+					value = strings.TrimSpace(value)
+					if value != "" {
+						l.Classifications = append(l.Classifications, value)
+					}
+				}
+			case "Legacy Provenance":
+				l.LegacyProvenance, l.LegacyProvenanceLine = val, i+1
+			case "Duplicate Of":
+				l.DuplicateOf, l.DuplicateOfLine = val, i+1
+			case "Supersedes":
+				l.Supersedes, l.SupersedesLine = val, i+1
 			case "Recurred":
 				l.RecurredRaw = val
 				l.RecurredLine = i + 1
@@ -178,6 +252,12 @@ func Parse(path string) (*Lesson, error) {
 			case "Superseded By":
 				l.SupersededBy = val
 				l.SupersededByLine = i + 1
+			case "Control":
+				l.Control, l.ControlLine = val, i+1
+			case "Verification":
+				l.Verification, l.VerificationLine = val, i+1
+			case "Evidence":
+				l.Evidence, l.EvidenceLine = val, i+1
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -15,6 +16,30 @@ import (
 	"github.com/specscore/specscore-cli/pkg/event"
 )
 
+type fakeEventOutbox struct {
+	prepared []event.PreparedRecord
+	result   event.ReplayResult
+	err      error
+	action   error
+	from     string
+}
+
+func (f *fakeEventOutbox) Replay(context.Context, []event.Subscriber, string, int) (event.ReplayResult, error) {
+	return f.result, f.err
+}
+func (f *fakeEventOutbox) ReplayFrom(_ context.Context, _ []event.Subscriber, _, from string, _ int) (event.ReplayResult, error) {
+	f.from = from
+	return f.result, f.err
+}
+func (f *fakeEventOutbox) Prepared() ([]event.PreparedRecord, error)     { return f.prepared, f.err }
+func (f *fakeEventOutbox) Commit(string) error                           { return f.action }
+func (f *fakeEventOutbox) Abort(string) error                            { return f.action }
+func (f *fakeEventOutbox) Enqueue(event.Event, []event.Subscriber) error { return f.action }
+
+func eventTestDeps(outbox eventCLIOutbox) eventCLIDeps {
+	return eventCLIDeps{func() (string, error) { return "root", nil }, func(s string) (string, error) { return s, nil }, func(string) ([]event.Subscriber, error) { return []event.Subscriber{event.NoOp{}}, nil }, func(string) eventCLIOutbox { return outbox }}
+}
+
 // runEvent invokes the event command tree in-process with the given args.
 func runEvent(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
@@ -25,6 +50,80 @@ func runEvent(t *testing.T, args ...string) (string, string, error) {
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
+}
+
+func TestEventAdapterFailures(t *testing.T) {
+	cmd := eventReplayCommand()
+	requireCLIError(t, runEventReplayWithDeps(cmd, defaultEventCLIDeps()))
+	cmd = eventReplayCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink", "limit": "-1"})
+	requireCLIError(t, runEventReplayWithDeps(cmd, defaultEventCLIDeps()))
+	cmd = eventReplayCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink", "from": "not-a-uuid"})
+	requireCLIError(t, runEventReplayWithDeps(cmd, defaultEventCLIDeps()))
+	cmd = eventReplayCommand()
+	fakeReplay := &fakeEventOutbox{}
+	const cursor = "00000000-0000-4000-8000-000000000042"
+	setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink", "from": cursor})
+	requireCLISuccess(t, runEventReplayWithDeps(cmd, eventTestDeps(fakeReplay)))
+	if fakeReplay.from != cursor {
+		t.Fatalf("replay cursor = %q, want %q", fakeReplay.from, cursor)
+	}
+	for _, phase := range []string{"getwd", "root", "load", "replay", "failed"} {
+		cmd = eventReplayCommand()
+		setLessonCommandFlags(t, cmd, map[string]string{"subscriber": "sink"})
+		fake := &fakeEventOutbox{}
+		deps := eventTestDeps(fake)
+		switch phase {
+		case "getwd":
+			deps.getwd = func() (string, error) { return "", errors.New("getwd") }
+		case "root":
+			deps.findRoot = func(string) (string, error) { return "", errors.New("root") }
+		case "load":
+			deps.load = func(string) ([]event.Subscriber, error) { return nil, errors.New("load") }
+		case "replay":
+			fake.err = errors.New("replay")
+		case "failed":
+			fake.result.Failed = []event.SubscriberFailure{{Name: "sink", Err: errors.New("delivery")}}
+		}
+		requireCLIError(t, runEventReplayWithDeps(cmd, deps))
+	}
+
+	for _, phase := range []string{"decision", "getwd", "root", "prepared", "missing", "action"} {
+		cmd = eventReconcileCommand()
+		fake := &fakeEventOutbox{}
+		deps := eventTestDeps(fake)
+		record := event.PreparedRecord{EventUUID: "id", EventName: "lesson.test", ArtifactPath: "spec/x"}
+		fake.prepared = []event.PreparedRecord{record}
+		decision := "abort"
+		switch phase {
+		case "decision":
+			decision = "bad"
+		case "getwd":
+			deps.getwd = func() (string, error) { return "", errors.New("getwd") }
+		case "root":
+			deps.findRoot = func(string) (string, error) { return "", errors.New("root") }
+		case "prepared":
+			fake.err = errors.New("prepared")
+		case "missing":
+			fake.prepared = nil
+		case "action":
+			fake.action = errors.New("action")
+		}
+		setLessonCommandFlags(t, cmd, map[string]string{"decision": decision, "confirm": event.ReconciliationToken(record, decision)})
+		requireCLIError(t, runEventReconcileWithDeps(cmd, []string{"id"}, deps))
+	}
+	cmd = eventReconcileCommand()
+	record := event.PreparedRecord{EventUUID: "id"}
+	setLessonCommandFlags(t, cmd, map[string]string{"decision": "abort", "confirm": event.ReconciliationToken(record, "abort")})
+	requireCLISuccess(t, runEventReconcileWithDeps(cmd, []string{"id"}, eventTestDeps(&fakeEventOutbox{prepared: []event.PreparedRecord{record}})))
+
+	cmd = eventEmitCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"name": "lesson.test", "actor-kind": "external", "actor-id": "specscore", "artifact-type": "lesson", "artifact-id": "x", "artifact-path": "spec/lessons/x", "payload-json": "{}"})
+	requireCLIError(t, runEventEmitWithDeps(cmd, eventTestDeps(&fakeEventOutbox{err: errors.New("replay")})))
+	deps := eventTestDeps(&fakeEventOutbox{})
+	deps.getwd = func() (string, error) { return "", errors.New("getwd") }
+	requireCLIError(t, runEventEmitWithDeps(cmd, deps))
 }
 
 // AC: verb-registers-and-helps — bare `event` exits 0 and lists `emit`.
@@ -82,6 +181,9 @@ func TestEventCommand_HelpShowsEnvelopeFlags(t *testing.T) {
 		if !strings.Contains(out, flag) {
 			t.Errorf("expected `event emit --help` to mention %s; got:\n%s", flag, out)
 		}
+	}
+	if !strings.Contains(out, "idea|feature|plan|task|lesson|idea-seed|consilium-review") {
+		t.Fatalf("event emit help does not mirror the complete artifact-type enum:\n%s", out)
 	}
 }
 
@@ -601,6 +703,124 @@ func TestEventEmit_NoopSubscriber_ExitCode0(t *testing.T) {
 	}
 	if strings.Contains(stderr, "event-dispatch failure") {
 		t.Errorf("expected no failure lines on success path; got stderr:\n%s", stderr)
+	}
+}
+
+func TestEventEmit_ExplicitEmptySubscribersCreatesNoRecipientlessLedger(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+	writeSpecscoreYAML(t, root, "events:\n  subscribers: []\n")
+	if _, _, err := runEvent(t,
+		"emit",
+		"--name", "idea.drafted",
+		"--actor-kind", "skill",
+		"--actor-id", "skill:t",
+		"--artifact-type", "idea",
+		"--artifact-id", "x",
+		"--artifact-path", "spec/ideas/x.md",
+		"--payload-json", "{}",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".specscore", "event-outbox")); !os.IsNotExist(err) {
+		t.Fatalf("explicit event opt-out created a recipientless outbox: %v", err)
+	}
+}
+
+func TestEventEmit_ExplicitEmptySubscribersStillValidateEnvelope(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+	writeSpecscoreYAML(t, root, "events:\n  subscribers: []\n")
+	_, _, err := runEvent(t,
+		"emit",
+		"--name", "INVALID",
+		"--actor-kind", "robot",
+		"--actor-id", "robot:t",
+		"--artifact-type", "idea",
+		"--artifact-id", "x",
+		"--artifact-path", "spec/ideas/x.md",
+		"--payload-json", "{}",
+	)
+	if err == nil {
+		t.Fatal("invalid envelope bypassed validation for explicit event opt-out")
+	}
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 2 || !strings.Contains(err.Error(), "envelope validation failed: field=name") {
+		t.Fatalf("invalid envelope error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".specscore", "event-outbox")); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid opted-out event wrote an outbox: %v", statErr)
+	}
+}
+
+func TestEventEmit_InvalidEnvelopeDoesNotLoadSubscriberConfiguration(t *testing.T) {
+	root := t.TempDir()
+	called := false
+	deps := defaultEventCLIDeps()
+	deps.getwd = func() (string, error) { return root, nil }
+	deps.findRoot = func(string) (string, error) { return root, nil }
+	deps.load = func(string) ([]event.Subscriber, error) {
+		called = true
+		return nil, errors.New("subscriber configuration should not be read")
+	}
+	cmd := eventEmitCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{
+		"name": "INVALID", "actor-kind": "robot", "actor-id": "robot:t",
+		"artifact-type": "idea", "artifact-id": "x", "artifact-path": "spec/ideas/x.md", "payload-json": "{}",
+	})
+	err := runEventEmitWithDeps(cmd, deps)
+	if err == nil || called || !strings.Contains(err.Error(), "envelope validation failed: field=name") {
+		t.Fatalf("invalid envelope = %v, subscriber load called=%v", err, called)
+	}
+}
+
+func TestEventReplaySurfacesPreparedArtifactEvidenceAndReconcileRequiresToken(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+	writeSpecscoreYAML(t, root, "events:\n  subscribers:\n    - type: noop\n")
+	artifact := filepath.Join(root, "spec", "ideas", "demo.md")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("# demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := event.Event{
+		Name:      "idea.drafted",
+		Version:   1,
+		UUID:      "11111111-1111-4111-8111-111111111111",
+		Timestamp: time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC),
+		Actor:     event.Actor{Kind: "external", ID: "specscore"},
+		Artifact:  event.Artifact{Type: "idea", ID: "demo", Path: "spec/ideas/demo.md", Revision: "uncommitted"},
+		Payload:   []byte(`{}`),
+	}
+	outbox := event.NewOutbox(root)
+	if err := outbox.Prepare(e, []event.Subscriber{event.NoOp{}}); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, err := runEvent(t, "replay", "--subscriber", "noop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "prepared=1") || !strings.Contains(stderr, e.UUID) || !strings.Contains(stderr, "artifact_exists=true") {
+		t.Fatalf("prepared replay output=%q stderr=%q", out, stderr)
+	}
+	preview, _, err := runEvent(t, "reconcile", e.UUID, "--decision", "commit")
+	if exitCodeOf(err) != 2 || !strings.Contains(preview, "confirmation-token:") {
+		t.Fatalf("reconcile preview=%q err=%v", preview, err)
+	}
+	prepared, err := outbox.Prepared()
+	if err != nil || len(prepared) != 1 {
+		t.Fatalf("prepared=%#v err=%v", prepared, err)
+	}
+	token := event.ReconciliationToken(prepared[0], "commit")
+	out, _, err = runEvent(t, "reconcile", e.UUID, "--decision", "commit", "--confirm", token)
+	if err != nil || !strings.Contains(out, ": commit") {
+		t.Fatalf("reconcile=%q err=%v", out, err)
+	}
+	prepared, err = outbox.Prepared()
+	if err != nil || len(prepared) != 0 {
+		t.Fatalf("reconciled event remains prepared: %#v err=%v", prepared, err)
 	}
 }
 

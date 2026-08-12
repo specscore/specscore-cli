@@ -1,0 +1,64 @@
+package lesson
+
+import "os"
+
+// lessonFile and lessonFS are private, per-call durability boundaries. They
+// keep public artifact APIs stable while allowing deterministic tests of every
+// write and directory-sync outcome without process-global test hooks.
+type lessonFile interface {
+	Name() string
+	Chmod(os.FileMode) error
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type lessonFS interface {
+	ReadFile(string) ([]byte, error)
+	ReadDir(string) ([]os.DirEntry, error)
+	Stat(string) (os.FileInfo, error)
+	Lstat(string) (os.FileInfo, error)
+	Mkdir(string, os.FileMode) error
+	MkdirAll(string, os.FileMode) error
+	MkdirTemp(string, string) (string, error)
+	Remove(string) error
+	RemoveAll(string) error
+	CreateTemp(string, string) (lessonFile, error)
+	Open(string) (lessonFile, error)
+	OpenFile(string, int, os.FileMode) (lessonFile, error)
+	Link(string, string) error
+	Rename(string, string) error
+}
+
+type osLessonFS struct{}
+
+func (osLessonFS) ReadFile(path string) ([]byte, error)          { return os.ReadFile(path) }
+func (osLessonFS) ReadDir(path string) ([]os.DirEntry, error)    { return os.ReadDir(path) }
+func (osLessonFS) Stat(path string) (os.FileInfo, error)         { return os.Stat(path) }
+func (osLessonFS) Lstat(path string) (os.FileInfo, error)        { return os.Lstat(path) }
+func (osLessonFS) Mkdir(path string, mode os.FileMode) error     { return os.Mkdir(path, mode) }
+func (osLessonFS) MkdirAll(path string, mode os.FileMode) error  { return os.MkdirAll(path, mode) }
+func (osLessonFS) MkdirTemp(dir, pattern string) (string, error) { return os.MkdirTemp(dir, pattern) }
+func (osLessonFS) Remove(path string) error                      { return os.Remove(path) }
+func (osLessonFS) RemoveAll(path string) error                   { return os.RemoveAll(path) }
+func (osLessonFS) CreateTemp(dir, pattern string) (lessonFile, error) {
+	return os.CreateTemp(dir, pattern)
+}
+func (osLessonFS) Open(path string) (lessonFile, error) { return os.Open(path) }
+func (osLessonFS) OpenFile(path string, flag int, mode os.FileMode) (lessonFile, error) {
+	return os.OpenFile(path, flag, mode)
+}
+func (osLessonFS) Link(oldname, newname string) error   { return os.Link(oldname, newname) }
+func (osLessonFS) Rename(oldname, newname string) error { return os.Rename(oldname, newname) }
+
+func syncDirectoryWithFS(path string, fs lessonFS) error {
+	f, err := fs.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}

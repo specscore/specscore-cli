@@ -3,6 +3,7 @@ package lesson
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,6 +31,31 @@ var statusHeaderLineRe = regexp.MustCompile(`^([ \t]*)\*\*Status:\*\*`)
 // graduate, not a graduation itself — the decision to promote stays a
 // deliberate `change-status` call. Returns the new recurrence count.
 func Recur(path, note string) (int, error) {
+	return RecurWithPostMutation(path, note, nil)
+}
+
+// RecurWithPostMutation holds the per-Lesson lifecycle lock across the body
+// rewrite and its bounded reconciliation hook. The hook may acquire the
+// shared Lesson-index lock; the total lock order is therefore always
+// per-Lesson first, shared index second.
+func RecurWithPostMutation(path, note string, postMutation func(int) error) (int, error) {
+	slug := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if filepath.Base(path) == "README.md" {
+		slug = filepath.Base(filepath.Dir(path))
+	}
+	var count int
+	err := withLessonMutationLock(projectRootForLessonPath(path), slug, defaultLessonMutationLockDeps(), func() error {
+		var err error
+		count, err = recurUnlocked(path, note)
+		if err == nil && postMutation != nil {
+			err = postMutation(count)
+		}
+		return err
+	})
+	return count, err
+}
+
+func recurUnlocked(path, note string) (int, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
@@ -43,10 +69,57 @@ func Recur(path, note string) (int, error) {
 
 	lines = appendRecurrenceEntry(lines, note)
 
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+	if err := writeRecurFileAtomic(path, []byte(strings.Join(lines, "\n"))); err != nil {
 		return 0, err
 	}
 	return newCount, nil
+}
+
+func writeRecurFileAtomic(path string, data []byte) error {
+	return writeRecurFileAtomicWithFS(path, data, osLessonFS{})
+}
+
+// RewriteFileAtomic replaces an existing Lesson artifact with a same-directory
+// temp, file fsync, atomic rename, and parent-directory fsync. Callers that
+// coordinate with lifecycle writers must hold WithMutationLock across their
+// ownership check, this rewrite, and any shared-index reconciliation.
+func RewriteFileAtomic(path string, data []byte) error {
+	return writeRecurFileAtomic(path, data)
+}
+
+func writeRecurFileAtomicWithFS(path string, data []byte, fs lessonFS) error {
+	info, err := fs.Stat(path)
+	if err != nil {
+		return err
+	}
+	tmp, err := fs.CreateTemp(filepath.Dir(path), ".lesson-recur-")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = fs.Remove(tmpPath) }()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := fs.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	if err := syncDirectoryWithFS(filepath.Dir(path), fs); err != nil {
+		return mutationFailure(MutationUncertain, fmt.Errorf("durably publishing legacy recurrence: %w", err))
+	}
+	return nil
 }
 
 // incrementRecurredLine finds the `**Recurred:**` line and rewrites its value

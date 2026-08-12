@@ -10,7 +10,6 @@ import (
 	"github.com/specscore/specscore-cli/pkg/ideapromote"
 	"github.com/specscore/specscore-cli/pkg/idearelocate"
 	"github.com/specscore/specscore-cli/pkg/issue"
-	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
@@ -21,9 +20,6 @@ var (
 	decisionNextNumberFn = decision.NextNumber
 	ideaScaffoldFn       = idea.Scaffold
 	planScaffoldFn       = plan.Scaffold
-	lessonScaffoldFn     = lesson.Scaffold
-	lessonRecurFn        = lesson.Recur
-	lessonParseFn        = lesson.Parse
 	issueScaffoldFn      = issue.Scaffold
 	issueParseFn         = issue.Parse
 	featureFindRefsFn    = feature.FindFeatureRefs

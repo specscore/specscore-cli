@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,7 +28,146 @@ func eventCommand() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(eventEmitCommand())
+	cmd.AddCommand(eventReplayCommand())
+	cmd.AddCommand(eventReconcileCommand())
 	return cmd
+}
+
+func eventReplayCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "replay", Short: "Replay pending durable subscriber deliveries", Long: "Reconstructs pending delivery from the immutable committed ledger, then replays only the named subscriber's unacknowledged entries in ledger timestamp/UUID order. --from starts inclusively at a committed event and remains valid after that event is acknowledged. Success for one sink never acknowledges another. Delivery is at-least-once, so subscribers must deduplicate the event UUID. Interrupted prepared records remain visible for explicit reconciliation. Docs: docs/agent-lessons.md#durable-event-delivery", Args: cobra.NoArgs, SilenceUsage: true, SilenceErrors: true, RunE: runEventReplay}
+	cmd.Flags().String("subscriber", "", "stable subscriber name (required)")
+	cmd.Flags().String("from", "", "inclusive committed event UUID cursor")
+	cmd.Flags().Int("limit", 0, "maximum pending entries to attempt (0 is all)")
+	return cmd
+}
+func runEventReplay(cmd *cobra.Command, _ []string) error {
+	return runEventReplayWithDeps(cmd, defaultEventCLIDeps())
+}
+
+type eventCLIOutbox interface {
+	Replay(context.Context, []event.Subscriber, string, int) (event.ReplayResult, error)
+	ReplayFrom(context.Context, []event.Subscriber, string, string, int) (event.ReplayResult, error)
+	Prepared() ([]event.PreparedRecord, error)
+	Commit(string) error
+	Abort(string) error
+	Enqueue(event.Event, []event.Subscriber) error
+}
+
+type eventCLIDeps struct {
+	getwd     func() (string, error)
+	findRoot  func(string) (string, error)
+	load      func(string) ([]event.Subscriber, error)
+	outboxFor func(string) eventCLIOutbox
+}
+
+func defaultEventCLIDeps() eventCLIDeps {
+	return eventCLIDeps{osGetwdFn, findRepoConfigRoot, event.LoadSubscribers, func(root string) eventCLIOutbox { return event.NewOutbox(root) }}
+}
+
+func runEventReplayWithDeps(cmd *cobra.Command, deps eventCLIDeps) error {
+	name, _ := cmd.Flags().GetString("subscriber")
+	if name == "" {
+		return exitcode.InvalidArgsError("--subscriber is required")
+	}
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit < 0 {
+		return exitcode.InvalidArgsError("--limit must be >= 0")
+	}
+	from, _ := cmd.Flags().GetString("from")
+	if from != "" {
+		if _, err := uuid.Parse(from); err != nil {
+			return exitcode.InvalidArgsErrorf("--from must be a valid event UUID: %v", err)
+		}
+	}
+	start, err := deps.getwd()
+	if err != nil {
+		return exitcode.UnexpectedErrorf("getwd: %v", err)
+	}
+	root, err := deps.findRoot(start)
+	if err != nil {
+		return err
+	}
+	subs, err := deps.load(root)
+	if err != nil {
+		return exitcode.InvalidArgsErrorf("%v", err)
+	}
+	r, err := deps.outboxFor(root).ReplayFrom(cmd.Context(), subs, name, from, limit)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("replaying outbox: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "delivered=%d failed=%d pending=%d prepared=%d\n", r.Delivered, len(r.Failed), r.Pending, len(r.Prepared))
+	for _, prepared := range r.Prepared {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "prepared event requires reconciliation: id=%s name=%s artifact=%s artifact_exists=%t; inspect it, then run `specscore event reconcile %s --decision commit|abort` for a confirmation token\n", prepared.EventUUID, prepared.EventName, prepared.ArtifactPath, prepared.ArtifactExists, prepared.EventUUID)
+	}
+	if len(r.Failed) > 0 {
+		return exitcode.UnexpectedErrorf("%d delivery attempt(s) remain pending", len(r.Failed))
+	}
+	return nil
+}
+
+func eventReconcileCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "reconcile <event-uuid>",
+		Short:         "Resolve an interrupted prepared event after inspecting artifact evidence",
+		Long:          "Previews the immutable event and whether its repository-relative artifact path exists. Commit makes every recorded subscriber delivery pending; abort retains an auditable non-deliverable record. The exact preview token is required, so reconciliation is never inferred from path existence alone. Docs: docs/agent-lessons.md#durable-event-delivery",
+		Args:          cobra.ExactArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runEventReconcile,
+	}
+	cmd.Flags().String("decision", "", "reconciliation decision: commit or abort (required)")
+	cmd.Flags().String("confirm", "", "exact confirmation token from the preview")
+	return cmd
+}
+
+func runEventReconcile(cmd *cobra.Command, args []string) error {
+	return runEventReconcileWithDeps(cmd, args, defaultEventCLIDeps())
+}
+
+func runEventReconcileWithDeps(cmd *cobra.Command, args []string, deps eventCLIDeps) error {
+	decision, _ := cmd.Flags().GetString("decision")
+	if decision != "commit" && decision != "abort" {
+		return exitcode.InvalidArgsError("--decision must be commit or abort")
+	}
+	start, err := deps.getwd()
+	if err != nil {
+		return exitcode.UnexpectedErrorf("getwd: %v", err)
+	}
+	root, err := deps.findRoot(start)
+	if err != nil {
+		return err
+	}
+	outbox := deps.outboxFor(root)
+	prepared, err := outbox.Prepared()
+	if err != nil {
+		return exitcode.UnexpectedErrorf("inspecting prepared events: %v", err)
+	}
+	var target *event.PreparedRecord
+	for i := range prepared {
+		if prepared[i].EventUUID == args[0] {
+			target = &prepared[i]
+			break
+		}
+	}
+	if target == nil {
+		return exitcode.NotFoundErrorf("prepared event not found: %s", args[0])
+	}
+	token := event.ReconciliationToken(*target, decision)
+	confirm, _ := cmd.Flags().GetString("confirm")
+	if confirm != token {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "preview: event=%s name=%s artifact=%s artifact_exists=%t decision=%s\nconfirmation-token: %s\n", target.EventUUID, target.EventName, target.ArtifactPath, target.ArtifactExists, decision, token)
+		return exitcode.InvalidArgsError("reconciliation requires the exact --confirm token from this preview")
+	}
+	if decision == "commit" {
+		err = outbox.Commit(target.EventUUID)
+	} else {
+		err = outbox.Abort(target.EventUUID)
+	}
+	if err != nil {
+		return exitcode.UnexpectedErrorf("reconciling prepared event: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", target.EventUUID, decision)
+	return nil
 }
 
 // eventEmitCommand returns `specscore event emit` — the user-facing emission
@@ -50,6 +190,10 @@ fields (version, uuid, timestamp, artifact.revision) are auto-filled when
 not supplied. The payload bytes are read via one of three input modes
 (--payload-json, --payload-file, or stdin).
 
+Every valid event is first committed to the durable generic outbox with the
+complete subscriber set, then replayed independently per subscriber. Delivery
+is at-least-once and event UUID is the subscriber idempotency key.
+
 The verb accepts flag-form input only; positional arguments are rejected
 to keep the call shape stable across shells.
 
@@ -68,7 +212,7 @@ Docs: https://specscore.md/event-emit
 	cmd.Flags().String("name", "", "event name (e.g. idea.drafted); supplies envelope field `name` (required)")
 	cmd.Flags().String("actor-kind", "", "one of skill|user|external; supplies envelope field `actor.kind` (required)")
 	cmd.Flags().String("actor-id", "", "actor identifier; supplies envelope field `actor.id` (required)")
-	cmd.Flags().String("artifact-type", "", "one of idea|feature|plan|task|idea-seed|consilium-review; supplies envelope field `artifact.type` (required)")
+	cmd.Flags().String("artifact-type", "", "one of idea|feature|plan|task|lesson|idea-seed|consilium-review; supplies envelope field `artifact.type` (required)")
 	cmd.Flags().String("artifact-id", "", "artifact slug or id; supplies envelope field `artifact.id` (required)")
 	cmd.Flags().String("artifact-path", "", "repo-relative path to the artifact; supplies envelope field `artifact.path` (required)")
 	cmd.Flags().String("artifact-revision", "", "git SHA or the literal `uncommitted`; supplies envelope field `artifact.revision` (optional; overrides auto-fill)")
@@ -250,6 +394,10 @@ func determineInputMode(payloadJSON, payloadFile string) string {
 }
 
 func runEventEmit(cmd *cobra.Command, _ []string) error {
+	return runEventEmitWithDeps(cmd, defaultEventCLIDeps())
+}
+
+func runEventEmitWithDeps(cmd *cobra.Command, deps eventCLIDeps) error {
 	for _, rf := range envelopeRequiredFlags {
 		v, _ := cmd.Flags().GetString(rf.flag)
 		if v == "" {
@@ -273,11 +421,11 @@ func runEventEmit(cmd *cobra.Command, _ []string) error {
 
 	// Discover the project root. Same heuristic the rest of the CLI uses
 	// (`findRepoConfigRoot` in spec.go); missing root → exit 3 (NotFound).
-	startDir, err := osGetwdFn()
+	startDir, err := deps.getwd()
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getwd: %v", err)
 	}
-	projectRoot, err := findRepoConfigRoot(startDir)
+	projectRoot, err := deps.findRoot(startDir)
 	if err != nil {
 		return err
 	}
@@ -310,22 +458,36 @@ func runEventEmit(cmd *cobra.Command, _ []string) error {
 	}
 	autofillEnvelope(&e, projectRoot, flagArtifactRevision)
 
-	subscribers, err := event.LoadSubscribers(projectRoot)
+	// An explicit empty subscriber set opts out of persistence and delivery,
+	// not out of the public envelope contract. Validate after auto-fill and
+	// before configuration loading or any no-op branch so invalid caller input
+	// remains deterministically exit 2 and write-free.
+	if err := event.Validate(e); err != nil {
+		return exitcode.InvalidArgsErrorf("%v", err)
+	}
+	subscribers, err := deps.load(projectRoot)
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("%v", err)
 	}
-
-	result := event.Dispatch(cmd.Context(), e, subscribers)
-	if result.ValidationError != nil {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), result.ValidationError.Error())
-		return exitcode.InvalidArgsErrorf("envelope validation failed")
+	// The explicit empty list disables event persistence and delivery. Durable
+	// ledger records otherwise always carry a nonempty canonical recipient set.
+	if len(subscribers) == 0 {
+		return nil
 	}
 
-	// REQ:dispatch-exit-codes:
-	//   - delivered ≥ 1 OR list empty → exit 0
-	//   - all subscribers in non-empty list failed → exit 10
-	if len(subscribers) > 0 && result.Delivered == 0 && result.Failed > 0 {
-		return exitcode.UnexpectedErrorf("all %d subscriber(s) failed", result.Failed)
+	outbox := deps.outboxFor(projectRoot)
+	if err := outbox.Enqueue(e, subscribers); err != nil {
+		return exitcode.UnexpectedErrorf("durably queueing event: %v", err)
+	}
+	result, err := outbox.Replay(cmd.Context(), subscribers, "", 0)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("delivering event: %v", err)
+	}
+	for _, failure := range result.Failed {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "event-delivery pending: subscriber=%s event=%s error=%q\n", failure.Name, e.Name, failure.Err.Error())
+	}
+	if len(result.Failed) > 0 {
+		return exitcode.UnexpectedErrorf("%d subscriber delivery attempt(s) remain pending", len(result.Failed))
 	}
 	return nil
 }

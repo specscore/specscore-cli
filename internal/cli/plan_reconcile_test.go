@@ -275,6 +275,40 @@ func TestPlanReconcile_ProjectResolveError_CLI(t *testing.T) {
 	}
 }
 
+// A false all-complete claim is corrected through the same public lifecycle
+// surface, not by editing the embedded task status by hand.
+func TestPlanReconcile_ReopenTasks_CLI(t *testing.T) {
+	root := stageReconcilablePlan(t, "auth", "Implemented", "complete", "complete")
+	stdout, stderr, err := runPlan(t, "reconcile", "auth", "--reopen-tasks=2", "--note", "audit found task 2 incomplete", "--evidence", "audit.md")
+	if err != nil {
+		t.Fatalf("reopen reconcile: %v (stderr=%s)", err, stderr)
+	}
+	if want := "auth: Implemented → Blocked (reconciled, 1 task(s) marked blocked)\n"; stdout != want {
+		t.Fatalf("stdout = %q, want %q", stdout, want)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "**Status:** Blocked") || !strings.Contains(string(body), "**Status:** blocked") || !strings.Contains(string(body), "audit found task 2 incomplete") {
+		t.Fatalf("reopen correction not recorded:\n%s", body)
+	}
+}
+
+func TestPlanReconcile_ReopenFlagErrors_CLI(t *testing.T) {
+	stageReconcilablePlan(t, "auth", "Implemented", "complete")
+	for _, args := range [][]string{
+		{"reconcile", "auth", "--tasks=complete", "--reopen-tasks=1", "--note", "x"},
+		{"reconcile", "auth", "--reopen-tasks=nope", "--note", "x"},
+		{"reconcile", "auth", "--reopen-tasks=1", "--force-tasks=1", "--note", "x"},
+	} {
+		_, _, err := runPlan(t, args...)
+		if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+			t.Fatalf("args=%v exit=%d, want %d: %v", args, got, exitcode.InvalidArgs, err)
+		}
+	}
+}
+
 // AC: the execution-band-rejected error message on change-status points the
 // user at `plan reconcile`.
 func TestPlanChangeStatus_ExecutionBandMessagePointsAtReconcile_CLI(t *testing.T) {

@@ -1,0 +1,1770 @@
+{
+  "$schema": "https://specscore.md/new/cli-capability-delivery.schema.json",
+  "schema_version": 1,
+  "binary": "specscore",
+  "capabilities": [
+    {
+      "id": "specscore.cli.public-command-tree",
+      "feature_refs": [
+        "spec/features/cli/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Partial",
+          "commands": [
+            {
+              "path": "specscore",
+              "flags": [
+                "--caller",
+                "--no-telemetry"
+              ],
+              "modes": [
+                "root and inherited flags"
+              ]
+            },
+            {
+              "path": "specscore agent setup",
+              "flags": [
+                "--all",
+                "--force",
+                "--no-skills",
+                "--project",
+                "--ref"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore code deps",
+              "flags": [
+                "--check",
+                "--path",
+                "--type"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore config get",
+              "flags": [
+                "--origin",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore config show",
+              "flags": [
+                "--origin",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore consilium",
+              "flags": [],
+              "modes": []
+            },
+            {
+              "path": "specscore decision change-status",
+              "flags": [
+                "--note",
+                "--project",
+                "--successor",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore decision new",
+              "flags": [
+                "--force",
+                "--owner",
+                "--project",
+                "--source-idea",
+                "--supersedes",
+                "--tags",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore entity list",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore entity refs",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore entity tree",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore event emit",
+              "flags": [
+                "--actor-id",
+                "--actor-kind",
+                "--artifact-id",
+                "--artifact-path",
+                "--artifact-revision",
+                "--artifact-type",
+                "--name",
+                "--payload-file",
+                "--payload-json"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore event reconcile",
+              "flags": [
+                "--confirm",
+                "--decision"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore event replay",
+              "flags": [
+                "--from",
+                "--limit",
+                "--subscriber"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore feature change-status",
+              "flags": [
+                "--project",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore feature deps",
+              "flags": [
+                "--fields",
+                "--format",
+                "--project",
+                "--transitive"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore feature info",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore feature list",
+              "flags": [
+                "--fields",
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore feature new",
+              "flags": [
+                "--commit",
+                "--depends-on",
+                "--description",
+                "--format",
+                "--parent",
+                "--project",
+                "--push",
+                "--slug",
+                "--status",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore feature refs",
+              "flags": [
+                "--fields",
+                "--format",
+                "--project",
+                "--transitive"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore feature tree",
+              "flags": [
+                "--direction",
+                "--fields",
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore graph lint",
+              "flags": [
+                "--fix",
+                "--format",
+                "--ignore",
+                "--project",
+                "--root",
+                "--rules",
+                "--severity"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore graph list",
+              "flags": [
+                "--format",
+                "--kind",
+                "--module",
+                "--project",
+                "--root"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore graph new",
+              "flags": [
+                "--bare",
+                "--from",
+                "--id",
+                "--module",
+                "--name",
+                "--project",
+                "--root",
+                "--status",
+                "--subject",
+                "--summary",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore graph refs",
+              "flags": [
+                "--format",
+                "--project",
+                "--root",
+                "--transitive"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore idea archive",
+              "flags": [
+                "--note",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore idea change-status",
+              "flags": [
+                "--project",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore idea list",
+              "flags": [
+                "--all",
+                "--format",
+                "--include-archived",
+                "--project",
+                "--status"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore idea new",
+              "flags": [
+                "--context",
+                "--force",
+                "--hmw",
+                "--interactive",
+                "--mvp",
+                "--not-doing",
+                "--owner",
+                "--phase",
+                "--project",
+                "--recommended-direction",
+                "--targets",
+                "--title",
+                "--type"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore idea promote",
+              "flags": [
+                "--force",
+                "--format",
+                "--project",
+                "--verdict"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore idea relocate",
+              "flags": [
+                "--no-commit",
+                "--project",
+                "--to-repo"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore idea unarchive",
+              "flags": [
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore init",
+              "flags": [
+                "--force",
+                "--host",
+                "--interactive",
+                "--org",
+                "--project",
+                "--repo",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore issue change-status",
+              "flags": [
+                "--notes",
+                "--project",
+                "--reason",
+                "--severity",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore issue list",
+              "flags": [
+                "--feature",
+                "--format",
+                "--project",
+                "--severity",
+                "--status"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore issue new",
+              "flags": [
+                "--affected-component",
+                "--captured-by",
+                "--feature",
+                "--force",
+                "--project",
+                "--severity",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson agents",
+              "flags": [
+                "--format",
+                "--message",
+                "--open",
+                "--project",
+                "--refresh",
+                "--resume",
+                "--text"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson change-status",
+              "flags": [
+                "--note",
+                "--project",
+                "--successor",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson check",
+              "flags": [
+                "--format",
+                "--max",
+                "--min-recurred",
+                "--not-enforced",
+                "--project",
+                "--status"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson import-legacy",
+              "flags": [
+                "--apply",
+                "--dry-run",
+                "--format",
+                "--mapping",
+                "--project",
+                "--source"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson info",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson list",
+              "flags": [
+                "--fields",
+                "--format",
+                "--min-recurred",
+                "--not-enforced",
+                "--project",
+                "--status"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson migrate-flat",
+              "flags": [
+                "--classification",
+                "--control",
+                "--evidence",
+                "--format",
+                "--project",
+                "--verification"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson new",
+              "flags": [
+                "--force",
+                "--owner",
+                "--project",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson occurrence add",
+              "flags": [
+                "--capture-context",
+                "--context-file",
+                "--context-json",
+                "--context-stdin",
+                "--evidence-kind",
+                "--evidence-ref",
+                "--project",
+                "--summary"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson occurrence info",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson occurrence list",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson recur",
+              "flags": [
+                "--note",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson relation add",
+              "flags": [
+                "--confirm",
+                "--project",
+                "--type"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore lesson relation list",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore migrate",
+              "flags": [
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore plan change-status",
+              "flags": [
+                "--force-coordination",
+                "--note",
+                "--project",
+                "--successor",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore plan info",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore plan list",
+              "flags": [
+                "--fields",
+                "--format",
+                "--project",
+                "--status"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore plan new",
+              "flags": [
+                "--feature",
+                "--force",
+                "--idea",
+                "--owner",
+                "--parent",
+                "--project",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore plan reconcile",
+              "flags": [
+                "--evidence",
+                "--force-coordination",
+                "--force-tasks",
+                "--note",
+                "--project",
+                "--reopen-tasks",
+                "--tasks"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore property list",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore property refs",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore proposal new",
+              "flags": [
+                "--context",
+                "--force",
+                "--hmw",
+                "--interactive",
+                "--mvp",
+                "--not-doing",
+                "--owner",
+                "--phase",
+                "--project",
+                "--recommended-direction",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore publication branch-check",
+              "flags": [
+                "--branch",
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore publication resolve",
+              "flags": [
+                "--branch",
+                "--command",
+                "--event",
+                "--format",
+                "--milestone",
+                "--project",
+                "--session-policy",
+                "--task-policy"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore publication set",
+              "flags": [
+                "--action",
+                "--actions",
+                "--command",
+                "--default",
+                "--event",
+                "--format",
+                "--milestone",
+                "--project",
+                "--scope"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore rehearse acs",
+              "flags": [
+                "--write"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore rehearse new",
+              "flags": [
+                "--commit",
+                "--dry-run",
+                "--force"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore rehearse run",
+              "flags": [
+                "--filter",
+                "--format",
+                "--report-out"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore rules",
+              "flags": [
+                "--check",
+                "--family",
+                "--format",
+                "--write"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore self-update",
+              "flags": [
+                "--allow-downgrade",
+                "--check",
+                "--dry-run",
+                "--version",
+                "--yes"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore sidekick change-status",
+              "flags": [
+                "--note",
+                "--project",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore sidekick new",
+              "flags": [
+                "--body",
+                "--captured-by",
+                "--force",
+                "--project",
+                "--slug"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore spec lint",
+              "flags": [
+                "--fix",
+                "--format",
+                "--ignore",
+                "--project",
+                "--rules",
+                "--severity"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore spec migrate",
+              "flags": [
+                "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore studio ask",
+              "flags": [
+                "--db",
+                "--format",
+                "--list",
+                "--workspace"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore studio contradictions",
+              "flags": [
+                "--db",
+                "--format",
+                "--ignore-file",
+                "--no-write",
+                "--show-ignored",
+                "--workspace"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore studio facts",
+              "flags": [
+                "--adapter",
+                "--class",
+                "--count",
+                "--db",
+                "--format",
+                "--object",
+                "--predicate",
+                "--stale",
+                "--subject",
+                "--workspace"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore studio index",
+              "flags": [
+                "--db",
+                "--ingr-dir",
+                "--no-ingr",
+                "--strict",
+                "--workspace"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore studio probe",
+              "flags": [
+                "--db",
+                "--format",
+                "--kind",
+                "--workspace"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore studio resolve",
+              "flags": [
+                "--db",
+                "--format",
+                "--workspace"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore task change-status",
+              "flags": [
+                "--amend-provenance",
+                "--branch",
+                "--commit",
+                "--evidence",
+                "--force-coordination",
+                "--note",
+                "--plan",
+                "--project",
+                "--repo",
+                "--to"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore task info",
+              "flags": [
+                "--format",
+                "--project",
+                "--task"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore task list",
+              "flags": [
+                "--format",
+                "--project",
+                "--status"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore task new",
+              "flags": [
+                "--depends-on",
+                "--description",
+                "--format",
+                "--project",
+                "--task",
+                "--title"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore telemetry disable",
+              "flags": [],
+              "modes": []
+            },
+            {
+              "path": "specscore telemetry enable",
+              "flags": [],
+              "modes": []
+            },
+            {
+              "path": "specscore telemetry status",
+              "flags": [],
+              "modes": []
+            },
+            {
+              "path": "specscore version",
+              "flags": [],
+              "modes": []
+            }
+          ],
+          "limitation": "This row proves public command and registered-flag inventory only; behavioral, help, skill, and adversarial completeness is claimed only by narrower capability rows."
+        },
+        "help": {
+          "status": "Partial",
+          "anchors": [
+            {
+              "command": "specscore --help",
+              "contains": [
+                "SpecScore CLI",
+                "Available Commands"
+              ]
+            }
+          ],
+          "limitation": "Root discovery is covered; detailed semantic help is audited only for focused capability rows."
+        },
+        "ai_skill": {
+          "status": "Absent",
+          "skills": [],
+          "limitation": "No single AI skill claims every SpecScore public command; focused skills own their declared capabilities."
+        },
+        "tests": {
+          "status": "Partial",
+          "references": [
+            {
+              "path": "internal/cli/capability_manifest_test.go",
+              "name": "TestCapabilityManifestCoversPublicCommandTree",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/capability_manifest_test.go",
+              "name": "TestCapabilityManifestValidatesAgainstPinnedCoreSchema",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": "The conformance test proves registration/flag coverage, not behavior for every historical command."
+        }
+      },
+      "notes": "Bounded full-binary inventory prevents changed-feature rows from masquerading as complete CLI coverage."
+    },
+    {
+      "id": "specscore.event.ledger-tamper-evidence",
+      "feature_refs": [
+        "spec/features/cli/event/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Planned",
+          "commands": [],
+          "limitation": "Content authentication for detecting a schema-valid local rewrite of an immutable ledger record is not implemented."
+        },
+        "help": {
+          "status": "Planned",
+          "anchors": [],
+          "limitation": "No user-facing cryptographic verification command exists yet."
+        },
+        "ai_skill": {
+          "status": "Planned",
+          "skills": [],
+          "limitation": "The skill must not advertise tamper evidence until content authentication is implemented."
+        },
+        "tests": {
+          "status": "Partial",
+          "references": [
+            {
+              "path": "pkg/event/outbox_test.go",
+              "name": "TestOutbox_RejectsCorruptLedgerBeforeAnySubscriberDelivery",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": "Executable coverage rejects unknown, trailing, invalid-envelope, duplicate, empty, and unsorted ledger data; a schema-valid rewrite remains undetectable."
+        }
+      },
+      "notes": "The current outbox is durable and no-clobber for supported writers, but it is not a cryptographically authenticated audit log."
+    },
+    {
+      "id": "specscore.event.outbox",
+      "feature_refs": [
+        "spec/features/cli/event/README.md",
+        "spec/features/cli/event/emit/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore event emit",
+              "flags": [
+                "--actor-id",
+                "--actor-kind",
+                "--artifact-id",
+                "--artifact-path",
+                "--artifact-revision",
+                "--artifact-type",
+                "--name",
+                "--payload-file",
+                "--payload-json"
+              ],
+              "modes": [
+                "durable enqueue and all-subscriber replay"
+              ]
+            },
+            {
+              "path": "specscore event reconcile",
+              "flags": [
+                "--confirm",
+                "--decision"
+              ],
+              "modes": [
+                "explicit commit or abort"
+              ]
+            },
+            {
+              "path": "specscore event replay",
+              "flags": [
+                "--from",
+                "--limit",
+                "--subscriber"
+              ],
+              "modes": [
+                "per-subscriber replay",
+                "inclusive committed UUID cursor in ledger timestamp/UUID order"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore event emit --help",
+              "contains": [
+                "durable generic outbox",
+                "at-least-once"
+              ]
+            },
+            {
+              "command": "specscore event replay --help",
+              "contains": [
+                "one sink never acknowledges another",
+                "event UUID"
+              ]
+            },
+            {
+              "command": "specscore event reconcile --help",
+              "contains": [
+                "exact preview token",
+                "never inferred"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.event.outbox",
+              "examples": [
+                "specscore event emit --name lesson.observed --actor-kind skill --actor-id skill:specscore-lessons --artifact-type lesson --artifact-id lesson --artifact-path spec/lessons/lesson/README.md --payload-json '{}'",
+                "specscore event replay --subscriber audit-sink --limit 100",
+                "specscore event replay --subscriber audit-sink --from 123e4567-e89b-42d3-a456-426614174000 --limit 100",
+                "specscore event reconcile 123e4567-e89b-42d3-a456-426614174000 --decision commit",
+                "specscore event reconcile 123e4567-e89b-42d3-a456-426614174000 --decision commit --confirm TOKEN_FROM_PREVIEW"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "pkg/event/outbox_test.go",
+              "name": "TestOutbox_ReplaysFailedSubscriberIndependently",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/event/outbox_test.go",
+              "name": "TestOutbox_PreparedArtifactEvidenceIsSurfacedUntilReconciled",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/event/outbox_test.go",
+              "name": "TestOutbox_PrepareRejectsRecipientlessLedger",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/event_test.go",
+              "name": "TestEventReplaySurfacesPreparedArtifactEvidenceAndReconcileRequiresToken",
+              "kind": "integration"
+            },
+            {
+              "path": "internal/cli/event_test.go",
+              "name": "TestEventEmit_ExplicitEmptySubscribersCreatesNoRecipientlessLedger",
+              "kind": "integration"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "Delivery is at-least-once; subscribers contractually deduplicate Event.UUID."
+    },
+    {
+      "id": "specscore.lesson.agents",
+      "feature_refs": [
+        "spec/features/cli/lesson/coordination/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Partial",
+          "commands": [
+            {
+              "path": "specscore lesson agents",
+              "flags": [
+                "--format",
+                "--message",
+                "--open",
+                "--project",
+                "--refresh",
+                "--resume",
+                "--text"
+              ],
+              "modes": [
+                "offline projection; explicit neutral executable hook"
+              ]
+            }
+          ],
+          "limitation": "A native orchestration adapter owns live transport and projection updates."
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore lesson agents --help",
+              "contains": [
+                "SPECSCORE_LESSON_AGENTS_HOOK",
+                "never writes"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.lesson.agents",
+              "examples": [
+                "specscore lesson agents verify-before-merge --format json"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Partial",
+          "references": [
+            {
+              "path": "internal/cli/lesson_agents_test.go",
+              "name": "TestLessonAgentsReadsOfflineProjectionAndStreamsNeutralHook",
+              "kind": "integration"
+            },
+            {
+              "path": "internal/cli/lesson_agents_test.go",
+              "name": "TestLessonAgentsRefusesInvalidProjectionAndActions",
+              "kind": "integration"
+            }
+          ],
+          "limitation": "The native adapter conformance test belongs to the orchestration repository."
+        }
+      },
+      "notes": "The core projection and hook envelope are generic; no orchestrator dependency is imported."
+    },
+    {
+      "id": "specscore.lesson.import-legacy",
+      "feature_refs": [
+        "spec/features/cli/lesson/import-legacy/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore lesson import-legacy",
+              "flags": [
+                "--apply",
+                "--dry-run",
+                "--format",
+                "--mapping",
+                "--project",
+                "--source"
+              ],
+              "modes": [
+                "write-free inventory",
+                "reviewed fail-closed apply"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore lesson import-legacy --help",
+              "contains": [
+                "exact byte",
+                "any manual row fails closed",
+                "concise safe lesson and process_gap",
+                "target specscore.yaml vocabulary",
+                "provider occurrence",
+                "never copied"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.lesson.import-legacy",
+              "examples": [
+                "specscore lesson import-legacy --source LESSONS-LEARNED.md --dry-run --format json",
+                "specscore lesson import-legacy --source LESSONS-LEARNED.md --apply --mapping reviewed-mapping.json --format json"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "pkg/lesson/legacy_import_test.go",
+              "name": "TestInventoryLegacy_AuthoritativeMonolithShape",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/legacy_import_test.go",
+              "name": "TestInventoryLegacy_AuthoritativeAuditProjectionFixture",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/legacy_import_test.go",
+              "name": "TestApplyLegacy_ReviewedMappingIdempotent",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/legacy_import_test.go",
+              "name": "TestApplyLegacy_NewRequiresSafeReviewedCompactContentAndConfiguredClassification",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/legacy_import_test.go",
+              "name": "TestApplyLegacy_ManualDispositionFailsClosedBeforeAnyWrite",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/legacy_import_test.go",
+              "name": "TestApplyLegacy_PublicationFailureRollsBackEveryArtifact",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/legacy_import_test.go",
+              "name": "TestApplyLegacy_PostLinkDurabilityFailureRollsBackOwnedArtifacts",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/lesson_import_legacy_test.go",
+              "name": "TestLessonImportLegacy_ConfigurationAndMappingPreflightBeforePreparedEvent",
+              "kind": "integration"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "Aggregate marker rows remain one ambiguity-tagged evidence record unless a human supplies stronger structured evidence."
+    },
+    {
+      "id": "specscore.lesson.migrate-flat",
+      "feature_refs": [
+        "spec/features/cli/lesson/migrate-flat/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore lesson migrate-flat",
+              "flags": [
+                "--classification",
+                "--control",
+                "--evidence",
+                "--format",
+                "--project",
+                "--verification"
+              ],
+              "modes": [
+                "committed source",
+                "resumable artifact/index/event transaction",
+                "read-only completed retry",
+                "reviewed Enforced mapping"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore lesson migrate-flat --help",
+              "contains": [
+                "provider occurrence",
+                "crash-resumable across canonical artifacts",
+                ".specscore/recovery/flat-migration/\u003cevent-uuid\u003e/",
+                "Git provenance alone never certifies"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.lesson.migrate-flat",
+              "examples": [
+                "specscore lesson migrate-flat verify-before-merge --classification process --format json",
+                "specscore lesson migrate-flat enforced-boundary --classification validation --control \"Run the durable boundary check.\" --verification \"go test ./pkg/event -run TestBoundary\" --evidence \"pkg/event/outbox_test.go\" --format json"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "pkg/lesson/flat_migration_test.go",
+              "name": "TestMigrateFlat_PreservesImmutableProvenanceAndEveryStructuredObservation",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/flat_migration_test.go",
+              "name": "TestMigrateFlat_EnforcedSourceRequiresReviewedEvidenceWithoutFabrication",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/flat_migration_test.go",
+              "name": "TestMigrateFlat_CrashAfterSourceRemovalResumesSameTransaction",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/flat_migration_test.go",
+              "name": "TestMigrateFlat_ResumesDurableMarkerWithoutOverwriting",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/lesson_migrate_flat_test.go",
+              "name": "TestLessonMigrateFlat_EndToEndIsLintCleanAndBounded",
+              "kind": "e2e"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": null
+    },
+    {
+      "id": "specscore.lesson.new",
+      "feature_refs": [
+        "spec/features/cli/lesson/new/README.md",
+        "spec/features/cli/spec/lint/lesson-rules/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore lesson new",
+              "flags": [
+                "--force",
+                "--owner",
+                "--project",
+                "--title"
+              ],
+              "modes": [
+                "configuration preflight",
+                "bounded scaffold, index upsert, and durable event"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore lesson new --help",
+              "contains": [
+                "non-empty lessons.classifications",
+                "repository-wide fixer",
+                "legacy spec/lessons/\u003cslug\u003e.md is a collision"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.lesson.new",
+              "examples": [
+                "specscore lesson new verify-before-merge --title \"Verify before merge\" --owner codex"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/lesson_new_test.go",
+              "name": "TestLessonNew_ConfigPreflightWritesNothing",
+              "kind": "integration"
+            },
+            {
+              "path": "internal/cli/lesson_new_test.go",
+              "name": "TestLessonNew_LintCleanOutsideFile",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/lesson_new_test.go",
+              "name": "TestLessonNew_CommitsDurableCreatedEvent",
+              "kind": "integration"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": null
+    },
+    {
+      "id": "specscore.lesson.occurrence",
+      "feature_refs": [
+        "spec/features/cli/lesson/occurrence/README.md",
+        "spec/features/cli/lesson/recur/README.md",
+        "spec/features/cli/lesson/check/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore lesson check",
+              "flags": [
+                "--format",
+                "--max",
+                "--min-recurred",
+                "--not-enforced",
+                "--project",
+                "--status"
+              ],
+              "modes": [
+                "opt-in process gate"
+              ]
+            },
+            {
+              "path": "specscore lesson occurrence add",
+              "flags": [
+                "--capture-context",
+                "--context-file",
+                "--context-json",
+                "--context-stdin",
+                "--evidence-kind",
+                "--evidence-ref",
+                "--project",
+                "--summary"
+              ],
+              "modes": [
+                "exclusive append"
+              ]
+            },
+            {
+              "path": "specscore lesson occurrence info",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": [
+                "strict read"
+              ]
+            },
+            {
+              "path": "specscore lesson occurrence list",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": [
+                "UTC and filename ordered"
+              ]
+            },
+            {
+              "path": "specscore lesson recur",
+              "flags": [
+                "--note",
+                "--project"
+              ],
+              "modes": [
+                "canonical append",
+                "legacy compatibility"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore lesson occurrence add --help",
+              "contains": [
+                "original/user/agent prompts",
+                "repository-relative forward-slash"
+              ]
+            },
+            {
+              "command": "specscore lesson occurrence info --help",
+              "contains": [
+                "filename=id",
+                "strict UTC"
+              ]
+            },
+            {
+              "command": "specscore lesson recur --help",
+              "contains": [
+                "leaves the README byte-identical, and refreshes only its derived index row"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.lesson.occurrence",
+              "examples": [
+                "specscore lesson occurrence add verify-before-merge --summary \"The merge gate was skipped.\" --context-json '{\"repository\":\"github.com/org/repo\",\"execution\":{\"kind\":\"interactive\",\"id\":\"run-42\"},\"worktree\":{\"path_hint\":\"redacted\",\"id\":\"wt-42\"}}' --evidence-kind path --evidence-ref spec/tests/merge-gate.md",
+                "specscore lesson occurrence list verify-before-merge --format json",
+                "specscore lesson occurrence info verify-before-merge 123e4567-e89b-42d3-a456-426614174000 --format json",
+                "specscore lesson recur verify-before-merge --note \"The bounded gap manifested again.\"",
+                "specscore lesson check --not-enforced --min-recurred 1 --format json"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "pkg/lesson/occurrence_schema_test.go",
+              "name": "TestValidateOccurrenceFile_RecursivePolicyLexicalUTCAndNoSecretEcho",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/occurrence_schema_test.go",
+              "name": "TestOccurrenceContractValidatesAgainstPinnedCoreSchema",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/occurrence_schema_test.go",
+              "name": "TestAddOccurrence_ExclusiveAtomicPublicationDoesNotOverwrite",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/lesson_occurrence_test.go",
+              "name": "TestLessonOccurrenceJourney_PreservesContextAndRecurCompatibility",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/lesson_occurrence_test.go",
+              "name": "TestLessonCheckFailsOnlyOverBaseline",
+              "kind": "integration"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "The legacy recur writer is temporary compatibility support; canonical recurrence is always derived from immutable children."
+    },
+    {
+      "id": "specscore.lesson.relation",
+      "feature_refs": [
+        "spec/features/cli/lesson/relations/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore lesson relation add",
+              "flags": [
+                "--confirm",
+                "--project",
+                "--type"
+              ],
+              "modes": [
+                "related",
+                "duplicates",
+                "supersedes"
+              ]
+            },
+            {
+              "path": "specscore lesson relation list",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": [
+                "inverse visibility"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore lesson relation add --help",
+              "contains": [
+                "retained duplicate becomes Superseded",
+                "cycles",
+                "overwrites"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.lesson.relation",
+              "examples": [
+                "specscore lesson relation add duplicate-rule canonical-rule --type duplicates",
+                "specscore lesson relation add duplicate-rule canonical-rule --type duplicates --confirm TOKEN_FROM_PREVIEW",
+                "specscore lesson relation list duplicate-rule --format json"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "pkg/lesson/relation_test.go",
+              "name": "TestAddRelation_SupersedesRefusesCycle",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/relation_test.go",
+              "name": "TestAddRelation_DuplicateRetiresOnlyRetainedLessonAndIsVisibleFromTarget",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/relation_test.go",
+              "name": "TestAddRelation_EnforcedDuplicateAndConflictingTargetAreWriteFree",
+              "kind": "conformance"
+            },
+            {
+              "path": "pkg/lesson/relation_test.go",
+              "name": "TestAddRelation_MalformedSidecarIsFatalAndWriteFree",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": null
+    },
+    {
+      "id": "specscore.spec.lint.open-questions-fix",
+      "feature_refs": [
+        "spec/features/cli/spec/lint/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore spec lint",
+              "flags": [
+                "--fix",
+                "--format",
+                "--ignore",
+                "--project",
+                "--rules",
+                "--severity"
+              ],
+              "modes": [
+                "read-only default",
+                "explicit exact-heading rewrite"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore spec lint --help",
+              "contains": [
+                "Outstanding Questions",
+                "Open Questions",
+                "create/scaffold commands never"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-lessons/SKILL.md",
+              "marker": "capability: specscore.spec.lint.open-questions-fix",
+              "examples": [
+                "specscore spec lint --fix"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/spec_lint_open_questions_test.go",
+              "name": "TestSpecLint_OpenQuestionsMigrationIsExplicitBoundedAndIdempotent",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/lesson_new_test.go",
+              "name": "TestLessonNew_DoesNotMigrateUnrelatedOutstandingQuestions",
+              "kind": "integration"
+            },
+            {
+              "path": "pkg/lint/lint_test.go",
+              "name": "TestOQSection_FixRewritesLegacyHeading",
+              "kind": "unit"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": null
+    }
+  ]
+}

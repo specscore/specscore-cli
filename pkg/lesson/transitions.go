@@ -32,10 +32,10 @@ var (
 	setSupersededByFn = lifecycle.SetSupersededBy
 )
 
-// PostMutationHook is the callback the cobra adapter wires to
-// `specscore spec lint --fix`. It MUST return nil on success; a non-nil
-// return triggers full rollback of every on-disk mutation and the error is
-// returned by ChangeStatus.
+// PostMutationHook is the callback the cobra adapter wires to its bounded
+// index synchronization, durability fence, and read-only validation. Once the
+// status rewrite is visible, a hook failure is retained as MutationUncertain;
+// restoring a whole-file snapshot could erase a concurrent foreign edit.
 type PostMutationHook func() error
 
 // ChangeStatusOptions packages the inputs to ChangeStatus.
@@ -83,11 +83,35 @@ type ChangeStatusResult struct {
 //     exit 3.
 //  2. lifecycle.Validate against the KindLesson matrix. Illegal transitions
 //     return exit 4.
-//  3. lifecycle.Rewrite the **Status:** line; capture original for rollback.
+//  3. lifecycle.Rewrite the **Status:** line.
 //  4. Optionally write the `**Superseded By:**` successor reference and the
-//     `## Resolution` note, each rolled back together with the status line.
-//  5. Invoke the PostMutation hook. Failure → full rollback + exit 10.
+//     `## Resolution` note.
+//  5. Invoke the PostMutation hook. Any failure after step 3 is uncertain and
+//     retained for durable recovery; this function never destructively
+//     restores a snapshot after publication.
 func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
+	if opts.SpecRoot == "" {
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
+	}
+	if err := ValidateSlug(opts.Slug); err != nil {
+		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: invalid slug: %v", err)
+	}
+	if opts.To == "" {
+		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: target status required")
+	}
+	if opts.PostMutation == nil {
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: PostMutation hook required")
+	}
+	var result ChangeStatusResult
+	err := withLessonMutationLock(opts.SpecRoot, opts.Slug, defaultLessonMutationLockDeps(), func() error {
+		var err error
+		result, err = changeStatusUnlocked(opts)
+		return err
+	})
+	return result, err
+}
+
+func changeStatusUnlocked(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	if opts.SpecRoot == "" {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
 	}
@@ -127,59 +151,57 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading lesson status: %v", err)
 	}
 
-	origLine, err := lifecycle.Rewrite(path, opts.To)
+	_, err = lifecycle.Rewrite(path, opts.To)
 	if err != nil {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("rewriting status line: %v", err)
 	}
-	fullRollback := func() {
-		_ = lifecycle.Rollback(path, origLine)
+
+	_, _, err = setSupersededByFn(path, opts.Successor)
+	if err != nil {
+		return ChangeStatusResult{}, mutationFailure(MutationUncertain, exitcode.UnexpectedErrorf("writing successor reference: %v", err))
 	}
 
-	origSucc, succWritten, err := setSupersededByFn(path, opts.Successor)
+	_, _, err = appendNoteFn(path, opts.Note)
 	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing successor reference: %v", err)
-	}
-	if succWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origSucc)
-			prev()
-		}
-	}
-
-	origBody, noteWritten, err := appendNoteFn(path, opts.Note)
-	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing transition note: %v", err)
-	}
-	if noteWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origBody)
-			prev()
-		}
+		return ChangeStatusResult{}, mutationFailure(MutationUncertain, exitcode.UnexpectedErrorf("writing transition note: %v", err))
 	}
 
 	if err := opts.PostMutation(); err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, err
+		return ChangeStatusResult{}, mutationFailure(MutationUncertain, err)
 	}
 
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil
 }
 
-// ResolveLessonFile resolves <slug> to an existing Lesson file under
-// lessonsDir (spec/lessons/<slug>.md). A slug that does not resolve returns
-// exit 3 (NotFound), naming the canonical path.
+// ResolveLessonFile resolves a canonical directory Lesson first, then a legacy
+// flat file during the compatibility window. Both forms for the same slug are
+// a conflict: picking one would make lifecycle changes nondeterministic.
 func ResolveLessonFile(lessonsDir, slug string) (string, error) {
-	flat := filepath.Join(lessonsDir, slug+".md")
-	if _, err := os.Stat(flat); err == nil {
-		return flat, nil
-	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorf("stat %s: %v", flat, err)
+	if err := ValidateSlug(slug); err != nil {
+		return "", exitcode.InvalidArgsErrorf("invalid lesson slug %q: %v", slug, err)
 	}
-	return "", exitcode.NotFoundErrorf("lesson not found at %s", flat)
+	canonical := filepath.Join(lessonsDir, slug, "README.md")
+	flat := filepath.Join(lessonsDir, slug+".md")
+	_, canonicalErr := os.Stat(canonical)
+	_, flatErr := os.Stat(flat)
+	canonicalExists := canonicalErr == nil
+	flatExists := flatErr == nil
+	if canonicalExists && flatExists {
+		return "", exitcode.ConflictErrorf("lesson %q has both canonical directory and legacy flat forms", slug)
+	}
+	if canonicalExists {
+		return canonical, nil
+	}
+	if canonicalErr != nil && !os.IsNotExist(canonicalErr) {
+		return "", exitcode.UnexpectedErrorf("stat %s: %v", canonical, canonicalErr)
+	}
+	if flatExists {
+		return flat, nil
+	}
+	if flatErr != nil && !os.IsNotExist(flatErr) {
+		return "", exitcode.UnexpectedErrorf("stat %s: %v", flat, flatErr)
+	}
+	return "", exitcode.NotFoundErrorf("lesson not found: %s", slug)
 }
 
 // statusNames converts a slice of Status values to plain strings, for

@@ -146,6 +146,14 @@ func TestValidate_RejectsBadArtifactType(t *testing.T) {
 	}
 }
 
+func TestValidate_AcceptsLessonArtifactType(t *testing.T) {
+	e := validEvent()
+	e.Artifact = Artifact{Type: "lesson", ID: "retry-safety", Path: "spec/lessons/retry-safety/README.md", Revision: "uncommitted"}
+	if err := Validate(e); err != nil {
+		t.Fatalf("Validate(lesson artifact) = %v, want nil", err)
+	}
+}
+
 // TestValidate_RejectsEmptyStringFields walks each required non-empty string
 // field and confirms the empty value is rejected with that field named.
 func TestValidate_RejectsEmptyStringFields(t *testing.T) {

@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Implemented
+---
+
 # Plan: Agent Setup Skill Bundles
 
 **Status:** Implemented

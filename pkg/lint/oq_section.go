@@ -132,7 +132,7 @@ func (c *oqSectionChecker) fix(specRoot string) error {
 			return nil
 		}
 
-		return os.WriteFile(path, []byte(rewritten), 0o644)
+		return writeLintFile(specRoot, path, content, []byte(rewritten), 0o644)
 	})
 }
 

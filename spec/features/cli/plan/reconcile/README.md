@@ -42,7 +42,7 @@ Reconciliation MUST be a separate verb (`plan reconcile`), never a flag or an ac
 
 ### REQ: tasks-flag
 
-`--tasks=complete` MUST be required and, today, is the ONLY accepted value: every `### Task N:` block's `**Status:**` is set to `complete`. A missing `--tasks` or any other value MUST exit `2` (InvalidArgs) naming the offending value; matching is case-insensitive. Per-task selection (reconciling a subset of tasks to a mix of statuses) is deferred — see Open Questions.
+`--tasks=complete` sets every `### Task N:` block to `complete`. A missing `--tasks` exits `2` unless the caller uses the deliberately narrow correction mode, `--reopen-tasks=<n>[,<n>...]`: every named task MUST currently be `complete` and is directly corrected to `blocked`; unlisted tasks remain untouched and the plan status is re-derived from the resulting rollup. This is only for audibly correcting a false completion claim, is mutually exclusive with `--tasks` and `--force-tasks`, and still requires `--note` plus optional evidence.
 
 ### REQ: terminal-task-requires-acknowledgement
 
@@ -122,6 +122,7 @@ The verb MUST accept a `--force-coordination` boolean flag with the same bypass-
 | `--note` | Yes | Justification for the reconciliation; written verbatim into a `## Resolution` paragraph. Missing/blank exits `2`. |
 | `--evidence` | No | Comma-separated commit SHAs / PR URLs / file paths backing the reconciliation; appended to the same paragraph as `--note`. |
 | `--force-tasks` | Conditional | Comma-separated task numbers explicitly acknowledging the override of a `failed`/`aborted` task to `complete`. Required only when such a task exists and is not named here (see [terminal-task-requires-acknowledgement](#req-terminal-task-requires-acknowledgement)); otherwise unused. |
+| `--reopen-tasks` | Conditional | Comma-separated falsely complete task numbers to correct to `blocked`; mutually exclusive with `--tasks` and `--force-tasks`. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
 | `--force-coordination` | No | Bypasses the plan's `**Coordination:**` repo/branch check for this invocation. Prints a `warning:` line to stderr; does not modify the plan's `**Coordination:**` field. |
 

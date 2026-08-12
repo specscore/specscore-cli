@@ -122,6 +122,19 @@ var docTypeTargets = []docTypeTarget{
 		severity:    "warn",
 		walk:        walkEntityFiles,
 	},
+	{
+		description:   "Lesson README",
+		url:           "https://specscore.md/lesson-specification",
+		severity:      "error",
+		statusBearing: true,
+		walk:          walkLessonReadmes,
+	},
+	{
+		description: "lessons-index README",
+		url:         "https://specscore.md/lessons-index-specification",
+		severity:    "error",
+		walk:        walkLessonsIndex,
+	},
 }
 
 // adherenceFooterChecker verifies that every SpecScore document of a
@@ -180,7 +193,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 			rewritten, replaced := rewriteTrailingAdherenceFooterURL(s, target.url)
 			if replaced {
 				if rewritten != s {
-					if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
+					if err := writeLintFile(specRoot, path, content, []byte(rewritten), 0o644); err != nil {
 						writeErr = err
 					}
 				}
@@ -194,7 +207,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 				s += "\n"
 			}
 			s += "\n---\n*This document follows the " + target.url + "*\n"
-			if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+			if err := writeLintFile(specRoot, path, content, []byte(s), 0o644); err != nil {
 				writeErr = err
 			}
 		})
@@ -280,6 +293,26 @@ func walkIdeasIndex(specRoot string, fn func(path string, content []byte)) error
 	return nil
 }
 
+func walkLessonsIndex(specRoot string, fn func(path string, content []byte)) error {
+	path := filepath.Join(specRoot, "lessons", "README.md")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	fn(path, content)
+	return nil
+}
+
+func walkLessonReadmes(specRoot string, fn func(path string, content []byte)) error {
+	root := filepath.Join(specRoot, "lessons")
+	return walkMatchingFiles(root, func(path string, depth int, name string) bool {
+		if name != "README.md" || depth != 2 {
+			return false
+		}
+		return path != filepath.Join(root, "README.md")
+	}, fn)
+}
+
 // walkFeaturesIndex invokes fn for specRoot/features/README.md if present.
 // This file is an Index-Kind document (features-index), not a Feature README,
 // and is checked against the features-index-specification URL.
@@ -308,9 +341,10 @@ func walkFeatureReadmesExcludingIndex(specRoot string, fn func(path string, cont
 	})
 }
 
-// walkPlanReadmes invokes fn for every Plan README under specRoot/plans/**/README.md,
-// excluding specRoot/plans/README.md (which is the plans-index, walked separately)
-// and any README.md inside a reserved _-prefixed directory.
+// walkPlanReadmes invokes fn for every directory-form Plan README under
+// specRoot/plans/**/README.md and every compatibility flat Plan at
+// specRoot/plans/*.md. It excludes specRoot/plans/README.md (the plans-index,
+// walked separately) and any README.md inside a reserved _-prefixed directory.
 func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) error {
 	plansDir := filepath.Join(specRoot, "plans")
 	info, err := os.Stat(plansDir)
@@ -327,7 +361,8 @@ func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) erro
 			}
 			return nil
 		}
-		if info.Name() != "README.md" {
+		isFlatPlan := filepath.Dir(path) == plansDir && info.Name() != "README.md" && strings.EqualFold(filepath.Ext(info.Name()), ".md")
+		if info.Name() != "README.md" && !isFlatPlan {
 			return nil
 		}
 		// Skip the plans-index itself (handled by walkPlansIndex).

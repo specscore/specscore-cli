@@ -2,7 +2,6 @@ package lint
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 )
@@ -78,7 +77,7 @@ func (c *footerFormatMirrorChecker) fix(specRoot string) error {
 				return
 			}
 			updated := replaceLastSpecURL(content, format)
-			if err := os.WriteFile(path, updated, 0o644); err != nil {
+			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 			}
 		})

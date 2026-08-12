@@ -1,6 +1,6 @@
 ---
 format: https://specscore.md/plan-specification
-status: Completed
+status: Implemented
 ---
 # Plan: Cli Sidekick Change Status
 

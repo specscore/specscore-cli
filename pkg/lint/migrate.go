@@ -2,7 +2,6 @@ package lint
 
 import (
 	"bytes"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -35,7 +34,7 @@ func Migrate(specRoot string) ([]string, error) {
 			if bytes.Equal(updated, content) {
 				return
 			}
-			if err := os.WriteFile(path, updated, 0o644); err != nil {
+			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 				return
 			}

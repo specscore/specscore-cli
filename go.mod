@@ -9,12 +9,15 @@ require (
 	github.com/dal-go/dalgo2sqlite v0.1.3
 	github.com/dal-go/record v0.1.2
 	github.com/getsentry/sentry-go v0.48.0
+	github.com/gofrs/flock v0.13.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/ingitdb/dalgo2ingitdb v0.2.4
 	github.com/ingitdb/ingitdb-go/ingitdb v0.5.2
 	github.com/posthog/posthog-go v1.23.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.10
 	github.com/strongo/selfupdate v0.2.0
 	github.com/zclconf/go-cty v1.19.0
 	golang.org/x/mod v0.38.0
@@ -44,7 +47,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/georgysavva/scany/v2 v2.1.4 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
-	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/ingr-io/ingr-go v0.0.2 // indirect
@@ -63,7 +65,6 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/strongo/random v0.0.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect

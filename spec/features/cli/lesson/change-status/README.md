@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a Lesson artifact from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`, including a direct `Recorded` → `Enforced` skip-ahead for a lesson that reaches a machine gate without ever passing through an advisory stage) or into one of two dispositions — `Withdrawn` or `Superseded` — reachable from every rung. It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract for the Lesson kind. Lessons are flat single files that never relocate, so — like `plan change-status` — this verb has no file-relocation side effect: every transition is a pure status rewrite plus index sync, plus the optional `## Resolution` note and `**Superseded By:**` reference.
+`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`) or into `Withdrawn`/`Superseded`. It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
 
 ## Synopsis
 
@@ -21,11 +21,11 @@ specscore lesson change-status <slug> --to=<status> [--note <markdown>] [--succe
 
 ## Problem
 
-A hand-maintained markdown log has no notion of a status transition at all — `LESSONS-LEARNED.md`'s own convention is a hand-edited `**Status:**` line ("updating its `Status:` line" is explicitly listed as one of the only permitted edits to a past entry), which is precisely the anti-pattern `idea`/`feature`/`plan change-status` already eliminate for their kinds. A dedicated verb closes the gap for Lesson: every promotion up the ladder, and every retirement, goes through the same validated, rollback-safe, index-syncing path every other kind uses.
+A hand-maintained markdown log has no notion of a status transition at all — `LESSONS-LEARNED.md`'s own convention is a hand-edited `**Status:**` line ("updating its `Status:` line" is explicitly listed as one of the only permitted edits to a past entry), which is precisely the anti-pattern `idea`/`feature`/`plan change-status` already eliminate for their kinds. A dedicated verb closes the gap for Lesson: every promotion up the ladder, and every retirement, goes through the same validated, fail-closed, index-syncing path every other kind uses.
 
 ## Behavior
 
-This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md) — strict state machine (exit `4`), `--to` parse + slug resolution, atomic rewrite + `spec lint --fix` index sync, rollback (exit `10`), `<slug>: <from> → <to>` success line, the shared exit-code mapping, and the optional `--note` → `## Resolution` mechanism. The REQs below are the Lesson-specific declarations.
+This verb inherits the strict state machine (exit `4`), `--to` parsing, slug resolution, atomic rewrite, success line, shared exit-code mapping, and optional `--note` → `## Resolution` mechanism from [lifecycle-transitions](../../lifecycle-transitions/README.md). Lesson index synchronization is deliberately narrower than the generic repository-wide fixer. Once the rewrite is visible, rollback requires atomic ownership; absent that proof, the artifact/index and prepared event remain recoverable instead of overwriting concurrent data.
 
 ### Legal-transition matrix
 
@@ -51,7 +51,7 @@ The verb MUST accept the target status via a required `--to=<status>` flag: `Sta
 
 #### REQ: lesson-slug-resolution
 
-The `<slug>` positional MUST resolve to an existing Lesson file at `spec/lessons/<slug>.md` within the project root (autodetected, or `--project`). A slug that does not resolve exits `3` (NotFound) naming the expected path.
+The `<slug>` positional MUST resolve canonical `spec/lessons/<slug>/README.md` first, then compatibility `spec/lessons/<slug>.md`, and MUST reject a duplicate layout. A slug that does not resolve exits `3` (NotFound) naming the slug.
 
 #### REQ: disposition-reason-required
 
@@ -63,7 +63,7 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: lessons-index-sync
 
-The post-mutation `specscore spec lint --fix` MUST sync the lessons index (`spec/lessons/README.md`) to the new status (rule L-004). The verb's exit `0` depends on the rewrite AND the lint pass both succeeding; a lint failure rolls back every mutation and exits `10`.
+The verb MUST hold the resolved Lesson's private lifecycle lock continuously from transition validation through rewrite, exact-row reconciliation, read-only lint, and durability fences. Inside that scope it acquires the shared Lesson-index writer lock only for the index mutation; the total lock order is always per-Lesson first, shared index second. It then durably fences both artifact/index files and parent directories before event commit. It MUST NOT invoke a repository-wide fixer or migrate an unrelated `## Outstanding Questions` heading. Exit `0` depends on every step succeeding. A post-rewrite failure exits `10`, retains the prepared event, and MUST preserve the published state and concurrent index rows rather than restoring whole-file snapshots.
 
 ## Flags
 
@@ -80,18 +80,18 @@ The post-mutation `specscore spec lint --fix` MUST sync the lessons index (`spec
 |---|---|
 | `0` | Transition succeeded; file rewritten; lessons index synced. |
 | `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
-| `3` | No Lesson file at `spec/lessons/<slug>.md`. |
+| `3` | No canonical or compatibility Lesson for the slug. |
 | `4` | `(current_status, --to)` is not a legal transition. |
-| `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
+| `10` | I/O, narrow index-upsert, read-only lint, or durability-fence failure; post-publication state and its prepared recovery event are retained. |
 
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. |
-| [cli/plan/change-status](../../plan/change-status/README.md) | Closest sibling — also a flat, relocation-free `change-status` whose disposition-reason-required and successor-reference mechanics this verb reuses directly. |
+| [cli/plan/change-status](../../plan/change-status/README.md) | Lifecycle sibling whose disposition-reason and successor-reference mechanics this verb reuses. |
 | [lesson (CLI group)](../README.md) | Parent group. |
-| [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rules L-002/L-004 validate what this verb writes. |
+| [spec lint](../../spec/lint/README.md) | Invoked read-only after the exact L-004 index row upsert; only an explicit CLI `--fix` runs repository-wide fixers. |
 
 ## Dependencies
 
@@ -137,15 +137,21 @@ The post-mutation `specscore spec lint --fix` MUST sync the lessons index (`spec
 
 ### AC: not-found-exits-3 (verifies REQ:lesson-slug-resolution)
 
-**Given** no lesson named `nonexistent`
+**Given** no canonical or compatibility Lesson named `nonexistent`
 **When** the user runs `specscore lesson change-status nonexistent --to=stated`
-**Then** the command exits `3` naming the expected `spec/lessons/nonexistent.md` path.
+**Then** the command exits `3` naming `nonexistent`.
 
 ### AC: lint-failure-rolls-back (verifies REQ:lessons-index-sync)
 
 **Given** `spec/lessons/kinder-fake.md` in `**Status:** Recorded`
-**When** `spec lint --fix` fails after a successful Status rewrite
-**Then** a full rollback restores the original `**Status:**`, and the command exits `10`.
+**When** read-only lint fails after a successful Status rewrite and exact index-row upsert
+**Then** the command exits `10`, retains the rewritten Lesson, its row, every concurrent foreign row, and the prepared lifecycle event for explicit recovery; it does not restore a whole-file snapshot. (The AC identifier is retained for traceability to the superseded rollback behavior.)
+
+### AC: unrelated-files-remain-byte-identical
+
+**Given** an unrelated Markdown file containing `## Outstanding Questions`
+**When** a valid Lesson status transition succeeds
+**Then** the unrelated bytes remain identical; only explicit `specscore spec lint --fix` performs that migration.
 
 ## Open Questions
 

@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson new <slug>` scaffolds a lint-clean Lesson artifact at `spec/lessons/<slug>.md`: the `format:`/`status:` frontmatter, the body-metadata header (`**Status:** Recorded`, `**Date:**`, `**Owner:**`, `**Recurred:** 0`), the four required sections (`## Incident`, `## Process gap`, `## Check`, `## Enforcement`) with `<!-- TODO: ... -->` prompts, and the adherence footer. No flag beyond `<slug>` is required.
+`specscore lesson new <slug>` creates one canonical compact Lesson at `spec/lessons/<slug>/README.md`, an empty `occurrences/` store, the exact index row, and its durable created event.
 
 ## Synopsis
 
@@ -21,100 +21,108 @@ specscore lesson new <slug> [--title <text>] [--owner <id>] [--force] [--project
 
 ## Problem
 
-The value of a lessons log is that writing an entry is nearly free — the moment recording one becomes a chore, lessons silently go unwritten, and an unwritten lesson is worse than a scruffy one. A verb that scaffolds a lint-clean Lesson from a single positional argument, with every other field optional and defaulted, keeps that friction at zero while still guaranteeing the artifact carries the structure the enforcement ladder depends on.
+Recording a process gap must remain quick, but a mutating scaffold cannot silently choose an unconfigured classification, retain both flat and directory layouts, run a repository-wide fixer, or leave a partial Lesson whose index/event says something else. The canonical README stays compact so agents read the current rule without loading occurrence history.
+
+## Journey
+
+The user configures the repository's Lesson classification vocabulary and chooses a slug. Before any write, the command validates configuration, content policy, both layout targets, and the complete bounded write set. The observable start result is either zero changed bytes or one prepared event naming the intended mutation.
+
+The command publishes the directory scaffold and exact index row, then runs lint read-only and durably fences both files and parent directories. The observable middle result is one canonical Lesson and no changed unrelated spec file. It commits and attempts the prepared event only after the artifact is valid and durable. The observable end result is a lint-clean Lesson plus independently replayable event delivery. A pre-publication collision or validation failure changes no bytes. Any post-publication failure retains the complete visible state and prepared event for explicit recovery; it never restores a whole-file/tree snapshot that could erase concurrent work.
 
 ## Behavior
 
-### Slug argument
+### Configuration and slug preflight
 
-#### REQ: slug-required
+#### REQ: config-before-write
 
-`<slug>` MUST be supplied. Absence MUST exit `2` (InvalidArgs).
+The project MUST have a valid `specscore.yaml` with a nonempty, unique `lessons.classifications` vocabulary before the command creates any path. The slug MUST be lowercase, hyphen-separated, URL-safe, and contain no `/`. Invalid configuration or input MUST leave the project byte-identical.
 
-#### REQ: slug-format
+#### REQ: one-layout-only
 
-The slug MUST be lowercase, hyphen-separated, URL-safe, and MUST NOT contain `/`. An invalid slug MUST exit `2` naming the offending slug.
+The command MUST refuse a sibling compatibility file at `spec/lessons/<slug>.md`; the user must run explicit flat migration first. An existing canonical README MUST exit Conflict unless `--force` is supplied.
 
-### Scaffold content
+### Canonical compact scaffold
 
-#### REQ: scaffolds-lint-clean
+#### REQ: canonical-directory-scaffold
 
-The scaffold MUST emit a single file `spec/lessons/<slug>.md` (not a directory) carrying the body-metadata header (`**Status:** Recorded`, `**Date:**`, `**Owner:**`, `**Recurred:** 0`), the four required sections (`## Incident`, `## Process gap`, `## Check`, `## Enforcement`, each with a `<!-- TODO: ... -->` prompt), and the adherence footer. `specscore spec lint` immediately afterwards MUST report no new error-severity violations outside the scaffolded file itself — the verb runs an internal `spec lint --fix` pass (see [REQ: index-row-materialized](#req-index-row-materialized)) specifically so this holds without a separate step.
+The command MUST create `spec/lessons/<slug>/README.md` and `spec/lessons/<slug>/occurrences/`. The README MUST carry format/status frontmatter, Recorded lifecycle metadata, configured classifications, relation and immutable-provenance fields, concise `## Lesson` and `## Process Gap` prompts, a `## Tracking` line with the exact published occurrence-schema URL, structured Enforcement fields, `## Open Questions`, and the matching adherence footer.
 
-#### REQ: emits-frontmatter
+#### REQ: bounded-index-upsert
 
-The scaffold MUST emit, per the [artifact-frontmatter-convention](../../../../../../specscore/spec/features/artifact-frontmatter-convention/README.md) feature, a `format:` frontmatter field carrying `https://specscore.md/lesson-specification` and a `status:` field mirroring the initial body `**Status:** Recorded`. The footer URL and `format:` MUST agree on creation.
+The command MAY materialize only missing `spec/README.md` and `spec/lessons/README.md` ancestors, then MUST upsert only the selected Lesson's canonical index row. It MUST run lint read-only for the owned Lesson, occurrence store, and exact index finding. It MUST NOT invoke `spec lint --fix`; in particular it MUST NOT rewrite an unrelated `## Outstanding Questions` heading.
 
-### Ancestor index and lessons-index materialization
+#### REQ: durable-created-event
 
-#### REQ: ancestor-indexes-materialized
+Before artifact publication, the command MUST prepare `lesson.created` with the complete nonempty configured subscriber set. The bounded transaction covers the requested Lesson paths, declared ancestor/index paths, and prepared event/outbox. After artifact validation it commits the event and attempts every subscriber independently. An explicitly empty subscriber configuration opts out without creating a recipientless ledger.
 
-When `lesson new` writes `spec/lessons/<slug>.md`, the command MUST also materialize `spec/README.md` and `spec/lessons/README.md` when they do not already exist, using the same templates as `specscore init`. Existing files MUST be left untouched. The lesson file MUST NOT be written until both ancestor indexes are in place.
+#### REQ: rollback-owned-write-set
 
-#### REQ: index-row-materialized
-
-After writing the lesson file, the verb MUST run `specscore spec lint --fix` scoped to the project, so the new lesson's row is inserted into `spec/lessons/README.md` (rule L-003) in the same invocation — no separate `spec lint --fix` step is needed to keep the tree lint-clean. If the fix pass fails, the partial lesson file MUST be removed and the command MUST exit `10`. The verb then re-runs lint (without `--fix`) and MUST exit `10` if any error-severity violation remains that touches the new file or any file under `lessons/`.
-
-### Overwrite behavior
-
-#### REQ: no-clobber-default
-
-If `spec/lessons/<slug>.md` already exists, the command MUST exit `1` (Conflict) naming the path, unless `--force` is supplied. No partial write may occur before the collision check.
+Any failure proven to precede publication MUST leave the declared write set byte-identical. After a path becomes visible, the command MUST NOT delete or restore an artifact/index snapshot without an atomic ownership proof. It MUST retain the visible state and prepared event as uncertain for explicit recovery, preserving every unrelated or concurrently added file/index row. Exact-row index writes MUST serialize through the project-private Lesson-index writer lock. Event commit MUST follow successful file and parent-directory durability fences for the Lesson, occurrence store, and both declared indexes.
 
 ## Parameters
 
 | Name | Required | Description |
 |---|---|---|
-| `slug` | Yes | Lesson slug — becomes the file name. |
-| `--title` | No | Lesson title (defaults to title-cased slug). |
-| `--owner` | No | Owner/author (defaults to `$USER`). |
-| `--force` | No | Overwrite an existing lesson file. |
+| `slug` | Yes | Canonical directory name. |
+| `--title` | No | Lesson title; defaults from the slug. |
+| `--owner` | No | Owner/author; defaults from the local user. |
+| `--force` | No | Replace the canonical README while preserving its occurrence directory. |
+| `--project` | No | Project root; otherwise autodetected. |
 
-## Exit codes
+## Exit Codes
 
 | Code | Condition |
 |---|---|
-| `0` | Lesson file created (and lint-clean, including its index row). |
-| `1` | File already exists and `--force` not supplied. |
-| `2` | Missing/invalid `slug`. |
-| `10` | Unexpected I/O failure, the internal `spec lint --fix` pass failed, or a remaining error-severity violation touches the new file after the fix pass. |
+| `0` | The canonical Lesson/index/event transaction completed, or durable subscriber failures remain independently pending and are reported as warnings. |
+| `1` | A flat sibling or unforced canonical target already exists. |
+| `2` | The slug or reviewed scaffold content is invalid. |
+| `3` | The project root is not found. |
+| `10` | Configuration, I/O, index, focused lint, or event preparation/commit failed. |
 
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
-| [lesson (CLI group)](../README.md) | Parent group; `new` is the group's only mutating-creation verb. |
-| [cli/plan/new](../../plan/new/README.md) | Sibling create verb whose slug/no-clobber/ancestor-index/lint-clean contract this verb mirrors. |
-| [cli/idea/new](../../idea/new/README.md) | Sibling create verb whose internal `spec lint --fix` pass (so the freshly scaffolded artifact's index row lands in the same invocation) this verb mirrors. |
-| [cli/spec/lint/lesson-rules](../../spec/lint/lesson-rules/README.md) | Owns the `L-001`–`L-004` rules this verb's scaffold and internal fix pass satisfy. |
+| [Lesson](../README.md) | Defines canonical Lesson identity and progressive disclosure. |
+| [Lesson lint rules](../../spec/lint/lesson-rules/README.md) | Supplies the narrow index upsert and read-only verification rules. |
+| [Flat migration](../migrate-flat/README.md) | Is the only path from a sibling compatibility file to this canonical layout. |
+| [Events](../../event/README.md) | Owns prepared delivery, independent acknowledgement, replay, and reconciliation. |
 
 ## Acceptance Criteria
 
-### AC: scaffolded-lesson-is-lint-clean (verifies REQ:scaffolds-lint-clean, REQ:index-row-materialized)
+### AC: configuration-preflight-is-zero-write
 
-`specscore lesson new kinder-fake` creates `spec/lessons/kinder-fake.md` AND inserts its row into `spec/lessons/README.md` in the same invocation. `specscore spec lint` immediately afterwards reports no error-severity violations anywhere in the tree, even though every section carries only a `<!-- TODO: ... -->` prompt.
+**Given** missing/invalid configuration or an empty classification vocabulary
+**When** `lesson new` runs
+**Then** it exits nonzero before an event, index, directory, or file is created.
 
-### AC: scaffold-emits-frontmatter (verifies REQ:emits-frontmatter)
+### AC: scaffolded-lesson-is-canonical-and-lint-clean
 
-A lesson scaffolded by `lesson new` carries `format: https://specscore.md/lesson-specification` and `status: Recorded` mirroring its body `**Status:** Recorded`, and its adherence-footer URL matches `format:`.
+**Given** a lint-clean configured project
+**When** `lesson new verify-before-merge` runs
+**Then** the canonical README and empty occurrence store exist, the exact canonical index row exists, focused and whole-project read-only lint report no new error, and no sibling flat file exists.
 
-### AC: existing-file-conflict (verifies REQ:no-clobber-default)
+### AC: unrelated-files-remain-byte-identical
 
-Running the command twice for the same slug without `--force` exits `1` on the second run and leaves the existing file untouched. With `--force`, the second run overwrites and exits `0`.
+**Given** unrelated specs including an obsolete `## Outstanding Questions` heading
+**When** `lesson new` succeeds or an owned-phase failure is injected
+**Then** every unrelated byte is unchanged and only explicit `spec lint --fix` can perform the heading migration.
 
-### AC: invalid-slug-rejected (verifies REQ:slug-format)
+### AC: created-event-is-durable
 
-`specscore lesson new Bad_Slug` exits `2` naming the offending slug. No file is created.
+**Given** a nonempty subscriber configuration
+**When** creation succeeds
+**Then** one immutable `lesson.created` ledger names the slug and complete canonical subscriber set, its decision is committed, and each failed sink remains independently replayable.
 
-### AC: ancestor-indexes-materialized (verifies REQ:ancestor-indexes-materialized)
+### AC: flat-sibling-is-refused
 
-**Given** a project with `specscore.yaml` but no `spec/lessons/` tree
-**When** the user runs `specscore lesson new my-lesson`
-**Then** `spec/README.md`, `spec/lessons/README.md`, and `spec/lessons/my-lesson.md` are created; re-running the command for a different slug leaves the pre-existing indexes' prologue untouched.
+**Given** `spec/lessons/<slug>.md`
+**When** `lesson new <slug>` runs, even with `--force`
+**Then** it exits Conflict before any write and directs the user to explicit flat migration.
 
 ## Open Questions
 
-- Should `--title`/`--owner` become the only optional flags forever, or is there value in a `--note "<free text>"` flag that seeds the `## Incident` section directly, shaving one more edit off the zero-friction path? Deferred until real usage shows agents consistently editing the same section by hand immediately after `new`.
+None at this time.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

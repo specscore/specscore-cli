@@ -3,6 +3,7 @@ package lint
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // readmeExistsChecker verifies that every spec directory has a README.md file.
@@ -25,7 +26,7 @@ func (c *readmeExistsChecker) check(specRoot string) ([]Violation, error) {
 	seedsRel := filepath.Join("ideas", "seeds")
 
 	err := walkSpecDirs(specRoot, func(dirPath, relPath string) error {
-		if relPath == seedsRel || isFeatureProposalsContainer(relPath) {
+		if relPath == seedsRel || isFeatureProposalsContainer(relPath) || isLessonOccurrencesContainer(relPath) {
 			return nil
 		}
 		readmePath := filepath.Join(dirPath, "README.md")
@@ -42,4 +43,12 @@ func (c *readmeExistsChecker) check(specRoot string) ([]Violation, error) {
 	})
 
 	return violations, err
+}
+
+// Occurrences are a reserved JSON-only child collection, not a document
+// directory. Requiring a README here would contradict the append-only
+// occurrence format and force a concurrent writer back into a shared file.
+func isLessonOccurrencesContainer(relPath string) bool {
+	parts := strings.Split(filepath.ToSlash(relPath), "/")
+	return len(parts) == 3 && parts[0] == "lessons" && parts[2] == "occurrences"
 }

@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Approved
+---
+
 # Plan: Idea Relocate Implementation
 
 **Status:** Approved

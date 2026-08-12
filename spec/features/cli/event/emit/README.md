@@ -14,13 +14,13 @@ status: Stable
 
 ## Summary
 
-The user-facing emission verb: `specscore event emit`. Owns cobra wiring under the `event` subcommand, the typed envelope flag set, the three payload input modes (`--payload-json` / `--payload-file` / stdin), and the auto-fill behavior for envelope fields the CLI is uniquely positioned to derive (version, uuid, timestamp, artifact revision). The verb constructs an `event.Event` from flags + payload bytes, hands it to the parent Feature's dispatcher, and maps the dispatch outcome to the standard exit-code contract.
+The user-facing emission verb: `specscore event emit`. It constructs a validated envelope from flags and one payload input mode, durably enqueues the envelope for the complete subscriber set, and attempts every pending delivery. A successful subscriber never masks a failed subscriber.
 
 ## Problem
 
-The parent Feature ([`cli/event`](../README.md)) owns the dispatcher, the subscriber registry, and the envelope validator — none of which is reachable from a shell. Skills (the primary callers) construct events from bash blocks and need a CLI entry point that (a) doesn't make them assemble JSON envelopes by hand, (b) lets them choose where the payload comes from (inline argument, file, or stdin), and (c) absorbs the bookkeeping fields (uuid generation, timestamp, git-revision lookup) so skill bash blocks shrink to one flag-driven invocation.
+The parent Feature ([`cli/event`](../README.md)) owns the subscriber registry, envelope validator, dispatcher primitive, and durable outbox — none of which is reachable from a shell. Skills need a CLI entry point that assembles the envelope, chooses one payload source, supplies bookkeeping fields, and does not lose one sink's work when another sink succeeds.
 
-This Feature is that entry point. It is deliberately a thin user-surface around the parent's dispatcher: every behavioral guarantee about validation, dispatch semantics, and exit codes is defined in the parent. The child's job is to translate command-line input into a fully-populated `event.Event` value.
+This Feature is that entry point. It translates command-line input into a fully populated `event.Event`, then uses the parent's durable outbox so a stopped process or one failed sink does not lose delivery work.
 
 ## Behavior
 
@@ -45,7 +45,7 @@ The CLI supplies the envelope's stable fields and auto-fills the bookkeeping fie
 | `--name` | event name (e.g. `idea.drafted`) | `name` |
 | `--actor-kind` | one of `skill`, `user`, `external` | `actor.kind` |
 | `--actor-id` | string | `actor.id` |
-| `--artifact-type` | one of `idea`, `feature`, `plan`, `task`, `idea-seed`, `consilium-review` | `artifact.type` |
+| `--artifact-type` | one of `idea`, `feature`, `plan`, `task`, `lesson`, `idea-seed`, `consilium-review` | `artifact.type` |
 | `--artifact-id` | string | `artifact.id` |
 | `--artifact-path` | repo-relative path string | `artifact.path` |
 | `--artifact-revision` (optional) | git SHA or the literal `uncommitted` | `artifact.revision` (overrides auto-fill — see REQ:envelope-auto-fill) |
@@ -79,15 +79,15 @@ The payload is opaque to the CLI (per the parent's REQ:payload-opaque clause); t
 
 Exactly one input mode is permitted per invocation. Passing both `--payload-json` and `--payload-file`, or either flag together with a non-TTY stdin that contains data, MUST exit `2` with a stderr message naming the conflict. When no payload flag is supplied AND stdin is a TTY, the CLI MUST exit `2` with a stderr message naming the three modes — the verb MUST NOT block waiting for keyboard input that the caller almost certainly did not intend.
 
-The CLI MUST verify the payload bytes parse as a JSON object (per the parent's REQ:envelope-validation) before passing them to the dispatcher. Bytes that don't parse MUST exit `2` with a stderr message naming the input mode and the JSON parse error.
+The CLI MUST verify the payload bytes parse as a JSON object (per the parent's REQ:envelope-validation) before enqueueing them. Bytes that don't parse MUST exit `2` with a stderr message naming the input mode and the JSON parse error.
 
-### Dispatch and exit codes
+### Durable enqueue and delivery
 
-The verb hands off to the parent's dispatcher and adopts its outcome.
+The verb hands off to the parent's durable outbox and adopts its outcome.
 
 #### REQ: dispatch-handoff
 
-After constructing the envelope and validating the payload parses as JSON, the verb MUST invoke the parent Feature's dispatcher with the constructed `event.Event` value. The verb MUST exit with the code defined by the parent's REQ:dispatch-exit-codes (0 / 2 / 3 / 10), mapped from the dispatcher's outcome. The verb MUST NOT add new exit codes beyond those defined in the parent.
+After constructing the envelope and validating the payload, the verb MUST exclusively enqueue the event with the complete canonical subscriber-name set, commit it, and replay every currently pending subscriber. An enqueue/ledger error or any remaining failed delivery MUST exit `10`; successful delivery to all subscribers or an explicit empty subscriber set MUST exit `0`. Each failure MUST remain inspectable for `event replay`, and success at another subscriber MUST NOT acknowledge it.
 
 #### REQ: help-output
 
@@ -97,11 +97,9 @@ After constructing the envelope and validating the payload parses as JSON, the v
 
 | Unit | Responsibility | Used by | Depends on |
 |---|---|---|---|
-| `internal/cli/event.go` | Registers the `event` cobra parent and its `emit` subcommand. | cobra root. | `internal/cli/event_emit.go`, `pkg/event`. |
-| `internal/cli/event_emit.go` | The verb's `RunE`. Reads flags, constructs the envelope, resolves the payload bytes from the selected input mode, calls `pkg/event` to validate and dispatch. | `internal/cli/event.go`. | `pkg/event`, `os` (stdin), `pkg/gitremote` or equivalent for `git rev-parse HEAD`. |
-| Flag definitions in `internal/cli/event_emit.go` | The closed flag set defined by REQ:envelope-flags and REQ:payload-input-modes. | The verb's `RunE`. | cobra. |
+| `internal/cli/event.go` | Registers the event command tree and implements emit: resolve payload, construct and validate the envelope, enqueue, and replay pending delivery. | cobra root. | `pkg/event`, `os` (stdin), Git revision lookup. |
 
-The verb owns no state and no goroutines; it is a pure pipeline from CLI args to `pkg/event.Dispatch(...)`.
+The verb owns no in-memory retry worker. Durable state lives under the parent Feature's project-local outbox.
 
 ## Data Flow
 
@@ -124,8 +122,10 @@ $ specscore event emit \
   ├─→ Auto-fill envelope fields (REQ:envelope-auto-fill)
   │     version=1, uuid=<v4>, timestamp=<now UTC>, revision=<git HEAD or "uncommitted">
   │
-  └─→ pkg/event.Dispatch(ctx, event) (REQ:dispatch-handoff)
-        outcome → exit code per parent's REQ:dispatch-exit-codes (0/2/3/10)
+  └─→ pkg/event.Outbox.Enqueue(event, subscribers) (REQ:dispatch-handoff)
+        └─→ Replay every pending subscriber independently
+              all acknowledged → exit 0
+              ledger/delivery pending → exit 10 and retain inspectable work
 ```
 
 ## Error Handling & Failure Modes
@@ -141,12 +141,12 @@ $ specscore event emit \
 | Envelope-validation failure (e.g. bad event-name pattern) | `2` | Delegated to the parent's REQ:envelope-validation. Stderr per the parent's contract. |
 | Config-load failure (`events:` block malformed) | `2` | Delegated to the parent's REQ:events-config-schema. |
 | `specscore.yaml` not found | `3` | Delegated to the parent `cli` Feature's REQ:project-autodetect. |
-| All subscribers fail | `10` | Delegated to the parent's REQ:dispatch-exit-codes. |
-| At least one subscriber succeeds | `0` | Delegated to the parent's REQ:dispatch-exit-codes. Stderr may contain per-subscriber failure lines from the parent's REQ:fan-out-dispatch contract. |
+| Any subscriber remains pending | `10` | Stderr names each pending subscriber; another subscriber's success does not mask it. |
+| Every subscriber succeeds, or subscriber list is explicitly empty | `0` | Every required acknowledgement is durable. |
 
 ## Testing Strategy
 
-Per-AC Rehearse stubs are scaffolded for the verb's user-visible behavior — flag validation, payload-mode arbitration, auto-fill values, and exit-code mapping. The dispatcher behavior itself is tested under the parent Feature; this child Feature's stubs use a recording subscriber to verify the verb's contract with the dispatcher (the envelope reaches the dispatcher with all fields correctly populated).
+Tests cover flag validation, payload-mode arbitration, auto-fill values, durable enqueue, per-subscriber acknowledgement, replay, and exit-code mapping. The parent Feature tests ledger and dispatcher primitives independently.
 
 ## Rehearse Integration
 
@@ -163,13 +163,13 @@ Per-AC Rehearse stubs are scaffolded for the verb's user-visible behavior — fl
 | `envelope-auto-fill-fields` | yes | Pass minimum flags; assert recording subscriber sees envelope with `version=1`, a UUID v4 `uuid`, an RFC 3339 `timestamp`, an `artifact.revision` matching `git rev-parse HEAD` |
 | `envelope-auto-fill-revision-no-git` | yes | Project root with no `.git`; assert `artifact.revision = "uncommitted"` |
 | `envelope-artifact-revision-override` | yes | Pass `--artifact-revision deadbeef`; assert recording subscriber sees that exact value |
-| `dispatch-exit-code-handoff` | yes | Configure two failing subscribers; assert verb exits `10` (the parent's contract) |
+| `dispatch-exit-code-handoff` | yes | Configure one successful and one failing subscriber; assert verb exits `10` and only the failed sink remains replayable |
 
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
-| [`cli/event`](../README.md) (parent) | This verb is the only first-class caller of `pkg/event.Dispatch` in v1. Every behavioral guarantee about envelope validation, subscriber dispatch, and exit codes lives in the parent; this child Feature delegates without restating. |
+| [`cli/event`](../README.md) (parent) | Owns envelope validation, subscribers, the immutable ledger, per-subscriber pending markers, replay, and reconciliation. |
 | [`cli`](../../README.md) (root) | The `event` cobra subcommand attaches under root. Inherits the shared exit-code contract; the verb adds no new exit-code semantics beyond delegation. Inherits `--project` autodetect and the global `--help` / `-h` flag. |
 | Event-emitting skills in the SDD skills repo | Out of scope of this Feature. The `verify` skill is the proof-point port — its bash block, in a follow-up change to that repo, drops the inline JSONL append and calls this verb unconditionally. Migration of the other five event-emitting skills is tracked in the SDD skills repo, not gated on this Feature. |
 
@@ -283,9 +283,9 @@ Per-AC Rehearse stubs are scaffolded for the verb's user-visible behavior — fl
 
 **Requirements:** cli/event/emit#req:dispatch-handoff
 
-**Given** a `specscore.yaml` configured with two Exec subscribers both pointing at `/bin/false` (always exit 1), a `specscore` binary
+**Given** a `specscore.yaml` configured with one successful subscriber and one Exec subscriber pointing at `/bin/false`, a `specscore` binary
 **When** the verb runs with a valid envelope and any payload mode
-**Then** exit code MUST be `10` (the parent's REQ:dispatch-exit-codes contract for "all subscribers failed"); stderr MUST contain two lines matching the parent's REQ:fan-out-dispatch failure format (one per subscriber); no exit code outside the parent's contract MUST be returned.
+**Then** exit code MUST be `10`; stderr MUST name the failed subscriber; the successful subscriber MUST be acknowledged; the failed subscriber MUST remain independently replayable with the same event UUID.
 
 ## Open Questions
 

@@ -1,3 +1,8 @@
+---
+format: https://specscore.md/plan-specification
+status: Approved
+---
+
 # Plan: CLI Telemetry — Usage Stats Channel
 
 **Status:** Approved

@@ -1,0 +1,4 @@
+interface:
+  display_name: "SpecScore Lessons"
+  short_description: "Operate safe SpecScore continuous-improvement Lessons"
+  default_prompt: "Use $specscore-lessons to record, migrate, deduplicate, inspect, or enforce process Lessons safely."

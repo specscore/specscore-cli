@@ -7,15 +7,27 @@ describes how events flow and how to configure consumers for your project.
 ## Overview
 
 Skills and verbs produce events; the `specscore` CLI dispatches each one to a
-list of registered subscribers configured in `specscore.yaml`. Built-in
+list of registered subscribers configured in `specscore.yaml`. Before delivery,
+the CLI publishes one immutable outbox record containing the complete canonical
+subscriber set. Built-in
 subscriber types cover the common cases (append-to-file, drop-on-the-floor,
 and pipe-to-a-child-process), and the dispatcher delivers each envelope to
-every configured subscriber in order. Subscriber failures are logged to stderr
-but do not stop other subscribers from running. The user-facing entrypoint for
+every configured subscriber in order. Subscriber failures do not stop other
+subscribers from running and remain independently pending; a success at one
+sink never acknowledges another sink. The user-facing entrypoint for
 publishing an event is the `specscore event emit` verb (see
 [`https://specscore.md/event-emit`](https://specscore.md/event-emit)); the
 source-of-truth Feature is
 [`spec/features/cli/event/README.md`](../spec/features/cli/event/README.md).
+
+Delivery is at least once. Subscribers must deduplicate using the envelope
+`uuid` if an interruption can occur after their side effect but before the CLI
+records the acknowledgement. Inspect and resume pending work with
+`specscore event replay`; inspect an interrupted prepared record and resolve it
+deliberately with `specscore event reconcile`. Malformed, trailing, invalid, or
+noncanonical ledger records are rejected before a subscriber is invoked.
+Cryptographic detection of an otherwise schema-valid local ledger rewrite is a
+Planned capability, not a current guarantee.
 
 ## The events: config block
 
@@ -131,7 +143,7 @@ fields. All fields are required.
 | `timestamp`         | RFC 3339 timestamp in UTC (must end with `Z` or `+00:00`).                                                           |
 | `actor.kind`        | One of `skill`, `user`, `external`.                                                                                  |
 | `actor.id`          | Non-empty string identifying the actor (e.g. skill name, user handle, integration slug).                             |
-| `artifact.type`     | One of `idea`, `feature`, `plan`, `task`, `idea-seed`, `consilium-review`.                                           |
+| `artifact.type`     | One of `idea`, `feature`, `plan`, `task`, `lesson`, `idea-seed`, `consilium-review`.                                 |
 | `artifact.id`       | Non-empty string identifying the artifact (typically its slug or ID).                                                |
 | `artifact.path`     | Non-empty repo-relative path to the artifact file.                                                                   |
 | `artifact.revision` | Non-empty string; the git revision the artifact was read at. The literal value `uncommitted` is permitted.           |
@@ -180,8 +192,10 @@ events:
 ```
 
 This differs from omitting the block: an empty list means "the operator opted
-in and chose zero subscribers," whereas an absent block falls back to the
-default JSONL sink. A single `noop` entry has the same observable effect:
+in and chose zero subscribers," so the CLI creates no recipientless outbox
+record; an absent block falls back to the default JSONL sink. A single `noop`
+entry keeps a durable delivery/acknowledgement record while producing no
+external effect:
 
 ```yaml
 events:

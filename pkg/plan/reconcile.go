@@ -95,6 +95,13 @@ type ReconcileOptions struct {
 	// the aggregate "N task(s) marked complete" count.
 	ForceTasks []int
 
+	// ReopenTasks is an explicit list of falsely-completed embedded tasks to
+	// correct to blocked. It is deliberately narrow: only complete tasks may
+	// be reopened, and no unlisted task is touched. This is the inverse audit
+	// path for an over-stated prior reconciliation, not a general bypass of
+	// the task lifecycle.
+	ReopenTasks []int
+
 	// PostMutation is the post-rewrite hook (typically a spec-lint pass,
 	// which also syncs the frontmatter `status:` mirror and the plans
 	// index). Required; Reconcile returns exit 10 if nil.
@@ -129,6 +136,10 @@ type ReconcileResult struct {
 	// via --force-tasks, by number and prior status. Empty when no task was
 	// in a terminal failure state (the common case).
 	Overrides []TaskOverride
+	// Target is the status written to every reconciled task. Complete is the
+	// normal all-task delivery reconciliation; Blocked is used only by the
+	// explicit ReopenTasks correction path.
+	Target TaskStatus
 }
 
 // Reconcile performs a Plan-kind out-of-band status correction end-to-end.
@@ -213,6 +224,64 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		}
 	}
 
+	// An explicit reopen corrects only a false completion. It must be exact:
+	// named task numbers must exist and each target must still be complete.
+	// This is intentionally before the all-complete guard below.
+	if len(opts.ReopenTasks) > 0 {
+		wanted := map[int]bool{}
+		for _, n := range opts.ReopenTasks {
+			if n <= 0 {
+				return ReconcileResult{}, exitcode.InvalidArgsError("Reconcile: reopen task numbers must be positive")
+			}
+			wanted[n] = true
+		}
+		hypothetical := append([]Task(nil), p.Tasks...)
+		changed := 0
+		for i := range hypothetical {
+			if !wanted[hypothetical[i].Number] {
+				continue
+			}
+			if hypothetical[i].Status != StatusComplete {
+				return ReconcileResult{}, exitcode.InvalidStateErrorf("plan %q Task %d is %s; only falsely complete tasks may be reopened", opts.Slug, hypothetical[i].Number, hypothetical[i].Status)
+			}
+			hypothetical[i].Status = StatusBlocked
+			delete(wanted, hypothetical[i].Number)
+			changed++
+		}
+		if len(wanted) > 0 {
+			return ReconcileResult{}, exitcode.InvalidStateErrorf("plan %q has no Task %d to reopen", opts.Slug, firstReconcileTask(wanted))
+		}
+		band, _ := (&Plan{Tasks: hypothetical}).DeriveExecutionBand()
+		to := lifecycle.Status(band)
+		original, err := reconcileReadOriginalFn(flatPath)
+		if err != nil {
+			return ReconcileResult{}, exitcode.UnexpectedErrorf("reading plan: %v", err)
+		}
+		rollback := func() { _ = os.WriteFile(flatPath, original, 0o644) }
+		lines := strings.Split(string(original), "\n")
+		for _, t := range p.Tasks {
+			if !wantedOriginal(opts.ReopenTasks, t.Number) {
+				continue
+			}
+			lines[t.StatusLine-1] = "**Status:** " + string(StatusBlocked)
+		}
+		lines[p.StatusLine-1] = "**Status:** " + string(to)
+		lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
+		if err := os.WriteFile(flatPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+			return ReconcileResult{}, exitcode.UnexpectedErrorf("writing plan: %v", err)
+		}
+		noteText := reconcileNoteTextWithTarget(from, to, changed, StatusBlocked, opts.Note, opts.Evidence, nil)
+		if _, _, err := appendNoteFn(flatPath, noteText); err != nil {
+			rollback()
+			return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
+		}
+		if err := opts.PostMutation(); err != nil {
+			rollback()
+			return ReconcileResult{}, err
+		}
+		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, nil
+	}
+
 	// A task recorded as failed or aborted is a deliberate, meaningful claim
 	// — reconcile must never silently overwrite it just because --tasks=complete
 	// asked for "every" task. Only a task number the caller explicitly named
@@ -287,7 +356,7 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing plan: %v", err)
 	}
 
-	noteText := reconcileNoteText(from, to, changedTasks, opts.Note, opts.Evidence, overrides)
+	noteText := reconcileNoteTextWithTarget(from, to, changedTasks, StatusComplete, opts.Note, opts.Evidence, overrides)
 	if _, _, err := appendNoteFn(flatPath, noteText); err != nil {
 		rollback()
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
@@ -298,7 +367,22 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, err
 	}
 
-	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides}, nil
+	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, nil
+}
+
+func wantedOriginal(numbers []int, n int) bool {
+	for _, v := range numbers {
+		if v == n {
+			return true
+		}
+	}
+	return false
+}
+func firstReconcileTask(numbers map[int]bool) int {
+	for n := range numbers {
+		return n
+	}
+	return 0
 }
 
 // insertReconciledMarkerIfAbsent inserts a `**Reconciled:** <date>` header
@@ -328,11 +412,11 @@ func insertReconciledMarkerIfAbsent(lines []string, statusIdx int, date string) 
 // change-status transition), the caller's own justification, any
 // --force-tasks overrides (named individually — NEVER folded silently into
 // the aggregate count), and — when supplied — the evidence references.
-func reconcileNoteText(from, to lifecycle.Status, tasksReconciled int, note string, evidence []string, overrides []TaskOverride) string {
+func reconcileNoteTextWithTarget(from, to lifecycle.Status, tasksReconciled int, target TaskStatus, note string, evidence []string, overrides []TaskOverride) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
-		"**Reconciled %s → %s outside the tracked `change-status` flow** (%d task(s) marked complete to match delivered code; this did not walk the legal-transition matrix).\n\n",
-		string(from), string(to), tasksReconciled)
+		"**Reconciled %s → %s outside the tracked `change-status` flow** (%d task(s) marked %s; this did not walk the legal-transition matrix).\n\n",
+		string(from), string(to), tasksReconciled, string(target))
 	b.WriteString(strings.TrimSpace(note))
 	if len(overrides) > 0 {
 		parts := make([]string, len(overrides))
