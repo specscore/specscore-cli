@@ -559,27 +559,82 @@ func TestOwnedMarkerFinalizationForeignReplacementIsNeverDeleted(t *testing.T) {
 }
 
 func TestOwnedMarkerFinalizationDetectsSameByteIdentityReplacement(t *testing.T) {
-	dir := t.TempDir()
-	prepared := filepath.Join(dir, "task.prepared")
-	committed := committedMarkerPath(prepared)
-	expected := []byte("owned marker\n")
-	if err := os.WriteFile(prepared, expected, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ops := defaultOwnedMarkerOps()
-	ops.syncDir = func(string) error {
-		if err := os.Remove(prepared); err != nil {
-			return err
-		}
-		return os.WriteFile(prepared, expected, 0o600)
-	}
-	if err := removeOwnedFileDurableWithOps(prepared, expected, ops); err == nil || !strings.Contains(err.Error(), "identity changed") {
-		t.Fatalf("err=%v, want inode identity refusal", err)
-	}
-	for _, path := range []string{prepared, committed} {
-		if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, expected) {
-			t.Fatalf("identity conflict deleted %s: %q %v", path, got, err)
-		}
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, prepared, committed string, expected []byte) ownedMarkerOps
+		foreign string
+	}{
+		{
+			name: "prepared-while-pair-visible",
+			prepare: func(t *testing.T, prepared, _ string, expected []byte) ownedMarkerOps {
+				ops := defaultOwnedMarkerOps()
+				ops.syncDir = func(string) error {
+					if err := os.Remove(prepared); err != nil {
+						return err
+					}
+					return os.WriteFile(prepared, expected, 0o600)
+				}
+				return ops
+			},
+			foreign: "prepared",
+		},
+		{
+			name: "committed-after-prepared-unlink",
+			prepare: func(t *testing.T, _, committed string, expected []byte) ownedMarkerOps {
+				ops := defaultOwnedMarkerOps()
+				calls := 0
+				ops.syncDir = func(string) error {
+					calls++
+					if calls != 2 {
+						return nil
+					}
+					if err := os.Remove(committed); err != nil {
+						return err
+					}
+					return os.WriteFile(committed, expected, 0o600)
+				}
+				return ops
+			},
+			foreign: "committed",
+		},
+		{
+			name: "receipt-only-before-final-unlink",
+			prepare: func(t *testing.T, prepared, committed string, expected []byte) ownedMarkerOps {
+				if err := os.Rename(prepared, committed); err != nil {
+					t.Fatal(err)
+				}
+				ops := defaultOwnedMarkerOps()
+				ops.syncDir = func(string) error {
+					if err := os.Remove(committed); err != nil {
+						return err
+					}
+					return os.WriteFile(committed, expected, 0o600)
+				}
+				return ops
+			},
+			foreign: "committed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			prepared := filepath.Join(dir, "task.prepared")
+			committed := committedMarkerPath(prepared)
+			expected := []byte("owned marker\n")
+			if err := os.WriteFile(prepared, expected, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ops := tc.prepare(t, prepared, committed, expected)
+			if err := removeOwnedFileDurableWithOps(prepared, expected, ops); err == nil || !strings.Contains(err.Error(), "identity changed") {
+				t.Fatalf("err=%v, want inode identity refusal", err)
+			}
+			foreignPath := prepared
+			if tc.foreign == "committed" {
+				foreignPath = committed
+			}
+			if got, err := os.ReadFile(foreignPath); err != nil || !bytes.Equal(got, expected) {
+				t.Fatalf("identity conflict deleted %s: %q %v", foreignPath, got, err)
+			}
+		})
 	}
 }
 
@@ -636,7 +691,7 @@ func TestOwnedMarkerFinalizationIdentityFenceFaultsFailClosed(t *testing.T) {
 	})
 
 	t.Run("pair-read-and-stat", func(t *testing.T) {
-		for _, fault := range []string{"committed-read", "prepared-stat", "committed-stat"} {
+		for _, fault := range []string{"committed-read", "prepared-lstat", "committed-lstat"} {
 			t.Run(fault, func(t *testing.T) {
 				dir := t.TempDir()
 				prepared := filepath.Join(dir, "task.prepared")
@@ -657,17 +712,36 @@ func TestOwnedMarkerFinalizationIdentityFenceFaultsFailClosed(t *testing.T) {
 						return os.ReadFile(path)
 					}
 				} else {
-					ops.stat = func(path string) (os.FileInfo, error) {
-						if (fault == "prepared-stat" && path == prepared) || (fault == "committed-stat" && path == committed) {
+					ops.lstat = func(path string) (os.FileInfo, error) {
+						if (fault == "prepared-lstat" && path == prepared) || (fault == "committed-lstat" && path == committed) {
 							return nil, boom
 						}
-						return os.Stat(path)
+						return os.Lstat(path)
 					}
 				}
-				if err := verifyOwnedMarkerPair(ops, prepared, committed, expected); !errors.Is(err, boom) {
+				if _, err := verifyOwnedMarkerPair(ops, prepared, committed, expected); !errors.Is(err, boom) {
 					t.Fatalf("err=%v", err)
 				}
 			})
+		}
+	})
+
+	t.Run("symlink-rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		prepared := filepath.Join(dir, "task.prepared")
+		target := filepath.Join(dir, "foreign")
+		expected := []byte("owned marker\n")
+		if err := os.WriteFile(target, expected, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, prepared); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeOwnedFileDurable(prepared, expected); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("err=%v, want symlink refusal", err)
+		}
+		if got, err := os.ReadFile(target); err != nil || !bytes.Equal(got, expected) {
+			t.Fatalf("symlink target changed: %q %v", got, err)
 		}
 	})
 }
