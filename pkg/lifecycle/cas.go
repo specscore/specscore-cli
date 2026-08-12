@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/gofrs/flock"
 )
 
 // ErrConcurrentMutation means the artifact changed after its caller read the
@@ -13,7 +15,7 @@ import (
 var ErrConcurrentMutation = errors.New("lifecycle: artifact changed before amendment write")
 
 // CompareAndSwap replaces path only when it still contains before. A sibling
-// O_EXCL lock makes the read/compare/rename sequence one critical section for
+// non-blocking advisory lock makes the read/compare/rename sequence one critical section for
 // every SpecScore lifecycle writer. The lock is intentionally adjacent to the
 // artifact (rather than process-global), so unrelated artifacts can progress.
 // A concurrent lifecycle writer receives ErrConcurrentMutation and must re-read
@@ -23,8 +25,7 @@ func CompareAndSwap(path string, before, after []byte) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(lock.Name()) }()
-	defer func() { _ = lock.Close() }()
+	defer func() { _ = lock.Unlock() }()
 	current, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -35,11 +36,21 @@ func CompareAndSwap(path string, before, after []byte) error {
 	return writeFileAtomic(path, after)
 }
 
-func acquireCASLock(path string) (*os.File, error) {
-	lockPath := filepath.Join(dirOf(path), "."+filepath.Base(path)+".lifecycle-cas.lock")
-	f, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if os.IsExist(err) {
+type casLock interface {
+	TryLock() (bool, error)
+	Unlock() error
+}
+
+var newCASLock = func(path string) casLock { return flock.New(path) }
+
+func acquireCASLock(path string) (casLock, error) {
+	lock := newCASLock(filepath.Join(dirOf(path), "."+filepath.Base(path)+".lifecycle-cas.lock"))
+	locked, err := lock.TryLock()
+	if err != nil {
+		return nil, err
+	}
+	if !locked {
 		return nil, ErrConcurrentMutation
 	}
-	return f, err
+	return lock, nil
 }
