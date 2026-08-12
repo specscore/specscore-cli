@@ -215,6 +215,131 @@ func TestLessonMigrateFlat_DurabilityFenceFailureRetainsRecovery(t *testing.T) {
 	}
 }
 
+// A repository with several committed flat Lessons migrates them one command
+// at a time. Each migration re-links exactly its own index row; it must never
+// leave the retired flat row beside the new canonical one.
+func TestLessonMigrateFlat_SequentialMigrationsKeepOneIndexRowPerSlug(t *testing.T) {
+	slugs := []string{"first-boundary", "second-boundary", "third-boundary"}
+	root := setupMultiFlatMigrationCLIProject(t, slugs)
+	indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+
+	for _, slug := range slugs {
+		if _, stderr, err := runLesson(t, "migrate-flat", slug, "--classification", "process", "--project", root); err != nil {
+			t.Fatalf("migrate-flat %s: %v\nstderr=%s", slug, err, stderr)
+		}
+		index, err := os.ReadFile(indexPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := bytes.Count(index, []byte("["+slug+"]")); got != 1 {
+			t.Fatalf("after migrating %s the index holds %d rows for it:\n%s", slug, got, index)
+		}
+		if bytes.Contains(index, []byte("["+slug+"]("+slug+".md)")) {
+			t.Fatalf("after migrating %s the retired flat row survived:\n%s", slug, index)
+		}
+		// The marker is the in-flight recovery token; a completed migration
+		// finalizes it out of spec/lessons/ into the private namespace.
+		marker := filepath.Join(root, "spec", "lessons", ".flat-migration-"+slug+".json")
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("completed migration of %s retained its recovery marker: %v", slug, err)
+		}
+	}
+
+	violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, violation := range violations {
+		if violation.Severity == "error" {
+			t.Errorf("sequential flat migrations left the tree unclean: %#v", violation)
+		}
+	}
+}
+
+// setupMultiFlatMigrationCLIProject commits several flat Lessons together with
+// the five-column legacy index that lists every one of them — the state a
+// repository is actually in when its first canonical migration begins.
+func setupMultiFlatMigrationCLIProject(t *testing.T, slugs []string) string {
+	t.Helper()
+	root := setupLintCleanProject(t)
+	physicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = physicalRoot
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	configureNoopLessonEvents(t, root)
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var index strings.Builder
+	index.WriteString("---\nformat: https://specscore.md/lessons-index-specification\n---\n\n")
+	index.WriteString("# SpecScore Lessons\n\n## Index\n\n")
+	index.WriteString("| Lesson | Status | Recurred | Date | Owner |\n|---|---|---|---|---|\n")
+	for _, slug := range slugs {
+		index.WriteString("| [" + slug + "](" + slug + ".md) | Recorded | 0 | 2026-08-01 | codex |\n")
+		body := `---
+format: https://specscore.md/lesson-specification
+status: Recorded
+---
+
+# Lesson: ` + slug + `
+
+**Status:** Recorded
+**Date:** 2026-08-01
+**Owner:** codex
+**Recurred:** 0
+
+## Incident
+
+An interrupted migration was observed.
+
+## Process gap
+
+The transaction boundary ended before its index and event.
+
+## Check
+
+Resume one deterministic transaction through finalization.
+
+## Enforcement
+
+Recorded.
+
+## Tracking
+
+Historical tracking.
+
+---
+*This document follows the https://specscore.md/lesson-specification*
+`
+		if err := os.WriteFile(filepath.Join(lessonsDir, slug+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	index.WriteString("\n## Open Questions\n\nNone at this time.\n\n")
+	index.WriteString("---\n*This document follows the https://specscore.md/lessons-index-specification*\n")
+	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.name", "SpecScore Test"},
+		{"config", "user.email", "test@example.invalid"},
+		{"remote", "add", "origin", "https://github.com/example/spec.git"},
+		{"add", "."},
+		{"commit", "-q", "-m", "fixture"},
+	} {
+		runGitForFlatMigration(t, root, args...)
+	}
+	return root
+}
+
 func setupFlatMigrationCLIProject(t *testing.T, slug string) string {
 	t.Helper()
 	root := setupLintCleanProject(t)
