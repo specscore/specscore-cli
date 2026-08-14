@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson new <slug>` creates one canonical compact Lesson at `spec/lessons/<slug>/README.md`, an empty `occurrences/` store, the exact index row, and its durable created event.
+`specscore lesson new <slug>` creates one canonical compact Lesson at `spec/lessons/<slug>/README.md`, a Git-preserved empty `occurrences/` store, the exact index row, and its durable created event.
 
 ## Synopsis
 
@@ -45,7 +45,7 @@ The command MUST refuse a sibling compatibility file at `spec/lessons/<slug>.md`
 
 #### REQ: canonical-directory-scaffold
 
-The command MUST create `spec/lessons/<slug>/README.md` and `spec/lessons/<slug>/occurrences/`. The README MUST carry format/status frontmatter, Recorded lifecycle metadata, configured classifications, relation and immutable-provenance fields, concise `## Lesson` and `## Process Gap` prompts, a `## Tracking` line with the exact published occurrence-schema URL, structured Enforcement fields, `## Open Questions`, and the matching adherence footer.
+The command MUST create `spec/lessons/<slug>/README.md` and `spec/lessons/<slug>/occurrences/`. An otherwise empty occurrence store MUST contain an empty `.gitkeep` marker so a Git checkout retains the required directory; the marker is not an occurrence. The README MUST carry format/status frontmatter, Recorded lifecycle metadata, configured classifications, relation and immutable-provenance fields, concise `## Lesson` and `## Process Gap` prompts, a `## Tracking` line with the exact published occurrence-schema URL, structured Enforcement fields, `## Open Questions`, and the matching adherence footer.
 
 #### REQ: bounded-index-upsert
 
@@ -100,7 +100,7 @@ Any failure proven to precede publication MUST leave the declared write set byte
 
 **Given** a lint-clean configured project
 **When** `lesson new verify-before-merge` runs
-**Then** the canonical README and empty occurrence store exist, the exact canonical index row exists, focused and whole-project read-only lint report no new error, and no sibling flat file exists.
+**Then** the canonical README and Git-preserved empty occurrence store exist, the exact canonical index row exists, focused and whole-project read-only lint report no new error, and no sibling flat file exists.
 
 ### AC: unrelated-files-remain-byte-identical
 

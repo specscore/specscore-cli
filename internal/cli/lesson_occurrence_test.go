@@ -111,7 +111,7 @@ func TestLessonOccurrenceRejectsBadContextBeforeWrite(t *testing.T) {
 	if exitCodeOfErr(err) != 2 {
 		t.Fatalf("exit=%d err=%v", exitCodeOfErr(err), err)
 	}
-	entries, err := os.ReadDir(filepath.Join(root, "spec", "lessons", "review-before-merge", "occurrences"))
+	entries, err := lesson.DiscoverOccurrences(filepath.Join(root, "spec", "lessons", "review-before-merge", "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

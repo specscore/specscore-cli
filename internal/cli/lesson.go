@@ -119,6 +119,7 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 
 	lessonsDir := filepath.Join(root, "spec", "lessons")
 	target := filepath.Join(lessonsDir, slug, "README.md")
+	occurrenceKeepFile := filepath.Join(filepath.Dir(target), "occurrences", lesson.OccurrenceStoreKeepFile)
 	legacy := filepath.Join(lessonsDir, slug+".md")
 	if _, err := deps.fs.stat(legacy); err == nil {
 		return exitcode.ConflictErrorf("legacy lesson already exists: %s; migrate it before creating canonical %q", legacy, slug)
@@ -180,9 +181,11 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 			if !bytes.Equal(current, targetBefore) {
 				return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: fmt.Errorf("lesson changed after --force preflight; retry against the current artifact")}
 			}
-			if bytes.Equal(current, body) && prepared == nil {
+			if _, markerErr := deps.fs.stat(occurrenceKeepFile); markerErr == nil && bytes.Equal(current, body) && prepared == nil {
 				noOp = true
 				return nil
+			} else if markerErr != nil && !os.IsNotExist(markerErr) {
+				return &lesson.MutationError{Outcome: lesson.MutationPrePublication, Err: fmt.Errorf("preflighting occurrence-store marker: %w", markerErr)}
 			}
 		}
 		if prepared == nil {
@@ -213,6 +216,13 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 			if publishErr != nil {
 				return fmt.Errorf("writing Lesson: %w", publishErr)
 			}
+		}
+		if _, err := deps.fs.stat(occurrenceKeepFile); os.IsNotExist(err) {
+			if err := deps.publishExclusive(occurrenceKeepFile, nil, 0o644); err != nil {
+				return fmt.Errorf("writing occurrence-store marker: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("preflighting occurrence-store marker: %w", err)
 		}
 		parsed, err := deps.parse(target)
 		if err != nil {
