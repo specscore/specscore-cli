@@ -9,6 +9,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/event"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
 // stageLesson bootstraps a spec repo, scaffolds a lint-clean lesson via
@@ -19,6 +20,9 @@ func stageLesson(t *testing.T, slug, status string) string {
 	t.Helper()
 	root := setupSpecRoot(t)
 	withCwd(t, root)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatalf("write lesson config: %v", err)
+	}
 	if _, _, err := runLesson(t, "new", slug, "--owner", "tester"); err != nil {
 		t.Fatalf("lesson new: %v", err)
 	}

@@ -93,6 +93,9 @@ func Sandbox[T any](root string, mutate func(sandboxRoot string) (T, error)) (T,
 	if err := copyTree(realSpecDir, sandboxSpecDir); err != nil {
 		return zero, nil, fmt.Errorf("dry-run: staging sandbox copy: %w", err)
 	}
+	if err := copyProjectConfig(root, tempRoot); err != nil {
+		return zero, nil, fmt.Errorf("dry-run: staging project config: %w", err)
+	}
 
 	result, mutateErr := mutate(tempRoot)
 	if mutateErr != nil {
@@ -104,6 +107,26 @@ func Sandbox[T any](root string, mutate func(sandboxRoot string) (T, error)) (T,
 		return zero, nil, fmt.Errorf("dry-run: computing changed files: %w", err)
 	}
 	return result, changes, nil
+}
+
+// copyProjectConfig copies the optional repository configuration alongside a
+// sandboxed spec tree. Some lifecycle mutations (notably canonical Lessons)
+// validate through lint rules that read specscore.yaml, so copying only spec/
+// would make a legal real transition fail only in preview mode.
+func copyProjectConfig(root, sandboxRoot string) error {
+	src := filepath.Join(root, "specscore.yaml")
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	contents, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(sandboxRoot, "specscore.yaml"), contents, info.Mode().Perm())
 }
 
 // rewriteSandboxPath replaces every occurrence of sandboxRoot in err's

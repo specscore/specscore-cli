@@ -9,11 +9,11 @@ package cli
 //
 //  1. The working tree is byte-for-byte unchanged after a --dry-run call
 //     (snapshotDir before/after, full diff — not just "the target file").
-//  2. The exact set of files --dry-run reports (parsed from its own stdout)
-//     matches the exact set of files a SUBSEQUENT real (non---dry-run) call
-//     on the SAME fixture actually changes — the strongest form of the
-//     "reported list is accurate" property, since it never trusts the
-//     mechanism's own claim about itself in isolation.
+//  2. The exact set of spec-tree files --dry-run reports (parsed from its own
+//     stdout) matches the exact spec-tree set a SUBSEQUENT real
+//     (non---dry-run) call on the SAME fixture actually changes. Durable event
+//     ledger entries live under .specscore/ and carry fresh event UUIDs, so
+//     they are deliberately outside the artifact-preview contract.
 //  3. An illegal transition under --dry-run exits with the SAME non-zero
 //     code the real command would use, writing nothing.
 //
@@ -79,6 +79,16 @@ func diffSnapshotPaths(before, after map[string]string) []string {
 		out = append(out, path)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func specTreePaths(paths []string) []string {
+	var out []string
+	for _, path := range paths {
+		if strings.HasPrefix(path, "spec/") {
+			out = append(out, path)
+		}
+	}
 	return out
 }
 
@@ -272,7 +282,7 @@ func TestChangeStatusDryRun_FileListMatchesRealRun(t *testing.T) {
 				t.Fatalf("%s: real run failed: %v\nstderr=%s", tc.name, err, realErr)
 			}
 			after := snapshotDir(t, root)
-			actual := diffSnapshotPaths(before, after)
+			actual := specTreePaths(diffSnapshotPaths(before, after))
 
 			if strings.Join(reported, ",") != strings.Join(actual, ",") {
 				t.Errorf("%s: dry-run reported %v, real run actually changed %v", tc.name, reported, actual)
