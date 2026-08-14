@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,24 @@ type checker interface {
 	check(specRoot string) ([]Violation, error)
 	name() string
 	severity() string
+}
+
+const checkerConcurrentMutationAttempts = 3
+
+// checkWithTransientRemovalRetry restarts a read-only checker when a path
+// disappears between directory enumeration and inspection. Atomic writers
+// create exactly that short ENOENT window. Each retry starts the checker from
+// scratch so partial findings are never combined across filesystem snapshots;
+// persistent disappearance and every other error still fail closed.
+func checkWithTransientRemovalRetry(c checker, specRoot string) ([]Violation, error) {
+	attempts := 0
+	for {
+		violations, err := c.check(specRoot)
+		attempts++
+		if err == nil || !errors.Is(err, os.ErrNotExist) || attempts == checkerConcurrentMutationAttempts {
+			return violations, err
+		}
+	}
 }
 
 // fixer is an optional interface that checkers may implement to support
@@ -266,7 +285,7 @@ func (l *linter) lint() ([]Violation, error) {
 			continue
 		}
 
-		v, err := c.check(l.opts.SpecRoot)
+		v, err := checkWithTransientRemovalRetry(c, l.opts.SpecRoot)
 		if err != nil {
 			return nil, fmt.Errorf("checker %s: %v", c.name(), err)
 		}

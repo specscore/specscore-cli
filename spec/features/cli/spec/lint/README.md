@@ -59,6 +59,31 @@ Without `--rules` or `--ignore`, `spec lint` MUST execute every registered rule 
 
 `--rules` and `--ignore` MUST NOT be combined. Supplying both MUST exit `2`.
 
+#### REQ: transient-concurrent-removal-retry
+
+A read-only checker that encounters a wrapped filesystem `not exist` error
+because an entry disappeared between directory enumeration and inspection MUST
+restart that checker from a clean result set. Retries MUST be bounded. A
+persistent `not exist` error after the bound and every other checker error MUST
+fail closed without retrying indefinitely or combining partial findings from
+different filesystem snapshots.
+
+### AC: transient-concurrent-removal-restarts-cleanly
+
+**Given** a checker returns a partial result plus a wrapped filesystem `not
+exist` error on its first pass and succeeds on its next pass
+**When** `specscore spec lint` runs
+**Then** only the successful pass's findings are returned and the transient
+atomic-publication window does not fail lint.
+
+### AC: persistent-or-different-walk-errors-fail-closed
+
+**Given** a checker repeatedly returns filesystem `not exist` through the
+bounded retry count, or returns a different error
+**When** `specscore spec lint` runs
+**Then** lint returns that error after the bound, and a non-`not exist` error is
+returned after its first attempt.
+
 ### Implements-reference liveness
 
 #### REQ: implements-reference-offline-requirement-resolution
