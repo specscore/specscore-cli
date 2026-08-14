@@ -312,7 +312,7 @@ func TestRetainedDescriptorSnapshotBranches(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		info, err := file.Stat()
 		if err != nil {
 			t.Fatal(err)
