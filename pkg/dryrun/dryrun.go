@@ -28,6 +28,23 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
+// File-operation seams keep failure handling testable without changing the
+// sandbox's production behavior. They are package-local: callers always use
+// Sandbox, never these implementation details.
+var (
+	dryrunMkdirTemp = os.MkdirTemp
+	dryrunRemoveAll = os.RemoveAll
+	dryrunStat      = os.Stat
+	dryrunReadFile  = os.ReadFile
+	dryrunWriteFile = os.WriteFile
+	dryrunMkdirAll  = os.MkdirAll
+	dryrunOpen      = os.Open
+	dryrunOpenFile  = os.OpenFile
+	dryrunCopy      = io.Copy
+	dryrunWalkDir   = filepath.WalkDir
+	dryrunRel       = filepath.Rel
+)
+
 // ChangeKind classifies how a file differs between the pre-mutation and
 // post-mutation snapshot of the spec tree, mirroring `git status --short`'s
 // single-letter vocabulary.
@@ -83,11 +100,11 @@ func Sandbox[T any](root string, mutate func(sandboxRoot string) (T, error)) (T,
 	var zero T
 
 	realSpecDir := filepath.Join(root, "spec")
-	tempRoot, err := os.MkdirTemp("", "specscore-dry-run-*")
+	tempRoot, err := dryrunMkdirTemp("", "specscore-dry-run-*")
 	if err != nil {
 		return zero, nil, fmt.Errorf("dry-run: creating sandbox: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tempRoot) }()
+	defer func() { _ = dryrunRemoveAll(tempRoot) }()
 
 	sandboxSpecDir := filepath.Join(tempRoot, "spec")
 	if err := copyTree(realSpecDir, sandboxSpecDir); err != nil {
@@ -115,18 +132,18 @@ func Sandbox[T any](root string, mutate func(sandboxRoot string) (T, error)) (T,
 // would make a legal real transition fail only in preview mode.
 func copyProjectConfig(root, sandboxRoot string) error {
 	src := filepath.Join(root, "specscore.yaml")
-	info, err := os.Stat(src)
+	info, err := dryrunStat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	contents, err := os.ReadFile(src)
+	contents, err := dryrunReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(sandboxRoot, "specscore.yaml"), contents, info.Mode().Perm())
+	return dryrunWriteFile(filepath.Join(sandboxRoot, "specscore.yaml"), contents, info.Mode().Perm())
 }
 
 // rewriteSandboxPath replaces every occurrence of sandboxRoot in err's
@@ -152,7 +169,7 @@ func rewriteSandboxPath(err error, sandboxRoot, realRoot string) error {
 // error, since a brand-new project may not yet have every ancestor
 // directory a kind expects.
 func copyTree(src, dst string) error {
-	info, err := os.Stat(src)
+	info, err := dryrunStat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -162,11 +179,11 @@ func copyTree(src, dst string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("dry-run: %s is not a directory", src)
 	}
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+	return dryrunWalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		rel, err := filepath.Rel(src, path)
+		rel, err := dryrunRel(src, path)
 		if err != nil {
 			return err
 		}
@@ -176,7 +193,7 @@ func copyTree(src, dst string) error {
 			if err != nil {
 				return err
 			}
-			return os.MkdirAll(target, fi.Mode().Perm()|0o700)
+			return dryrunMkdirAll(target, fi.Mode().Perm()|0o700)
 		}
 		return copyFile(path, target, d)
 	})
@@ -188,20 +205,20 @@ func copyFile(src, dst string, d os.DirEntry) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := dryrunMkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	in, err := os.Open(src)
+	in, err := dryrunOpen(src)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
+	out, err := dryrunOpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := dryrunCopy(out, in); err != nil {
 		_ = out.Close()
 		return err
 	}
@@ -229,11 +246,11 @@ func diffTrees(oldDir, newDir string) ([]Change, error) {
 			changes = append(changes, Change{Kind: Added, Path: projPath})
 			continue
 		}
-		oldBytes, err := os.ReadFile(filepath.Join(oldDir, rel))
+		oldBytes, err := dryrunReadFile(filepath.Join(oldDir, rel))
 		if err != nil {
 			return nil, err
 		}
-		newBytes, err := os.ReadFile(filepath.Join(newDir, rel))
+		newBytes, err := dryrunReadFile(filepath.Join(newDir, rel))
 		if err != nil {
 			return nil, err
 		}
@@ -256,20 +273,20 @@ func diffTrees(oldDir, newDir string) ([]Change, error) {
 // dir, using forward slashes. A missing dir yields an empty set.
 func listFiles(dir string) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := dryrunStat(dir); err != nil {
 		if os.IsNotExist(err) {
 			return out, nil
 		}
 		return nil, err
 	}
-	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+	err := dryrunWalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, path)
+		rel, err := dryrunRel(dir, path)
 		if err != nil {
 			return err
 		}

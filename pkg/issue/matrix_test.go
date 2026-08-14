@@ -59,6 +59,13 @@ func TestIssueEdgeFor_UnknownStatusReturnsEmptyEdge(t *testing.T) {
 	}
 }
 
+func TestIssueEdgeFor_KnownStatusReturnsItsMatrixEntry(t *testing.T) {
+	e := EdgeFor("investigating")
+	if e.Status != "investigating" || len(e.Previous) != 1 || e.Previous[0] != "open" || len(e.Next) != 2 {
+		t.Fatalf("EdgeFor(investigating) = %+v, want its populated matrix entry", e)
+	}
+}
+
 func TestIssueRenderBidirectionalMatrix_MentionsEveryStatus(t *testing.T) {
 	out := RenderBidirectionalMatrix()
 	for _, s := range []string{"open", "investigating", "resolved", "rejected"} {

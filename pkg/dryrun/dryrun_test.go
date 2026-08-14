@@ -1,6 +1,9 @@
 package dryrun
 
 import (
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +12,32 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
+
+// resetFileOps restores the production file operations after a test exercises
+// an otherwise hard-to-trigger operating-system failure. These tests must not
+// use t.Parallel while a seam is overridden.
+func resetFileOps(t *testing.T) {
+	t.Helper()
+	mkdirTemp, removeAll := dryrunMkdirTemp, dryrunRemoveAll
+	stat, readFile, writeFile := dryrunStat, dryrunReadFile, dryrunWriteFile
+	mkdirAll, openFile := dryrunMkdirAll, dryrunOpenFile
+	open, copyFileOp := dryrunOpen, dryrunCopy
+	walkDir, rel := dryrunWalkDir, dryrunRel
+	t.Cleanup(func() {
+		dryrunMkdirTemp, dryrunRemoveAll = mkdirTemp, removeAll
+		dryrunStat, dryrunReadFile, dryrunWriteFile = stat, readFile, writeFile
+		dryrunMkdirAll, dryrunOpenFile = mkdirAll, openFile
+		dryrunOpen, dryrunCopy = open, copyFileOp
+		dryrunWalkDir, dryrunRel = walkDir, rel
+	})
+}
+
+type infoErrorEntry struct{ directory bool }
+
+func (entry infoErrorEntry) Name() string         { return "entry" }
+func (entry infoErrorEntry) IsDir() bool          { return entry.directory }
+func (entry infoErrorEntry) Type() fs.FileMode    { return 0 }
+func (infoErrorEntry) Info() (fs.FileInfo, error) { return nil, errors.New("entry info") }
 
 // writeTree materializes a small spec/ tree under root for test fixtures.
 func writeTree(t *testing.T, root string, files map[string]string) {
@@ -213,4 +242,248 @@ func TestPrintReport(t *testing.T) {
 	if buf.String() != want {
 		t.Fatalf("PrintReport output = %q, want %q", buf.String(), want)
 	}
+}
+
+func TestSandbox_StagingFailures(t *testing.T) {
+	t.Run("temporary directory unavailable", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("TMPDIR", filepath.Join(root, "missing"))
+		if _, _, err := Sandbox(root, func(string) (struct{}, error) { return struct{}{}, nil }); err == nil {
+			t.Fatal("Sandbox succeeded with an unavailable temporary directory")
+		}
+	})
+	t.Run("spec is a file", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "spec"), []byte("not a directory"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Sandbox(root, func(string) (struct{}, error) { return struct{}{}, nil }); err == nil {
+			t.Fatal("Sandbox accepted a file as spec/")
+		}
+	})
+	t.Run("configuration is a directory", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{"spec/ideas/a.md": "a\n"})
+		if err := os.Mkdir(filepath.Join(root, "specscore.yaml"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Sandbox(root, func(string) (struct{}, error) { return struct{}{}, nil }); err == nil {
+			t.Fatal("Sandbox accepted a directory as specscore.yaml")
+		}
+	})
+	t.Run("mutation leaves an unreadable changed file", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{"spec/ideas/a.md": "a\n"})
+		if _, _, err := Sandbox(root, func(sandbox string) (struct{}, error) {
+			path := filepath.Join(sandbox, "spec", "ideas", "a.md")
+			return struct{}{}, os.Chmod(path, 0)
+		}); err == nil {
+			t.Fatal("Sandbox accepted an unreadable changed file")
+		}
+	})
+}
+
+func TestCopyHelpersAndPathRewriteFailures(t *testing.T) {
+	root := t.TempDir()
+	plain := filepath.Join(root, "plain")
+	if err := os.WriteFile(plain, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTree(plain, filepath.Join(root, "dst")); err == nil {
+		t.Fatal("copyTree accepted a file")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry os.DirEntry
+	for _, candidate := range entries {
+		if candidate.Name() == "plain" {
+			entry = candidate
+		}
+	}
+	if entry == nil {
+		t.Fatal("missing test entry")
+	}
+	if err := copyFile(filepath.Join(root, "missing"), filepath.Join(root, "out"), entry); err == nil {
+		t.Fatal("copyFile accepted a missing source")
+	}
+	if err := copyFile(plain, filepath.Join(plain, "child"), entry); err == nil {
+		t.Fatal("copyFile accepted a destination below a file")
+	}
+	if got := rewriteSandboxPath(errors.New("at /sandbox/path"), "/sandbox", "/real"); got.Error() != "at /real/path" {
+		t.Fatalf("rewritten plain error = %q", got)
+	}
+	original := errors.New("unchanged")
+	if got := rewriteSandboxPath(original, "/sandbox", "/real"); got != original {
+		t.Fatal("path-free error should be returned unchanged")
+	}
+}
+
+func TestSandboxAndHelpers_SurfaceFileOperationFailures(t *testing.T) {
+	t.Run("sandbox temporary directory error", func(t *testing.T) {
+		resetFileOps(t)
+		dryrunMkdirTemp = func(string, string) (string, error) { return "", errors.New("no temp") }
+		if _, _, err := Sandbox(t.TempDir(), func(string) (struct{}, error) { return struct{}{}, nil }); err == nil {
+			t.Fatal("Sandbox succeeded")
+		}
+	})
+
+	t.Run("project config failures", func(t *testing.T) {
+		root := t.TempDir()
+		config := filepath.Join(root, "specscore.yaml")
+		if err := os.WriteFile(config, []byte("name: test\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for name, setFailure := range map[string]func(){
+			"stat":  func() { dryrunStat = func(string) (os.FileInfo, error) { return nil, errors.New("stat") } },
+			"read":  func() { dryrunReadFile = func(string) ([]byte, error) { return nil, errors.New("read") } },
+			"write": func() { dryrunWriteFile = func(string, []byte, os.FileMode) error { return errors.New("write") } },
+		} {
+			t.Run(name, func(t *testing.T) {
+				resetFileOps(t)
+				setFailure()
+				if err := copyProjectConfig(root, t.TempDir()); err == nil {
+					t.Fatal("copyProjectConfig succeeded")
+				}
+			})
+		}
+	})
+
+	t.Run("tree staging failures", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{"source/file.md": "content\n"})
+		src := filepath.Join(root, "source")
+		entry, err := os.ReadDir(src)
+		if err != nil || len(entry) != 1 {
+			t.Fatalf("ReadDir = %v, %v", entry, err)
+		}
+		for name, setFailure := range map[string]func(){
+			"stat": func() { dryrunStat = func(string) (os.FileInfo, error) { return nil, errors.New("stat") } },
+			"walk": func() { dryrunWalkDir = func(string, fs.WalkDirFunc) error { return errors.New("walk") } },
+			"walk callback": func() {
+				dryrunWalkDir = func(path string, visit fs.WalkDirFunc) error { return visit(path, nil, errors.New("walk callback")) }
+			},
+			"relative path": func() {
+				dryrunWalkDir = func(path string, visit fs.WalkDirFunc) error { return visit(path, entry[0], nil) }
+				dryrunRel = func(string, string) (string, error) { return "", errors.New("rel") }
+			},
+			"directory info": func() {
+				dryrunWalkDir = func(path string, visit fs.WalkDirFunc) error {
+					return visit(path, infoErrorEntry{directory: true}, nil)
+				}
+			},
+			"mkdir": func() {
+				dryrunWalkDir = func(path string, visit fs.WalkDirFunc) error { return visit(path, entry[0], nil) }
+				dryrunMkdirAll = func(string, os.FileMode) error { return errors.New("mkdir") }
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				resetFileOps(t)
+				setFailure()
+				if err := copyTree(src, filepath.Join(root, "destination")); err == nil {
+					t.Fatal("copyTree succeeded")
+				}
+			})
+		}
+	})
+
+	t.Run("file staging failures", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{"source/file.md": "content\n"})
+		src := filepath.Join(root, "source", "file.md")
+		entries, err := os.ReadDir(filepath.Dir(src))
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("ReadDir = %v, %v", entries, err)
+		}
+		entry := entries[0]
+		for name, setFailure := range map[string]func(){
+			"entry info":  func() {},
+			"mkdir":       func() { dryrunMkdirAll = func(string, os.FileMode) error { return errors.New("mkdir") } },
+			"open source": func() { dryrunOpen = func(string) (*os.File, error) { return nil, errors.New("open") } },
+			"open destination": func() {
+				dryrunOpenFile = func(string, int, os.FileMode) (*os.File, error) { return nil, errors.New("open destination") }
+			},
+			"copy": func() { dryrunCopy = func(io.Writer, io.Reader) (int64, error) { return 0, errors.New("copy") } },
+		} {
+			t.Run(name, func(t *testing.T) {
+				resetFileOps(t)
+				setFailure()
+				fileEntry := entry
+				if name == "entry info" {
+					fileEntry = infoErrorEntry{}
+				}
+				if err := copyFile(src, filepath.Join(root, "destination", "file.md"), fileEntry); err == nil {
+					t.Fatal("copyFile succeeded")
+				}
+			})
+		}
+	})
+
+	t.Run("diff failures", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{"old/a.md": "old\n", "new/a.md": "new\n"})
+		oldDir, newDir := filepath.Join(root, "old"), filepath.Join(root, "new")
+		for name, setFailure := range map[string]func(){
+			"listing": func() { dryrunStat = func(string) (os.FileInfo, error) { return nil, errors.New("stat") } },
+			"listing new tree": func() {
+				calls := 0
+				dryrunWalkDir = func(path string, visit fs.WalkDirFunc) error {
+					calls++
+					if calls == 2 {
+						return errors.New("new walk")
+					}
+					return filepath.WalkDir(path, visit)
+				}
+			},
+			"reading old": func() { dryrunReadFile = func(string) ([]byte, error) { return nil, errors.New("read old") } },
+			"reading new": func() {
+				calls := 0
+				dryrunReadFile = func(path string) ([]byte, error) {
+					calls++
+					if calls == 2 {
+						return nil, errors.New("read new")
+					}
+					return os.ReadFile(path)
+				}
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				resetFileOps(t)
+				setFailure()
+				if _, err := diffTrees(oldDir, newDir); err == nil {
+					t.Fatal("diffTrees succeeded")
+				}
+			})
+		}
+	})
+
+	t.Run("file listing failures", func(t *testing.T) {
+		root := t.TempDir()
+		writeTree(t, root, map[string]string{"tree/file.md": "content\n"})
+		dir := filepath.Join(root, "tree")
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("ReadDir = %v, %v", entries, err)
+		}
+		for name, setFailure := range map[string]func(){
+			"stat": func() { dryrunStat = func(string) (os.FileInfo, error) { return nil, errors.New("stat") } },
+			"walk": func() { dryrunWalkDir = func(string, fs.WalkDirFunc) error { return errors.New("walk") } },
+			"walk callback": func() {
+				dryrunWalkDir = func(path string, visit fs.WalkDirFunc) error { return visit(path, nil, errors.New("walk callback")) }
+			},
+			"relative path": func() {
+				dryrunWalkDir = func(path string, visit fs.WalkDirFunc) error { return visit(path, entries[0], nil) }
+				dryrunRel = func(string, string) (string, error) { return "", errors.New("rel") }
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				resetFileOps(t)
+				setFailure()
+				if _, err := listFiles(dir); err == nil {
+					t.Fatal("listFiles succeeded")
+				}
+			})
+		}
+	})
 }

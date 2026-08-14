@@ -53,3 +53,16 @@ func TestSidekickEdgeFor_UnknownStatusReturnsEmptyEdge(t *testing.T) {
 		t.Errorf("EdgeFor(unknown) = %+v, want zero-value edges", e)
 	}
 }
+
+func TestSidekickEdgeForAndParseStatus_KnownAndUnknown(t *testing.T) {
+	edge := EdgeFor(SeedQueued)
+	if edge.Status != SeedQueued || len(edge.Next) != len(seedTargets) {
+		t.Fatalf("EdgeFor(Queued) = %+v", edge)
+	}
+	if got := ParseStatus(" queued "); got != SeedQueued {
+		t.Fatalf("ParseStatus(queued) = %q, want %q", got, SeedQueued)
+	}
+	if got := ParseStatus("custom"); got != "custom" {
+		t.Fatalf("ParseStatus(custom) = %q", got)
+	}
+}

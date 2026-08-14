@@ -146,3 +146,10 @@ func TestParked_RuleNamesRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestParkedCheckerMetadata(t *testing.T) {
+	checker := newParkedChecker()
+	if checker.name() != "parked-shape" || checker.severity() != "error" {
+		t.Fatalf("checker metadata = %q/%q", checker.name(), checker.severity())
+	}
+}

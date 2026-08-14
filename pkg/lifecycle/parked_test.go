@@ -128,6 +128,41 @@ func TestReadParked_AbsentIsFalse(t *testing.T) {
 	}
 }
 
+func TestParkedReaders_ReportReadErrors(t *testing.T) {
+	missing := "nonexistent/parked.md"
+	if _, err := ReadParked(missing); err == nil {
+		t.Fatal("ReadParked missing file succeeded")
+	}
+	if _, err := IsParked(missing); err == nil {
+		t.Fatal("IsParked missing file succeeded")
+	}
+}
+
+func TestSetAndClearParked_ReportReadErrors(t *testing.T) {
+	missing := "nonexistent/parked.md"
+	if _, wrote, err := SetParked(missing, "deferred"); err == nil || wrote {
+		t.Fatalf("SetParked missing = wrote:%v err:%v", wrote, err)
+	}
+	if _, wrote, err := ClearParked(missing); err == nil || wrote {
+		t.Fatalf("ClearParked missing = wrote:%v err:%v", wrote, err)
+	}
+}
+
+func TestSetParked_AddsTerminatorToUnterminatedStatus(t *testing.T) {
+	freezeParkedToday(t, "2026-08-14")
+	path := writeHeaderFixture(t, "**Status:** Draft")
+	if _, wrote, err := SetParked(path, "deferred"); err != nil || !wrote {
+		t.Fatalf("SetParked = wrote:%v err:%v", wrote, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "**Status:** Draft\n**Parked:** true\n**Parked Reason:** deferred\n**Parked Date:** 2026-08-14\n" {
+		t.Fatalf("unterminated status result = %q", got)
+	}
+}
+
 // Unparking is not a no-op when never parked — it errors so a mistyped
 // slug the caller believed was parked surfaces immediately.
 func TestClearParked_NotParkedRejected(t *testing.T) {

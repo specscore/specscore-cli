@@ -44,6 +44,9 @@ func TestParse_FullIdea(t *testing.T) {
 **Promotes To:** —
 **Supersedes:** —
 **Related Ideas:** depends_on:payment-rails-audit
+**Parked:** true
+**Parked Reason:** waiting for device support
+**Parked Date:** 2026-08-14
 
 ## Problem Statement
 How Might We let users work without a connection?
@@ -98,6 +101,9 @@ None at this time.
 	}
 	if got := p.RelatedIdeas(); len(got) != 1 || got[0] != "depends_on:payment-rails-audit" {
 		t.Errorf("related = %v", got)
+	}
+	if !p.Parked() || p.ParkedReason() != "waiting for device support" || p.ParkedDate() != "2026-08-14" {
+		t.Errorf("parked fields = parked:%v reason:%q date:%q", p.Parked(), p.ParkedReason(), p.ParkedDate())
 	}
 	// Required sections all present.
 	for _, s := range RequiredSections {
