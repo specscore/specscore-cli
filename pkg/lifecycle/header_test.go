@@ -51,6 +51,25 @@ func TestSetSupersededBy_InsertAfterSupersedes(t *testing.T) {
 	}
 }
 
+func TestSetSupersededBy_DecisionHeader(t *testing.T) {
+	t.Parallel()
+	body := "# Decision: Replace storage\n\n**Status:** Approved\n**Supersedes:** —\n\n## Context\n"
+	path := writeHeaderFixture(t, body)
+	if _, wrote, err := SetSupersededBy(path, "0002-new-storage"); err != nil {
+		t.Fatalf("SetSupersededBy: %v", err)
+	} else if !wrote {
+		t.Fatal("SetSupersededBy did not write the Decision header")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Decision: Replace storage\n\n**Status:** Approved\n**Supersedes:** —\n**Superseded By:** 0002-new-storage\n\n## Context\n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // No Supersedes line → insert after the Status line.
 func TestSetSupersededBy_InsertAfterStatus(t *testing.T) {
 	t.Parallel()

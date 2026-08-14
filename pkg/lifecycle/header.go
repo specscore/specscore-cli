@@ -25,8 +25,8 @@ var supersedesLineRe = regexp.MustCompile(`^([ \t]*)\*\*Supersedes:\*\*`)
 //
 //   - An empty or whitespace-only successor is treated as absent: the file is
 //     left untouched, wrote is false, and original is nil.
-//   - Only fields in the canonical header after the first structural Plan or
-//     Lesson title and before its first structural H2 participate.
+//   - Only fields in the canonical header after the first structural Decision,
+//     Plan, or Lesson title and before its first structural H2 participate.
 //   - If a `**Superseded By:**` line already exists there, its value is
 //     rewritten in place (indentation and trailing whitespace preserved).
 //   - Otherwise the line is inserted immediately after the `**Supersedes:**`
@@ -139,8 +139,9 @@ func findStatusLineIndexInHeader(lines []string, structure []bool, start, end in
 }
 
 // canonicalLifecycleHeaderRange returns the [start,end) range eligible for
-// Plan/Lesson lifecycle fields. An earlier ordinary or Setext H1 makes a later
-// lifecycle-looking sample non-canonical and therefore fails closed.
+// Decision/Plan/Lesson lifecycle fields. An earlier ordinary or Setext H1
+// makes a later lifecycle-looking sample non-canonical and therefore fails
+// closed.
 func canonicalLifecycleHeaderRange(lines []string, structure []bool) (start, end int) {
 	for i, line := range lines {
 		if !isStructuralLine(structure, i) {
@@ -176,7 +177,7 @@ func canonicalLifecycleHeaderRange(lines []string, structure []bool) (start, end
 }
 
 func isCanonicalLifecycleTitle(line string) bool {
-	for _, prefix := range []string{"# Plan: ", "# Lesson: "} {
+	for _, prefix := range []string{"# Decision: ", "# Plan: ", "# Lesson: "} {
 		if strings.HasPrefix(line, prefix) && strings.TrimSpace(line[len(prefix):]) != "" {
 			return true
 		}
