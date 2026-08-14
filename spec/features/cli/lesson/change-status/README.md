@@ -88,8 +88,8 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. |
-| [cli/plan/change-status](../../plan/change-status/README.md) | Lifecycle sibling whose disposition-reason and successor-reference mechanics this verb reuses. |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. Also implements the Meta's [`--dry-run`](../../lifecycle-transitions/README.md#req-dry-run-mode) and [`transitions`](../../lifecycle-transitions/README.md#req-transitions-query-verb) verbs. |
+| [cli/plan/change-status](../../plan/change-status/README.md) | Closest sibling — also a flat, relocation-free `change-status` whose disposition-reason-required and successor-reference mechanics this verb reuses directly. |
 | [lesson (CLI group)](../README.md) | Parent group. |
 | [spec lint](../../spec/lint/README.md) | Invoked read-only after the exact L-004 index row upsert; only an explicit CLI `--fix` runs repository-wide fixers. |
 

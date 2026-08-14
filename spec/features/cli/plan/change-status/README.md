@@ -126,7 +126,7 @@ The verb MUST accept a `--force-coordination` boolean flag. When set, a coordina
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies; this verb declares no relocation side effect and consumes the `reason-required-transitions` mechanism for `Withdrawn`/`Superseded`. |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies; this verb declares no relocation side effect and consumes the `reason-required-transitions` mechanism for `Withdrawn`/`Superseded`. Also implements the Meta's [`--dry-run`](../../lifecycle-transitions/README.md#req-dry-run-mode) and [`transitions`](../../lifecycle-transitions/README.md#req-transitions-query-verb) verbs (the coordination-branch check runs against the real project root even under `--dry-run`, since it only reads ambient git state). |
 | [`cli/feature/change-status`](../../feature/change-status/README.md) | Closest sibling — also a flat, relocation-free `change-status`. Mirrors its structure and its index-sync coupling. |
 | [`cli/idea/change-status`](../../idea/change-status/README.md) | Sibling verb for the Idea kind (which DOES relocate on archive). |
 | [`cli/plan/reconcile`](../reconcile/README.md) | Deliberately separate verb for the out-of-band correction path: when work was delivered outside the tracked flow, this verb's execution-band-rejection error points there instead of letting a caller hand-edit the file. Both verbs independently enforce the same coordination-branch check. |

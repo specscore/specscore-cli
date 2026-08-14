@@ -73,7 +73,7 @@ Every AC below has a CLI surface (exit code + on-disk effect) and is exercised b
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies; this verb extends `status-line-rewrite` with relocation and consumes the `reason-required-transitions` mechanism for `Rejected`. |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies; this verb extends `status-line-rewrite` with relocation and consumes the `reason-required-transitions` mechanism for `Rejected`. Also implements the Meta's [`--dry-run`](../../lifecycle-transitions/README.md#req-dry-run-mode) and [`transitions`](../../lifecycle-transitions/README.md#req-transitions-query-verb) verbs, wired by hand (a sidekick-seed keeps its own tiny matrix rather than a `pkg/lifecycle.Kind`). |
 | [`idea/change-status`](../../idea/change-status/README.md) | Sibling verb; the archive-relocation + collision pattern is mirrored from it. |
 | [`idea/promote`](../../idea/promote/README.md) | Precedent for moving a seed to `spec/ideas/archived/` and adding `type: sidekick-seed`. Sets `status: promoted`; this verb sets `Implemented`/`Rejected`/`Stale`. Neither sets the consilium-owned `deprecated`. |
 | [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; also owns the `sidekick-seed` rule whose status enum must accept the new terminal values (see Open Questions). |

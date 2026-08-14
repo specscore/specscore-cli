@@ -49,6 +49,7 @@ Commands that grew inside the codebase without written specs accrete inconsisten
 | [sidekick](sidekick/README.md) | Scaffold sidekick-seed artifacts. |
 | [studio](studio/README.md) | SpecScore Studio commands for indexing, facts, asking questions, serving, and MCP. |
 | [telemetry](telemetry/README.md) | TODO: Add description. |
+| [parked](parked/README.md) | A scheduling axis, orthogonal to Status, marking an artifact as deliberately deferred without touching its lifecycle maturity. |
 
 ### agent
 

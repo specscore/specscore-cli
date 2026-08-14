@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -31,8 +33,22 @@ func planCommand() *cobra.Command {
 		planNewCommand(),
 		planChangeStatusCommand(),
 		planReconcileCommand(),
+		planTransitionsCommand(),
 	)
 	return cmd
+}
+
+// planTransitionsCommand registers `specscore plan transitions [<slug>]`,
+// the read-only counterpart to change-status.
+func planTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindPlan, "slug", "Show the Plan status matrix, or one plan's legal next statuses",
+		func(projectFlag, slug string) (string, error) {
+			specRoot, err := resolveSpecRoot(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			return resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
+		})
 }
 
 // planChangeStatusCommand transitions a Plan's **Status:** field via the
@@ -94,6 +110,7 @@ Examples:
 	cmd.Flags().String("successor", "", "slug of the plan that supersedes this one; required for --to=superseded, rejected otherwise")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().Bool(coordinationForceFlagName, false, coordinationForceFlagUsage)
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -167,50 +184,69 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
+	successor = strings.TrimSpace(successor)
 	var coordinationWarning bytes.Buffer
 
-	successor = strings.TrimSpace(successor)
-
-	result, err := plan.ChangeStatus(plan.ChangeStatusOptions{
-		SpecRoot:  specRoot,
-		Slug:      slug,
-		To:        to,
-		Note:      note,
-		Successor: successor,
-		ValidateSnapshot: func(path string, before []byte) error {
-			parsedPlan, parseErr := plan.ParseBytes(path, before)
-			if parseErr != nil {
-				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
-			}
-			if coordinationErr := enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, &coordinationWarning); coordinationErr != nil {
-				return coordinationErr
-			}
-			// Successor existence affects mutation admissibility, so sample it
-			// authoritatively while the exact source Plan bytes are locked, directly
-			// before the pure status/successor transform.
-			if to == lifecycle.PlanSuperseded {
-				if _, successorErr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), successor); successorErr != nil {
-					return exitcode.InvalidArgsErrorf(
-						"successor plan %q does not resolve to an existing plan at spec/plans/%s.md", successor, successor)
-				}
-			}
-			return nil
-		},
-		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
-	})
-	if err != nil {
-		var committed *lifecycle.CommittedMutationError
-		if errors.As(err, &committed) {
-			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
-			return exitcode.UnexpectedErrorCause(err.Error(), err)
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (plan.ChangeStatusResult, error) {
+			return planChangeStatusMutate(sandboxRoot, specRoot, slug, to, note, successor, forceCoordination, &coordinationWarning)
+		})
+		if err != nil {
+			return handlePlanChangeStatusError(err, &coordinationWarning, cmd.ErrOrStderr())
 		}
-		return err
+		_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, string(result.From), string(result.To), changes)
+		return nil
+	}
+
+	result, err := planChangeStatusMutate(specRoot, specRoot, slug, to, note, successor, forceCoordination, &coordinationWarning)
+	if err != nil {
+		return handlePlanChangeStatusError(err, &coordinationWarning, cmd.ErrOrStderr())
 	}
 	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
 	return nil
+}
+
+// planChangeStatusMutate is the full Plan status transaction used by both the
+// real command and --dry-run. ArtifactRoot is the tree that is transformed;
+// coordinationRoot stays on the real project during a preview because the
+// sandbox intentionally contains only spec/ and is not a Git checkout.
+func planChangeStatusMutate(artifactRoot, coordinationRoot, slug string, to lifecycle.Status, note, successor string, forceCoordination bool, coordinationWarning *bytes.Buffer) (plan.ChangeStatusResult, error) {
+	return plan.ChangeStatus(plan.ChangeStatusOptions{
+		SpecRoot:  artifactRoot,
+		Slug:      slug,
+		To:        to,
+		Note:      note,
+		Successor: successor,
+		ValidateSnapshot: func(path string, before []byte) error {
+			parsedPlan, err := plan.ParseBytes(path, before)
+			if err != nil {
+				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, err), err)
+			}
+			if err := enforceCoordinationBranch(parsedPlan, coordinationRoot, forceCoordination, coordinationWarning); err != nil {
+				return err
+			}
+			if to == lifecycle.PlanSuperseded {
+				if _, err := resolvePlanFile(filepath.Join(artifactRoot, "spec", "plans"), successor); err != nil {
+					return exitcode.InvalidArgsErrorf("successor plan %q does not resolve to an existing plan at spec/plans/%s.md", successor, successor)
+				}
+			}
+			return nil
+		},
+		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(artifactRoot, "spec"))),
+	})
+}
+
+func handlePlanChangeStatusError(err error, coordinationWarning *bytes.Buffer, stderr io.Writer) error {
+	var committed *lifecycle.CommittedMutationError
+	if errors.As(err, &committed) {
+		_, _ = stderr.Write(coordinationWarning.Bytes())
+		return exitcode.UnexpectedErrorCause(err.Error(), err)
+	}
+	return err
 }
 
 // resolvePlanFile mirrors plan.resolvePlanFile for the cobra layer's

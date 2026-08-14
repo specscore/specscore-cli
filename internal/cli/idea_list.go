@@ -18,7 +18,9 @@ func ideaListCommand() *cobra.Command {
 		Short: "List all idea slugs, one per line",
 		Long: `Lists all ideas in a project as slugs, one per line, sorted
 alphabetically. By default, archived ideas are excluded. Use --all to
-include them. Use --status to filter by lifecycle status.`,
+include them. Use --status to filter by lifecycle status. Use --parked
+to show only ideas carrying the **Parked:** true axis (deliberately
+deferred, independent of their **Status:**) and exclude unparked ideas.`,
 		Args: cobra.NoArgs,
 		RunE: runIdeaList,
 	}
@@ -26,6 +28,7 @@ include them. Use --status to filter by lifecycle status.`,
 	cmd.Flags().String("status", "", "filter by status (case-insensitive, e.g. Draft, Approved)")
 	cmd.Flags().Bool("all", false, "include archived ideas in the output")
 	cmd.Flags().Bool("include-archived", false, "include archived ideas in the output (alias for --all)")
+	cmd.Flags().Bool("parked", false, "show only parked ideas (excludes unparked ideas)")
 	cmd.Flags().String("format", "text", "output format: text, yaml, json")
 	return cmd
 }
@@ -36,6 +39,7 @@ type ideaListEntry struct {
 	Status   string `json:"status" yaml:"status"`
 	Path     string `json:"path" yaml:"path"`
 	Archived bool   `json:"archived" yaml:"archived"`
+	Parked   bool   `json:"parked" yaml:"parked"`
 }
 
 func runIdeaList(cmd *cobra.Command, _ []string) error {
@@ -44,6 +48,7 @@ func runIdeaList(cmd *cobra.Command, _ []string) error {
 	showAll, _ := cmd.Flags().GetBool("all")
 	includeArchived, _ := cmd.Flags().GetBool("include-archived")
 	showAll = showAll || includeArchived
+	parkedOnly, _ := cmd.Flags().GetBool("parked")
 	format, _ := cmd.Flags().GetString("format")
 
 	if format != "text" && format != "yaml" && format != "json" {
@@ -71,13 +76,14 @@ func runIdeaList(cmd *cobra.Command, _ []string) error {
 		filtered = append(filtered, d)
 	}
 
-	// If --status is set, parse each idea and filter by status.
+	// If --status or --parked is set, parse each idea and filter accordingly.
 	// Also needed for yaml/json output regardless of filter.
-	needsParse := statusFilter != "" || format == "yaml" || format == "json"
+	needsParse := statusFilter != "" || parkedOnly || format == "yaml" || format == "json"
 
 	type enriched struct {
 		idea.Discovered
 		status string
+		parked bool
 	}
 	var entries []enriched
 
@@ -86,13 +92,20 @@ func runIdeaList(cmd *cobra.Command, _ []string) error {
 		for _, d := range filtered {
 			parsed, parseErr := idea.Parse(d.Path)
 			status := "Draft"
-			if parseErr == nil && parsed.Status() != "" {
-				status = parsed.Status()
+			parked := false
+			if parseErr == nil {
+				if parsed.Status() != "" {
+					status = parsed.Status()
+				}
+				parked = parsed.Parked()
 			}
 			if statusFilter != "" && strings.ToLower(status) != statusFilterLower {
 				continue
 			}
-			entries = append(entries, enriched{Discovered: d, status: status})
+			if parkedOnly && !parked {
+				continue
+			}
+			entries = append(entries, enriched{Discovered: d, status: status, parked: parked})
 		}
 	} else {
 		for _, d := range filtered {
@@ -116,6 +129,7 @@ func runIdeaList(cmd *cobra.Command, _ []string) error {
 				Status:   e.status,
 				Path:     e.Path,
 				Archived: e.Archived,
+				Parked:   e.parked,
 			}
 		}
 		if format == "yaml" {

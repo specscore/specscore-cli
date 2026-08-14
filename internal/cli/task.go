@@ -55,8 +55,32 @@ func taskCommandWithDeps(deps taskMutationDeps) *cobra.Command {
 		taskNewCommand(deps),
 		taskChangeStatusCommand(deps),
 		taskAmendCommand(deps),
+		taskTransitionsCommand(),
 	)
 	return cmd
+}
+
+// taskTransitionsCommand registers `specscore task transitions [<task>]`,
+// the read-only counterpart to change-status. It covers board-mode tasks
+// (tasks/<task>/README.md) only: a plan-inline task's status lives inside a
+// `### Task N:` block partway down its plan file rather than as that file's
+// leading `**Status:**` line, so resolving one requires the plan block
+// parser change-status's plan-inline path uses — out of scope for this
+// read-only query verb. Use `plan info <plan>` to inspect a plan-inline
+// task's current status in the meantime.
+func taskTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindTask, "task", "Show the Task status matrix, or one board-mode task's legal next statuses",
+		func(projectFlag, taskSlug string) (string, error) {
+			tasksDir, err := resolveTasksDir(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			taskFilePath := filepath.Join(tasksDir, taskSlug, "README.md")
+			if _, statErr := os.Stat(taskFilePath); statErr != nil {
+				return "", exitcode.NotFoundErrorf("task not found: %s", taskSlug)
+			}
+			return taskFilePath, nil
+		})
 }
 
 // --- task change-status ---

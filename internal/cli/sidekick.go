@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -24,8 +25,83 @@ func sidekickCommand() *cobra.Command {
 		Use:   "sidekick",
 		Short: "Sidekick-seed management — scaffold scaled-down Idea seeds",
 	}
-	cmd.AddCommand(sidekickNewCommand(), sidekickChangeStatusCommand())
+	cmd.AddCommand(sidekickNewCommand(), sidekickChangeStatusCommand(), sidekickTransitionsCommand())
 	return cmd
+}
+
+// sidekickTransitionsCommand registers `specscore sidekick transitions
+// [<slug>]`, the read-only counterpart to change-status. A sidekick-seed's
+// tiny matrix lives in pkg/sidekick rather than as a pkg/lifecycle.Kind, so
+// this is wired by hand rather than through the shared transitionsCommand
+// builder — but it derives its output from that same package
+// (sidekick.BidirectionalMatrix), not a hand-authored duplicate. A seed
+// already relocated to a terminal status lives under
+// spec/ideas/archived/<slug>.md, so both locations are checked.
+func sidekickTransitionsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "transitions [<slug>]",
+		Short: "Show the sidekick-seed status matrix, or one seed's legal next statuses",
+		Long: `Prints the sidekick-seed's legal-transition matrix: every recognized
+status with the statuses that can legally precede it ("previous") and the
+statuses it can legally become ("next"), derived from the same values
+change-status validates against. An empty "previous" means the status is set
+only by ` + "`sidekick new`" + `, never by change-status; an empty "next" means the
+status is terminal.
+
+With <slug>, reports that ONE seed's CURRENT status and the "next" values a
+change-status call would accept for it right now. Read-only — it never
+mutates the seed.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runSidekickTransitions,
+	}
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().String("format", "text", "output format: text, json, yaml")
+	return cmd
+}
+
+func runSidekickTransitions(cmd *cobra.Command, args []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "text" && format != "json" && format != "yaml" {
+		return exitcode.InvalidArgsErrorf("invalid --format: %s (valid: text, json, yaml)", format)
+	}
+
+	if len(args) == 0 {
+		edges := sidekick.BidirectionalMatrix()
+		switch format {
+		case "json":
+			return printJSON(cmd.OutOrStdout(), edges)
+		case "yaml":
+			return printYAML(cmd.OutOrStdout(), edges)
+		default:
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), lifecycle.RenderEdges("sidekick", edges))
+			return nil
+		}
+	}
+
+	slug := args[0]
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+	seedPath, err := sidekick.ResolveSeedPath(specRoot, slug)
+	if err != nil {
+		// A seed already relocated to its terminal status lives under
+		// spec/ideas/archived/, which ResolveSeedPath does not check (it
+		// resolves the active spec/ideas/seeds/ path only).
+		archivedPath := filepath.Join(specRoot, "spec", "ideas", "archived", slug+".md")
+		if _, statErr := os.Stat(archivedPath); statErr == nil {
+			seedPath = archivedPath
+		} else {
+			return err
+		}
+	}
+	current, err := sidekick.ReadFrontmatterStatus(seedPath)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("reading seed frontmatter status: %v", err)
+	}
+	edge := sidekick.EdgeFor(sidekick.ParseStatus(current))
+	return printArtifactEdge(cmd.OutOrStdout(), slug, edge.Status, edge.Previous, edge.Next, format)
 }
 
 // sidekickChangeStatusCommand transitions a sidekick-seed from Queued to a
@@ -65,6 +141,7 @@ Examples:
 	cmd.Flags().String("note", "", "transition reasoning (required for --to=rejected; "+
 		"written as a ## Resolution section when supplied)")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -85,19 +162,59 @@ func runSidekickChangeStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 3. Resolve the seed path (exit 3 on NotFound).
-	seedPath, err := sidekick.ResolveSeedPath(specRoot, slug)
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (sidekickChangeStatusResult, error) {
+			return sidekickChangeStatusMutate(sandboxRoot, slug, to, note)
+		})
+		if err != nil {
+			return err
+		}
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, string(result.From), string(result.To), changes)
+		return nil
+	}
+
+	result, err := sidekickChangeStatusMutate(specRoot, slug, to, note)
 	if err != nil {
 		return err
+	}
+
+	// 8. Success line.
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
+		result.Slug, string(result.From), string(result.To))
+	return nil
+}
+
+// sidekickChangeStatusResult mirrors the small ChangeStatusResult shape the
+// other kinds' pkg-level ChangeStatus functions return, so the dry-run
+// wiring here reads the same way theirs does even though sidekick has no
+// single pkg.ChangeStatus entry point of its own.
+type sidekickChangeStatusResult struct {
+	Slug string
+	From lifecycle.Status
+	To   lifecycle.Status
+}
+
+// sidekickChangeStatusMutate performs steps 3-7 of the sidekick-seed
+// terminal relocation rooted at root (the project root containing spec/):
+// resolve the seed, the strict source-state check, the reason-required
+// guard, the optional resolution note, and Relocate (status rewrite + type
+// tag + move + index sync). It is the single mutation path both the real
+// command and its --dry-run sandbox invoke — dry-run passes a throwaway
+// copy of root instead of the real one (see dryrun.Sandbox).
+func sidekickChangeStatusMutate(root, slug string, to lifecycle.Status, note string) (sidekickChangeStatusResult, error) {
+	// 3. Resolve the seed path (exit 3 on NotFound).
+	seedPath, err := sidekick.ResolveSeedPath(root, slug)
+	if err != nil {
+		return sidekickChangeStatusResult{}, err
 	}
 
 	// 4. Strict source-state check (exit 4 if the current status is not Queued).
 	current, err := sidekick.ReadFrontmatterStatus(seedPath)
 	if err != nil {
-		return exitcode.UnexpectedErrorf("reading seed frontmatter status: %v", err)
+		return sidekickChangeStatusResult{}, exitcode.UnexpectedErrorf("reading seed frontmatter status: %v", err)
 	}
 	if err := sidekick.CheckSeedSource(current); err != nil {
-		return err
+		return sidekickChangeStatusResult{}, err
 	}
 
 	// 5. Reason-required guard BEFORE any mutation (exit 2 if Rejected w/o note).
@@ -106,7 +223,7 @@ func runSidekickChangeStatus(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		// GuardReason only ever returns *ReasonRequiredError (or nil), which
 		// maps to exit 2 (InvalidArgs).
-		return exitcode.InvalidArgsError(err.Error())
+		return sidekickChangeStatusResult{}, exitcode.InvalidArgsError(err.Error())
 	}
 
 	// 6. Mutate. Append the note first (if any), then relocate. The note is
@@ -118,14 +235,14 @@ func runSidekickChangeStatus(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(note) != "" {
 		orig, wrote, err := lifecycle.AppendResolutionNote(seedPath, note)
 		if err != nil {
-			return exitcode.UnexpectedErrorf("writing resolution note: %v", err)
+			return sidekickChangeStatusResult{}, exitcode.UnexpectedErrorf("writing resolution note: %v", err)
 		}
 		noteOriginal, noteWritten = orig, wrote
 	}
 
-	specSub := filepath.Join(specRoot, "spec")
+	specSub := filepath.Join(root, "spec")
 	relErr := sidekick.Relocate(sidekick.RelocateOptions{
-		SpecRoot:  specRoot,
+		SpecRoot:  root,
 		Slug:      slug,
 		SeedPath:  seedPath,
 		NewStatus: to,
@@ -152,13 +269,10 @@ func runSidekickChangeStatus(cmd *cobra.Command, args []string) error {
 				_ = lifecycle.RestoreBody(seedPath, noteOriginal)
 			}
 		}
-		return relErr
+		return sidekickChangeStatusResult{}, relErr
 	}
 
-	// 8. Success line.
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
-		slug, string(sidekick.SeedQueued), string(to))
-	return nil
+	return sidekickChangeStatusResult{Slug: slug, From: sidekick.SeedQueued, To: to}, nil
 }
 
 // sidekickNewCommand scaffolds a lint-clean sidekick-seed at
