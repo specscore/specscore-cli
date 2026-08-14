@@ -265,8 +265,8 @@ func listFiles(dir string) (map[string]struct{}, error) {
 // git-status-style line per Change ("  M spec/ideas/foo.md"), in Changes'
 // existing (path-sorted) order.
 func PrintReport(w io.Writer, id, from, to string, changes []Change) {
-	fmt.Fprintf(w, "%s: %s → %s (dry-run; would touch %d file(s))\n", id, from, to, len(changes))
+	_, _ = fmt.Fprintf(w, "%s: %s → %s (dry-run; would touch %d file(s))\n", id, from, to, len(changes))
 	for _, c := range changes {
-		fmt.Fprintf(w, "  %s\n", c.String())
+		_, _ = fmt.Fprintf(w, "  %s\n", c.String())
 	}
 }

@@ -118,7 +118,7 @@ func runIssueTransitions(cmd *cobra.Command, args []string) error {
 			Next     []string `yaml:"next"`
 		}{slug, edge.Status, edge.Previous, edge.Next})
 	default:
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", slug, edge.Status)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", slug, edge.Status)
 		prev := "(none — initial status, set only by `issue new`)"
 		if len(edge.Previous) > 0 {
 			prev = strings.Join(edge.Previous, ", ")
@@ -127,8 +127,8 @@ func runIssueTransitions(cmd *cobra.Command, args []string) error {
 		if len(edge.Next) > 0 {
 			next = strings.Join(edge.Next, ", ")
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "  previous: %s\n", prev)
-		fmt.Fprintf(cmd.OutOrStdout(), "  next:     %s\n", next)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  previous: %s\n", prev)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  next:     %s\n", next)
 		return nil
 	}
 }

@@ -110,9 +110,9 @@ func printArtifactEdge(w io.Writer, id string, status lifecycle.Status, previous
 	case "yaml":
 		return printYAML(w, artifactStatusResult{ID: id, Status: status, Previous: previous, Next: next})
 	default:
-		fmt.Fprintf(w, "%s: %s\n", id, string(status))
-		fmt.Fprintf(w, "  previous: %s\n", statusListOrPlaceholder(previous, "(none — initial status, set only by the kind's scaffold/new verb)"))
-		fmt.Fprintf(w, "  next:     %s\n", statusListOrPlaceholder(next, "(none — terminal status)"))
+		_, _ = fmt.Fprintf(w, "%s: %s\n", id, string(status))
+		_, _ = fmt.Fprintf(w, "  previous: %s\n", statusListOrPlaceholder(previous, "(none — initial status, set only by the kind's scaffold/new verb)"))
+		_, _ = fmt.Fprintf(w, "  next:     %s\n", statusListOrPlaceholder(next, "(none — terminal status)"))
 		return nil
 	}
 }

@@ -101,8 +101,8 @@ func checkParkedInFile(rel, content string, staleDays int) []Violation {
 				"(use `specscore <kind> park <slug> --reason \"...\"` rather than hand-editing the header)",
 		})
 	}
-	switch {
-	case date == "":
+	switch date {
+	case "":
 		out = append(out, Violation{
 			File: rel, Line: parkedLine, Severity: "error", Rule: "parked-shape",
 			Message: "**Parked:** true requires a **Parked Date:** line " +
