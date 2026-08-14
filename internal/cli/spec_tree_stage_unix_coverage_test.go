@@ -314,7 +314,7 @@ func TestStagedSpecTree_DescriptorFailureBranches(t *testing.T) {
 	})
 	t.Run("staging helper cleanup and materialization failures", func(t *testing.T) {
 		root := t.TempDir()
-		resetSpecTreeTransactionSeams(t)
+		resetSpecTreeSnapshotSeams(t)
 		resetStageUnixSeams(t)
 		originalOpen := stageUnixOpen
 		stageUnixOpen = func(string, int, uint32) (int, error) { return -1, errors.New("stage descriptor open failed") }
