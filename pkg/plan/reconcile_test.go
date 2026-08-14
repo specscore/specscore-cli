@@ -285,6 +285,32 @@ func TestReconcile_MissingFrontmatterFailsClosedWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestReconcile_ReopenMissingFrontmatterFailsClosedWithoutMutation(t *testing.T) {
+	root, path := stageReconcilePlan(t, "auth", "Implemented", "complete")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutFrontmatter := []byte(strings.TrimPrefix(string(before), "---\nformat: "+FormatURL+"\nstatus: Implemented\n---\n\n"))
+	if err := os.WriteFile(path, withoutFrontmatter, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Reconcile(ReconcileOptions{
+		SpecRoot: root, Slug: "auth", ReopenTasks: []int{1}, Note: "must fail closed", PostMutation: okHook,
+	})
+	if got := codeOf(t, err); got != exitcode.Unexpected {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(withoutFrontmatter) {
+		t.Fatalf("reopen missing-frontmatter refusal changed the Plan:\nwant:\n%s\ngot:\n%s", withoutFrontmatter, after)
+	}
+}
+
 // Reconcile's marker and audit note belong to the canonical Plan, not to
 // similarly-shaped prose that appears before its title. The success assertion
 // is intentionally byte-exact so a future broad search cannot silently move

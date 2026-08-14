@@ -85,6 +85,53 @@ func TestSetSupersededBy_InsertAfterStatus(t *testing.T) {
 	}
 }
 
+func TestSetSupersededByBytes_FailsClosedOutsideCanonicalHeader(t *testing.T) {
+	t.Parallel()
+	if _, wrote, err := SetSupersededByBytes([]byte("# Notes\n\n**Status:** Approved\n"), "auth-v2"); !errors.Is(err, ErrStatusLineNotFound) || wrote {
+		t.Fatalf("non-lifecycle document: wrote=%v err=%v", wrote, err)
+	}
+
+	body := []byte("# Plan: X\n\n**Status:** Approved\n```markdown\n**Superseded By:** example-only\n```\n")
+	got, wrote, err := SetSupersededByBytes(body, "auth-v2")
+	if err != nil || !wrote {
+		t.Fatalf("fenced example: wrote=%v err=%v", wrote, err)
+	}
+	want := "# Plan: X\n\n**Status:** Approved\n**Superseded By:** auth-v2\n```markdown\n**Superseded By:** example-only\n```\n"
+	if string(got) != want {
+		t.Fatalf("fenced example changed instead of canonical header:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestCanonicalLifecycleHeaderHelpers_DefensiveBranches(t *testing.T) {
+	t.Parallel()
+	lines := splitKeepTerminators([]byte("# Plan: X\n```markdown\n**Status:** example\n**Supersedes:** example\n```\n"))
+	structure := StructuralMarkdownMask(lines, "")
+	if got := findSupersedesLineIndexInHeader(lines, structure, -1, len(lines)); got != -1 {
+		t.Errorf("negative Supersedes range start = %d, want -1", got)
+	}
+	if got := findStatusLineIndexInHeader(lines, structure, -1, len(lines)); got != -1 {
+		t.Errorf("negative Status range start = %d, want -1", got)
+	}
+	if got := findSupersedesLineIndexInHeader(lines, structure, 1, len(lines)); got != -1 {
+		t.Errorf("fenced Supersedes index = %d, want -1", got)
+	}
+	if got := findStatusLineIndexInHeader(lines, structure, 1, len(lines)); got != -1 {
+		t.Errorf("fenced Status index = %d, want -1", got)
+	}
+
+	setextLines := splitKeepTerminators([]byte("Notes\n  ===\n# Plan: Hidden\n"))
+	setextStructure := StructuralMarkdownMask(setextLines, "")
+	if start, end := canonicalLifecycleHeaderRange(setextLines, setextStructure); start != -1 || end != -1 {
+		t.Errorf("Setext prelude range = [%d,%d), want [-1,-1)", start, end)
+	}
+	if !isATXH1("   # Plan: Indented") {
+		t.Error("three-space ATX H1 was not recognized")
+	}
+	if isSetextH1Line([]string{"Notes", "    ===="}, []bool{true, true}, 1) {
+		t.Error("indented code was recognized as a Setext H1")
+	}
+}
+
 // An existing **Superseded By:** line is rewritten in place, preserving
 // indentation and trailing whitespace.
 func TestSetSupersededBy_RewriteExisting(t *testing.T) {
@@ -166,7 +213,7 @@ func TestSetSupersededBy_RewriteWriteError(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
-	if err := os.WriteFile(path, []byte("**Status:** Approved\n**Superseded By:** old\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# Plan: X\n\n**Status:** Approved\n**Superseded By:** old\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if err := os.Chmod(dir, 0o555); err != nil {
@@ -185,7 +232,7 @@ func TestSetSupersededBy_InsertWriteError(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
-	if err := os.WriteFile(path, []byte("**Status:** Approved\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# Plan: X\n\n**Status:** Approved\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if err := os.Chmod(dir, 0o555); err != nil {
