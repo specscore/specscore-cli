@@ -26,7 +26,7 @@ Pre-spec one-pagers for the `specscore` CLI. Each Idea refines a vague concept i
 | [lifecycle-verbs-for-idea-and-feature](lifecycle-verbs-for-idea-and-feature.md) | Implemented | 2026-05-18 | alexander.trakhimenok | cli/feature/change-status, cli/idea/change-status, cli/lifecycle-transitions |
 | [lint-fix-reports-modified-files](lint-fix-reports-modified-files.md) | Specified | 2026-06-02 | alexander.trakhimenok | cli/spec/lint |
 | [modelspec-cli-validation](modelspec-cli-validation.md) | Specified | 2026-07-08 | codex | cli/spec/lint |
-| [specscore-cli-should-expose-a-plan-verb-with-list-and-query](specscore-cli-should-expose-a-plan-verb-with-list-and-query.md) | Specified | 2026-06-04 | alexander.trakhimenok | cli/plan, cli/plan/info, cli/plan/list |
+| [specscore-cli-should-expose-a-plan-verb-with-list-and-query](specscore-cli-should-expose-a-plan-verb-with-list-and-query.md) | Specified | 2026-06-04 | alexander.trakhimenok | cli/plan, cli/plan/info, cli/plan/list, cli/plan/readiness |
 
 ## Open Questions
 

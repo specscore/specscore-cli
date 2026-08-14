@@ -180,9 +180,15 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 	}
 	planSlug, _ := cmd.Flags().GetString("plan")
 	planSlug = strings.TrimSpace(planSlug)
-	if planSlug != "" {
+	planFlagChanged := cmd.Flags().Changed("plan")
+	// Plan-inline mode constructs a file path from --plan in both the status
+	// transition and provenance-amend flows. Validate once, before either
+	// dispatch (and therefore before project resolution or path construction),
+	// so an explicit blank or traversal-shaped value is always a usage error and
+	// cannot address an unrelated file or fall back to a board task.
+	if planFlagChanged {
 		if err := plan.ValidateSlug(planSlug); err != nil {
-			return exitcode.InvalidArgsErrorf("invalid plan slug: %v", err)
+			return exitcode.InvalidArgsErrorf("invalid --plan value %q: %v", planSlug, err)
 		}
 	}
 
@@ -211,7 +217,7 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 		if err := validateProvenanceFlags(cmd, lifecycle.TaskComplete); err != nil {
 			return err
 		}
-		if planSlug != "" {
+		if planFlagChanged {
 			return runTaskAmendProvenancePlanInline(cmd, taskSlug, planSlug, deps)
 		}
 		return runTaskAmendProvenanceBoard(cmd, taskSlug, deps)
@@ -237,9 +243,9 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 	}
 
 	// --plan selects plan-inline mode: the task is addressed by its **Id:**
-	// field on a `### Task N:` block inside spec/plans/<plan>.md. Without --plan
-	// the verb stays in board mode (tasks/<task>/README.md), unchanged.
-	if planSlug != "" {
+	// field on a `### Task N:` block inside spec/plans/<plan>.md. Only when
+	// --plan is absent does the verb stay in board mode (tasks/<task>/README.md).
+	if planFlagChanged {
 		return runTaskChangeStatusPlanInline(cmd, taskSlug, planSlug, to, deps)
 	}
 
@@ -527,6 +533,10 @@ func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug,
 		// ParseBytes consumes the supplied snapshot only and never performs I/O.
 		return nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", planSlug, err)
 	}
+	if !p.HasPlanTitle {
+		return nil, exitcode.InvalidStateErrorf(
+			"plan %q is not a Plan artifact: expected first H1 to start with '# Plan:'", planSlug)
+	}
 
 	// Coordination-branch enforcement: when the plan declares
 	// **Coordination:**, mutating one of its inline tasks is authoritative
@@ -551,6 +561,20 @@ func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug,
 
 	if target.StatusLine == 0 {
 		return nil, exitcode.UnexpectedErrorf("task %q in plan %s has no **Status:** line", taskSlug, planSlug)
+	}
+	// Moving a plan-inline task into in_progress is the first execution-band
+	// entrypoint. Keep the check before the file rewrite so an unmet
+	// prerequisite leaves the task byte-for-byte untouched.
+	if to == lifecycle.TaskInProgress {
+		readiness, readinessErr := p.PrerequisiteReadiness(filepath.Join(specRoot, "spec", "plans"))
+		if readinessErr != nil {
+			return nil, readinessCLIError(readinessErr)
+		}
+		if !readiness.Ready {
+			return nil, exitcode.InvalidStateErrorf(
+				"plan %q is not ready to begin execution; unmet prerequisite plan(s): %s; each must derive Implemented from its task rollup",
+				planSlug, readiness.UnmetMessage())
+		}
 	}
 	// Provenance is written ONLY when completing, in the same atomic write that
 	// sets the status; values come ONLY from flags (never ambient git HEAD).
@@ -777,6 +801,10 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 		p, err := plan.ParseBytes(planPath, before)
 		if err != nil {
 			return nil, err
+		}
+		if !p.HasPlanTitle {
+			return nil, exitcode.InvalidStateErrorf(
+				"plan %q is not a Plan artifact: expected first H1 to start with '# Plan:'", planSlug)
 		}
 		forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
 		if err := enforceCoordinationBranch(p, specRoot, forceCoordination, &coordinationWarning); err != nil {

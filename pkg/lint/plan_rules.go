@@ -1169,6 +1169,12 @@ func lintP009(parsedPlans map[string]*plan.Plan, relPaths map[string]string) []V
 		if p.PrerequisiteLine == 0 {
 			continue
 		}
+		if len(p.PrerequisiteLines) > 1 {
+			out = append(out, Violation{
+				File: relPaths[slug], Line: p.PrerequisiteLines[1], Severity: "error", Rule: "P-009",
+				Message: "**Prerequisite Plans:** must appear at most once",
+			})
+		}
 		raw := strings.TrimSpace(p.PrerequisiteRaw)
 		if raw == "" {
 			out = append(out, Violation{

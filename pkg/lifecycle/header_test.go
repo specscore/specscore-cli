@@ -51,6 +51,25 @@ func TestSetSupersededBy_InsertAfterSupersedes(t *testing.T) {
 	}
 }
 
+func TestSetSupersededBy_DecisionHeader(t *testing.T) {
+	t.Parallel()
+	body := "# Decision: Replace storage\n\n**Status:** Approved\n**Supersedes:** —\n\n## Context\n"
+	path := writeHeaderFixture(t, body)
+	if _, wrote, err := SetSupersededBy(path, "0002-new-storage"); err != nil {
+		t.Fatalf("SetSupersededBy: %v", err)
+	} else if !wrote {
+		t.Fatal("SetSupersededBy did not write the Decision header")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Decision: Replace storage\n\n**Status:** Approved\n**Supersedes:** —\n**Superseded By:** 0002-new-storage\n\n## Context\n"
+	if string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // No Supersedes line → insert after the Status line.
 func TestSetSupersededBy_InsertAfterStatus(t *testing.T) {
 	t.Parallel()
@@ -66,17 +85,64 @@ func TestSetSupersededBy_InsertAfterStatus(t *testing.T) {
 	}
 }
 
+func TestSetSupersededByBytes_FailsClosedOutsideCanonicalHeader(t *testing.T) {
+	t.Parallel()
+	if _, wrote, err := SetSupersededByBytes([]byte("# Notes\n\n**Status:** Approved\n"), "auth-v2"); !errors.Is(err, ErrStatusLineNotFound) || wrote {
+		t.Fatalf("non-lifecycle document: wrote=%v err=%v", wrote, err)
+	}
+
+	body := []byte("# Plan: X\n\n**Status:** Approved\n```markdown\n**Superseded By:** example-only\n```\n")
+	got, wrote, err := SetSupersededByBytes(body, "auth-v2")
+	if err != nil || !wrote {
+		t.Fatalf("fenced example: wrote=%v err=%v", wrote, err)
+	}
+	want := "# Plan: X\n\n**Status:** Approved\n**Superseded By:** auth-v2\n```markdown\n**Superseded By:** example-only\n```\n"
+	if string(got) != want {
+		t.Fatalf("fenced example changed instead of canonical header:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestCanonicalLifecycleHeaderHelpers_DefensiveBranches(t *testing.T) {
+	t.Parallel()
+	lines := splitKeepTerminators([]byte("# Plan: X\n```markdown\n**Status:** example\n**Supersedes:** example\n```\n"))
+	structure := StructuralMarkdownMask(lines, "")
+	if got := findSupersedesLineIndexInHeader(lines, structure, -1, len(lines)); got != -1 {
+		t.Errorf("negative Supersedes range start = %d, want -1", got)
+	}
+	if got := findStatusLineIndexInHeader(lines, structure, -1, len(lines)); got != -1 {
+		t.Errorf("negative Status range start = %d, want -1", got)
+	}
+	if got := findSupersedesLineIndexInHeader(lines, structure, 1, len(lines)); got != -1 {
+		t.Errorf("fenced Supersedes index = %d, want -1", got)
+	}
+	if got := findStatusLineIndexInHeader(lines, structure, 1, len(lines)); got != -1 {
+		t.Errorf("fenced Status index = %d, want -1", got)
+	}
+
+	setextLines := splitKeepTerminators([]byte("Notes\n  ===\n# Plan: Hidden\n"))
+	setextStructure := StructuralMarkdownMask(setextLines, "")
+	if start, end := canonicalLifecycleHeaderRange(setextLines, setextStructure); start != -1 || end != -1 {
+		t.Errorf("Setext prelude range = [%d,%d), want [-1,-1)", start, end)
+	}
+	if !isATXH1("   # Plan: Indented") {
+		t.Error("three-space ATX H1 was not recognized")
+	}
+	if isSetextH1Line([]string{"Notes", "    ===="}, []bool{true, true}, 1) {
+		t.Error("indented code was recognized as a Setext H1")
+	}
+}
+
 // An existing **Superseded By:** line is rewritten in place, preserving
 // indentation and trailing whitespace.
 func TestSetSupersededBy_RewriteExisting(t *testing.T) {
 	t.Parallel()
-	body := "**Status:** Approved\n**Superseded By:** old-plan  \n"
+	body := "# Plan: X\n\n**Status:** Approved\n**Superseded By:** old-plan  \n"
 	path := writeHeaderFixture(t, body)
 	if _, _, err := SetSupersededBy(path, "auth-v2"); err != nil {
 		t.Fatalf("SetSupersededBy: %v", err)
 	}
 	got, _ := os.ReadFile(path)
-	want := "**Status:** Approved\n**Superseded By:** auth-v2  \n"
+	want := "# Plan: X\n\n**Status:** Approved\n**Superseded By:** auth-v2  \n"
 	if string(got) != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -85,13 +151,13 @@ func TestSetSupersededBy_RewriteExisting(t *testing.T) {
 // CRLF line endings are preserved on insertion.
 func TestSetSupersededBy_CRLFPreserved(t *testing.T) {
 	t.Parallel()
-	body := "**Status:** Approved\r\n**Supersedes:** —\r\n"
+	body := "# Plan: X\r\n\r\n**Status:** Approved\r\n**Supersedes:** —\r\n"
 	path := writeHeaderFixture(t, body)
 	if _, _, err := SetSupersededBy(path, "auth-v2"); err != nil {
 		t.Fatalf("SetSupersededBy: %v", err)
 	}
 	got, _ := os.ReadFile(path)
-	want := "**Status:** Approved\r\n**Supersedes:** —\r\n**Superseded By:** auth-v2\r\n"
+	want := "# Plan: X\r\n\r\n**Status:** Approved\r\n**Supersedes:** —\r\n**Superseded By:** auth-v2\r\n"
 	if string(got) != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -100,13 +166,13 @@ func TestSetSupersededBy_CRLFPreserved(t *testing.T) {
 // A status line with no terminator (EOF) still gets a sane inserted line.
 func TestSetSupersededBy_NoTerminatorAnchor(t *testing.T) {
 	t.Parallel()
-	body := "**Status:** Approved"
+	body := "# Plan: X\n\n**Status:** Approved"
 	path := writeHeaderFixture(t, body)
 	if _, _, err := SetSupersededBy(path, "auth-v2"); err != nil {
 		t.Fatalf("SetSupersededBy: %v", err)
 	}
 	got, _ := os.ReadFile(path)
-	want := "**Status:** Approved\n**Superseded By:** auth-v2\n"
+	want := "# Plan: X\n\n**Status:** Approved\n**Superseded By:** auth-v2\n"
 	if string(got) != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -147,7 +213,7 @@ func TestSetSupersededBy_RewriteWriteError(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
-	if err := os.WriteFile(path, []byte("**Status:** Approved\n**Superseded By:** old\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# Plan: X\n\n**Status:** Approved\n**Superseded By:** old\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if err := os.Chmod(dir, 0o555); err != nil {
@@ -166,7 +232,7 @@ func TestSetSupersededBy_InsertWriteError(t *testing.T) {
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
-	if err := os.WriteFile(path, []byte("**Status:** Approved\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# Plan: X\n\n**Status:** Approved\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if err := os.Chmod(dir, 0o555); err != nil {
@@ -182,11 +248,11 @@ func TestSetSupersededBy_InsertWriteError(t *testing.T) {
 // after-Status case, exercised directly here for clarity).
 func TestFindSupersedesLineIndex(t *testing.T) {
 	t.Parallel()
-	lines := splitKeepTerminators([]byte("**Status:** Approved\n**Supersedes:** —\n"))
-	if got := findSupersedesLineIndex(lines); got != 1 {
-		t.Errorf("got %d, want 1", got)
+	lines := splitKeepTerminators([]byte("# Plan: X\n\n**Status:** Approved\n**Supersedes:** —\n"))
+	if got := findSupersedesLineIndex(lines); got != 3 {
+		t.Errorf("got %d, want 3", got)
 	}
-	none := splitKeepTerminators([]byte("**Status:** Approved\n"))
+	none := splitKeepTerminators([]byte("# Plan: X\n\n**Status:** Approved\n"))
 	if got := findSupersedesLineIndex(none); got != -1 {
 		t.Errorf("got %d, want -1", got)
 	}

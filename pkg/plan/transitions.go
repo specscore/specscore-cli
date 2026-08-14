@@ -150,11 +150,22 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		if parseErr != nil {
 			return nil, parseErr
 		}
+		if artifactErr := requirePlanArtifact(parsed, "target"); artifactErr != nil {
+			return nil, artifactErr
+		}
 		if parsed.StatusCount == 0 {
 			return nil, lifecycle.ErrStatusLineNotFound
 		}
 		if parsed.StatusCount > 1 {
 			return nil, exitcode.InvalidArgsErrorf("plan %q must have exactly one header **Status:** field; found %d", opts.Slug, parsed.StatusCount)
+		}
+		// RewriteBytes intentionally understands several artifact kinds and
+		// therefore selects the first raw body Status line. Refuse if that line
+		// is an example/comment rather than the structural Plan header selected
+		// from this exact transaction snapshot.
+		if firstRawPlanStatusLineBytes(before) != parsed.StatusLine {
+			return nil, exitcode.InvalidStateErrorf(
+				"plan %q has a non-structural **Status:** line before its canonical header status; remove or relocate the example before changing status", opts.Slug)
 		}
 		from = lifecycle.Status(parsed.Status)
 		var validateErr error
@@ -168,7 +179,7 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		if opts.Successor != "" {
 			updated, _, _ = lifecycle.SetSupersededByBytes(updated, opts.Successor)
 		}
-		updated, _, _ = lifecycle.AppendResolutionNoteBytes(updated, opts.Note)
+		updated, _, _ = lifecycle.AppendResolutionNoteAfterLineBytes(updated, opts.Note, parsed.TitleLine)
 		return updated, nil
 	})
 	if err != nil {
@@ -211,6 +222,20 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	}
 
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil
+}
+
+// firstRawPlanStatusLineBytes mirrors the broad line selection used by
+// lifecycle.RewriteBytes. Keeping this check byte-local means validation and
+// transformation describe the same locked snapshot; no second filesystem read
+// can race the transaction.
+func firstRawPlanStatusLineBytes(data []byte) int {
+	for i, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(strings.TrimSpace(line), "**Status:**") {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // resolvePlanFile resolves <slug> to an existing Plan file under plansDir,

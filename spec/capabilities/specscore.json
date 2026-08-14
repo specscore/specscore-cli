@@ -657,6 +657,14 @@
               "modes": []
             },
             {
+              "path": "specscore plan readiness",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
               "path": "specscore plan reconcile",
               "flags": [
                 "--evidence",
@@ -665,7 +673,8 @@
                 "--note",
                 "--project",
                 "--reopen-tasks",
-                "--tasks"
+                "--tasks",
+                "--tree-transaction"
               ],
               "modes": []
             },
@@ -1811,6 +1820,99 @@
         }
       },
       "notes": null
+    },
+    {
+      "id": "specscore.lifecycle.spec-tree-recovery",
+      "feature_refs": [
+        "spec/features/cli/lifecycle-transitions/spec-tree-transaction-recovery/README.md",
+        "spec/features/cli/plan/reconcile/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore recovery diff",
+              "flags": [
+                "--project"
+              ],
+              "modes": [
+                "read-only retained predecessor comparison"
+              ]
+            },
+            {
+              "path": "specscore recovery inspect",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": [
+                "read-only validated receipt inspection"
+              ]
+            },
+            {
+              "path": "specscore recovery list",
+              "flags": [
+                "--project"
+              ],
+              "modes": [
+                "read-only receipt inventory"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore recovery --help",
+              "contains": [
+                "Inspect retained lifecycle transaction predecessors",
+                "inspect",
+                "diff"
+              ]
+            },
+            {
+              "command": "specscore plan reconcile --help",
+              "contains": [
+                "--tree-transaction",
+                "permits writes only",
+                "default Plan artifact transaction is unchanged"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Absent",
+          "skills": [],
+          "limitation": "No focused AI skill advertises destructive recovery; the shipped surface is intentionally read-only."
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/lifecycle_transaction_test.go",
+              "name": "TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor",
+              "kind": "integration"
+            },
+            {
+              "path": "internal/cli/lifecycle_transaction_test.go",
+              "name": "TestRunLifecycleTransactionRejectsUndeclaredStagedWrites",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/plan_reconcile_test.go",
+              "name": "TestPlanReconcile_TreeTransactionPublishesDeclaredPlanChanges",
+              "kind": "e2e"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "Destructive restore and reclaim remain explicitly out of scope pending a separate authorization and audit contract."
     },
     {
       "id": "specscore.spec.lint.open-questions-fix",

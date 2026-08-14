@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -565,23 +566,21 @@ func TestWriteFileAtomic_CloseError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// readStatus — scanner error (huge line exceeds buffer)
+// readStatus — a huge non-status line is handled without a scanner token-size
+// limit and returns the ordinary missing-status result.
 // ---------------------------------------------------------------------------
 
-func TestReadStatus_ScannerError(t *testing.T) {
+func TestReadStatus_HugeNonStatusLine(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "artifact.md")
-	// Create a file with a single line exceeding the 1MB scanner buffer
-	// limit. This triggers scanner.Err() != nil.
+	// The structural reader works from an exact byte snapshot so it must not
+	// reintroduce Scanner's 1MB token limit while selecting a header field.
 	huge := strings.Repeat("x", 2*1024*1024) + "\n"
 	if err := os.WriteFile(path, []byte(huge), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := readStatus(path)
-	if err == nil {
-		t.Fatal("expected error for scanner overflow")
-	}
-	if err == ErrStatusLineNotFound {
-		t.Error("expected scanner error, not ErrStatusLineNotFound")
+	if !errors.Is(err, ErrStatusLineNotFound) {
+		t.Fatalf("readStatus error = %v, want ErrStatusLineNotFound", err)
 	}
 }

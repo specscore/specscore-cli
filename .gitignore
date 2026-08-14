@@ -20,6 +20,7 @@ cover*.out
 .claude/
 .specscore/
 .codegraph/
+**/.*.lifecycle-transaction.lock
 
 # reviewer-gate prompts are config, not runtime state
 !.specscore/

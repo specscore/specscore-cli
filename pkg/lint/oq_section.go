@@ -11,10 +11,14 @@ import (
 // section. A legacy "## Outstanding Questions" heading is reported as a
 // distinct violation and is autofixable: --fix rewrites the heading line
 // in place to "## Open Questions".
-type oqSectionChecker struct{}
+type oqSectionChecker struct{ projectRoot string }
 
-func newOQSectionChecker() checker {
-	return &oqSectionChecker{}
+func newOQSectionChecker(projectRoot ...string) checker {
+	var root string
+	if len(projectRoot) > 0 {
+		root = projectRoot[0]
+	}
+	return &oqSectionChecker{projectRoot: root}
 }
 
 func (c *oqSectionChecker) name() string     { return "oq-section" }
@@ -132,7 +136,7 @@ func (c *oqSectionChecker) fix(specRoot string) error {
 			return nil
 		}
 
-		return writeLintFile(specRoot, path, content, []byte(rewritten), 0o644)
+		return writeLintFile(c.projectRoot, specRoot, path, content, []byte(rewritten), 0o644)
 	})
 }
 

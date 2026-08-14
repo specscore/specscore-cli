@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // statusMirrorChecker enforces artifact-frontmatter-convention REQ:status-field,
@@ -24,9 +26,15 @@ import (
 // --severity=error and FilterBySeverity excludes "warning" violations at that
 // level, so un-migrated repos are not broken on landing. The severity flips to
 // "error" once the target repos are migrated.
-type statusMirrorChecker struct{}
+type statusMirrorChecker struct{ projectRoot string }
 
-func newStatusMirrorChecker() checker { return &statusMirrorChecker{} }
+func newStatusMirrorChecker(projectRoot ...string) checker {
+	var root string
+	if len(projectRoot) > 0 {
+		root = projectRoot[0]
+	}
+	return &statusMirrorChecker{projectRoot: root}
+}
 
 func (c *statusMirrorChecker) name() string     { return "status-mirror" }
 func (c *statusMirrorChecker) severity() string { return "error" }
@@ -40,11 +48,20 @@ func (c *statusMirrorChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	for _, t := range docTypeTargets {
 		target := t
+		var bodyStatusErr error
 		err := target.walk(specRoot, func(path string, content []byte) {
+			if bodyStatusErr != nil {
+				return
+			}
 			var v Violation
 			var ok bool
 			if target.statusBearing {
-				v, ok = statusMirrorViolation(specRoot, path, content, target.description)
+				body, err := canonicalArtifactBodyStatus(path, content, target)
+				if err != nil {
+					bodyStatusErr = err
+					return
+				}
+				v, ok = statusMirrorViolation(specRoot, path, content, body, target.description)
 			} else {
 				v, ok = statusLessStatusViolation(specRoot, path, content, target.description)
 			}
@@ -54,6 +71,9 @@ func (c *statusMirrorChecker) check(specRoot string) ([]Violation, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+		if bodyStatusErr != nil {
+			return nil, bodyStatusErr
 		}
 	}
 	return violations, nil
@@ -85,8 +105,7 @@ func statusLessStatusViolation(specRoot, path string, content []byte, descriptio
 // status-bearing artifact. When the body carries no `**Status:**` line there is
 // nothing to mirror (the missing-body-status rule is enforced per type
 // elsewhere), so the artifact is skipped.
-func statusMirrorViolation(specRoot, path string, content []byte, description string) (Violation, bool) {
-	body := extractBodyStatus(content)
+func statusMirrorViolation(specRoot, path string, content []byte, body, description string) (Violation, bool) {
 	if body == "" {
 		return Violation{}, false
 	}
@@ -132,15 +151,20 @@ func (c *statusMirrorChecker) fix(specRoot string) error {
 		}
 		target := t
 		var writeErr error
+		var bodyStatusErr error
 		err := target.walk(specRoot, func(path string, content []byte) {
-			if writeErr != nil {
+			if writeErr != nil || bodyStatusErr != nil {
 				return
 			}
 			fields, present := parseLeadingFrontmatter(content)
 			if !present {
 				return
 			}
-			body := extractBodyStatus(content)
+			body, err := canonicalArtifactBodyStatus(path, content, target)
+			if err != nil {
+				bodyStatusErr = err
+				return
+			}
 			if body == "" {
 				return
 			}
@@ -149,18 +173,45 @@ func (c *statusMirrorChecker) fix(specRoot string) error {
 				return
 			}
 			updated := setFrontmatterStatus(content, body)
-			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
+			if err := writeLintFile(c.projectRoot, specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 			}
 		})
 		if err != nil {
 			return err
 		}
+		if bodyStatusErr != nil {
+			return bodyStatusErr
+		}
 		if writeErr != nil {
 			return writeErr
 		}
 	}
 	return nil
+}
+
+// parsePlanForArtifactStatus is injectable to exercise and preserve the error
+// path around the canonical Plan parser. Production always uses plan.Parse.
+var parsePlanForArtifactStatus = plan.Parse
+
+// canonicalArtifactBodyStatus returns the only body status eligible for a
+// mirrored frontmatter field. A Plan must use its established structural parser
+// rather than a raw Markdown scan: only the first structural `# Plan:` title's
+// header band may supply `**Status:**`; frontmatter, comments, code samples,
+// pre-title prose, and later body examples are excluded. Other artifact types
+// retain their existing body-status convention.
+func canonicalArtifactBodyStatus(path string, content []byte, target docTypeTarget) (string, error) {
+	if !target.planArtifact {
+		return extractBodyStatus(content), nil
+	}
+	parsed, err := parsePlanForArtifactStatus(path)
+	if err != nil {
+		return "", fmt.Errorf("parsing Plan artifact %q for canonical status: %w", path, err)
+	}
+	if !parsed.HasPlanTitle {
+		return "", nil
+	}
+	return strings.Trim(strings.TrimSpace(parsed.Status), "`\"'"), nil
 }
 
 // frontmatterStatus returns the leading frontmatter `status:` value, or "" when
@@ -195,20 +246,21 @@ func extractBodyStatus(content []byte) string {
 // rule's — see fix).
 func setFrontmatterStatus(content []byte, status string) []byte {
 	lines := strings.Split(string(content), "\n")
-	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+	if len(lines) == 0 || !isLeadingFrontmatterFence(lines[0]) {
 		return content
 	}
 	return []byte(strings.Join(upsertFrontmatterField(lines, "status", status), "\n"))
 }
 
 // upsertFrontmatterField sets `key: value` within the leading frontmatter block
-// (lines[0] == "---" up to the next "---"): an existing top-level `key:` line is
-// rewritten in place, otherwise a new line is inserted just before the closing
-// fence. Other lines are preserved. When there is no closing fence the lines are
-// returned unchanged. The caller guarantees lines[0] opens a fence.
+// (from the opening fence through its `---` or `...` closer): an existing
+// top-level `key:` line is rewritten in place, otherwise a new line is inserted
+// just before the closing fence. Other lines are preserved. When there is no
+// closing fence the lines are returned unchanged. The caller guarantees lines[0]
+// opens a fence.
 func upsertFrontmatterField(lines []string, key, value string) []string {
 	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], "\r") != "---" {
+		if !isFrontmatterFence(lines[i]) {
 			continue
 		}
 		// lines[i] is the closing fence; lines[1:i] is the block body.

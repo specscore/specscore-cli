@@ -28,7 +28,7 @@ func TestWriteLintFileCoordinatesLessonArtifactsAndIndex(t *testing.T) {
 		if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeLintFile(specRoot, path, []byte("before\n"), []byte("after\n"), 0o600); err != nil {
+		if err := writeLintFile("", specRoot, path, []byte("before\n"), []byte("after\n"), 0o600); err != nil {
 			t.Fatalf("rewrite %s: %v", path, err)
 		}
 		got, err := os.ReadFile(path)
@@ -45,7 +45,7 @@ func TestWriteLintFileCoordinatesLessonArtifactsAndIndex(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeLintFile(specRoot, other, nil, []byte("new\n"), 0o600); err != nil {
+	if err := writeLintFile("", specRoot, other, nil, []byte("new\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(other); err != nil || info.Mode().Perm() != 0o600 {
@@ -75,7 +75,7 @@ func TestWriteLintFileSharesLifecycleLock(t *testing.T) {
 	}()
 	<-locked
 	writer := make(chan error, 1)
-	go func() { writer <- writeLintFile(specRoot, path, []byte("before\n"), []byte("after\n"), 0o644) }()
+	go func() { writer <- writeLintFile("", specRoot, path, []byte("before\n"), []byte("after\n"), 0o644) }()
 	select {
 	case err := <-writer:
 		t.Fatalf("lint writer escaped lifecycle lock: %v", err)

@@ -14,6 +14,11 @@ var (
 	writeFileFn = os.WriteFile
 )
 
+// LifecycleTransactionLockIgnorePattern keeps persistent flock identity files
+// out of source control. The files deliberately remain next to the artifacts
+// they protect so old and new CLI processes contend on the same lock.
+const LifecycleTransactionLockIgnorePattern = "**/.*.lifecycle-transaction.lock"
+
 func runGit(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -25,10 +30,11 @@ func localIsTracked(repoRoot string) bool {
 	return runGitFn(repoRoot, "ls-files", "--error-unmatch", LocalFile) == nil
 }
 
-// EnsureLocalGitignored makes sure specscore.local.yaml is git-ignored in
-// repoRoot, appending it to .gitignore when absent. It returns whether the
-// entry was added and a non-empty warning when the file is already git-tracked
-// (which defeats its per-user purpose).
+// EnsureLocalGitignored makes sure SpecScore's user-local configuration and
+// persistent lifecycle lock identities are git-ignored in repoRoot, appending
+// missing entries to .gitignore. It returns whether any entry was added and a
+// non-empty warning when specscore.local.yaml is already git-tracked (which
+// defeats its per-user purpose).
 func EnsureLocalGitignored(repoRoot string) (added bool, warning string, err error) {
 	path := filepath.Join(repoRoot, ".gitignore")
 	data, rerr := os.ReadFile(path)
@@ -37,13 +43,16 @@ func EnsureLocalGitignored(repoRoot string) (added bool, warning string, err err
 	}
 	existing := string(data)
 
-	if !ignoresLocal(existing) {
+	missing := missingGitignoreEntries(existing)
+	if len(missing) > 0 {
 		var b strings.Builder
 		b.WriteString(existing)
 		if existing != "" && !strings.HasSuffix(existing, "\n") {
 			b.WriteString("\n")
 		}
-		b.WriteString(LocalFile + "\n")
+		for _, entry := range missing {
+			b.WriteString(entry + "\n")
+		}
 		if werr := writeFileFn(path, []byte(b.String()), 0o644); werr != nil {
 			return false, "", fmt.Errorf("writing .gitignore: %w", werr)
 		}
@@ -68,12 +77,17 @@ func EnsureLocalGitignoredMsg(repoRoot string) string {
 	return warning
 }
 
-// ignoresLocal reports whether content already ignores specscore.local.yaml.
-func ignoresLocal(content string) bool {
+func missingGitignoreEntries(content string) []string {
+	required := []string{LocalFile, LifecycleTransactionLockIgnorePattern}
+	present := make(map[string]bool, len(required))
 	for _, line := range strings.Split(content, "\n") {
-		if strings.TrimSpace(line) == LocalFile {
-			return true
+		present[strings.TrimSpace(line)] = true
+	}
+	missing := make([]string, 0, len(required))
+	for _, entry := range required {
+		if !present[entry] {
+			missing = append(missing, entry)
 		}
 	}
-	return false
+	return missing
 }

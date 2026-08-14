@@ -3,6 +3,7 @@ package plan
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -99,6 +100,33 @@ func TestParse_PrerequisitePlansRetainsASCIIDashForLint(t *testing.T) {
 	}
 	if got, want := strings.Join(p.PrerequisitePlans, ","), "-"; got != want {
 		t.Fatalf("PrerequisitePlans = %q, want %q", got, want)
+	}
+}
+
+func TestParse_PrerequisitePlansKeepsFirstDeclarationAndTracksDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	p, err := Parse(writePlan(t, filepath.Join(dir, "plans"), "application", `# Plan: Application
+
+**Prerequisite Plans:** foundation
+**Prerequisite Plans:** replacement
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.PrerequisitePlans, []string{"foundation"}; !slices.Equal(got, want) {
+		t.Fatalf("PrerequisitePlans = %v, want first declaration %v", got, want)
+	}
+	if got, want := p.PrerequisiteLines, []int{3, 4}; !slices.Equal(got, want) {
+		t.Fatalf("PrerequisiteLines = %v, want %v", got, want)
+	}
+}
+
+func TestSlugFromPath_DirectoryAndBareReadmeForms(t *testing.T) {
+	if got := slugFromPath(filepath.Join("spec", "plans", "auth", "README.md")); got != "auth" {
+		t.Errorf("directory-form slug = %q, want auth", got)
+	}
+	if got := slugFromPath("README.md"); got != "README.md" {
+		t.Errorf("bare README slug = %q, want README.md", got)
 	}
 }
 
@@ -626,6 +654,377 @@ just some markdown
 	}
 	if p.HasPlanTitle {
 		t.Fatal("non-plan file should have HasPlanTitle=false")
+	}
+}
+
+func TestParse_OnlyFirstH1CanDeclarePlan(t *testing.T) {
+	dir := t.TempDir()
+	body := `# Notes
+
+This document mentions a plan below, but is not one.
+
+# Plan: Hidden
+
+**Status:** Approved
+`
+	p, err := Parse(writePlan(t, dir, "notes", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HasPlanTitle || p.TitleLine != 0 || p.Title != "" {
+		t.Fatalf("later Plan H1 must not declare a Plan: %+v", p)
+	}
+}
+
+func TestParse_OnlyTheFirstMarkdownH1CanDeclarePlan(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantPlanTitle bool
+		wantTitleLine int
+	}{
+		{
+			name: "backtick fenced Plan heading is not a title",
+			body: "```markdown\n# Plan: Example only\n```\n# Notes\n",
+		},
+		{
+			name: "backtick fence close must match opening length",
+			body: "````markdown\n# Notes\n```\n# Plan: Still code\n````\n",
+		},
+		{
+			name: "tilde fenced Plan heading is not a title",
+			body: "~~~markdown\n# Plan: Example only\n~~~\n# Notes\n",
+		},
+		{
+			name:          "indented code heading does not hide first real Plan title",
+			body:          "    # Notes\n# Plan: Delivery\n",
+			wantPlanTitle: true,
+			wantTitleLine: 2,
+		},
+		{
+			name:          "BOM-prefixed Plan title is recognized as the first H1",
+			body:          "\ufeff# Plan: Delivery\n",
+			wantPlanTitle: true,
+			wantTitleLine: 1,
+		},
+		{
+			name: "indented Plan example does not declare a plan",
+			body: "    # Plan: Example only\n# Notes\n",
+		},
+		{
+			name: "three-space Markdown H1 blocks later canonical Plan title",
+			body: "   # Plan: Example only\n# Notes\n",
+		},
+		{
+			name: "tab separated Markdown H1 blocks later canonical Plan title",
+			body: "#\tNotes\n# Plan: Delivery\n",
+		},
+		{
+			name: "multiple-space Markdown H1 blocks later canonical Plan title",
+			body: "#  Notes\n# Plan: Delivery\n",
+		},
+		{
+			name: "bare Markdown H1 blocks later canonical Plan title",
+			body: "#\n# Plan: Delivery\n",
+		},
+		{
+			name: "BOM-prefixed Markdown H1 blocks later canonical Plan title",
+			body: "\ufeff# Notes\n# Plan: Delivery\n",
+		},
+		{
+			name:          "no-separator hash line is not an ATX H1",
+			body:          "#Notes\n# Plan: Delivery\n",
+			wantPlanTitle: true,
+			wantTitleLine: 2,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := Parse(writePlan(t, t.TempDir(), "title", tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.HasPlanTitle != tc.wantPlanTitle || p.TitleLine != tc.wantTitleLine {
+				t.Fatalf("parsed title = (has=%t, line=%d), want (has=%t, line=%d): %+v", p.HasPlanTitle, p.TitleLine, tc.wantPlanTitle, tc.wantTitleLine, p)
+			}
+		})
+	}
+}
+
+func TestParse_StructuralMarkdownCannotCreateOrHidePlanSyntax(t *testing.T) {
+	dir := t.TempDir()
+	body := `---
+# Plan: frontmatter example
+**Prerequisite Plans:** frontmatter
+---
+<!--
+# Plan: commented example
+**Prerequisite Plans:** commented
+-->
+# Plan: Real
+
+**Prerequisite Plans:** foundation
+    ## A code-looking heading must not end the header
+**Prerequisite Plans:** integration
+<!-- **Prerequisite Plans:** hidden -->
+
+## Tasks
+
+~~~markdown
+### Task 99: fenced
+**Id:** fenced
+**Status:** complete
+~~~
+    ### Task 98: indented
+    **Id:** indented
+    **Status:** complete
+<!--
+### Task 97: commented
+**Id:** commented
+**Status:** complete
+-->
+### Task 1: Real work
+
+**Id:** real
+~~~markdown
+**Status:** complete
+~~~
+    **Status:** complete
+<!-- **Status:** complete -->
+**Status:** planning
+`
+	p, err := Parse(writePlan(t, dir, "real", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.HasPlanTitle || p.Title != "Real" {
+		t.Fatalf("title = has:%t title:%q, want canonical real title", p.HasPlanTitle, p.Title)
+	}
+	if got, want := p.PrerequisiteLines, []int{11, 13}; !slices.Equal(got, want) {
+		t.Fatalf("prerequisite lines = %v, want %v", got, want)
+	}
+	if got, want := p.PrerequisitePlans, []string{"foundation"}; !slices.Equal(got, want) {
+		t.Fatalf("prerequisites = %v, want first real header value %v", got, want)
+	}
+	if len(p.Tasks) != 1 {
+		t.Fatalf("tasks = %d, want only the real task: %+v", len(p.Tasks), p.Tasks)
+	}
+	task := p.Tasks[0]
+	if task.Number != 1 || task.Id != "real" || task.Status != StatusPlanning || !task.StatusPresent {
+		t.Fatalf("task = %+v, want real planning task", task)
+	}
+}
+
+func TestParse_SetextH1PreventsLaterPlanTitle(t *testing.T) {
+	dir := t.TempDir()
+	p, err := Parse(writePlan(t, dir, "notes", "Notes\n=====\n\n# Plan: Hidden\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HasPlanTitle {
+		t.Fatalf("later title after Setext H1 must not declare a Plan: %+v", p)
+	}
+	p, err = Parse(writePlan(t, dir, "single-equals", "Notes\n=\n\n# Plan: Hidden\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.HasPlanTitle {
+		t.Fatalf("later title after one-character Setext H1 must not declare a Plan: %+v", p)
+	}
+
+	p, err = Parse(writePlan(t, dir, "code", "```markdown\nNotes\n=====\n```\n# Plan: Real\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.HasPlanTitle || p.Title != "Real" {
+		t.Fatalf("Setext example in code must not hide title: %+v", p)
+	}
+}
+
+func TestCanonicalPlanTitleRequiresExactSeparators(t *testing.T) {
+	cases := []struct {
+		line string
+		want string
+		ok   bool
+	}{
+		{"# Plan: Delivery", "Delivery", true},
+		{"# Plan: Delivery  ", "Delivery", true},
+		{"#\tPlan: Delivery", "", false},
+		{"#  Plan: Delivery", "", false},
+		{"# Plan:Delivery", "", false},
+		{"# Plan:   ", "", false},
+		{"#", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.line, func(t *testing.T) {
+			got, ok := canonicalPlanTitle(tc.line)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("canonicalPlanTitle(%q) = (%q,%t), want (%q,%t)", tc.line, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestStructuralMarkdownMask(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []bool
+	}{
+		{
+			name: "frontmatter including comments is not structure",
+			body: "---\n<!-- frontmatter comment -->\n...\n# Plan: Real",
+			want: []bool{false, false, false, true},
+		},
+		{
+			name: "BOM-prefixed frontmatter including comments is not structure",
+			body: "\ufeff---\n# Plan: frontmatter fake\n<!-- comment -->\n...\n# Plan: Real",
+			want: []bool{false, false, false, false, true},
+		},
+		{
+			name: "multiline comments and a second unmatched opener stay hidden",
+			body: "<!-- one --> <!-- two\ncomment body\n-->\nreal",
+			want: []bool{false, false, false, true},
+		},
+		{
+			name: "backtick fence survives blank and all-space lines until trailing-space close",
+			body: "```go\n\n   \n# fake\n```   \nreal",
+			want: []bool{false, false, false, false, false, true},
+		},
+		{
+			name: "shorter fence never closes a longer opener",
+			body: "````go\n```\n# fake\n````\nreal",
+			want: []bool{false, false, false, false, true},
+		},
+		{
+			name: "tilde fence and all code indentation are hidden",
+			body: "~~~\n# fake\n~~~\n    fake\n\tfake\n  \tfake\n   prose",
+			want: []bool{false, false, false, false, false, false, true},
+		},
+		{
+			name: "canonical stub placeholder remains structural but indented copy is code",
+			body: "<!-- implement: pending -->\n    <!-- implement: pending -->",
+			want: []bool{true, false},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scanStructuralMarkdown(strings.Split(tc.body, "\n")).lines
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("mask = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStructuralMarkdownHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"", false}, {"   ", false}, {"   text", false}, {"    text", true}, {"\ttext", true}, {"  \ttext", true},
+	} {
+		if got := isIndentedCode(tc.line); got != tc.want {
+			t.Errorf("isIndentedCode(%q) = %t, want %t", tc.line, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"---", true}, {" ... ", true}, {"----", false}, {"", false},
+	} {
+		if got := isFrontmatterFence(tc.line); got != tc.want {
+			t.Errorf("isFrontmatterFence(%q) = %t, want %t", tc.line, got, tc.want)
+		}
+	}
+	if !isLeadingFrontmatterFence("\ufeff---") {
+		t.Fatal("BOM-prefixed opening frontmatter fence must be recognized")
+	}
+	for _, tc := range []struct {
+		fragment string
+		want     bool
+	}{
+		{"plain", false}, {"<!-- open", true}, {"<!-- closed -->", false}, {"<!-- one --> <!-- two", true},
+	} {
+		if got := htmlCommentContinues(tc.fragment); got != tc.want {
+			t.Errorf("htmlCommentContinues(%q) = %t, want %t", tc.fragment, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"# Real", true}, {"#\tReal", true}, {"#  Real", true}, {"#", true}, {"# ", true}, {" # Real", true}, {"   # Real", true}, {"    # Real", false}, {"#Real", false}, {"## Real", false},
+	} {
+		if got := isMarkdownATXH1(tc.line); got != tc.want {
+			t.Errorf("isMarkdownATXH1(%q) = %t, want %t", tc.line, got, tc.want)
+		}
+	}
+	if title, ok := canonicalUnindentedATXH2("## Tasks  "); !ok || title != "Tasks" {
+		t.Fatalf("canonical H2 = (%q,%t), want (Tasks,true)", title, ok)
+	}
+	if _, ok := canonicalUnindentedATXH2(" ## Tasks"); ok {
+		t.Fatal("indented H2 must not be structural")
+	}
+	for _, tc := range []struct {
+		line   string
+		marker byte
+		length int
+		want   bool
+	}{
+		{"", '`', 3, false}, {"   ", '`', 3, false}, {"```   ", '`', 3, true}, {"~~~", '`', 3, false}, {"``", '`', 3, false},
+	} {
+		if got := fenceCloses(tc.line, tc.marker, tc.length); got != tc.want {
+			t.Errorf("fenceCloses(%q,%q,%d) = %t, want %t", tc.line, tc.marker, tc.length, got, tc.want)
+		}
+	}
+	structure := structuralMarkdown{lines: []bool{true, true, true, true}}
+	if !isSetextH1([]string{"Notes", "  ====", "# Plan: ignored", ""}, structure, 1) {
+		t.Fatal("expected structural Setext H1")
+	}
+	for _, i := range []int{0, 2, 3} {
+		if isSetextH1([]string{"", "====", "# Plan: ignored", "   "}, structure, i) {
+			t.Errorf("unexpected Setext H1 at line %d", i)
+		}
+	}
+	if isSetextH1([]string{"Notes", "    ====", "", ""}, structure, 1) {
+		t.Fatal("indented Setext underline must be code, not an H1")
+	}
+	if !isSetextH1([]string{"Notes", "=", "", ""}, structure, 1) {
+		t.Fatal("one-character Setext underline must be an H1")
+	}
+}
+
+func TestParse_BOMFrontmatterCannotClaimPlanTitle(t *testing.T) {
+	body := "\ufeff---\n# Plan: Metadata fake\n<!--\n# Plan: Comment fake\n-->\n---\n# Plan: Real\n"
+	p, err := Parse(writePlan(t, t.TempDir(), "bom", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.HasPlanTitle || p.Title != "Real" || p.TitleLine != 7 {
+		t.Fatalf("BOM frontmatter must leave only the body title structural: %+v", p)
+	}
+}
+
+func TestParse_DeferredACsIgnoreNonStructuralExamples(t *testing.T) {
+	body := `# Plan: Deferred
+
+## Deferred AC Coverage
+
+<!-- - fake#ac:comment -->
+~~~markdown
+- fake#ac:fence
+~~~
+    - fake#ac:indent
+- real#ac:kept
+`
+	p, err := Parse(writePlan(t, t.TempDir(), "deferred", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.DeferredACs, []DeferredAC{{ACID: "real#ac:kept", Line: 10}}; !slices.Equal(got, want) {
+		t.Fatalf("deferred ACs = %+v, want %+v", got, want)
 	}
 }
 

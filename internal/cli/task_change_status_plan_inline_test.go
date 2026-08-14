@@ -129,6 +129,199 @@ func TestTaskChangeStatus_PlanInline_MissingPlan(t *testing.T) {
 	}
 }
 
+// A plan-inline task mutation is valid only inside a real Plan artifact. This
+// holds even when an arbitrary Markdown file contains a complete-looking task
+// example; no status or provenance field may be rewritten on refusal.
+func TestTaskChangeStatus_PlanInline_RefusesNonPlanWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"backtick fence", "```markdown\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n```\n# Notes\n"},
+		{"tilde fence", "~~~markdown\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n~~~\n# Notes\n"},
+		{"indented code", "    # Plan: Auth\n    ## Tasks\n    ### Task 1: Example\n    **Id:** setup\n    **Status:** planning\n# Notes\n"},
+		{"HTML comment", "<!--\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n-->\n# Notes\n"},
+		{"frontmatter", "---\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n---\n# Notes\n"},
+		{"earlier Setext H1", "Notes\n=====\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier tab-separated ATX H1", "#\tNotes\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier three-space ATX H1", "   # Notes\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier bare ATX H1", "#\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"earlier one-character Setext H1", "Notes\n=\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+		{"BOM-prefixed frontmatter", "\ufeff---\n# Plan: Metadata fake\n<!-- comment -->\n---\n# Notes\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** planning\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, planPath := stagePlanWithTasks(t, "auth", tc.body)
+			before, err := os.ReadFile(planPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = runTask(t, "change-status", "setup", "--plan", "auth", "--to=queued")
+			if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+				t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+			}
+			after, readErr := os.ReadFile(planPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("non-Plan file changed despite refusal:\n%s", after)
+			}
+		})
+	}
+}
+
+// A traversal-shaped --plan must be rejected as usage before either
+// plan-inline operation constructs its path. The target outside spec/plans is
+// deliberately a complete-looking Plan: byte equality proves neither status
+// nor provenance can be written through the selector.
+func TestTaskChangeStatus_PlanInline_InvalidPlanSlugNeverTouchesExternalFile(t *testing.T) {
+	root, _ := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
+	externalPath := filepath.Join(root, "outside.md")
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		external []byte
+	}{
+		{
+			name: "status transition",
+			args: []string{"change-status", "setup", "--plan", "../../outside", "--to=queued"},
+			external: []byte(`# Plan: Outside
+
+## Tasks
+
+### Task 1: Setup
+
+**Id:** setup
+**Status:** planning
+`),
+		},
+		{
+			name: "provenance amend",
+			args: []string{"change-status", "setup", "--plan", "../../outside", "--amend-provenance", "--commit", "a1b2c3d"},
+			external: []byte(`# Plan: Outside
+
+## Tasks
+
+### Task 1: Setup
+
+**Id:** setup
+**Status:** complete
+**Implemented-by:** old@deadbee
+`),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(externalPath, tc.external, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(externalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = runTask(t, tc.args...)
+			if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+			}
+			after, readErr := os.ReadFile(externalPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("external file changed after invalid --plan refusal:\n%s", after)
+			}
+		})
+	}
+}
+
+// An explicitly supplied blank --plan must never fall back to a same-named
+// board task. The matching board task is deliberately mutable by each command
+// shape; byte equality proves the invalid selector stopped dispatch before any
+// board or plan mutation.
+func TestTaskChangeStatus_ExplicitBlankPlanNeverFallsBackToBoard(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		planFlag string
+		amend    bool
+	}{
+		{name: "status with equals", planFlag: "--plan="},
+		{name: "status with whitespace", planFlag: "--plan= \t"},
+		{name: "amend with equals", planFlag: "--plan=", amend: true},
+		{name: "amend with whitespace", planFlag: "--plan= \t", amend: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status := "in_progress"
+			planBody := twoTaskPlanBody
+			if tc.amend {
+				status = "complete"
+				planBody = completeTaskPlanBody
+			}
+			root, boardTaskPath := stageTaskWithStatus(t, "setup", status)
+			if tc.amend {
+				if err := writeBoardImplementedBy(boardTaskPath, "backstage@wrongsha"); err != nil {
+					t.Fatalf("seed board provenance: %v", err)
+				}
+			}
+
+			plansDir := filepath.Join(root, "spec", "plans")
+			if err := os.MkdirAll(plansDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			planPath := filepath.Join(plansDir, "auth.md")
+			if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			boardIndexPath := filepath.Join(root, "tasks", "README.md")
+			boardIndexBefore, err := os.ReadFile(boardIndexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			boardBefore, err := os.ReadFile(boardTaskPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			planBefore, err := os.ReadFile(planPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			args := []string{"change-status", "setup", tc.planFlag}
+			if tc.amend {
+				args = append(args, "--amend-provenance", "--commit", "a1b2c3d")
+			} else {
+				args = append(args, "--to=complete")
+			}
+			_, _, err = runTask(t, args...)
+			if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit = %d, want %d (InvalidArgs); err=%v", got, exitcode.InvalidArgs, err)
+			}
+
+			boardIndexAfter, readErr := os.ReadFile(boardIndexPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(boardIndexAfter) != string(boardIndexBefore) {
+				t.Fatalf("board index changed despite invalid --plan refusal:\n%s", boardIndexAfter)
+			}
+			boardAfter, readErr := os.ReadFile(boardTaskPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(boardAfter) != string(boardBefore) {
+				t.Fatalf("matching board task changed despite invalid --plan refusal:\n%s", boardAfter)
+			}
+			planAfter, readErr := os.ReadFile(planPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(planAfter) != string(planBefore) {
+				t.Fatalf("plan changed despite invalid --plan refusal:\n%s", planAfter)
+			}
+		})
+	}
+}
+
 // Illegal transition on a plan-inline task → exit 4 (InvalidState), block unchanged.
 func TestTaskChangeStatus_PlanInline_IllegalTransition(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
@@ -139,6 +332,187 @@ func TestTaskChangeStatus_PlanInline_IllegalTransition(t *testing.T) {
 	}
 	if got := planTaskStatus(t, planPath, "deploy"); got != "planning" {
 		t.Errorf("deploy changed on rejection: %q", got)
+	}
+}
+
+// A plan-inline task enters execution only after every declared prerequisite
+// derives Implemented. The refusal is before the rewrite, so the target plan
+// stays byte-identical and the diagnostic lists the prerequisite and status.
+func TestTaskChangeStatus_PlanInline_InProgressRequiresImplementedPrerequisites(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	plansDir := filepath.Join(root, "spec", "plans")
+	foundation := `# Plan: Foundation
+
+**Status:** Approved
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** queued
+`
+	if err := os.WriteFile(filepath.Join(plansDir, "foundation.md"), []byte(foundation), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d (InvalidState); err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "foundation") || !strings.Contains(err.Error(), "Approved") {
+		t.Errorf("diagnostic must name unmet prerequisite/status: %v", err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(original) {
+		t.Errorf("task plan changed despite readiness refusal:\n%s", after)
+	}
+}
+
+// A reachable prerequisite cycle is invalid even if the directly named plan's
+// own task rollup derives Implemented. The execution entrypoint must not use
+// that direct status as a bypass, and it must leave the task unchanged.
+func TestTaskChangeStatus_PlanInline_InProgressRejectsPrerequisiteCycle(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	foundation := `# Plan: Foundation
+
+**Status:** Implemented
+**Prerequisite Plans:** auth
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** complete
+`
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte(foundation), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "prerequisite cycle: auth -> foundation -> auth") {
+		t.Errorf("cycle diagnostic = %v", err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Error("task plan changed despite prerequisite-cycle refusal")
+	}
+}
+
+// A malformed prerequisite artifact is a lifecycle refusal (4), not an
+// operational failure (10), and the task status remains untouched.
+func TestTaskChangeStatus_PlanInline_PreservesInvalidStateFakeHeadingReadinessError(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte("```markdown\n# Plan: Foundation\n```\n# Notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Error("task plan changed despite invalid-state readiness refusal")
+	}
+}
+
+// A duplicate prerequisite header is malformed even if a later header says
+// none. Readiness must refuse before the target task rewrite and retain the
+// first declaration for the authoring diagnostic.
+func TestTaskChangeStatus_PlanInline_DuplicatePrerequisiteHeaderRefusesWithoutMutation(t *testing.T) {
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Prerequisite Plans:** —\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	foundation := `# Plan: Foundation
+
+**Status:** Implemented
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** complete
+`
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte(foundation), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "duplicate field") {
+		t.Errorf("diagnostic = %v, want duplicate declaration", err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Error("task plan changed despite duplicate prerequisite refusal")
+	}
+}
+
+func TestTaskChangeStatus_PlanInline_ReadinessReadFailureIsAtomic(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission denial is not enforceable for root")
+	}
+	body := strings.Replace(twoTaskPlanBody, "**Status:** Executing\n**Source Feature:** auth", "**Status:** Executing\n**Prerequisite Plans:** foundation\n**Source Feature:** auth", 1)
+	body = strings.Replace(body, "**Status:** planning\n**Depends-On:** 1", "**Status:** queued\n**Depends-On:** 1", 1)
+	root, planPath := stagePlanWithTasks(t, "auth", body)
+	foundationPath := filepath.Join(root, "spec", "plans", "foundation.md")
+	if err := os.WriteFile(foundationPath, []byte("# Plan: Foundation\n\n**Status:** Approved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(foundationPath, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(foundationPath, 0o644) })
+	original, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "deploy", "--plan", "auth", "--to=in_progress")
+	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(original) {
+		t.Errorf("task plan changed despite readiness read failure")
 	}
 }
 

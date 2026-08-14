@@ -3,6 +3,7 @@ package plan
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -117,6 +118,16 @@ func TestParse_FileNotFound(t *testing.T) {
 	_, err := Parse(filepath.Join(t.TempDir(), "nonexistent.md"))
 	if err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestParse_PropagatesScannerErrorFromRealFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", (1<<20)+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(path); err == nil {
+		t.Fatal("expected scanner error for line larger than parser limit")
 	}
 }
 

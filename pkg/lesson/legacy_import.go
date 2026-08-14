@@ -482,6 +482,8 @@ type legacyApplyState struct {
 	occurrenceAlready map[string]bool
 }
 
+var inspectLegacyApplyPlanForPublic = inspectLegacyApplyPlan
+
 // PreflightLegacyApply validates the complete reviewed mapping, configured
 // classification vocabulary, immutable source bytes, targets, and manifest
 // collisions without writing. CLI adapters call it before preparing an event;
@@ -500,7 +502,7 @@ func InspectLegacyApply(lessonsDir string, allowedClassifications []string, inv 
 	if err != nil {
 		return LegacyApplyInspection{}, err
 	}
-	state, err := inspectLegacyApplyPlan(lessonsDir, inv, plan, osLessonFS{}, findOccurrenceWithFS)
+	state, err := inspectLegacyApplyPlanForPublic(lessonsDir, inv, plan, osLessonFS{}, findOccurrenceWithFS)
 	if err != nil {
 		return LegacyApplyInspection{}, err
 	}

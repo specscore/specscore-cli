@@ -1,7 +1,6 @@
 package lifecycle
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -176,19 +175,19 @@ func RollbackBytes(current []byte, originalStatusLine string) ([]byte, error) {
 }
 
 // findFrontmatterStatusLineIndex returns the index of the `status:` line inside
-// a leading `---`-fenced YAML frontmatter block, or -1 when the file has no
-// such block or the block carries no `status:` key. The search stops at the
+// a leading YAML frontmatter block, or -1 when the file has no such block or
+// the block carries no `status:` key. The search stops at either `---` or `...`
 // closing fence so a body line is never mistaken for the mirror.
 func findFrontmatterStatusLineIndex(lines []string) int {
 	if len(lines) == 0 {
 		return -1
 	}
-	if body, _ := splitTerminator(lines[0]); body != "---" {
+	if body, _ := splitTerminator(lines[0]); !IsLeadingFrontmatterFence(body) {
 		return -1
 	}
 	for i := 1; i < len(lines); i++ {
 		body, _ := splitTerminator(lines[i])
-		if body == "---" {
+		if IsFrontmatterFence(body) {
 			return -1
 		}
 		if fmStatusLineRe.MatchString(body) {
@@ -217,34 +216,33 @@ func bodyStatusValue(statusLine string) string {
 	return strings.TrimSpace(m[2])
 }
 
-// readStatus opens the file and returns the value text of the first
-// `**Status:**` line. Returns ErrStatusLineNotFound if no such line is
-// present.
+// readStatus opens the file and returns the selected body status. Canonical
+// Plan/Lesson artifacts use the same structurally masked header scope as the
+// compound writers; other kinds retain first-match behavior.
 func readStatus(artifactPath string) (Status, error) {
-	f, err := os.Open(artifactPath)
+	data, err := os.ReadFile(artifactPath)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if m := statusLineRe.FindStringSubmatch(line); m != nil {
-			return Status(strings.TrimSpace(m[2])), nil
-		}
+	lines := splitKeepTerminators(data)
+	idx := findStatusLineIndex(lines)
+	if idx < 0 {
+		return "", ErrStatusLineNotFound
 	}
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
-	return "", ErrStatusLineNotFound
+	body, _ := splitTerminator(lines[idx])
+	m := statusLineRe.FindStringSubmatch(body)
+	return Status(strings.TrimSpace(m[2])), nil
 }
 
 // findStatusLineIndex returns the index in lines of the first line whose
 // body (terminator stripped) matches statusLineRe, or -1 if no such line
 // exists.
 func findStatusLineIndex(lines []string) int {
+	structure := StructuralMarkdownMask(lines, "")
+	start, end := canonicalLifecycleHeaderRange(lines, structure)
+	if start >= 0 {
+		return findStatusLineIndexInHeader(lines, structure, start, end)
+	}
 	for i, ln := range lines {
 		body, _ := splitTerminator(ln)
 		if statusLineRe.MatchString(body) {

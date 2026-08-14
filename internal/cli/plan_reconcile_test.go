@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // planTasksPlaceholder is the exact TODO comment `plan new` scaffolds inside
@@ -103,6 +106,9 @@ func TestPlanReconcile_HappyPath_CLI(t *testing.T) {
 	if !strings.Contains(s, "**Status:** Implemented") {
 		t.Errorf("status not rewritten:\n%s", s)
 	}
+	if !strings.Contains(s, "status: Implemented") || strings.Contains(s, "status: Draft") {
+		t.Errorf("frontmatter status mirror was not atomically reconciled with the body status:\n%s", s)
+	}
 	if strings.Count(s, "**Status:** complete") != 8 {
 		t.Errorf("expected 8 completed tasks:\n%s", s)
 	}
@@ -123,6 +129,99 @@ func TestPlanReconcile_HappyPath_CLI(t *testing.T) {
 		if v.Severity == "error" {
 			t.Errorf("unexpected lint error after reconcile: %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message)
 		}
+	}
+}
+
+func TestPlanReconcile_TreeTransactionPublishesDeclaredPlanChanges(t *testing.T) {
+	root := stageReconcilablePlan(t, "auth", "Draft", "planning", "planning")
+	stdout, stderr, err := runPlan(t, "reconcile", "auth", "--tasks=complete",
+		"--note", "delivered outside the tracked flow", "--tree-transaction")
+	if err != nil {
+		t.Fatalf("tree transaction reconcile: %v (stderr=%s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "auth: Draft → Implemented") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	receipts, err := readLifecycleReceipts(root)
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("tree transaction receipts = %#v, %v", receipts, err)
+	}
+	receipt := receipts[0]
+	if receipt.State != "committed" || !slices.Equal(receipt.DeclaredWriteSet, []string{"plans/README.md", "plans/auth.md"}) {
+		t.Fatalf("tree transaction receipt = %#v", receipt)
+	}
+	live, err := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	if err != nil || !strings.Contains(string(live), "**Status:** Implemented") {
+		t.Fatalf("published Plan = %v\n%s", err, live)
+	}
+	predecessor, err := os.ReadFile(filepath.Join(receipt.RecoveryRoot, "spec", "plans", "auth.md"))
+	if err != nil || !strings.Contains(string(predecessor), "**Status:** Draft") {
+		t.Fatalf("retained predecessor = %v\n%s", err, predecessor)
+	}
+	index, err := os.ReadFile(filepath.Join(root, "spec", "plans", "README.md"))
+	if err != nil || !strings.Contains(string(index), "| [auth](auth.md) | Implemented |") {
+		t.Fatalf("published plans index = %v\n%s", err, index)
+	}
+}
+
+func TestPlanReconcile_TreeTransactionValidationCreatesNoRecoveryState(t *testing.T) {
+	root := stageReconcilablePlan(t, "auth", "Draft", "failed")
+	_, _, err := runPlan(t, "reconcile", "auth", "--tasks=complete", "--note", "unsupported claim", "--tree-transaction")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want %d: %v", got, exitcode.InvalidState, err)
+	}
+	entries, readErr := os.ReadDir(root)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".specscore-recovery" || strings.HasPrefix(entry.Name(), ".specscore-txn-") {
+			t.Fatalf("validation refusal created recovery state: %s", entry.Name())
+		}
+	}
+}
+
+func TestPlanReconcile_TreeTransactionStagedFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(t *testing.T)
+	}{
+		{
+			name: "staged snapshot parse",
+			arrange: func(t *testing.T) {
+				original := planReconcileFn
+				t.Cleanup(func() { planReconcileFn = original })
+				planReconcileFn = func(opts plan.ReconcileOptions) (plan.ReconcileResult, error) {
+					return plan.ReconcileResult{}, opts.ValidateSnapshot("invalid.md", []byte(strings.Repeat("x", (1<<20)+1)))
+				}
+			},
+		},
+		{
+			name: "staged reconcile",
+			arrange: func(t *testing.T) {
+				original := planReconcileFn
+				t.Cleanup(func() { planReconcileFn = original })
+				planReconcileFn = func(plan.ReconcileOptions) (plan.ReconcileResult, error) {
+					return plan.ReconcileResult{}, errors.New("staged reconcile failed")
+				}
+			},
+		},
+		{
+			name: "staged index sync",
+			arrange: func(t *testing.T) {
+				original := planSyncIndexFn
+				t.Cleanup(func() { planSyncIndexFn = original })
+				planSyncIndexFn = func(string) (bool, error) { return false, errors.New("staged sync failed") }
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stageReconcilablePlan(t, "auth", "Draft", "planning")
+			tc.arrange(t)
+			if _, _, err := runPlan(t, "reconcile", "auth", "--tasks=complete", "--note", "reason", "--tree-transaction"); err == nil {
+				t.Fatal("tree transaction unexpectedly succeeded")
+			}
+		})
 	}
 }
 
@@ -261,6 +360,86 @@ func TestPlanReconcile_LintFailureRollsBack_CLI(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "**Reconciled:**") {
 		t.Errorf("reconciled marker missing from committed transaction:\n%s", body)
+	}
+}
+
+// Reconcile is an out-of-band record correction, not a way around a Plan's
+// execution prerequisites. Its readiness refusal happens before any rewrite.
+func TestPlanReconcile_UnmetPrerequisiteRefusesWithoutMutation_CLI(t *testing.T) {
+	root := stageReconcilablePlan(t, "delivery", "Draft", "planning")
+	deliveryPath := filepath.Join(root, "spec", "plans", "delivery.md")
+	body, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "**Status:** Draft", "**Status:** Draft\n**Prerequisite Plans:** foundation", 1))
+	if err := os.WriteFile(deliveryPath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foundation := `# Plan: Foundation
+
+**Status:** Approved
+
+## Tasks
+
+### Task 1: Work
+
+**Status:** queued
+`
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte(foundation), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runPlan(t, "reconcile", "delivery", "--tasks=complete", "--note", "x")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "foundation") || !strings.Contains(err.Error(), "Approved") {
+		t.Errorf("diagnostic must name unmet prerequisite/status: %v", err)
+	}
+	after, readErr := os.ReadFile(deliveryPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(original) {
+		t.Errorf("reconcile changed plan despite readiness refusal:\n%s", after)
+	}
+}
+
+// A malformed prerequisite artifact is a lifecycle refusal (4), not an
+// operational failure (10), and reconcile must not write any bytes first.
+func TestPlanReconcile_PreservesInvalidStateReadinessErrorWithoutMutation_CLI(t *testing.T) {
+	root := stageReconcilablePlan(t, "delivery", "Draft", "planning")
+	deliveryPath := filepath.Join(root, "spec", "plans", "delivery.md")
+	body, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "**Status:** Draft", "**Status:** Draft\n**Prerequisite Plans:** foundation", 1))
+	if err := os.WriteFile(deliveryPath, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "spec", "plans", "foundation.md"), []byte("# Notes\n\n# Plan: Foundation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(deliveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = runPlan(t, "reconcile", "delivery", "--tasks=complete", "--note", "x")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	after, readErr := os.ReadFile(deliveryPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Error("reconcile changed plan despite invalid-state readiness refusal")
 	}
 }
 

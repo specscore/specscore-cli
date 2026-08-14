@@ -31,6 +31,7 @@ package plan
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -99,9 +100,10 @@ type ReconcileOptions struct {
 	// validation/transformation. It must not mutate the artifact.
 	ValidateSnapshot SnapshotValidator
 
-	// PostMutation is the post-rewrite hook (typically a spec-lint pass,
-	// which also syncs the frontmatter `status:` mirror and the plans
-	// index). Required; Reconcile returns exit 10 if nil.
+	// PostMutation is the post-rewrite hook (typically a spec-lint pass that
+	// syncs the plans index). The lifecycle write itself keeps the frontmatter
+	// `status:` mirror in lockstep with the canonical Plan body status.
+	// Required; Reconcile returns exit 10 if nil.
 	PostMutation PostMutationHook
 
 	// transformArtifact is an instance-scoped fault dependency for package
@@ -141,6 +143,45 @@ type ReconcileResult struct {
 	// normal all-task delivery reconciliation; Blocked is used only by the
 	// explicit ReopenTasks correction path.
 	Target TaskStatus
+}
+
+// PreviewReconcile runs the complete read-only reconciliation validation and
+// composition against the current Plan bytes. It is used by whole-tree
+// transactions to reject an invalid command before creating recovery state;
+// it never acquires a write lock, writes the Plan, or invokes PostMutation.
+func PreviewReconcile(opts ReconcileOptions) (ReconcileResult, error) {
+	if opts.SpecRoot == "" {
+		return ReconcileResult{}, exitcode.UnexpectedErrorf("PreviewReconcile: SpecRoot required")
+	}
+	if opts.Slug == "" {
+		return ReconcileResult{}, exitcode.InvalidArgsErrorf("PreviewReconcile: slug required")
+	}
+	if strings.TrimSpace(opts.Note) == "" {
+		return ReconcileResult{}, exitcode.InvalidArgsError(
+			"PreviewReconcile: --note required — describe why the plan is being reconciled")
+	}
+	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
+	flatPath := filepath.Join(plansDir, opts.Slug+".md")
+	resolved, err := resolvePlanFile(plansDir, opts.Slug)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	if resolved != flatPath {
+		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+			"plan %q uses the directory form (spec/plans/%s/README.md); `plan reconcile` only supports the flat single-file form",
+			opts.Slug, opts.Slug)
+	}
+	before, err := os.ReadFile(flatPath)
+	if err != nil {
+		return ReconcileResult{}, exitcode.UnexpectedErrorf("reading plan %s for reconciliation preview: %v", opts.Slug, err)
+	}
+	if opts.ValidateSnapshot != nil {
+		if err := opts.ValidateSnapshot(flatPath, before); err != nil {
+			return ReconcileResult{}, err
+		}
+	}
+	result, _, err := reconcileBytes(opts, flatPath, before)
+	return result, err
 }
 
 // Reconcile performs a Plan-kind out-of-band status correction end-to-end.
@@ -236,6 +277,9 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	if err != nil {
 		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", flatPath, err)
 	}
+	if err := requirePlanArtifact(p, "target"); err != nil {
+		return ReconcileResult{}, nil, err
+	}
 	if p.StatusCount == 0 {
 		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("plan %s has no **Status:** line", flatPath)
 	}
@@ -310,10 +354,29 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 			lines[t.StatusLine-1] = "**Status:** " + string(StatusBlocked)
 		}
 		lines[p.StatusLine-1] = "**Status:** " + string(to)
-		lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
+		var mirrorErr error
+		lines, mirrorErr = setReconcileFrontmatterStatus(lines, string(to))
+		if mirrorErr != nil {
+			return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("preparing Plan frontmatter mirror: %v", mirrorErr)
+		}
+		lines = insertReconciledMarkerIfAbsent(lines, p.TitleLine-1, p.StatusLine-1, reconcileTodayUTC())
 		noteText := reconcileNoteTextWithTarget(from, to, changed, StatusBlocked, opts.Note, opts.Evidence, nil)
-		updated, _, _ := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
+		updated, _, _ := lifecycle.AppendResolutionNoteAfterLineBytes([]byte(strings.Join(lines, "\n")), noteText, p.TitleLine)
 		return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changed, Target: StatusBlocked}, updated, nil
+	}
+
+	// Reconcile writes the Plan directly to the Implemented execution band.
+	// It is an out-of-band history correction, not a prerequisite bypass: the
+	// same readiness evaluator used by dispatch entrypoints must pass before
+	// any transformed bytes are produced or written, preserving atomic refusal.
+	readiness, err := p.PrerequisiteReadiness(filepath.Join(opts.SpecRoot, "spec", "plans"))
+	if err != nil {
+		return ReconcileResult{}, nil, preserveReadinessError(opts.Slug, err)
+	}
+	if !readiness.Ready {
+		return ReconcileResult{}, nil, exitcode.InvalidStateErrorf(
+			"plan %q is not ready to reconcile to Implemented; unmet prerequisite plan(s): %s; each must derive Implemented from its task rollup",
+			opts.Slug, readiness.UnmetMessage())
 	}
 
 	// A task recorded as failed or aborted is a deliberate, meaningful claim
@@ -370,18 +433,12 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 			"plan %q is already reconciled: status is %q and every task is complete; re-running is a no-op", opts.Slug, string(to))
 	}
 
-	lines := strings.Split(string(original), "\n")
-	for _, t := range p.Tasks {
-		if t.Status == StatusComplete {
-			continue
-		}
-		lines[t.StatusLine-1] = "**Status:** " + string(StatusComplete)
+	updated, err := reconcilePlanContent(original, p, to, reconcileTodayUTC())
+	if err != nil {
+		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("preparing plan reconciliation: %v", err)
 	}
-	lines[p.StatusLine-1] = "**Status:** " + string(to)
-	lines = insertReconciledMarkerIfAbsent(lines, p.StatusLine-1, reconcileTodayUTC())
-
 	noteText := reconcileNoteTextWithTarget(from, to, changedTasks, StatusComplete, opts.Note, opts.Evidence, overrides)
-	updated, _, _ := lifecycle.AppendResolutionNoteBytes([]byte(strings.Join(lines, "\n")), noteText)
+	updated, _, _ = lifecycle.AppendResolutionNoteAfterLineBytes(updated, noteText, p.TitleLine)
 
 	return ReconcileResult{Slug: opts.Slug, From: from, To: to, TasksReconciled: changedTasks, Overrides: overrides, Target: StatusComplete}, updated, nil
 }
@@ -401,20 +458,194 @@ func firstReconcileTask(numbers map[int]bool) int {
 	return 0
 }
 
+// reconcilePlanContent derives every first-write change from one original byte
+// snapshot: each incomplete task becomes complete, the canonical Plan Status
+// becomes Implemented, the leading-frontmatter status mirror follows it, and
+// the reconciliation marker is inserted once. No source line is selected by a
+// broad text search: Parse supplied every body line from the same structural
+// Markdown mask used for lifecycle admission.
+func reconcilePlanContent(original []byte, p *Plan, to lifecycle.Status, date string) ([]byte, error) {
+	lines := strings.Split(string(original), "\n")
+	for _, t := range p.Tasks {
+		if t.Status == StatusComplete {
+			continue
+		}
+		if t.StatusLine <= 0 || t.StatusLine > len(lines) {
+			return nil, fmt.Errorf("Task %d status line %d is outside 1..%d", t.Number, t.StatusLine, len(lines))
+		}
+		updated, err := replaceReconciledStatusLine(lines[t.StatusLine-1], string(StatusComplete))
+		if err != nil {
+			return nil, fmt.Errorf("Task %d status line: %w", t.Number, err)
+		}
+		lines[t.StatusLine-1] = updated
+	}
+	if p.StatusLine <= 0 || p.StatusLine > len(lines) {
+		return nil, fmt.Errorf("Plan status line %d is outside 1..%d", p.StatusLine, len(lines))
+	}
+	updatedStatus, err := replaceReconciledStatusLine(lines[p.StatusLine-1], string(to))
+	if err != nil {
+		return nil, fmt.Errorf("Plan status line: %w", err)
+	}
+	lines[p.StatusLine-1] = updatedStatus
+	lines = insertReconciledMarkerIfAbsent(lines, p.TitleLine-1, p.StatusLine-1, date)
+
+	// A reconciled flat Plan must leave both status surfaces synchronized in
+	// this very write. A legacy/malformed frontmatter block is rejected before
+	// persistence rather than allowing body-only status drift for a later lint
+	// pass to repair.
+	lines, err = setReconcileFrontmatterStatus(lines, string(to))
+	if err != nil {
+		return nil, err
+	}
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
+// replaceReconciledStatusLine preserves the header spelling, post-colon
+// whitespace, trailing horizontal whitespace, and CR byte of a parsed Plan
+// Status field. The parser only records structurally canonical, column-zero
+// Plan/task fields; this defensive check makes any read/write disagreement a
+// fail-closed error before the compound write happens.
+func replaceReconciledStatusLine(line, status string) (string, error) {
+	const prefix = "**Status:**"
+	cr := ""
+	if strings.HasSuffix(line, "\r") {
+		cr = "\r"
+		line = strings.TrimSuffix(line, cr)
+	}
+	if !strings.HasPrefix(line, prefix) {
+		return "", fmt.Errorf("expected %q field", prefix)
+	}
+	rest := line[len(prefix):]
+	valueStart := 0
+	for valueStart < len(rest) && (rest[valueStart] == ' ' || rest[valueStart] == '\t') {
+		valueStart++
+	}
+	if valueStart == len(rest) {
+		return "", fmt.Errorf("missing status value")
+	}
+	valueEnd := len(rest)
+	for valueEnd > valueStart && (rest[valueEnd-1] == ' ' || rest[valueEnd-1] == '\t') {
+		valueEnd--
+	}
+	return prefix + rest[:valueStart] + status + rest[valueEnd:] + cr, nil
+}
+
+// setReconcileFrontmatterStatus updates the unique top-level `status:` field
+// in a complete leading frontmatter block, or inserts it immediately before
+// the closing fence when absent. A BOM-prefixed opening fence is recognized
+// but never normalized, and a missing/malformed block fails closed before any
+// mutation is persisted.
+func setReconcileFrontmatterStatus(lines []string, status string) ([]string, error) {
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("Plan has no leading frontmatter block")
+	}
+	first := strings.TrimSuffix(lines[0], "\r")
+	if !lifecycle.IsLeadingFrontmatterFence(first) {
+		return nil, fmt.Errorf("Plan has no complete leading frontmatter block")
+	}
+	closing := -1
+	statusLine := -1
+	for i := 1; i < len(lines); i++ {
+		body := strings.TrimSuffix(lines[i], "\r")
+		if lifecycle.IsFrontmatterFence(body) {
+			closing = i
+			break
+		}
+		if isTopLevelFrontmatterKey(body, "status") {
+			if statusLine >= 0 {
+				return nil, fmt.Errorf("Plan frontmatter has duplicate top-level status fields")
+			}
+			statusLine = i
+		}
+	}
+	if closing < 0 {
+		return nil, fmt.Errorf("Plan frontmatter opening fence is not closed")
+	}
+	if statusLine >= 0 {
+		lines[statusLine] = replaceReconcileFrontmatterStatus(lines[statusLine], status)
+		return lines, nil
+	}
+
+	terminator := reconcileInsertionTerminator(lines, closing)
+	inserted := append([]string{}, lines[:closing]...)
+	inserted = append(inserted, "status: "+status+terminator)
+	inserted = append(inserted, lines[closing:]...)
+	return inserted, nil
+}
+
+func isTopLevelFrontmatterKey(line, key string) bool {
+	if line == "" || line[0] == ' ' || line[0] == '\t' || line[0] == '#' {
+		return false
+	}
+	colon := strings.IndexByte(line, ':')
+	return colon > 0 && strings.TrimSpace(line[:colon]) == key
+}
+
+func replaceReconcileFrontmatterStatus(line, status string) string {
+	cr := ""
+	if strings.HasSuffix(line, "\r") {
+		cr = "\r"
+		line = strings.TrimSuffix(line, cr)
+	}
+	colon := strings.IndexByte(line, ':')
+	rest := line[colon+1:]
+	valueStart := 0
+	for valueStart < len(rest) && (rest[valueStart] == ' ' || rest[valueStart] == '\t') {
+		valueStart++
+	}
+	valueEnd := len(rest)
+	for valueEnd > valueStart && (rest[valueEnd-1] == ' ' || rest[valueEnd-1] == '\t') {
+		valueEnd--
+	}
+	return line[:colon+1] + rest[:valueStart] + status + rest[valueEnd:] + cr
+}
+
+func reconcileInsertionTerminator(lines []string, around int) string {
+	for _, index := range []int{around, around - 1, 0} {
+		if index >= 0 && index < len(lines) && strings.HasSuffix(lines[index], "\r") {
+			return "\r"
+		}
+	}
+	return ""
+}
+
+// preserveReadinessError keeps contract-level refusals such as a non-Plan
+// prerequisite at InvalidState. Only untyped filesystem/parser failures are
+// unexpected runtime failures. Call this before a reconcile mutation so an
+// execution gate cannot accidentally erase its own machine-readable reason.
+func preserveReadinessError(slug string, err error) error {
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return err
+	}
+	return exitcode.UnexpectedErrorf("checking prerequisite readiness for plan %q: %v", slug, err)
+}
+
 // insertReconciledMarkerIfAbsent inserts a `**Reconciled:** <date>` header
 // line immediately after lines[statusIdx] (the plan's 0-based **Status:**
-// line), unless a `**Reconciled:**` line already exists anywhere in the file.
+// line), unless the canonical post-title Plan header already contains a
+// `**Reconciled:**` line. A pre-title sample or a body example must not
+// suppress the actual audit marker.
 // The marker records only the date of the FIRST reconciliation; later
 // reconciliations (e.g. after more tasks are added) still get their own
 // dated paragraph in `## Resolution`, so nothing is lost — the header stays a
 // single, stable, grep-able "this plan was reconciled at least once" signal.
-func insertReconciledMarkerIfAbsent(lines []string, statusIdx int, date string) []string {
-	for _, ln := range lines {
-		if strings.HasPrefix(strings.TrimSpace(ln), reconciledMarkerPrefix) {
+func insertReconciledMarkerIfAbsent(lines []string, titleIdx, statusIdx int, date string) []string {
+	structure := scanStructuralMarkdown(lines)
+	for i := titleIdx + 1; i < len(lines); i++ {
+		if !structure.isStructural(i) {
+			continue
+		}
+		body := strings.TrimSuffix(lines[i], "\r")
+		if _, ok := canonicalUnindentedATXH2(body); ok {
+			break
+		}
+		name, _, ok := matchBoldField(body)
+		if ok && name == "Reconciled" {
 			return lines
 		}
 	}
-	marker := reconciledMarkerPrefix + " " + date
+	marker := reconciledMarkerPrefix + " " + date + reconcileInsertionTerminator(lines, statusIdx)
 	out := make([]string, 0, len(lines)+1)
 	out = append(out, lines[:statusIdx+1]...)
 	out = append(out, marker)

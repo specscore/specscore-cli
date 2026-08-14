@@ -34,6 +34,12 @@ import (
 // require a human decision.
 type acHeadingChecker struct{}
 
+// walkACFeatureReadmes is a narrow test seam around the shared filesystem
+// walker. Production always uses walkFeatureReadmes; the seam lets the checker
+// prove that traversal errors remain visible rather than being mistaken for a
+// clean rule result.
+var walkACFeatureReadmes = walkFeatureReadmes
+
 func newACHeadingFormatChecker() *acHeadingChecker { return &acHeadingChecker{} }
 
 func (c *acHeadingChecker) name() string     { return "ac-heading-format" }
@@ -65,7 +71,7 @@ var acVerifiesParentheticalRe = regexp.MustCompile(`^\(verifies\b.*\)$`)
 
 func (c *acHeadingChecker) check(specRoot string) ([]Violation, error) {
 	var out []Violation
-	err := walkFeatureReadmes(specRoot, func(readmePath string, content []byte) {
+	err := walkACFeatureReadmes(specRoot, func(readmePath string, content []byte) {
 		if !isFeatureReadmeContent(content) {
 			return
 		}

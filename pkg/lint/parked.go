@@ -22,6 +22,8 @@ import (
 //     (cli/parked#req:stale-surfaced).
 var parkedRuleNames = []string{"parked-shape", "parked-stale"}
 
+var parkedWalkMatchingFiles = walkMatchingFiles
+
 // dateLayout is the repo-wide ISO-8601 date convention (see
 // pkg/lifecycle.parkedTodayUTC and every kind's scaffold).
 const dateLayout = "2006-01-02"
@@ -30,15 +32,21 @@ const dateLayout = "2006-01-02"
 // kind that carries a **Status:** header block — the same generic,
 // kind-agnostic scan `gradeChecker` uses for **Grade:**, since `**Parked:**`
 // is likewise a plain body-metadata line rather than a per-kind construct.
-type parkedChecker struct{}
+type parkedChecker struct{ projectRoot string }
 
-func newParkedChecker() *parkedChecker { return &parkedChecker{} }
+func newParkedChecker(projectRoot ...string) *parkedChecker {
+	var root string
+	if len(projectRoot) > 0 {
+		root = projectRoot[0]
+	}
+	return &parkedChecker{projectRoot: root}
+}
 
 func (c *parkedChecker) name() string     { return "parked-shape" }
 func (c *parkedChecker) severity() string { return "error" }
 
 func (c *parkedChecker) check(specRoot string) ([]Violation, error) {
-	projectRoot := filepath.Dir(specRoot)
+	projectRoot := lintProjectRoot(c.projectRoot, specRoot)
 	cfg, err := projectdef.ReadSpecConfig(projectRoot)
 	if err != nil {
 		// No / unreadable specscore.yaml: other rules surface that; this
@@ -48,7 +56,7 @@ func (c *parkedChecker) check(specRoot string) ([]Violation, error) {
 	staleDays := cfg.EffectiveParkedStaleDays()
 
 	var violations []Violation
-	walkErr := walkMatchingFiles(specRoot,
+	walkErr := parkedWalkMatchingFiles(specRoot,
 		func(_ string, _ int, name string) bool { return strings.HasSuffix(name, ".md") },
 		func(path string, content []byte) {
 			rel, _ := filepath.Rel(specRoot, path)

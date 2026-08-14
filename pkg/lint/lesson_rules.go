@@ -85,6 +85,7 @@ const canonicalLessonStatusList = "Recorded, Stated, Enforced, Withdrawn, Supers
 // for all four rule names; the linter framework dedupes by pointer identity
 // so a single walk produces every finding.
 type lessonRulesChecker struct {
+	projectRoot string
 	// fixIndex, when true, makes the fix pass regenerate spec/lessons/README.md
 	// from the parsed Lesson set (L-003 missing rows, L-004 drifted rows).
 	fixIndex bool
@@ -93,7 +94,17 @@ type lessonRulesChecker struct {
 	withIndexLock func(string, func() error) error
 }
 
-func newLessonRulesChecker() *lessonRulesChecker { return &lessonRulesChecker{} }
+func newLessonRulesChecker(projectRoot ...string) *lessonRulesChecker {
+	var root string
+	if len(projectRoot) > 0 {
+		root = projectRoot[0]
+	}
+	return &lessonRulesChecker{projectRoot: root}
+}
+
+func (c *lessonRulesChecker) effectiveProjectRoot(specRoot string) string {
+	return lintProjectRoot(c.projectRoot, specRoot)
+}
 
 func (c *lessonRulesChecker) name() string     { return "L-001" }
 func (c *lessonRulesChecker) severity() string { return "error" }
@@ -115,12 +126,13 @@ func (c *lessonRulesChecker) check(specRoot string) ([]Violation, error) {
 		}
 		return nil, err
 	}
-	allowed, configErr := lessonClassifications(specRoot)
+	projectRoot := c.effectiveProjectRoot(specRoot)
+	allowed, configErr := lessonClassificationsAtProject(projectRoot)
 	for _, l := range lessons {
 		relPath, _ := filepath.Rel(specRoot, l.Path)
 		violations = append(violations, lintLesson(l, relPath)...)
 		if l.Canonical {
-			violations = append(violations, lintCanonicalLesson(specRoot, l, relPath, allowed, configErr)...)
+			violations = append(violations, lintCanonicalLessonAtProject(projectRoot, specRoot, l, relPath, allowed, configErr)...)
 			violations = append(violations, lintOccurrenceChildren(specRoot, l)...)
 		}
 		parsed[l.Slug] = l
@@ -156,7 +168,7 @@ func (c *lessonRulesChecker) fix(specRoot string) error {
 	lock := c.withIndexLock
 	if lock == nil {
 		lock = func(root string, mutate func() error) error {
-			return withLessonIndexLock(root, defaultLessonIndexLockDeps(), mutate)
+			return withLessonIndexLockAtProject(c.effectiveProjectRoot(root), root, defaultLessonIndexLockDeps(), mutate)
 		}
 	}
 	// This repair does not mutate a Lesson artifact, so it takes only the
@@ -218,7 +230,11 @@ func firstLessonSlug(items []*lesson.Lesson) string {
 	return items[0].Slug
 }
 func lessonClassifications(specRoot string) (map[string]bool, error) {
-	cfg, err := projectdef.ReadSpecConfig(filepath.Dir(specRoot))
+	return lessonClassificationsAtProject(lintProjectRoot("", specRoot))
+}
+
+func lessonClassificationsAtProject(projectRoot string) (map[string]bool, error) {
+	cfg, err := projectdef.ReadSpecConfig(projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +279,10 @@ func lessonClassificationsFrom(raw any) (map[string]bool, error) {
 }
 
 func lintCanonicalLesson(specRoot string, l *lesson.Lesson, rel string, allowed map[string]bool, configErr error) []Violation {
+	return lintCanonicalLessonAtProject(lintProjectRoot("", specRoot), specRoot, l, rel, allowed, configErr)
+}
+
+func lintCanonicalLessonAtProject(projectRoot, specRoot string, l *lesson.Lesson, rel string, allowed map[string]bool, configErr error) []Violation {
 	var out []Violation
 	if !l.HasLessonTitle || strings.TrimSpace(l.Title) == "" {
 		out = append(out, Violation{File: rel, Rule: "L-005", Severity: "error", Message: "canonical Lesson requires a non-empty # Lesson: title"})
@@ -329,7 +349,7 @@ func lintCanonicalLesson(specRoot string, l *lesson.Lesson, rel string, allowed 
 		out = append(out, Violation{File: rel, Rule: "L-006", Severity: "error", Message: "canonical Tracking must declare occurrence store, derived recurrence, and schema; Recurred is forbidden"})
 	}
 	if l.Status == "Enforced" {
-		if l.Control == "" || l.Control == "—" || l.Verification == "" || l.Verification == "—" || l.Evidence == "" || l.Evidence == "—" || strings.Contains(strings.ToLower(l.Verification), "manual") || !stableLessonEvidence(specRoot, l.Evidence) {
+		if l.Control == "" || l.Control == "—" || l.Verification == "" || l.Verification == "—" || l.Evidence == "" || l.Evidence == "—" || strings.Contains(strings.ToLower(l.Verification), "manual") || !stableLessonEvidenceAtProject(projectRoot, l.Evidence) {
 			out = append(out, Violation{File: rel, Rule: "L-007", Severity: "error", Message: "Enforced Lesson requires deterministic Control, Verification, and Evidence"})
 		}
 	}
@@ -337,6 +357,10 @@ func lintCanonicalLesson(specRoot string, l *lesson.Lesson, rel string, allowed 
 }
 
 func stableLessonEvidence(specRoot, value string) bool {
+	return stableLessonEvidenceAtProject(lintProjectRoot("", specRoot), value)
+}
+
+func stableLessonEvidenceAtProject(projectRoot, value string) bool {
 	value = strings.TrimSpace(value)
 	if strings.HasPrefix(value, "sha256:") && len(value) > len("sha256:")+16 {
 		return true
@@ -347,7 +371,7 @@ func stableLessonEvidence(specRoot, value string) bool {
 	if strings.Contains(value, "\\") || filepath.IsAbs(value) || strings.HasPrefix(value, "../") || strings.Contains(value, "/../") || value == "." || value == ".." {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(filepath.Dir(specRoot), filepath.FromSlash(value)))
+	_, err := os.Stat(filepath.Join(projectRoot, filepath.FromSlash(value)))
 	return err == nil
 }
 
@@ -748,7 +772,11 @@ func upsertLessonIndexRowWithLock(specRoot string, l *lesson.Lesson, deps lesson
 }
 
 func withLessonIndexLock(specRoot string, deps lessonIndexLockDeps, mutate func() error) error {
-	lockDir := filepath.Join(filepath.Dir(specRoot), ".specscore", "locks")
+	return withLessonIndexLockAtProject(lintProjectRoot("", specRoot), specRoot, deps, mutate)
+}
+
+func withLessonIndexLockAtProject(projectRoot, _ string, deps lessonIndexLockDeps, mutate func() error) error {
+	lockDir := filepath.Join(projectRoot, ".specscore", "locks")
 	if err := deps.mkdirAll(lockDir, 0o700); err != nil {
 		return fmt.Errorf("creating Lesson index lock directory: %w", err)
 	}

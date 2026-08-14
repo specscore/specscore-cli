@@ -1,10 +1,13 @@
 package lint
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // featureWithStatus builds a minimal feature-README body carrying an optional
@@ -99,6 +102,96 @@ func TestStatusMirrorChecker_Check(t *testing.T) {
 				t.Errorf("expected no status-mirror violation, got %+v", *v)
 			}
 		})
+	}
+}
+
+// A flat spec/plans/<slug>.md is the canonical Plan shape. It must be checked
+// alongside the legacy directory-form README so drift cannot bypass the
+// status-mirror contract merely by using the newer layout.
+func TestStatusMirrorChecker_ChecksFlatPlanArtifact(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"plans/social-circles.md": "---\nformat: https://specscore.md/plan-specification\nstatus: Draft\n---\n\n# Plan: Social Circles\n\n**Status:** Approved\n",
+	})
+	violations, err := newStatusMirrorChecker().check(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected one status-mirror violation for the flat Plan, got %+v", violations)
+	}
+	v := violations[0]
+	if v.Rule != "status-mirror" || filepath.ToSlash(v.File) != "plans/social-circles.md" {
+		t.Fatalf("flat Plan was not reported as status-mirror drift: %+v", v)
+	}
+	if !strings.Contains(v.Message, "does not mirror body") {
+		t.Errorf("unexpected violation message: %q", v.Message)
+	}
+}
+
+// A direct plans/*.md file is not a Plan until its first structural H1 is a
+// canonical `# Plan:` title. Its incidental Markdown must not enter any
+// Plan-specific frontmatter lifecycle rule.
+func TestStatusMirrorChecker_FlatNonPlanIsIgnored(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"plans/notes.md":         "# Random notes\n\n**Status:** Draft\n",
+		"plans/legacy/README.md": "# Random legacy notes\n\n**Status:** Draft\n",
+	})
+	violations, err := newStatusMirrorChecker().check(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("non-Plan flat markdown must not be checked as a Plan: %+v", violations)
+	}
+}
+
+// Plan status mirrors take their canonical value from the Plan parser's
+// structural header band. Examples in pre-title prose, comments, and fenced
+// code are never metadata and --fix must leave them byte-identical.
+func TestStatusMirrorChecker_PlanUsesStructuralHeaderStatus(t *testing.T) {
+	original := "---\nformat: https://specscore.md/plan-specification\nstatus: Draft\n---\n\n" +
+		"**Status:** Pre-title example\n\n" +
+		"<!--\n**Status:** Comment example\n-->\n\n" +
+		"```markdown\n**Status:** Fenced example\n```\n\n" +
+		"# Plan: Genuine\n\n**Status:** Draft\n\n## Summary\n\nActual Plan body.\n"
+	specRoot := writeSpec(t, map[string]string{"plans/genuine.md": original})
+	c := newStatusMirrorChecker()
+	violations, err := c.check(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("faux Plan statuses must not cause mirror drift: %+v", violations)
+	}
+	if err := c.(fixer).fix(specRoot); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(specRoot, "plans", "genuine.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("status-mirror --fix rewrote noncanonical Plan metadata:\nwant:\n%s\ngot:\n%s", original, got)
+	}
+}
+
+func TestStatusMirrorChecker_PlanParserErrorIsReturned(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{
+		"plans/a.md": "---\nstatus: Draft\n---\n\n# Plan: A\n\n**Status:** Draft\n",
+		"plans/b.md": "---\nstatus: Draft\n---\n\n# Plan: B\n\n**Status:** Draft\n",
+	})
+	original := parsePlanForArtifactStatus
+	parsePlanForArtifactStatus = func(string) (*plan.Plan, error) {
+		return nil, errors.New("forced Plan parser failure")
+	}
+	t.Cleanup(func() { parsePlanForArtifactStatus = original })
+
+	c := newStatusMirrorChecker()
+	if _, err := c.check(specRoot); err == nil {
+		t.Fatal("expected Plan parser error from status-mirror check")
+	}
+	if err := c.(fixer).fix(specRoot); err == nil {
+		t.Fatal("expected Plan parser error from status-mirror fix")
 	}
 }
 
@@ -401,6 +494,7 @@ func TestBodyAfterFrontmatter(t *testing.T) {
 		{"no opening fence", "# Title\nbody\n", "# Title\nbody\n"},
 		{"opening without closing", "---\nformat: x\nbody\n", "---\nformat: x\nbody\n"},
 		{"complete block", "---\nformat: x\n---\nbody\n", "body\n"},
+		{"dotted closer", "---\nformat: x\n...\nbody\n", "body\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -408,6 +502,22 @@ func TestBodyAfterFrontmatter(t *testing.T) {
 				t.Errorf("bodyAfterFrontmatter = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDottedFrontmatterCloserScopesStatusMirrorParserAndFix(t *testing.T) {
+	content := "---\nformat: x\n...\n# Plan: Sample\n\nstatus: prose that is not frontmatter\n**Status:** Approved\n"
+	fields, present := parseLeadingFrontmatter([]byte(content))
+	if !present || fields["format"] != "x" {
+		t.Fatalf("dotted closer was not parsed as a complete frontmatter block: present=%v fields=%v", present, fields)
+	}
+	if got := extractBodyStatus([]byte(content)); got != "Approved" {
+		t.Fatalf("body status = %q, want Approved", got)
+	}
+	got := string(setFrontmatterStatus([]byte(content), "Approved"))
+	want := "---\nformat: x\nstatus: Approved\n...\n# Plan: Sample\n\nstatus: prose that is not frontmatter\n**Status:** Approved\n"
+	if got != want {
+		t.Fatalf("dotted-closer fix crossed into body or changed the closer:\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
 

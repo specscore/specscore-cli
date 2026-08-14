@@ -22,19 +22,30 @@ const migrateHint = " (run `specscore migrate` to backfill)"
 // Returns the spec-root-relative, slash-separated paths of the files it changed,
 // sorted.
 func Migrate(specRoot string) ([]string, error) {
+	return MigrateWithProjectRoot(lintProjectRoot("", specRoot), specRoot)
+}
+
+// MigrateWithProjectRoot performs Migrate with explicit project context so
+// staged callers never derive a live project path from their spec root.
+func MigrateWithProjectRoot(projectRoot, specRoot string) ([]string, error) {
 	var changed []string
 	for _, t := range docTypeTargets {
 		target := t
 		var writeErr error
+		var bodyStatusErr error
 		err := target.walk(specRoot, func(path string, content []byte) {
-			if writeErr != nil {
+			if writeErr != nil || bodyStatusErr != nil {
 				return
 			}
-			updated := migrateArtifact(content, target)
+			updated, err := migrateArtifact(path, content, target)
+			if err != nil {
+				bodyStatusErr = err
+				return
+			}
 			if bytes.Equal(updated, content) {
 				return
 			}
-			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
+			if err := writeLintFile(projectRoot, specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 				return
 			}
@@ -43,6 +54,9 @@ func Migrate(specRoot string) ([]string, error) {
 		})
 		if err != nil {
 			return nil, err
+		}
+		if bodyStatusErr != nil {
+			return nil, bodyStatusErr
 		}
 		if writeErr != nil {
 			return nil, writeErr
@@ -53,12 +67,17 @@ func Migrate(specRoot string) ([]string, error) {
 }
 
 // migrateArtifact returns content with the convention frontmatter ensured and
-// the footer aligned to `format:`. Status-bearing types whose body carries a
+// the footer aligned to `format:`, or an error when its canonical body-status
+// reader cannot parse an artifact. Status-bearing types whose body carries a
 // `**Status:**` gain a mirrored `status:`; status-less types get `format:` only.
-func migrateArtifact(content []byte, t docTypeTarget) []byte {
+func migrateArtifact(path string, content []byte, t docTypeTarget) ([]byte, error) {
 	fields := [][2]string{{"format", t.url}}
 	if t.statusBearing {
-		if bodyStatus := extractBodyStatus(content); bodyStatus != "" {
+		bodyStatus, err := canonicalArtifactBodyStatus(path, content, t)
+		if err != nil {
+			return nil, err
+		}
+		if bodyStatus != "" {
 			fields = append(fields, [2]string{"status", bodyStatus})
 		}
 	}
@@ -66,17 +85,18 @@ func migrateArtifact(content []byte, t docTypeTarget) []byte {
 	if footer := extractFooterURL(out); footer != "" && !formatURLMatches(footer, t.url) {
 		out = replaceLastSpecURL(out, t.url)
 	}
-	return out
+	return out, nil
 }
 
 // ensureFrontmatter returns content with the ordered key/value fields present in
 // its leading frontmatter block. When a complete block exists each field is
 // upserted (existing key rewritten, missing key inserted before the closing
 // fence), preserving other lines. When no complete block exists, a fresh
-// `---`-fenced block carrying the fields is prepended.
+// `---`-opened block carrying the fields is prepended. A complete existing
+// block may use either `---` or `...` as its closer.
 func ensureFrontmatter(content []byte, fields [][2]string) []byte {
 	lines := strings.Split(string(content), "\n")
-	if len(lines) > 0 && strings.TrimRight(lines[0], "\r") == "---" && hasClosingFence(lines) {
+	if len(lines) > 0 && isLeadingFrontmatterFence(lines[0]) && hasClosingFence(lines) {
 		for _, f := range fields {
 			lines = upsertFrontmatterField(lines, f[0], f[1])
 		}
@@ -92,11 +112,11 @@ func ensureFrontmatter(content []byte, fields [][2]string) []byte {
 	return []byte(b.String())
 }
 
-// hasClosingFence reports whether lines (whose first line opens a `---` fence)
-// contains a later `---` closing fence.
+// hasClosingFence reports whether lines (whose first line opens a frontmatter
+// fence) contain a later `---` or `...` closing fence.
 func hasClosingFence(lines []string) bool {
 	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], "\r") == "---" {
+		if isFrontmatterFence(lines[i]) {
 			return true
 		}
 	}

@@ -96,6 +96,17 @@ The `<slug>` positional MUST resolve to an existing flat-form Plan file (`spec/p
 
 The post-mutation lint/index sync runs after the committed reconciliation transaction. Exit `0` requires both stages; failure exits `10` with the reconciled artifact retained for explicit recovery.
 
+### REQ: optional-tree-transaction
+
+`--tree-transaction` opts this verb into the bounded Spec-tree copy-on-write
+publisher. The command validates the reconciliation before creating recovery
+state, declares only `plans/<slug>.md` and `plans/README.md` as writable, runs
+the reconciliation and explicit index sync in the descriptor-rooted stage,
+verifies lint without broad fixers, and publishes the complete staged tree by
+atomic directory exchange. An undeclared staged write is a conflict and never
+reaches the live tree. The default single-artifact transaction remains
+unchanged when the flag is absent.
+
 ### REQ: execution-band-error-points-here
 
 [`plan change-status`](../change-status/README.md)'s execution-band-not-settable error (triggered by passing an execution-band value as `--to`) MUST name this verb as the corrective path when the underlying work was actually delivered outside the tracked flow, so a caller who hits the illegal-jump wall is pointed at the supported alternative rather than left to hand-edit the file.
@@ -125,6 +136,7 @@ The verb MUST accept a `--force-coordination` boolean flag with the same bypass-
 | `--reopen-tasks` | Conditional | Comma-separated falsely complete task numbers to correct to `blocked`; mutually exclusive with `--tasks` and `--force-tasks`. |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
 | `--force-coordination` | No | Bypasses the plan's `**Coordination:**` repo/branch check for this invocation. Prints a `warning:` line to stderr; does not modify the plan's `**Coordination:**` field. |
+| `--tree-transaction` | No | Opts into bounded whole-spec-tree copy-on-write publication and read-only `specscore recovery list/inspect/diff`; unsupported platforms reject only this opt-in path. |
 
 ## Exit codes
 
@@ -144,6 +156,7 @@ The verb MUST accept a `--force-coordination` boolean flag with the same bypass-
 | [`cli/plan/change-status`](../change-status/README.md) | Sibling verb for the human-authored arcs; its execution-band-rejection error names this verb as the corrective path (REQ:execution-band-error-points-here). The two verbs are deliberately never merged. |
 | [`cli/task/change-status`](../../task/change-status/README.md) | Owns single-task, single-actor transitions (board or plan-inline `--id`); reconcile owns the coarser "every embedded task at once, out of band" correction and does not replace it for day-to-day task completion. |
 | [lifecycle-transitions](../../lifecycle-transitions/README.md) | Reconcile reuses the shared `## Resolution` note mechanism and the index-sync-on-success contract, but does NOT use the shared state-machine validation (`Transition`/`Validate`) — see REQ:no-silent-history. |
+| [Spec tree transaction recovery](../../lifecycle-transitions/spec-tree-transaction-recovery/README.md) | Owns the descriptor staging, declared-write-set, atomic exchange, retention, and read-only recovery contract behind `--tree-transaction`. |
 | [spec lint](../../spec/lint/README.md) | Invoked internally for index sync; rule P-007 (execution-band derivation) sees the post-reconcile plan already at its correct, self-consistent state, so it is a no-op on a freshly reconciled plan. |
 | [plan (upstream Feature)](https://specscore.md/plan-specification) | `status-rollup` and `execution-status-derived` are the canonical rules this verb's target-status derivation realizes (REQ:derived-not-asserted-target). [plan#coordination-branch](https://specscore.md/plan-specification#coordination-branch) is the source of truth this verb enforces (REQ:coordination-branch-enforcement). |
 
@@ -265,6 +278,26 @@ The verb MUST accept a `--force-coordination` boolean flag with the same bypass-
 **Given** a plan eligible for reconciliation
 **When** `spec lint --fix` fails after a successful rewrite
 **Then** the command exits `10` and retains the committed reconciliation marker and resolution for explicit recovery; it never performs an unsafe late rollback.
+
+### AC: tree-transaction-publishes-plan-and-index-only
+
+**Requirements:** [optional-tree-transaction](#req-optional-tree-transaction), [index-sync](#req-index-sync)
+
+**Given** a Plan eligible for reconciliation and a lint-clean Spec tree
+**When** the user adds `--tree-transaction`
+**Then** the command validates before creating recovery state, atomically
+publishes the reconciled Plan and synchronized plans index, records that exact
+declared write set in a committed receipt, and retains the previous Spec tree
+for read-only recovery inspection.
+
+### AC: tree-transaction-rejection-leaves-no-recovery-state
+
+**Requirements:** [optional-tree-transaction](#req-optional-tree-transaction)
+
+**Given** a reconciliation rejected by Plan validation
+**When** the user supplies `--tree-transaction`
+**Then** the live Plan remains byte-identical and no `.specscore-recovery`
+journal or `.specscore-txn-*` tree is created.
 
 ### AC: change-status-error-mentions-reconcile
 

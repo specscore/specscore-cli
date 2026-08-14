@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,95 @@ import (
 	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
+
+func TestWalkFlatPlanFiles(t *testing.T) {
+	t.Run("missing plans directory is empty", func(t *testing.T) {
+		called := false
+		if err := walkFlatPlanFiles(t.TempDir(), func(string, []byte) { called = true }); err != nil {
+			t.Fatal(err)
+		}
+		if called {
+			t.Fatal("missing plans directory must not produce artifacts")
+		}
+	})
+
+	t.Run("skips index directories and non markdown files", func(t *testing.T) {
+		root := t.TempDir()
+		plansDir := filepath.Join(root, "plans")
+		mkdir(t, filepath.Join(plansDir, "legacy"))
+		writeFile(t, filepath.Join(plansDir, "README.md"), "# Plans\n")
+		writeFile(t, filepath.Join(plansDir, "notes.txt"), "skip\n")
+		writeFile(t, filepath.Join(plansDir, "random.md"), "# Random notes\n")
+		writeFile(t, filepath.Join(plansDir, "social-circles.md"), "# Plan: Social Circles\n")
+		writeFile(t, filepath.Join(plansDir, "legacy", "README.md"), "# Plan: Legacy\n")
+		var visited []string
+		if err := walkFlatPlanFiles(root, func(path string, _ []byte) {
+			visited = append(visited, filepath.Base(path))
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := strings.Join(visited, ","), "social-circles.md"; got != want {
+			t.Fatalf("visited %q, want %q", got, want)
+		}
+	})
+
+	t.Run("parser error is returned", func(t *testing.T) {
+		root := t.TempDir()
+		plansDir := filepath.Join(root, "plans")
+		if err := os.MkdirAll(plansDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		brokenPath := filepath.Join(plansDir, "broken.md")
+		if err := os.Symlink(filepath.Join(root, "missing.md"), brokenPath); err != nil {
+			t.Skipf("cannot create a broken symlink: %v", err)
+		}
+		if err := walkFlatPlanFiles(root, func(string, []byte) {}); err == nil {
+			t.Fatal("expected Plan parser error for an unreadable candidate")
+		}
+	})
+
+	t.Run("directory read error is returned", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "plans"), "not a directory")
+		if err := walkFlatPlanFiles(root, func(string, []byte) {}); err == nil {
+			t.Fatal("expected a read-directory error")
+		}
+	})
+
+	t.Run("artifact read error is returned", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "plans", "sample.md"), "# Plan: Sample\n")
+		original := readFlatPlanFile
+		readFlatPlanFile = func(string) ([]byte, error) { return nil, errors.New("forced read failure") }
+		t.Cleanup(func() { readFlatPlanFile = original })
+		if err := walkFlatPlanFiles(root, func(string, []byte) {}); err == nil {
+			t.Fatal("expected an artifact read error")
+		}
+	})
+}
+
+func TestWalkPlanArtifactsIncludesFlatAndDirectoryForms(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "plans", "flat.md"), "# Plan: Flat\n")
+	writeFile(t, filepath.Join(root, "plans", "legacy", "README.md"), "# Plan: Legacy\n")
+	var visited []string
+	if err := walkPlanArtifacts(root, func(path string, _ []byte) {
+		visited = append(visited, filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator))))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(visited, ","), "plans/flat.md,plans/legacy/README.md"; got != want {
+		t.Fatalf("visited %q, want %q", got, want)
+	}
+}
+
+func TestWalkPlanArtifactsReturnsFlatPlanWalkError(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "plans"), "not a directory")
+	if err := walkPlanArtifacts(root, func(string, []byte) {}); err == nil {
+		t.Fatal("expected flat Plan walker error to be returned")
+	}
+}
 
 // =============================================================================
 // adherence_footer.go:289.33,291.4

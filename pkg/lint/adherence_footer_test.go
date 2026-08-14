@@ -108,6 +108,20 @@ func TestAdherenceFooter_PlanReadmeWithURL_NoViolation(t *testing.T) {
 	}
 }
 
+func TestAdherenceFooter_FlatNonPlanIsIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "plans", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# Random notes\n\nNo Plan footer.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if violations := runAdherenceFooterCheck(t, tmp); len(violations) != 0 {
+		t.Fatalf("non-Plan flat markdown must not be checked for a Plan footer: %+v", violations)
+	}
+}
+
 func TestAdherenceFooter_IdeaFileWithoutURL_Warns(t *testing.T) {
 	tmp := t.TempDir()
 	ideasDir := filepath.Join(tmp, "ideas")

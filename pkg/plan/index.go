@@ -9,6 +9,11 @@ import (
 
 const plansIndexHeader = "| Plan | Status | Source | Date | Owner |"
 
+// syncIndexWriteFile is an OS seam for the final derived-index write. The
+// normal path remains os.WriteFile; tests use the seam to prove a failed final
+// write never reports a successful sync.
+var syncIndexWriteFile = os.WriteFile
+
 // IndexContent returns the canonical plans-index content formed by replacing
 // the Plan rows in content with rows derived from the flat Plan files in
 // plansDir. It preserves every non-table byte, including Recently Closed and
@@ -87,7 +92,7 @@ func SyncIndex(plansDir string) (bool, error) {
 	if err != nil || !changed {
 		return changed, err
 	}
-	if err := os.WriteFile(indexPath, updated, 0o644); err != nil {
+	if err := syncIndexWriteFile(indexPath, updated, 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

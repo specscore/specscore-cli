@@ -13,7 +13,7 @@ import (
 func TestWriteLintLessonMissingSnapshotFailsBeforeWrite(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "lessons", "README.md")
-	if err := writeLintFile(root, path, []byte("before"), []byte("after"), 0o644); !errors.Is(err, os.ErrNotExist) {
+	if err := writeLintFile("", root, path, []byte("before"), []byte("after"), 0o644); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("err=%v, want not exist", err)
 	}
 }

@@ -24,11 +24,16 @@ type Violation struct {
 
 // Options holds linting options.
 type Options struct {
-	SpecRoot string
-	Rules    []string // enabled rules; nil = all
-	Ignore   []string // disabled rules
-	Severity string   // minimum severity: error, warning, info
-	Fix      bool     // when true, auto-fixable violations are repaired on disk by checkers that support it
+	// SpecRoot is the spec tree to lint. ProjectRoot identifies the project
+	// context used by rules that inspect specscore.yaml, .github, or project
+	// identity. A staged lifecycle transaction sets both explicitly so lint
+	// never reaches back into the live project through filepath derivation.
+	SpecRoot    string
+	ProjectRoot string
+	Rules       []string // enabled rules; nil = all
+	Ignore      []string // disabled rules
+	Severity    string   // minimum severity: error, warning, info
+	Fix         bool     // when true, auto-fixable violations are repaired on disk by checkers that support it
 	// FixTargets names opt-in fixes to enable on top of the standard fix pass
 	// (only consulted when Fix is true). These are fixes that are deliberately
 	// off by default because they mask a likely authoring mistake — e.g.
@@ -39,6 +44,20 @@ type Options struct {
 	// rule to detect stale pins in .github/workflows/*.yml. Empty, "dev",
 	// or any non-semver value disables the comparison silently.
 	CLIVersion string
+}
+
+func (o Options) effectiveProjectRoot() string {
+	return lintProjectRoot(o.ProjectRoot, o.SpecRoot)
+}
+
+// lintProjectRoot centralizes the backwards-compatible fallback for callers
+// that still pass only SpecRoot. Rule implementations receive the constructed
+// project root instead of deriving it from a live spec-tree path.
+func lintProjectRoot(projectRoot, specRoot string) string {
+	if projectRoot != "" {
+		return projectRoot
+	}
+	return filepath.Dir(specRoot)
 }
 
 // Fix target sentinels. FixTargetAll is the implicit target of a bare `--fix`

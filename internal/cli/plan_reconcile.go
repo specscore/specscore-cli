@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -83,6 +84,13 @@ lock is released. If it fails, the committed reconciliation remains visible
 and the command returns a recovery-required error; it never rolls back stale
 bytes.
 
+--tree-transaction is an opt-in whole-spec-tree publication path. It validates
+the reconciliation before creating recovery state, mutates a descriptor-rooted
+copy, permits writes only to the target Plan and plans index, verifies lint
+without running broad fixers, then atomically exchanges the staged spec tree.
+The predecessor and read-only receipt are retained for ` + "`specscore recovery`" + `
+inspection. The default Plan artifact transaction is unchanged.
+
 Examples:
 
   specscore plan reconcile auth --tasks=complete --note "implemented directly during the incident; tracked flow was skipped"
@@ -101,6 +109,7 @@ Examples:
 	cmd.Flags().String("reopen-tasks", "", "comma-separated falsely-complete task numbers to correct to blocked; cannot be combined with --tasks")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().Bool(coordinationForceFlagName, false, coordinationForceFlagUsage)
+	cmd.Flags().Bool("tree-transaction", false, "opt in to bounded whole-spec-tree copy-on-write publication with read-only recovery")
 	return cmd
 }
 
@@ -186,22 +195,57 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
 	var coordinationWarning bytes.Buffer
 
-	result, err := plan.Reconcile(plan.ReconcileOptions{
-		SpecRoot:    specRoot,
-		Slug:        slug,
-		Note:        note,
-		Evidence:    evidence,
-		ForceTasks:  forceTasks,
-		ReopenTasks: reopenTasks,
-		ValidateSnapshot: func(path string, before []byte) error {
-			parsedPlan, parseErr := plan.ParseBytes(path, before)
-			if parseErr != nil {
-				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
+	validateSnapshot := func(path string, before []byte) error {
+		parsedPlan, parseErr := plan.ParseBytes(path, before)
+		if parseErr != nil {
+			return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
+		}
+		return enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, &coordinationWarning)
+	}
+	opts := plan.ReconcileOptions{
+		SpecRoot:         specRoot,
+		Slug:             slug,
+		Note:             note,
+		Evidence:         evidence,
+		ForceTasks:       forceTasks,
+		ReopenTasks:      reopenTasks,
+		ValidateSnapshot: validateSnapshot,
+		PostMutation:     plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
+	}
+	var result plan.ReconcileResult
+	treeTransaction, _ := cmd.Flags().GetBool("tree-transaction")
+	if treeTransaction {
+		if _, err := planPreviewReconcileFn(opts); err != nil {
+			return err
+		}
+		writeSet := []string{
+			filepath.ToSlash(filepath.Join("plans", slug+".md")),
+			"plans/README.md",
+		}
+		_, err = RunLifecycleTransaction(specRoot, writeSet, func(stagedProjectRoot string) error {
+			stagedOpts := opts
+			stagedOpts.SpecRoot = stagedProjectRoot
+			stagedOpts.ValidateSnapshot = func(path string, before []byte) error {
+				parsedPlan, parseErr := plan.ParseBytes(path, before)
+				if parseErr != nil {
+					return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
+				}
+				return enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, io.Discard)
 			}
-			return enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, &coordinationWarning)
-		},
-		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
-	})
+			stagedOpts.PostMutation = func() error { return nil }
+			var reconcileErr error
+			result, reconcileErr = planReconcileFn(stagedOpts)
+			if reconcileErr != nil {
+				return reconcileErr
+			}
+			if _, syncErr := planSyncIndexFn(filepath.Join(stagedProjectRoot, "spec", "plans")); syncErr != nil {
+				return exitcode.UnexpectedErrorf("syncing staged plans index: %v", syncErr)
+			}
+			return verifyLintPostMutation(filepath.Join(stagedProjectRoot, "spec"))
+		})
+	} else {
+		result, err = planReconcileFn(opts)
+	}
 	if err != nil {
 		var committed *lifecycle.CommittedMutationError
 		if errors.As(err, &committed) {

@@ -238,11 +238,11 @@ For a cross-repo `**Parent:**` value `<repo-slug>:<plan-slug>`, `P-005` MUST val
 
 #### REQ: plan-prerequisite-plans-field
 
-The parser MUST recognize an optional header line `**Prerequisite Plans:** <slug>, <slug>, …`. Each value is a same-repository, lowercase, hyphen-separated Plan slug. The field is omitted when a Plan has no cross-plan prerequisites; `—` is an accepted explicit empty value. The parsed list normalizes surrounding whitespace, while the raw header is retained so `P-009` can reject empty comma entries rather than silently accepting them. Cross-repository references are deliberately not supported by this field.
+The parser MUST recognize at most one optional header line `**Prerequisite Plans:** <slug>, <slug>, …`. Each value is a same-repository, lowercase, hyphen-separated Plan slug. The field is omitted when a Plan has no cross-plan prerequisites; `—` is an accepted explicit empty value. The parsed list normalizes surrounding whitespace, while the raw header and every field occurrence are retained so `P-009` can reject empty comma entries and duplicate headers rather than silently accepting or overwriting them. Cross-repository references are deliberately not supported by this field.
 
 #### REQ: rule-p-009-prerequisites-resolve-and-acyclic
 
-`P-009` MUST execute in the default lint suite at error severity. It MUST reject empty entries, malformed or duplicate slugs, self-references, and references that do not resolve to a single-file Plan at `spec/plans/<slug>.md`. It MUST reject dependency cycles and name a full cycle path. `P-009` is not autofixable because adding, removing, or ordering prerequisites requires author intent.
+`P-009` MUST execute in the default lint suite at error severity. It MUST reject duplicate headers, empty entries, malformed or duplicate slugs, self-references, and references that do not resolve to a single-file Plan at `spec/plans/<slug>.md`. It MUST reject dependency cycles and name a full cycle path. `P-009` is not autofixable because adding, removing, or ordering prerequisites requires author intent.
 
 ### Lint rule P-010 — Coordination-branch reference format
 

@@ -159,6 +159,7 @@ func TestStudioToolbarLineIndex(t *testing.T) {
 	}{
 		{"no frontmatter, title at 0", "# Feature: Foo\n\n> tb\n", 2},
 		{"frontmatter then title", "---\nformat: x\n---\n\n# Feature: Foo\n", 6},
+		{"dotted frontmatter closer then title", "---\nformat: x\n...\n\n# Feature: Foo\n", 6},
 		{"no title", "just text here\n", -1},
 		{"opening fence never closed, no title", "---\nformat: x\nno close\n", -1},
 	}

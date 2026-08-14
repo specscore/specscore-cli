@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -151,5 +152,16 @@ func TestParkedCheckerMetadata(t *testing.T) {
 	checker := newParkedChecker()
 	if checker.name() != "parked-shape" || checker.severity() != "error" {
 		t.Fatalf("checker metadata = %q/%q", checker.name(), checker.severity())
+	}
+}
+
+func TestParkedCheckerPropagatesWalkFailure(t *testing.T) {
+	original := parkedWalkMatchingFiles
+	t.Cleanup(func() { parkedWalkMatchingFiles = original })
+	parkedWalkMatchingFiles = func(string, func(string, int, string) bool, func(string, []byte)) error {
+		return errors.New("walk failed")
+	}
+	if _, err := newParkedChecker().check(t.TempDir()); err == nil || !strings.Contains(err.Error(), "walk failed") {
+		t.Fatalf("check error = %v, want walk failure", err)
 	}
 }

@@ -287,29 +287,37 @@ func runIdeaUnarchive(cmd *cobra.Command, args []string) error {
 // path failed.
 func lintPostMutationHook(specSub string) idea.PostMutationHook {
 	return func() error {
-		if _, err := lintLintFn(lint.Options{SpecRoot: specSub, Fix: true}); err != nil {
+		if _, err := lintLintFn(lint.Options{SpecRoot: specSub, ProjectRoot: filepath.Dir(specSub), Fix: true}); err != nil {
 			return exitcode.UnexpectedErrorf("running lint --fix: %v", err)
 		}
-		violations, err := lintLintFn(lint.Options{SpecRoot: specSub})
-		if err != nil {
-			return exitcode.UnexpectedErrorf("running lint: %v", err)
-		}
-		var errs []lint.Violation
-		for _, v := range violations {
-			if v.Severity == "error" {
-				errs = append(errs, v)
-			}
-		}
-		if len(errs) > 0 {
-			var sb strings.Builder
-			sb.WriteString("lint failed after status rewrite:\n")
-			for _, v := range errs {
-				fmt.Fprintf(&sb, "  %s:%d [%s] %s\n", v.File, v.Line, v.Rule, v.Message)
-			}
-			return exitcode.UnexpectedError(sb.String())
-		}
-		return nil
+		return verifyLintPostMutation(specSub)
 	}
+}
+
+// verifyLintPostMutation performs only the read-only half of the standard
+// lifecycle lint hook. Whole-tree transactions call this after explicitly
+// updating their declared derived indexes, so no broad lint fixer can expand
+// the transaction's write set.
+func verifyLintPostMutation(specSub string) error {
+	violations, err := lintLintFn(lint.Options{SpecRoot: specSub, ProjectRoot: filepath.Dir(specSub)})
+	if err != nil {
+		return exitcode.UnexpectedErrorf("running lint: %v", err)
+	}
+	var errs []lint.Violation
+	for _, v := range violations {
+		if v.Severity == "error" {
+			errs = append(errs, v)
+		}
+	}
+	if len(errs) > 0 {
+		var sb strings.Builder
+		sb.WriteString("lint failed after status rewrite:\n")
+		for _, v := range errs {
+			fmt.Fprintf(&sb, "  %s:%d [%s] %s\n", v.File, v.Line, v.Rule, v.Message)
+		}
+		return exitcode.UnexpectedError(sb.String())
+	}
+	return nil
 }
 
 // ideaNewCommand scaffolds a lint-clean Idea artifact at spec/ideas/<slug>.md,

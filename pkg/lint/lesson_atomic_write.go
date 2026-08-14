@@ -14,7 +14,10 @@ import (
 // reach a visible Lesson artifact or the shared Lesson index. Other document
 // kinds retain their established write behavior. The total Lesson lock order
 // is per-artifact first and shared index last; a single write never holds both.
-func writeLintFile(specRoot, path string, expected, data []byte, mode os.FileMode) error {
+func writeLintFile(projectRoot, specRoot, path string, expected, data []byte, mode os.FileMode) error {
+	if projectRoot == "" {
+		projectRoot = lintProjectRoot("", specRoot)
+	}
 	path = filepath.Clean(path)
 	lessonsDir := filepath.Join(filepath.Clean(specRoot), "lessons")
 	rewriteExpected := func(write func() error) error {
@@ -28,7 +31,7 @@ func writeLintFile(specRoot, path string, expected, data []byte, mode os.FileMod
 		return write()
 	}
 	if path == filepath.Join(lessonsDir, "README.md") {
-		return withLessonIndexLock(specRoot, defaultLessonIndexLockDeps(), func() error {
+		return withLessonIndexLockAtProject(projectRoot, specRoot, defaultLessonIndexLockDeps(), func() error {
 			return rewriteExpected(func() error { return writeLessonIndexAtomic(path, data) })
 		})
 	}
@@ -42,7 +45,7 @@ func writeLintFile(specRoot, path string, expected, data []byte, mode os.FileMod
 			slug = strings.TrimSuffix(parts[0], ".md")
 		}
 		if slug != "" && lesson.ValidateSlug(slug) == nil {
-			return lesson.WithMutationLock(filepath.Dir(specRoot), slug, func() error {
+			return lesson.WithMutationLock(projectRoot, slug, func() error {
 				return rewriteExpected(func() error { return lesson.RewriteFileAtomic(path, data) })
 			})
 		}

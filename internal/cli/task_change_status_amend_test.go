@@ -314,6 +314,26 @@ func TestTaskChangeStatus_PlanInline_AmendNoMatchingId(t *testing.T) {
 	}
 }
 
+func TestTaskChangeStatus_PlanInline_AmendRefusesNonPlanWithoutMutation(t *testing.T) {
+	_, planPath := stagePlanWithTasks(t, "auth", "<!--\n# Plan: Auth\n## Tasks\n### Task 1: Example\n**Id:** setup\n**Status:** complete\n-->\n# Notes\n")
+	before, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runTask(t, "change-status", "setup", "--plan", "auth",
+		"--amend-provenance", "--commit", "a1b2c3d")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+	after, readErr := os.ReadFile(planPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("non-Plan file changed despite amend refusal:\n%s", after)
+	}
+}
+
 // Plan-inline amend with an unreadable plan surfaces Unexpected (10).
 func TestTaskChangeStatus_PlanInline_AmendUnreadablePlan(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", completeTaskPlanBody)
