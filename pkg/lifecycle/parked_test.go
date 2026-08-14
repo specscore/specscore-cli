@@ -163,6 +163,24 @@ func TestSetParked_AddsTerminatorToUnterminatedStatus(t *testing.T) {
 	}
 }
 
+func TestParkedWrites_SurfaceCompareBeforeRenameFailure(t *testing.T) {
+	freezeParkedToday(t, "2026-08-14")
+	boom := errors.New("compare before rename")
+	originalReader := osReadBeforeRename
+	osReadBeforeRename = func(string) ([]byte, error) { return nil, boom }
+	t.Cleanup(func() { osReadBeforeRename = originalReader })
+
+	path := writeHeaderFixture(t, "**Status:** Draft\n")
+	if _, wrote, err := SetParked(path, "deferred"); !errors.Is(err, boom) || wrote {
+		t.Fatalf("SetParked = wrote:%v err:%v", wrote, err)
+	}
+
+	path = writeHeaderFixture(t, "**Status:** Draft\n**Parked:** true\n**Parked Reason:** deferred\n**Parked Date:** 2026-08-14\n")
+	if _, wrote, err := ClearParked(path); !errors.Is(err, boom) || wrote {
+		t.Fatalf("ClearParked = wrote:%v err:%v", wrote, err)
+	}
+}
+
 // Unparking is not a no-op when never parked — it errors so a mistyped
 // slug the caller believed was parked surfaces immediately.
 func TestClearParked_NotParkedRejected(t *testing.T) {
