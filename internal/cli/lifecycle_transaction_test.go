@@ -2123,6 +2123,18 @@ func TestLifecycleTransactionRetentionAndCanonicalRootFailures(t *testing.T) {
 		}
 	})
 
+	t.Run("journal open", func(t *testing.T) {
+		project := openProject(t, false)
+		lifecycleTransactionReadDir = originalReadDir
+		lifecycleTransactionOpenChild = func(*stagedSpecTree, string) (*stagedSpecTree, error) {
+			return nil, errors.New("journal open failed")
+		}
+		t.Cleanup(func() { lifecycleTransactionOpenChild = originalOpenChild })
+		if err := ensureLifecycleRecoveryCapacity(project); err == nil || !strings.Contains(err.Error(), "journal open failed") {
+			t.Fatalf("capacity error = %v", err)
+		}
+	})
+
 	t.Run("journal enumeration", func(t *testing.T) {
 		project := openProject(t, true)
 		calls := 0
