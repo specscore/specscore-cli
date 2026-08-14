@@ -30,6 +30,8 @@ import (
 
 const lessonAgentsHookEnv = "SPECSCORE_LESSON_AGENTS_HOOK"
 
+var canonicalLessonAgentsProjectRootForCommand = canonicalLessonAgentsProjectRoot
+
 type lessonAgent struct {
 	ID            string `json:"id" yaml:"id"`
 	Role          string `json:"role" yaml:"role"`
@@ -90,7 +92,7 @@ func runLessonAgents(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	root, err = canonicalLessonAgentsProjectRoot(root)
+	root, err = canonicalLessonAgentsProjectRootForCommand(root)
 	if err != nil {
 		return err
 	}

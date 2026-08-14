@@ -82,6 +82,13 @@ func newLinter(opts Options) *linter {
 		l.ruleSet[n] = grc
 	}
 
+	// Register parked checker under both parked-* rule IDs (one checker,
+	// two rule names/severities; per-violation filtering via Violation.Rule).
+	pkc := newParkedChecker()
+	for _, n := range parkedRuleNames {
+		l.ruleSet[n] = pkc
+	}
+
 	// Register plan-rules checker under all rule IDs (P-001..P-007).
 	// The single checker emits violations for all rules; deduping by
 	// pointer identity in lint() ensures it runs once per pass.

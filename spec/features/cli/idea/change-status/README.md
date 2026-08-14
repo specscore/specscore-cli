@@ -117,7 +117,7 @@ The post-mutation `specscore spec lint --fix` invocation (per [lifecycle-transit
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. The verb performs the Meta's `status-line-rewrite` in place, with no relocation side effect. |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies. The verb performs the Meta's `status-line-rewrite` in place, with no relocation side effect. Also implements the Meta's [`--dry-run`](../../lifecycle-transitions/README.md#req-dry-run-mode) and [`transitions`](../../lifecycle-transitions/README.md#req-transitions-query-verb) verbs. |
 | [cli/idea/archive](../archive/README.md) | The orthogonal verb that files an Idea out of active view (`**Archived:** true` + relocation). `change-status` writes the terminal status; `archive` files it away. |
 | [idea (CLI group)](../README.md) | Parent group. Contents table includes this sub-feature. |
 | [cli/feature/change-status](../../feature/change-status/README.md) | Sibling verb for the Feature kind. Same shared contract; the differences are the legal-transition matrix, the identifier name (`<feature_id>` vs `<slug>`), and the kind-specific path. |

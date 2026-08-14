@@ -822,6 +822,30 @@ func TestResolveFields_TitleAndQuestions(t *testing.T) {
 	}
 }
 
+func TestResolveFields_Parked(t *testing.T) {
+	featDir := setupTestFeatures(t, map[string]string{
+		"a": "# Feature: Alpha\n\n**Status:** Approved\n**Parked:** true\n**Parked Reason:** sequencing\n**Parked Date:** 2026-08-14\n",
+	})
+	ef, err := ResolveFields(featDir, "a", []string{"parked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ef.Parked == nil || !*ef.Parked {
+		t.Fatalf("Parked = %v, want true", ef.Parked)
+	}
+}
+
+func TestResolveFields_ParkedReportsUnreadableArtifact(t *testing.T) {
+	featuresDir := t.TempDir()
+	readmeDir := filepath.Join(featuresDir, "broken", "README.md")
+	if err := os.MkdirAll(readmeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveFields(featuresDir, "broken", []string{"parked"}); err == nil {
+		t.Fatal("ResolveFields accepted a directory in place of README.md")
+	}
+}
+
 // TestUpdateFeatureIndex_FourColumnLegacy asserts the historical 4-column
 // shape `| Feature | Status | Kind | Description |` still gets a 4-cell row
 // (no regression for the existing CLI test fixtures and for repos that

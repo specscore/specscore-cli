@@ -7,10 +7,16 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/issue"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/spf13/cobra"
+)
+
+var (
+	discoverIssuesForTransitions = issue.DiscoverAll
+	parseIssueForTransitions     = issue.Parse
 )
 
 // issueCommand returns the "issue" command group — scaffold, transition, and list Issue artifacts.
@@ -19,8 +25,117 @@ func issueCommand() *cobra.Command {
 		Use:   "issue",
 		Short: "Issue management — scaffold, transition, and list Issue artifacts",
 	}
-	cmd.AddCommand(issueNewCommand(), issueChangeStatusCommand(), issueListCommand())
+	cmd.AddCommand(issueNewCommand(), issueChangeStatusCommand(), issueListCommand(), issueTransitionsCommand())
 	return cmd
+}
+
+// issueTransitionsCommand registers `specscore issue transitions [<slug>]`,
+// the read-only counterpart to change-status. Issue keeps its own tiny
+// matrix (pkg/issue.LegalTransitions) rather than a pkg/lifecycle.Kind, so
+// this command is wired by hand instead of through the shared
+// transitionsCommand builder used by the pkg/lifecycle-backed kinds — but it
+// derives its output from that SAME map (pkg/issue.BidirectionalMatrix), not
+// a hand-authored duplicate.
+func issueTransitionsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "transitions [<slug>]",
+		Short: "Show the Issue status matrix, or one issue's legal next statuses",
+		Long: `Prints the Issue kind's legal-transition matrix: every recognized status
+with the statuses that can legally precede it ("previous") and the statuses
+it can legally become ("next"), derived from the same map change-status
+validates against. An empty "previous" means the status is set only by
+` + "`issue new`" + `, never by change-status; an empty "next" means the status is
+terminal.
+
+With <slug>, reports that ONE issue's CURRENT status and the "next" values a
+change-status call would accept for it right now. Read-only — it never
+mutates the issue.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runIssueTransitions,
+	}
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().String("format", "text", "output format: text, json, yaml")
+	return cmd
+}
+
+func runIssueTransitions(cmd *cobra.Command, args []string) error {
+	format, _ := cmd.Flags().GetString("format")
+	if format != "text" && format != "json" && format != "yaml" {
+		return exitcode.InvalidArgsErrorf("invalid --format: %s (valid: text, json, yaml)", format)
+	}
+
+	if len(args) == 0 {
+		switch format {
+		case "json":
+			return printJSON(cmd.OutOrStdout(), issue.BidirectionalMatrix())
+		case "yaml":
+			return printYAML(cmd.OutOrStdout(), issue.BidirectionalMatrix())
+		default:
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), issue.RenderBidirectionalMatrix())
+			return nil
+		}
+	}
+
+	slug := args[0]
+	projectFlag, _ := cmd.Flags().GetString("project")
+	specRoot, err := resolveSpecRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+	specDir := filepath.Join(specRoot, "spec")
+	discovered, err := discoverIssuesForTransitions(specDir)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("discovering issues: %v", err)
+	}
+	var issuePath string
+	for _, d := range discovered {
+		if d.Slug == slug {
+			issuePath = d.Path
+			break
+		}
+	}
+	if issuePath == "" {
+		return exitcode.NotFoundErrorf("issue %q not found under %s", slug, specDir)
+	}
+	parsed, err := parseIssueForTransitions(issuePath)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("reading %s: %v", issuePath, err)
+	}
+	current := parsed.Frontmatter["status"]
+	if current == "" {
+		current = "open"
+	}
+	edge := issue.EdgeFor(current)
+
+	switch format {
+	case "json":
+		return printJSON(cmd.OutOrStdout(), struct {
+			ID       string   `json:"id"`
+			Status   string   `json:"status"`
+			Previous []string `json:"previous"`
+			Next     []string `json:"next"`
+		}{slug, edge.Status, edge.Previous, edge.Next})
+	case "yaml":
+		return printYAML(cmd.OutOrStdout(), struct {
+			ID       string   `yaml:"id"`
+			Status   string   `yaml:"status"`
+			Previous []string `yaml:"previous"`
+			Next     []string `yaml:"next"`
+		}{slug, edge.Status, edge.Previous, edge.Next})
+	default:
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", slug, edge.Status)
+		prev := "(none — initial status, set only by `issue new`)"
+		if len(edge.Previous) > 0 {
+			prev = strings.Join(edge.Previous, ", ")
+		}
+		next := "(none — terminal status)"
+		if len(edge.Next) > 0 {
+			next = strings.Join(edge.Next, ", ")
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  previous: %s\n", prev)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  next:     %s\n", next)
+		return nil
+	}
 }
 
 // issueNewCommand scaffolds a lint-clean Issue artifact at spec/issues/<slug>.md
@@ -189,6 +304,7 @@ Examples:
 		strings.Join(issue.ValidReasonValues, ", "))
 	cmd.Flags().String("notes", "", "rejection notes (optional, only with --to=rejected)")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -253,16 +369,18 @@ func runIssueChangeStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	specSub := filepath.Join(specRoot, "spec")
-	result, err := issue.ChangeStatus(issue.ChangeStatusOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		To:           to,
-		Severity:     severity,
-		Reason:       reason,
-		Notes:        notes,
-		PostMutation: issueLintPostMutationHook(specSub, slug),
-	})
+	if dryRunFlag, _ := cmd.Flags().GetBool("dry-run"); dryRunFlag {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (issue.ChangeStatusResult, error) {
+			return issueChangeStatusMutate(sandboxRoot, slug, to, severity, reason, notes)
+		})
+		if err != nil {
+			return err
+		}
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, result.From, result.To, changes)
+		return nil
+	}
+
+	result, err := issueChangeStatusMutate(specRoot, slug, to, severity, reason, notes)
 	if err != nil {
 		return err
 	}
@@ -270,6 +388,22 @@ func runIssueChangeStatus(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, result.From, result.To)
 	return nil
+}
+
+// issueChangeStatusMutate performs the Issue Status transition rooted at
+// root (the project root containing spec/). It is the single mutation path
+// both the real command and its --dry-run sandbox invoke.
+func issueChangeStatusMutate(root, slug, to, severity, reason, notes string) (issue.ChangeStatusResult, error) {
+	specSub := filepath.Join(root, "spec")
+	return issue.ChangeStatus(issue.ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         slug,
+		To:           to,
+		Severity:     severity,
+		Reason:       reason,
+		Notes:        notes,
+		PostMutation: issueLintPostMutationHook(specSub, slug),
+	})
 }
 
 // issueLintPostMutationHook returns a post-mutation hook scoped to Issue

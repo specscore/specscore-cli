@@ -112,7 +112,7 @@ After a successful frontmatter rewrite, the verb MUST run `specscore spec lint -
 
 | Feature | Interaction |
 |---|---|
-| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies (atomicity, rollback, output format, exit codes). |
+| [lifecycle-transitions](../../lifecycle-transitions/README.md) | Defines every cross-cutting REQ this verb satisfies (atomicity, rollback, output format, exit codes). Also implements the Meta's [`--dry-run`](../../lifecycle-transitions/README.md#req-dry-run-mode) and [`transitions`](../../lifecycle-transitions/README.md#req-transitions-query-verb) verbs, wired by hand (Issue keeps its own small matrix rather than a `pkg/lifecycle.Kind`). |
 | [issue (CLI group)](../README.md) | Parent group. Contents table includes this sub-feature. |
 | [issue-artifact-type](https://github.com/specscore/specstudio-skills/blob/main/spec/features/issue-artifact-type/README.md) | Source of truth for the four-state lifecycle, severity-on-transition rule, and rejection-reason enum. |
 | [cli/spec/lint/issue-rules](../../spec/lint/issue-rules/README.md) | Rules `I-005` (severity-on-transition) and `I-006` (rejection-reason) enforce the same constraints at lint time. This verb enforces them at mutation time as gate checks. |

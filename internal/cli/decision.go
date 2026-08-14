@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/decision"
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
@@ -42,8 +43,33 @@ func decisionCommand() *cobra.Command {
 		Use:   "decision",
 		Short: "Decision management — scaffold and transition Decision artifacts",
 	}
-	cmd.AddCommand(decisionNewCommand(), decisionChangeStatusCommand())
+	cmd.AddCommand(decisionNewCommand(), decisionChangeStatusCommand(), decisionTransitionsCommand())
 	return cmd
+}
+
+// decisionTransitionsCommand registers `specscore decision transitions
+// [<slug>]`, the read-only counterpart to change-status. slug is the FULL
+// on-disk identifier (see decisionChangeStatusCommand). A Decision that has
+// already reached a terminal disposition lives under spec/decisions/archived/
+// rather than spec/decisions/, so both locations are checked.
+func decisionTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindDecision, "slug", "Show the Decision status matrix, or one decision's legal next statuses",
+		func(projectFlag, slug string) (string, error) {
+			specRoot, err := resolveSpecRoot(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			decisionsDir := filepath.Join(specRoot, "spec", "decisions")
+			active := filepath.Join(decisionsDir, slug+".md")
+			if _, statErr := os.Stat(active); statErr == nil {
+				return active, nil
+			}
+			archived := filepath.Join(decisionsDir, "archived", slug+".md")
+			if _, statErr := os.Stat(archived); statErr == nil {
+				return archived, nil
+			}
+			return "", exitcode.NotFoundErrorf("decision not found: %s", slug)
+		})
 }
 
 // decisionChangeStatusCommand transitions a Decision's **Status:** field via
@@ -107,6 +133,7 @@ Examples:
 	cmd.Flags().String("note", "", "markdown appended as a ## Resolution section; required for --to=rejected, --to=superseded, and --to=deprecated")
 	cmd.Flags().String("successor", "", "full identifier (NNNN-slug) of the decision that supersedes this one; required for --to=superseded, rejected otherwise")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -170,14 +197,18 @@ func runDecisionChangeStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := decision.ChangeStatus(decision.ChangeStatusOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		To:           to,
-		Note:         note,
-		Successor:    successor,
-		PostMutation: decision.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
-	})
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (decision.ChangeStatusResult, error) {
+			return decisionChangeStatusMutate(sandboxRoot, slug, to, note, successor)
+		})
+		if err != nil {
+			return err
+		}
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, string(result.From), string(result.To), changes)
+		return nil
+	}
+
+	result, err := decisionChangeStatusMutate(specRoot, slug, to, note, successor)
 	if err != nil {
 		return err
 	}
@@ -185,6 +216,22 @@ func runDecisionChangeStatus(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
 		result.Slug, string(result.From), string(result.To))
 	return nil
+}
+
+// decisionChangeStatusMutate performs the Decision Status transition
+// (including the terminal-disposition archive relocation and bidirectional
+// Supersedes/Superseded-By link) rooted at root (the project root
+// containing spec/). It is the single mutation path both the real command
+// and its --dry-run sandbox invoke.
+func decisionChangeStatusMutate(root, slug string, to lifecycle.Status, note, successor string) (decision.ChangeStatusResult, error) {
+	return decision.ChangeStatus(decision.ChangeStatusOptions{
+		SpecRoot:     root,
+		Slug:         slug,
+		To:           to,
+		Note:         note,
+		Successor:    successor,
+		PostMutation: decision.PostMutationHook(lintPostMutationHook(filepath.Join(root, "spec"))),
+	})
 }
 
 func decisionNewCommand() *cobra.Command {

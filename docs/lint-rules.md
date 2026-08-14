@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 164
+Total rules: 166
 
 ## capability
 
@@ -214,6 +214,13 @@ Total rules: 164
 | L-007 | error | Requires Enforced Lessons to declare deterministic control, verification, and stable evidence. |
 | L-008 | error | Requires duplicate and supersession relations to resolve without conflicts or cycles. |
 | L-009 | error | Requires every canonical Lesson occurrence child to satisfy the published append-only JSON contract. |
+
+## parked
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| parked-shape | error | Requires a **Parked:** true axis to carry a non-empty **Parked Reason:** and a well-formed **Parked Date:**. |
+| parked-stale | warning | Warns when an artifact has been parked longer than the configured (or default 90-day) review window. |
 
 ## plan
 

@@ -126,6 +126,33 @@ A verb MAY designate a subset of its legal transitions as **reason-required** �
 
 A lifecycle verb MUST map errors to the codes above per their declared meanings. Code `1` is the local transaction/precondition conflict code; it does not imply distributed claim ownership. Codes `5–9` are reserved for other standard meanings per the [CLI exit-code contract](../README.md#shared-exit-code-contract).
 
+### Learning a transition's effect without mutating
+
+The rules above assume a caller is willing to mutate the artifact to find out what a transition does. In practice an agent or script sometimes needs to answer "is this transition legal, and what would it touch?" WITHOUT committing to the mutation — the only prior way to learn that was to run the verb for real and inspect a git diff afterward, trusting its own attention not to forget to revert. `REQ: dry-run-mode` closes that gap with an opt-in flag; `REQ: transitions-query-verb` closes the companion "what could this become?" gap with a permanent read-only verb.
+
+#### REQ: dry-run-mode
+
+A lifecycle verb MAY accept a `--dry-run` flag. When set:
+
+- The verb MUST perform every read and validation step it would normally perform — slug/id resolution, the state-machine check, reason-required/successor/coordination-branch gating — EXACTLY as it would without the flag. An illegal transition, a missing artifact, or a missing required flag is rejected with the IDENTICAL exit code and stderr message a real invocation would produce; `--dry-run` does not soften or reinterpret [REQ: exit-code-fidelity](#req-exit-code-fidelity), it inherits it unchanged.
+- On a LEGAL transition, the verb MUST write nothing: not the target artifact, not an ancestor index file, not any other file under the project's `spec/` tree. The working tree MUST be byte-for-byte identical before and after the call.
+- On a LEGAL transition, the verb MUST report every file within `spec/` that WOULD change — the target artifact, plus whatever `spec lint --fix` would additionally touch (an ancestor index row, a parent's contents table, or a bidirectional link on a second artifact for the kinds that write one) — with paths relative to the project root, and MUST exit `0`. Operational `.specscore/` event-ledger records are deliberately excluded: they carry a fresh event UUID and are delivery bookkeeping rather than artifact edits.
+- The reported file list MUST be produced by running the SAME mutation code path the real command runs, against a throwaway copy of the project's `spec/` tree, then diffing that copy against the untouched original — never by a second, hand-authored prediction of what "should" change. This is what guarantees the list cannot drift from what a subsequent real run actually does: a dry run and a real run share the one mutation implementation, differing only in which tree it is pointed at.
+- `--dry-run` output stays plain text — one line per changed file, `<letter> <path>` in `git status --short`'s `M`/`A`/`D` vocabulary — consistent with this contract's text-only stance in [REQ: success-output-format](#req-success-output-format). It does not resolve the deferred `--format yaml|json` question in Open Questions, which is scoped to the mutating command's own stdout.
+
+`--dry-run` is implemented for `feature`, `idea`, `plan`, `lesson`, `decision`, `issue`, and `sidekick`. It is NOT implemented for `task`: task's mutation is a direct `lifecycle.Rewrite` call against `tasks/<task>/README.md` — outside `spec/`, with no shared per-kind `ChangeStatus` orchestrator to sandbox — plus provenance stamping and a plan-inline resolution mode (a task's status can live in a `### Task N:` block inside a Plan file) that would need its own preview semantics. Closing that gap is future work.
+
+#### REQ: transitions-query-verb
+
+Each kind implementing this contract SHOULD also expose a **read-only** `<kind> transitions [<id>]` verb, answering "what can this become?" without requiring a caller to already know a `--to` value to test:
+
+- With no `<id>`, it prints the kind's complete bidirectional status matrix — every recognized status with its legal predecessors ("previous") and legal successors ("next") — derived from the SAME matrix `change-status` validates against. A status with no predecessors is initial-only (set only by the kind's `new`/scaffold verb); a status with no successors is terminal. Both MUST be stated outright rather than left for the reader to infer from a forward-only table's silence.
+- With `<id>`, it resolves the artifact exactly as `change-status` would, reads its CURRENT status, and reports that one status's previous/next — i.e., exactly the `--to` values a subsequent `change-status` call on the SAME artifact would accept.
+
+This verb is a query, not a mutation: it never writes, and it never validates a *proposed* transition — it only reports the legal set. It falls outside [REQ: scope-status-mutation-only](#req-scope-status-mutation-only)'s boundary and every REQ above that governs write behavior (rollback-on-lint-failure, the reason-required gates, and so on). It is documented in this Meta feature rather than left as a bare, uncontracted query verb because its entire content IS this contract's matrix — it has no behavior independent of it. It supports `--format text|json|yaml`, matching this CLI's existing query-verb convention (see [CLI](../README.md)); this is independent of — and does not reopen — the deferred structured-output question for `change-status`'s own mutating stdout.
+
+`task transitions` covers board-mode tasks (`tasks/<task>/README.md`) only, for the same reason `task change-status` has no `--dry-run`: a plan-inline task's status lives inside a `### Task N:` block partway down its Plan file, which needs that Plan's own block parser to locate, not a bare artifact-path resolution.
+
 ## Interaction with Other Features
 
 | Feature | Interaction |
@@ -145,6 +172,7 @@ A lifecycle verb MUST map errors to the codes above per their declared meanings.
 - Is `spec lint --fix` scope narrowed to only the affected index row (faster on large repos) or kept full-tree (safer)? Today's lint is fast enough that full-tree is acceptable, but measurement on representative consumer repos will decide if a narrow-scope path is worth the complexity.
 - When a new doc kind grows lifecycle verbs (e.g., the planned `entity` and `property` Doc-Kinds from the meta-spec's [entity-and-property-definitions](https://github.com/specscore/specscore/blob/main/spec/ideas/entity-and-property-definitions.md) Idea), does it inherit this contract directly, or does the contract abstract a shared "index sync rule" parameter? Today every supported doc kind uses a `*-index-row-sync` rule, so direct inheritance works.
 - Batch transitions (`specscore idea approve <slug-1> <slug-2> ...`) are out of MVP. If they land later, are they atomic-per-slug or all-or-nothing, and what explicit committed/recovery outcome applies to a partially published batch?
+- Should `task change-status` grow `--dry-run` and a full (board- and plan-inline-mode) `task transitions`? It requires either extracting task's inline mutation into a shared per-kind `ChangeStatus` orchestrator (mirroring the other six kinds) or a bespoke sandbox/status-reader that understands plan-inline `### Task N:` block resolution and provenance stamping. Not attempted in this pass — see [REQ: dry-run-mode](#req-dry-run-mode) and [REQ: transitions-query-verb](#req-transitions-query-verb).
 
 ---
 *This document follows the https://specscore.md/feature-specification*

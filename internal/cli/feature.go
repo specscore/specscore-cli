@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -33,8 +34,30 @@ func featureCommand() *cobra.Command {
 		featureRefsCommand(),
 		featureNewCommand(),
 		featureChangeStatusCommand(),
+		featureTransitionsCommand(),
+		featureParkCommand(),
+		featureUnparkCommand(),
 	)
 	return cmd
+}
+
+// featureTransitionsCommand registers `specscore feature transitions
+// [<feature_id>]`, the read-only counterpart to change-status: with no
+// argument it prints the Feature kind's full bidirectional status matrix;
+// with a feature_id it reports that feature's current status and what it
+// can legally become next.
+func featureTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindFeature, "feature_id", "Show the Feature status matrix, or one feature's legal next statuses",
+		func(projectFlag, featureID string) (string, error) {
+			featuresDir, err := resolveFeaturesDir(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			if !feature.Exists(featuresDir, featureID) {
+				return "", exitcode.NotFoundErrorf("feature not found: %s (expected README at %s)", featureID, feature.ReadmePath(featuresDir, featureID))
+			}
+			return feature.ReadmePath(featuresDir, featureID), nil
+		})
 }
 
 // resolveFeaturesDir resolves the features directory from a --project flag or CWD.
@@ -166,6 +189,10 @@ func writeEnrichedTextNode(w *bufio.Writer, ef *feature.EnrichedFeature, fields 
 		case "proposals":
 			if len(ef.Proposals) > 0 {
 				meta = append(meta, fmt.Sprintf("proposals=[%s]", strings.Join(ef.Proposals, ",")))
+			}
+		case "parked":
+			if ef.Parked != nil && *ef.Parked {
+				meta = append(meta, "parked=true")
 			}
 		}
 	}
@@ -318,19 +345,23 @@ func featureListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List all feature IDs, one per line",
 		Long: `Lists all features in a project as full feature IDs, one per line,
-sorted alphabetically. Use --fields to include metadata for each feature.`,
+sorted alphabetically. Use --fields to include metadata for each feature.
+Use --parked to show only features carrying the **Parked:** true axis
+(deliberately deferred, independent of their **Status:**).`,
 		Args: cobra.NoArgs,
 		RunE: runFeatureList,
 	}
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().String("fields", "", "comma-separated metadata fields to include (e.g., status,oq)")
 	cmd.Flags().String("format", "", "output format: yaml, json, text (auto-selects yaml when --fields is set)")
+	cmd.Flags().Bool("parked", false, "show only parked features (excludes unparked features)")
 	return cmd
 }
 
 func runFeatureList(cmd *cobra.Command, _ []string) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
 	fieldsFlag, _ := cmd.Flags().GetString("fields")
+	parkedOnly, _ := cmd.Flags().GetBool("parked")
 
 	fields, err := feature.ParseFieldNames(fieldsFlag)
 	if err != nil {
@@ -352,6 +383,17 @@ func runFeatureList(cmd *cobra.Command, _ []string) error {
 		return exitcode.UnexpectedErrorf("discovering features: %v", err)
 	}
 	featureIDs := feature.FeatureIDs(features)
+
+	if parkedOnly {
+		var filtered []string
+		for _, id := range featureIDs {
+			info, err := lifecycle.ReadParked(feature.ReadmePath(featuresDir, id))
+			if err == nil && info.Parked {
+				filtered = append(filtered, id)
+			}
+		}
+		featureIDs = filtered
+	}
 
 	w := cmd.OutOrStdout()
 
@@ -886,6 +928,7 @@ restored and the command exits 10.`,
 	}
 	cmd.Flags().String("to", "", "target status (required; case-insensitive)")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -910,10 +953,45 @@ func runFeatureChangeStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// featuresDir is always <projectRoot>/spec/features (resolveFeaturesDir's
+	// contract); undo both joins to recover the project root dryrun.Sandbox
+	// needs (it copies <root>/spec).
+	projectRoot := filepath.Dir(filepath.Dir(featuresDir))
 
-	result, err := feature.ChangeStatus(featuresDir, featureID, toFlag)
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(projectRoot, func(sandboxRoot string) (feature.ChangeStatusResult, error) {
+			return featureChangeStatusMutate(sandboxRoot, featureID, toFlag)
+		})
+		if err != nil {
+			return err
+		}
+		dryrun.PrintReport(cmd.OutOrStdout(), featureID, string(result.From), string(result.To), changes)
+		return nil
+	}
+
+	result, err := featureChangeStatusMutate(projectRoot, featureID, toFlag)
 	if err != nil {
 		return err
+	}
+
+	// Success: exactly one line to stdout (Meta REQ
+	// success-output-format), using the unicode arrow.
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", featureID, string(result.From), string(result.To))
+	return nil
+}
+
+// featureChangeStatusMutate performs the Feature Status rewrite plus its
+// post-rewrite `spec lint --fix`/verify/rollback dance, rooted at root (the
+// project root containing spec/). It is the single mutation path both the
+// real command and its --dry-run sandbox invoke — dry-run passes a
+// throwaway copy of root here instead of the real one (see dryrun.Sandbox),
+// so this function derives every path from its root argument rather than
+// from any ambient/pre-resolved value.
+func featureChangeStatusMutate(root, featureID, toFlag string) (feature.ChangeStatusResult, error) {
+	featuresDir := filepath.Join(root, "spec", "features")
+	result, err := feature.ChangeStatus(featuresDir, featureID, toFlag)
+	if err != nil {
+		return feature.ChangeStatusResult{}, err
 	}
 
 	// Post-rewrite: run `spec lint --fix` against the project's spec
@@ -921,29 +999,29 @@ func runFeatureChangeStatus(cmd *cobra.Command, args []string) error {
 	// REQ rollback-on-lint-failure, ANY error-severity violation
 	// after `--fix` triggers rollback — pre-existing violations
 	// elsewhere in the tree included.
-	specRoot := filepath.Dir(featuresDir) // spec/features → spec/
+	specRoot := filepath.Join(root, "spec")
 
 	if _, fixErr := lintLintFn(lint.Options{SpecRoot: specRoot, Fix: true}); fixErr != nil {
 		// Lint --fix itself errored; roll back so the on-disk state
 		// matches its pre-invocation snapshot, then map to exit-10.
 		if rbErr := result.Restore(); rbErr != nil {
-			return exitcode.UnexpectedErrorf(
+			return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf(
 				"lint --fix failed: %v; rollback also failed: %v",
 				fixErr, rbErr,
 			)
 		}
-		return exitcode.UnexpectedErrorf("lint --fix failed: %v (rolled back)", fixErr)
+		return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf("lint --fix failed: %v (rolled back)", fixErr)
 	}
 
 	violations, lintErr := lintLintFn(lint.Options{SpecRoot: specRoot})
 	if lintErr != nil {
 		if rbErr := result.Restore(); rbErr != nil {
-			return exitcode.UnexpectedErrorf(
+			return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf(
 				"post-fix lint failed: %v; rollback also failed: %v",
 				lintErr, rbErr,
 			)
 		}
-		return exitcode.UnexpectedErrorf("post-fix lint failed: %v (rolled back)", lintErr)
+		return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf("post-fix lint failed: %v (rolled back)", lintErr)
 	}
 
 	var errs []lint.Violation
@@ -954,7 +1032,7 @@ func runFeatureChangeStatus(cmd *cobra.Command, args []string) error {
 	}
 	if len(errs) > 0 {
 		if rbErr := result.Restore(); rbErr != nil {
-			return exitcode.UnexpectedErrorf(
+			return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf(
 				"lint reported %d error-severity violation(s) after --fix; rollback also failed: %v",
 				len(errs), rbErr,
 			)
@@ -964,13 +1042,10 @@ func runFeatureChangeStatus(cmd *cobra.Command, args []string) error {
 		for _, v := range errs {
 			fmt.Fprintf(&sb, "  %s:%d [%s] %s\n", v.File, v.Line, v.Rule, v.Message)
 		}
-		return exitcode.UnexpectedError(sb.String())
+		return feature.ChangeStatusResult{}, exitcode.UnexpectedError(sb.String())
 	}
 
-	// Success: exactly one line to stdout (Meta REQ
-	// success-output-format), using the unicode arrow.
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", featureID, string(result.From), string(result.To))
-	return nil
+	return *result, nil
 }
 
 // gitCommitAndPush stages files, commits, and pushes. On push conflict it

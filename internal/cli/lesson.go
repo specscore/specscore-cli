@@ -4,13 +4,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
@@ -38,8 +41,22 @@ func lessonCommand() *cobra.Command {
 		lessonMigrateFlatCommand(),
 		lessonCheckCommand(),
 		lessonAgentsCommand(),
+		lessonTransitionsCommand(),
 	)
 	return cmd
+}
+
+// lessonTransitionsCommand registers `specscore lesson transitions
+// [<slug>]`, the read-only counterpart to change-status.
+func lessonTransitionsCommand() *cobra.Command {
+	return transitionsCommand(lifecycle.KindLesson, "slug", "Show the Lesson status matrix, or one lesson's legal next statuses",
+		func(projectFlag, slug string) (string, error) {
+			lessonsDir, err := resolveLessonsDir(projectFlag)
+			if err != nil {
+				return "", err
+			}
+			return resolveLessonPath(lessonsDir, slug)
+		})
 }
 
 // lessonNewCommand scaffolds a lint-clean canonical Lesson directory at
@@ -369,6 +386,7 @@ Examples:
 	cmd.Flags().String("note", "", "markdown appended as a ## Resolution section; required for --to=withdrawn and --to=superseded")
 	cmd.Flags().String("successor", "", "slug of the lesson that supersedes this one; required for --to=superseded, rejected otherwise")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
 	return cmd
 }
 
@@ -428,59 +446,20 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 		return err
 	}
 
-	if to == lifecycle.LessonSuperseded {
-		successor = strings.TrimSpace(successor)
-		if _, rerr := lesson.ResolveLessonFile(filepath.Join(specRoot, "spec", "lessons"), successor); rerr != nil {
-			return exitcode.InvalidArgsErrorf(
-				"successor lesson %q does not resolve to an existing canonical or compatibility Lesson", successor)
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (lesson.ChangeStatusResult, error) {
+			return lessonChangeStatusMutateWithDeps(cmd.Context(), sandboxRoot, slug, to, note, successor, deps, nil)
+		})
+		if err != nil {
+			return err
 		}
+		dryrun.PrintReport(cmd.OutOrStdout(), result.Slug, string(result.From), string(result.To), changes)
+		return nil
 	}
-	// Establish every non-mutating lifecycle precondition before preparing an
-	// outbox record. This keeps ordinary missing/illegal-transition failures
-	// write-free rather than manufacturing a recovery item for a mutation that
-	// could not have started.
-	path, err := lesson.ResolveLessonFile(filepath.Join(specRoot, "spec", "lessons"), slug)
-	if err != nil {
-		return err
-	}
-	if _, err := lifecycle.Validate(lifecycle.KindLesson, path, to); err != nil {
-		var transition *lifecycle.InvalidTransitionError
-		if errors.As(err, &transition) {
-			return exitcode.InvalidStateErrorf("invalid transition: lesson %q is in status %q", slug, string(transition.From))
-		}
-		return exitcode.UnexpectedErrorf("reading lesson status: %v", err)
-	}
-	postMutation, err := prepareLessonPostMutationWithDeps(specRoot, slug, deps)
-	if err != nil {
-		return err
-	}
-	prepared, err := deps.prepareEvent(specRoot, "lesson.lifecycle-changed", slug, map[string]any{"to": string(to)}, time.Time{})
-	if err != nil {
-		return exitcode.UnexpectedErrorf("preparing lifecycle event: %v", err)
-	}
-	transaction := newLessonMutationCoordinator(prepared, deps.durable)
 
-	result, err := deps.changeStatus(lesson.ChangeStatusOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		To:           to,
-		Note:         note,
-		Successor:    successor,
-		PostMutation: postMutation,
-	})
+	result, err := lessonChangeStatusMutateWithDeps(cmd.Context(), specRoot, slug, to, note, successor, deps, cmd.ErrOrStderr())
 	if err != nil {
-		if recovery, resolved := transaction.ResolveFailure("changing lesson status", err); recovery {
-			return exitcode.UnexpectedErrorf("%v", resolved)
-		} else {
-			return resolved
-		}
-	}
-	delivery, commitErr := transaction.Commit(cmd.Context())
-	if commitErr != nil {
-		return exitcode.UnexpectedErrorf("status changed but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
-	}
-	for _, failure := range delivery.Failed {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
+		return err
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n",
@@ -535,6 +514,58 @@ func prepareLessonPostMutationWithDeps(root, slug string, deps lessonCLIDeps) (l
 		}
 		return nil
 	}, nil
+}
+
+// lessonChangeStatusMutateWithDeps is the full status-change transaction used
+// by both the real command and --dry-run.  The latter points root at a
+// temporary spec tree, so it performs the same validation, durable artifact
+// fence, index update, and event coordination without writing the project the
+// user invoked the command against.
+func lessonChangeStatusMutateWithDeps(ctx context.Context, root, slug string, to lifecycle.Status, note, successor string, deps lessonCLIDeps, warnings io.Writer) (lesson.ChangeStatusResult, error) {
+	if to == lifecycle.LessonSuperseded {
+		successor = strings.TrimSpace(successor)
+		if _, err := lesson.ResolveLessonFile(filepath.Join(root, "spec", "lessons"), successor); err != nil {
+			return lesson.ChangeStatusResult{}, exitcode.InvalidArgsErrorf("successor lesson %q does not resolve to an existing canonical or compatibility Lesson", successor)
+		}
+	}
+	path, err := lesson.ResolveLessonFile(filepath.Join(root, "spec", "lessons"), slug)
+	if err != nil {
+		return lesson.ChangeStatusResult{}, err
+	}
+	if _, err := lifecycle.Validate(lifecycle.KindLesson, path, to); err != nil {
+		var transition *lifecycle.InvalidTransitionError
+		if errors.As(err, &transition) {
+			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf("invalid transition: lesson %q is in status %q", slug, string(transition.From))
+		}
+		return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading lesson status: %v", err)
+	}
+	postMutation, err := prepareLessonPostMutationWithDeps(root, slug, deps)
+	if err != nil {
+		return lesson.ChangeStatusResult{}, err
+	}
+	prepared, err := deps.prepareEvent(root, "lesson.lifecycle-changed", slug, map[string]any{"to": string(to)}, time.Time{})
+	if err != nil {
+		return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("preparing lifecycle event: %v", err)
+	}
+	transaction := newLessonMutationCoordinator(prepared, deps.durable)
+	result, err := deps.changeStatus(lesson.ChangeStatusOptions{SpecRoot: root, Slug: slug, To: to, Note: note, Successor: successor, PostMutation: postMutation})
+	if err != nil {
+		recovery, resolved := transaction.ResolveFailure("changing lesson status", err)
+		if recovery {
+			return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("%v", resolved)
+		}
+		return lesson.ChangeStatusResult{}, resolved
+	}
+	delivery, commitErr := transaction.Commit(ctx)
+	if commitErr != nil {
+		return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("status changed but event publication is pending for event %s: %v", prepared.event.UUID, commitErr)
+	}
+	if warnings != nil {
+		for _, failure := range delivery.Failed {
+			_, _ = fmt.Fprintf(warnings, "warning: subscriber %s remains pending: %v\n", failure.Name, failure.Err)
+		}
+	}
+	return result, nil
 }
 
 // ensureLessonAncestorIndexes materializes spec/README.md and
