@@ -558,6 +558,33 @@ func TestOwnedMarkerFinalizationForeignReplacementIsNeverDeleted(t *testing.T) {
 	}
 }
 
+type markerGenerationFileInfo struct {
+	os.FileInfo
+	generation int
+}
+
+// markerGenerationOps makes the identity-fence tests deterministic. A real
+// remove-and-recreate can reuse the same inode on Linux, so inode equality
+// alone cannot prove the test's intended replacement happened.
+func markerGenerationOps(prepared, committed string) (ownedMarkerOps, func(string)) {
+	ops := defaultOwnedMarkerOps()
+	generation := map[string]int{prepared: 1, committed: 1}
+	lstat := ops.lstat
+	ops.lstat = func(path string) (os.FileInfo, error) {
+		info, err := lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		return markerGenerationFileInfo{FileInfo: info, generation: generation[path]}, nil
+	}
+	ops.sameFile = func(left, right os.FileInfo) bool {
+		leftIdentity, leftOK := left.(markerGenerationFileInfo)
+		rightIdentity, rightOK := right.(markerGenerationFileInfo)
+		return leftOK && rightOK && leftIdentity.generation == rightIdentity.generation
+	}
+	return ops, func(path string) { generation[path]++ }
+}
+
 func TestOwnedMarkerFinalizationDetectsSameByteIdentityReplacement(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -567,11 +594,12 @@ func TestOwnedMarkerFinalizationDetectsSameByteIdentityReplacement(t *testing.T)
 		{
 			name: "prepared-while-pair-visible",
 			prepare: func(t *testing.T, prepared, _ string, expected []byte) ownedMarkerOps {
-				ops := defaultOwnedMarkerOps()
+				ops, replaced := markerGenerationOps(prepared, committedMarkerPath(prepared))
 				ops.syncDir = func(string) error {
 					if err := os.Remove(prepared); err != nil {
 						return err
 					}
+					replaced(prepared)
 					return os.WriteFile(prepared, expected, 0o600)
 				}
 				return ops
@@ -581,7 +609,7 @@ func TestOwnedMarkerFinalizationDetectsSameByteIdentityReplacement(t *testing.T)
 		{
 			name: "committed-after-prepared-unlink",
 			prepare: func(t *testing.T, _, committed string, expected []byte) ownedMarkerOps {
-				ops := defaultOwnedMarkerOps()
+				ops, replaced := markerGenerationOps(strings.TrimSuffix(committed, ".committed"), committed)
 				calls := 0
 				ops.syncDir = func(string) error {
 					calls++
@@ -591,6 +619,7 @@ func TestOwnedMarkerFinalizationDetectsSameByteIdentityReplacement(t *testing.T)
 					if err := os.Remove(committed); err != nil {
 						return err
 					}
+					replaced(committed)
 					return os.WriteFile(committed, expected, 0o600)
 				}
 				return ops
@@ -603,11 +632,12 @@ func TestOwnedMarkerFinalizationDetectsSameByteIdentityReplacement(t *testing.T)
 				if err := os.Rename(prepared, committed); err != nil {
 					t.Fatal(err)
 				}
-				ops := defaultOwnedMarkerOps()
+				ops, replaced := markerGenerationOps(prepared, committed)
 				ops.syncDir = func(string) error {
 					if err := os.Remove(committed); err != nil {
 						return err
 					}
+					replaced(committed)
 					return os.WriteFile(committed, expected, 0o600)
 				}
 				return ops
@@ -625,7 +655,7 @@ func TestOwnedMarkerFinalizationDetectsSameByteIdentityReplacement(t *testing.T)
 			}
 			ops := tc.prepare(t, prepared, committed, expected)
 			if err := removeOwnedFileDurableWithOps(prepared, expected, ops); err == nil || !strings.Contains(err.Error(), "identity changed") {
-				t.Fatalf("err=%v, want inode identity refusal", err)
+				t.Fatalf("err=%v, want identity refusal", err)
 			}
 			foreignPath := prepared
 			if tc.foreign == "committed" {
