@@ -30,7 +30,7 @@ Plans move through a document lifecycle, but historically there was **no CLI ver
 
 ## Behavior
 
-This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md) — strict state machine (exit `4`), `--to` parse + slug resolution, atomic rewrite + `spec lint --fix` index sync, rollback (exit `10`), `<slug>: <from> → <to>` success line, the shared exit-code mapping, and the optional `--note` → `## Resolution` mechanism. The REQs below are the Plan-specific declarations: the human-only legal-transition matrix, the execution-band-not-settable rule, the `--to` flag enumeration, the kind-specific slug resolution, the reason-required dispositions, and the Superseded-needs-successor rule.
+This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md), including one committed artifact transaction, fail-fast lock contention, and retained recovery-required derived-work failures.
 
 ### Legal-transition matrix
 
@@ -85,7 +85,7 @@ A `Superseded` plan MUST reference its successor plan (canonical [plan#req:valid
 
 #### REQ: plans-index-sync
 
-The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success)) MUST sync the plans index (`spec/plans/README.md`) to the new status. The verb reuses the same post-mutation lint hook as `idea`/`feature change-status`; the lint pass IS the sync. The verb's exit `0` depends on the rewrite AND the lint pass both succeeding; a lint failure rolls back every mutation and exits `10`.
+The post-mutation lint/index sync runs after the committed Plan transaction. Exit `0` requires both stages; a derived-work failure exits `10` with the committed Plan retained for recovery.
 
 #### REQ: coordination-branch-enforcement
 
@@ -120,7 +120,7 @@ The verb MUST accept a `--force-coordination` boolean flag. When set, a coordina
 | `2` | Missing/malformed `<slug>`; missing `--to`; unrecognized `--to`; an execution-band `--to`; missing required `--note` on `--to=superseded`/`--to=withdrawn`; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No Plan file at `spec/plans/<slug>.md` (nor the directory form). |
 | `4` | `(current_status, --to)` is not a legal transition per the matrix. |
-| `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
+| `10` | I/O failure, or derived lint/index work failed after the atomic Plan transaction committed; committed bytes are retained and the error requires recovery. |
 
 ## Interaction with Other Features
 
@@ -284,13 +284,13 @@ The verb MUST accept a `--force-coordination` boolean flag. When set, a coordina
 **When** the user runs `specscore plan change-status nonexistent --to=approved`
 **Then** the command exits `3` with stderr naming the expected `spec/plans/nonexistent.md` path.
 
-### AC: lint-failure-rolls-back
+### AC: lint-failure-retains-committed-transaction
 
-**Requirements:** [cli/plan/change-status#req:plans-index-sync](#req-plans-index-sync), [lifecycle-transitions#req:rollback-on-lint-failure](../../lifecycle-transitions/README.md#req-rollback-on-lint-failure)
+**Requirements:** [cli/plan/change-status#req:plans-index-sync](#req-plans-index-sync)
 
 **Given** `spec/plans/auth.md` in `**Status:** Draft`
 **When** `spec lint --fix` fails after a successful Status rewrite
-**Then** a full rollback restores the original `**Status:**` (and removes any `## Resolution` note or `**Superseded By:**` line), and the command exits `10` with stderr naming the lint violation(s).
+**Then** the command exits `10` with a committed/recovery-required error naming the lint violation(s), while the new `**Status:**` and any same-transaction `## Resolution` or `**Superseded By:**` bytes remain visible. No late rollback is attempted.
 
 ### AC: coordination-mismatch-rejected
 

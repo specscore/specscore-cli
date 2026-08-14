@@ -38,14 +38,19 @@ const (
 // message. It satisfies both the error interface and the ExitCode()
 // convention checked by the top-level CLI runner.
 type Error struct {
-	code int
-	msg  string
+	code  int
+	msg   string
+	cause error
 }
 
 func (e *Error) Error() string { return e.msg }
 
 // ExitCode returns the numeric exit code for this error.
 func (e *Error) ExitCode() int { return e.code }
+
+// Unwrap preserves an underlying runtime cause when a command maps it to a
+// stable process exit code. Argument/state errors commonly have no cause.
+func (e *Error) Unwrap() error { return e.cause }
 
 // New creates an Error with the given exit code and message.
 func New(code int, msg string) *Error {
@@ -55,6 +60,11 @@ func New(code int, msg string) *Error {
 // Newf creates an Error with the given exit code and formatted message.
 func Newf(code int, format string, args ...any) *Error {
 	return &Error{code: code, msg: fmt.Sprintf(format, args...)}
+}
+
+// Wrap maps cause to code while retaining errors.Is/errors.As identity.
+func Wrap(code int, msg string, cause error) *Error {
+	return &Error{code: code, msg: msg, cause: cause}
 }
 
 // --- Convenience constructors for standard exit codes ---
@@ -100,4 +110,10 @@ func UnexpectedError(msg string) *Error { return &Error{code: Unexpected, msg: m
 // UnexpectedErrorf returns an exit-code-10 error with a formatted message.
 func UnexpectedErrorf(format string, args ...any) *Error {
 	return Newf(Unexpected, format, args...)
+}
+
+// UnexpectedErrorCause maps an unexpected runtime cause to exit 10 without
+// discarding its identity.
+func UnexpectedErrorCause(msg string, cause error) *Error {
+	return Wrap(Unexpected, msg, cause)
 }

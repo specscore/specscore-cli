@@ -131,8 +131,8 @@ func TestPlanRulesFix_ParseError(t *testing.T) {
 	}
 }
 
-// Covers the insertSourceNone error path inside planRulesChecker.fix(): a
-// sourceless plan that is read-only fails when the fixer rewrites it.
+// Covers the insertSourceNone error path inside planRulesChecker.fix(): an
+// unwritable artifact directory prevents staging the atomic replacement.
 func TestPlanRulesFix_InsertWriteError(t *testing.T) {
 	skipIfRoot(t)
 	root := t.TempDir()
@@ -142,15 +142,15 @@ func TestPlanRulesFix_InsertWriteError(t *testing.T) {
 	}
 	p := filepath.Join(plansDir, "p.md")
 	mustWrite(t, p, "# Plan: P\n\n**Status:** Draft\n\n## Tasks\n\n### Task 1: Do\n\n**Status:** pending\n")
-	if err := os.Chmod(p, 0o444); err != nil {
+	if err := os.Chmod(plansDir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chmod(p, 0o644) }()
+	defer func() { _ = os.Chmod(plansDir, 0o755) }()
 
 	c := newPlanRulesChecker()
 	c.fixNoSource = true
 	if err := c.fix(root); err == nil {
-		t.Error("expected a write error rewriting a read-only plan")
+		t.Error("expected a write error staging in a read-only plan directory")
 	}
 }
 

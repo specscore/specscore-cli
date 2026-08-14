@@ -94,7 +94,7 @@ The `<slug>` positional MUST resolve to an existing flat-form Plan file (`spec/p
 
 ### REQ: index-sync
 
-The post-mutation `specscore spec lint --fix` (per [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success)) MUST run after the rewrite, syncing the plans index and the frontmatter `status:` mirror. The verb's exit `0` depends on the rewrite AND the lint pass both succeeding; a lint failure rolls back every mutation and exits `10`.
+The post-mutation lint/index sync runs after the committed reconciliation transaction. Exit `0` requires both stages; failure exits `10` with the reconciled artifact retained for explicit recovery.
 
 ### REQ: execution-band-error-points-here
 
@@ -135,7 +135,7 @@ The verb MUST accept a `--force-coordination` boolean flag with the same bypass-
 | `2` | Missing/malformed `<slug>`; missing or unrecognized `--tasks`; missing/blank `--note`; malformed `--force-tasks` value (not a comma-separated list of positive integers). |
 | `3` | No Plan file at `spec/plans/<slug>.md` (nor the directory form). |
 | `4` | Plan resolves only to the directory form; plan is in a terminal disposition status; plan has no embedded tasks; a task is missing an explicit `**Status:**` line; a task is `failed`/`aborted` and not acknowledged via `--force-tasks`; or the plan is already reconciled (re-run no-op). |
-| `10` | I/O failure, or `spec lint --fix` failed after a successful rewrite (rollback applied). |
+| `10` | I/O failure, or derived lint/index work failed after a committed reconciliation (recovery required). |
 
 ## Interaction with Other Features
 
@@ -258,13 +258,13 @@ The verb MUST accept a `--force-coordination` boolean flag with the same bypass-
 **When** the user runs `specscore plan reconcile ghost --tasks=complete --note "x"`
 **Then** the command exits `3`, naming the expected `spec/plans/ghost.md` path.
 
-### AC: lint-failure-rolls-back
+### AC: lint-failure-retains-committed-reconciliation
 
 **Requirements:** [index-sync](#req-index-sync)
 
 **Given** a plan eligible for reconciliation
 **When** `spec lint --fix` fails after a successful rewrite
-**Then** a full rollback restores the plan to its pre-invocation bytes — including removing the `**Reconciled:**` marker and `## Resolution` paragraph if this was the first reconciliation — and the command exits `10`.
+**Then** the command exits `10` and retains the committed reconciliation marker and resolution for explicit recovery; it never performs an unsafe late rollback.
 
 ### AC: change-status-error-mentions-reconcile
 

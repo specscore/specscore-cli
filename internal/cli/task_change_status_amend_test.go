@@ -216,13 +216,14 @@ func TestTaskChangeStatus_Board_AmendNoStatusLine(t *testing.T) {
 // A board amend write failure surfaces Unexpected (10).
 func TestTaskChangeStatus_Board_AmendWriteFailure(t *testing.T) {
 	stageTaskWithStatus(t, "auth", "complete")
-	orig := osWriteFileFn
-	osWriteFileFn = func(string, []byte, os.FileMode) error { return errors.New("boom") }
-	t.Cleanup(func() { osWriteFileFn = orig })
+	boom := errors.New("atomic transaction boom")
 
-	_, _, err := runTask(t, "change-status", "auth", "--amend-provenance", "--commit", "a1b2c3d")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: func(string, func([]byte) ([]byte, error)) error { return boom }}, "change-status", "auth", "--amend-provenance", "--commit", "a1b2c3d")
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("error lost transaction cause: %v", err)
 	}
 }
 
@@ -330,16 +331,16 @@ func TestTaskChangeStatus_PlanInline_AmendUnreadablePlan(t *testing.T) {
 
 // Plan-inline amend whose post-validation write fails surfaces Unexpected (10).
 func TestTaskChangeStatus_PlanInline_AmendWriteFailure(t *testing.T) {
-	_, planPath := stagePlanWithTasks(t, "auth", completeTaskPlanBody)
-	if err := os.Chmod(planPath, 0o400); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(planPath, 0o644) })
+	stagePlanWithTasks(t, "auth", completeTaskPlanBody)
+	boom := errors.New("atomic transaction boom")
 
-	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth",
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: func(string, func([]byte) ([]byte, error)) error { return boom }}, "change-status", "setup", "--plan", "auth",
 		"--amend-provenance", "--commit", "a1b2c3d")
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("error lost transaction cause: %v", err)
 	}
 }
 

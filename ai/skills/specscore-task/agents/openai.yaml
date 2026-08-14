@@ -1,0 +1,4 @@
+interface:
+  display_name: "SpecScore Task"
+  short_description: "Correct Task annotations with an auditable lifecycle record."
+  default_prompt: "Use $specscore-task to correct a Task annotation safely."

@@ -20,6 +20,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/idearelocate"
 	"github.com/specscore/specscore-cli/pkg/issue"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
@@ -1896,6 +1897,13 @@ func setupTaskProjectForNew(t *testing.T) string {
 	_ = os.MkdirAll(tasksDir, 0o755)
 	board := "# Tasks\n\n| Task | Status | Depends on | Branch | Agent | Requester | Time |\n|---|---|---|---|---|---|---|\n"
 	_ = os.WriteFile(filepath.Join(tasksDir, "README.md"), []byte(board), 0o644)
+	// Common dependency fixtures exercise the documented directory fallback;
+	// task-new revalidates these under the board transaction before commit.
+	for _, slug := range []string{"setup", "deploy", "other", "a", "b"} {
+		if err := os.MkdirAll(filepath.Join(tasksDir, slug), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -4160,15 +4168,16 @@ func TestTaskNew_BoardParseError(t *testing.T) {
 func TestTaskNew_WriteBoardError(t *testing.T) {
 	root := setupTaskProjectForNew(t)
 	withCwd(t, root)
-	// First make tasks/README.md read-only so write fails.
-	boardPath := filepath.Join(root, "tasks", "README.md")
-	if err := os.Chmod(boardPath, 0o444); err != nil {
-		t.Fatal(err)
+	boom := errors.New("atomic board commit failed")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{commitBoard: func(*lifecycle.ArtifactTransaction, []byte) error { return boom }}, "new", "--task=wrfail", "--title=WR Fail")
+	if err == nil || !errors.Is(err, boom) {
+		t.Fatalf("expected preserved atomic board commit error, got %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(boardPath, 0o644) })
-	_, _, err := runTask(t, "new", "--task=wrfail", "--title=WR Fail")
-	if err == nil {
-		t.Fatal("expected error when board file is read-only")
+	if _, statErr := os.Stat(taskNewMarkerPath(filepath.Join(root, "tasks"), "wrfail")); statErr != nil {
+		t.Fatalf("prepared marker not retained: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "tasks", "wrfail", "README.md")); statErr != nil {
+		t.Fatalf("published README not retained for retry: %v", statErr)
 	}
 }
 
@@ -6431,16 +6440,18 @@ func TestTaskNew_WriteFileError(t *testing.T) {
 	root := setupTaskProject(t)
 	withCwd(t, root)
 
-	// Inject a stub failure for writing the task README.
-	old := osWriteFileFn
-	osWriteFileFn = func(name string, data []byte, perm os.FileMode) error {
-		return fmt.Errorf("injected write error")
+	// Let the prepared marker publish, then fail the exclusive README publish.
+	boom := errors.New("injected exclusive publish error")
+	publish := func(name string, data []byte, perm os.FileMode) error {
+		if filepath.Base(name) == "README.md" {
+			return boom
+		}
+		return publishFileExclusive(name, data, perm)
 	}
-	t.Cleanup(func() { osWriteFileFn = old })
 
-	_, _, err := runTask(t, "new", "--task=inject-fail", "--title=Fail Task")
-	if err == nil {
-		t.Fatal("expected error from injected write failure")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{publishExclusive: publish}, "new", "--task=inject-fail", "--title=Fail Task")
+	if err == nil || !errors.Is(err, boom) {
+		t.Fatalf("expected preserved exclusive publish failure, got %v", err)
 	}
 }
 

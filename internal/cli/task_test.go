@@ -38,8 +38,12 @@ func setupTaskProject(t *testing.T) string {
 }
 
 func runTask(t *testing.T, args ...string) (string, string, error) {
+	return runTaskWithMutationDeps(t, taskMutationDeps{}, args...)
+}
+
+func runTaskWithMutationDeps(t *testing.T, deps taskMutationDeps, args ...string) (string, string, error) {
 	t.Helper()
-	cmd := taskCommand()
+	cmd := taskCommandWithDeps(deps)
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
