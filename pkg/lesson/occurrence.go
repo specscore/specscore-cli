@@ -415,6 +415,10 @@ func ensureOccurrenceDirectory(path string) error {
 	return ensureOccurrenceDirectoryWithFS(path, osLessonFS{})
 }
 
+// OccurrenceStoreKeepFile preserves an otherwise empty canonical occurrence
+// store in Git. It is not an occurrence and must remain empty.
+const OccurrenceStoreKeepFile = ".gitkeep"
+
 func ensureOccurrenceDirectoryWithFS(path string, fs lessonFS) error {
 	info, err := fs.Stat(path)
 	if err == nil {

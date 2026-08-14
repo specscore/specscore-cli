@@ -408,6 +408,14 @@ func lintOccurrenceChildren(specRoot string, l *lesson.Lesson) []Violation {
 	for _, e := range entries {
 		path := filepath.Join(l.OccurrencesDir, e.Name())
 		rel := mustRel(specRoot, path)
+		if e.Name() == lesson.OccurrenceStoreKeepFile && !e.IsDir() {
+			info, err := e.Info()
+			if err == nil && info.Size() == 0 {
+				continue
+			}
+			out = append(out, Violation{File: rel, Rule: "L-009", Severity: "error", Message: "occurrence-store marker must be an empty file"})
+			continue
+		}
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			out = append(out, Violation{File: rel, Rule: "L-009", Severity: "error", Message: "occurrences contains a non-JSON child"})
 			continue

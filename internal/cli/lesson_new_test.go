@@ -108,6 +108,10 @@ func TestLessonNew_EmbeddedEmitsFrontmatterSectionsAndIndex(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences")); err != nil {
 		t.Fatalf("canonical occurrence directory missing: %v", err)
 	}
+	keepFile := filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences", lesson.OccurrenceStoreKeepFile)
+	if got, err := os.ReadFile(keepFile); err != nil || len(got) != 0 {
+		t.Fatalf("Git-preserving occurrence-store marker = %q, err=%v", got, err)
+	}
 }
 
 // A repository can adopt directory-form Lessons incrementally. Creating its

@@ -4,7 +4,7 @@ Use canonical directory Lessons. The compact durable rule lives at `spec/lessons
 
 ## Create and record
 
-`specscore lesson new <slug>` requires `specscore.yaml` and a non-empty `lessons.classifications` vocabulary before it creates a path. Its bounded write set is the requested Lesson directory, empty occurrence store, declared index rows, and durable prepared event/outbox. It rejects a sibling flat `<slug>.md` instead of retaining both layouts.
+`specscore lesson new <slug>` requires `specscore.yaml` and a non-empty `lessons.classifications` vocabulary before it creates a path. Its bounded write set is the requested Lesson directory, a Git-preserved empty occurrence store (an empty `.gitkeep` marker until the first JSON occurrence), declared index rows, and durable prepared event/outbox. It rejects a sibling flat `<slug>.md` instead of retaining both layouts.
 
 Use `specscore lesson occurrence add <slug> --summary "bounded factual statement" --context-json '<safe object>'`. Context is an opaque JSON object: arbitrary scalar, array, and nested members are preserved, while repository, git, worktree, and execution have recognized semantic shapes. JSON is strict at the occurrence envelope and inside those recognized objects; timestamps use UTC `Z`; path hints and path evidence are normalized repository-relative forward-slash paths or `redacted`. Recursive validation rejects oversized collections, newlines, duplicate redactions, credential/contact patterns, and raw prompt/log/diff properties without echoing unsafe values.
 

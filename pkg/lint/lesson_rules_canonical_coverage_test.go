@@ -340,6 +340,25 @@ func TestLintOccurrenceChildren_MissingUnreadableNonJSONMalformedAndValid(t *tes
 	if err := os.RemoveAll(l.OccurrencesDir); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(l.OccurrencesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(l.OccurrencesDir, lesson.OccurrenceStoreKeepFile), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := lintOccurrenceChildren(specRoot, l); len(got) != 0 {
+		t.Fatalf("empty-store marker should be accepted: %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(l.OccurrencesDir, lesson.OccurrenceStoreKeepFile), []byte("not empty"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := lintOccurrenceChildren(specRoot, l); len(got) != 1 || got[0].Rule != "L-009" {
+		t.Fatalf("non-empty store marker should be rejected: %+v", got)
+	}
+
+	if err := os.RemoveAll(l.OccurrencesDir); err != nil {
+		t.Fatal(err)
+	}
 	canonical := canonicalLessonFixture(t, specRoot, "valid")
 	if _, err := lesson.AddOccurrence(lesson.AddOccurrenceOptions{
 		LessonPath: canonical.Path,

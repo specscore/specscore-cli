@@ -21,11 +21,11 @@ func TestLessonRecur_HappyPath(t *testing.T) {
 	if stdout != "kinder-fake: recurred 1\n" {
 		t.Errorf("stdout = %q", stdout)
 	}
-	entries, _ := os.ReadDir(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences"))
-	if len(entries) != 1 {
-		t.Fatalf("expected one immutable occurrence, got %d", len(entries))
+	occurrences, err := lesson.DiscoverOccurrences(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
+	if err != nil || len(occurrences) != 1 {
+		t.Fatalf("expected one immutable occurrence, got %#v, err=%v", occurrences, err)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences", entries[0].Name()))
+	body, _ := os.ReadFile(occurrences[0].Path)
 	if !strings.Contains(string(body), "happened again") {
 		t.Errorf("recurrence summary not recorded: %s", body)
 	}
@@ -78,9 +78,9 @@ func TestLessonRecur_WarnsOnRetiredStatuses(t *testing.T) {
 			if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, status) {
 				t.Errorf("expected a warning naming %q, got stderr=%q", status, stderr)
 			}
-			entries, _ := os.ReadDir(filepath.Join(root, "spec", "lessons", "kinder-fake", "occurrences"))
-			if len(entries) != 1 {
-				t.Fatalf("recurrence must still be recorded despite warning")
+			occurrences, err := lesson.DiscoverOccurrences(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
+			if err != nil || len(occurrences) != 1 {
+				t.Fatalf("recurrence must still be recorded despite warning: %#v, err=%v", occurrences, err)
 			}
 		})
 	}
