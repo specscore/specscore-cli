@@ -300,6 +300,7 @@ func lifecycleSnapshotDigest(snapshot specTreeSnapshot) string {
 func digestWriteMetadata(h io.Writer, metadata specTreeEntryMetadata) {
 	digestWriteInt64(h, metadata.modificationTime.Unix())
 	digestWriteUint64(h, uint64(metadata.modificationTime.Nanosecond()))
+	digestWriteUint64(h, uint64(metadata.platformFlags))
 	names := make([]string, 0, len(metadata.extendedAttributes))
 	for name := range metadata.extendedAttributes {
 		names = append(names, name)

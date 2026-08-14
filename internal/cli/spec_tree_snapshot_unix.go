@@ -209,7 +209,8 @@ func captureSnapshotEntryMetadata(file *os.File, info os.FileInfo) (specTreeEntr
 	if !info.IsDir() && stat.Nlink != 1 {
 		return specTreeEntryMetadata{}, fmt.Errorf("hard-linked file with %d links cannot be preserved by isolated lint", stat.Nlink)
 	}
-	if err := validateSnapshotPlatformMetadata(int(file.Fd()), info); err != nil {
+	platformFlags, err := snapshotPlatformFlags(int(file.Fd()), info)
+	if err != nil {
 		return specTreeEntryMetadata{}, err
 	}
 	attributes, err := readSnapshotExtendedAttributes(int(file.Fd()))
@@ -224,6 +225,7 @@ func captureSnapshotEntryMetadata(file *os.File, info os.FileInfo) (specTreeEntr
 		extendedAttributes: attributes,
 		accessTime:         accessTime,
 		modificationTime:   modificationTime,
+		platformFlags:      platformFlags,
 	}, nil
 }
 
@@ -296,5 +298,5 @@ func applyStagedEntryMetadata(fd int, metadata specTreeEntryMetadata) error {
 			return fmt.Errorf("setting access/modification times: %w", err)
 		}
 	}
-	return nil
+	return applyStagedPlatformFlags(fd, metadata.platformFlags)
 }

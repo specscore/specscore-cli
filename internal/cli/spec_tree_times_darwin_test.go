@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSetStagedEntryModificationTime_DarwinError(t *testing.T) {
@@ -62,7 +64,7 @@ func TestSnapshotEntryTimes_Darwin(t *testing.T) {
 	}
 }
 
-func TestSnapshotMetadataRejectsDarwinFlagsAndACLXattrs(t *testing.T) {
+func TestSnapshotMetadataPreservesDarwinFlagsAndRejectsACLXattrs(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "metadata")
 	if err != nil {
 		t.Fatal(err)
@@ -72,20 +74,24 @@ func TestSnapshotMetadataRejectsDarwinFlagsAndACLXattrs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSnapshotPlatformMetadata(int(file.Fd()), info); err != nil {
+	flags, err := snapshotPlatformFlags(int(file.Fd()), info)
+	if err != nil || flags != 0 {
 		t.Fatalf("ordinary file metadata rejected: %v", err)
 	}
-	flagged := fileInfoWithSys{FileInfo: info, sys: &syscall.Stat_t{Flags: 1}}
-	if err := validateSnapshotPlatformMetadata(int(file.Fd()), flagged); err == nil {
-		t.Fatal("Darwin filesystem flag accepted")
+	const restricted = uint32(0x00080000) // SF_RESTRICTED from sys/stat.h.
+	flagged := fileInfoWithSys{FileInfo: info, sys: &syscall.Stat_t{Flags: restricted}}
+	flags, err = snapshotPlatformFlags(int(file.Fd()), flagged)
+	if err != nil || flags != restricted {
+		t.Fatalf("Darwin filesystem flags = %#x, %v", flags, err)
 	}
-	if err := validateSnapshotPlatformMetadata(int(file.Fd()), fileInfoWithSys{FileInfo: info}); err == nil {
+	if _, err := snapshotPlatformFlags(int(file.Fd()), fileInfoWithSys{FileInfo: info}); err == nil {
 		t.Fatal("unsupported stat metadata accepted")
 	}
 	platformStat := *(info.Sys().(*syscall.Stat_t))
-	platformStat.Flags = 1
-	if _, err := captureSnapshotEntryMetadata(file, fileInfoWithSys{FileInfo: info, sys: &platformStat}); err == nil || !contains(err, "filesystem flags") {
-		t.Fatalf("capture accepted filesystem flags: %v", err)
+	platformStat.Flags = restricted
+	metadata, err := captureSnapshotEntryMetadata(file, fileInfoWithSys{FileInfo: info, sys: &platformStat})
+	if err != nil || metadata.platformFlags != restricted {
+		t.Fatalf("captured filesystem flags = %#x, %v", metadata.platformFlags, err)
 	}
 	hardLinkedStat := *(info.Sys().(*syscall.Stat_t))
 	hardLinkedStat.Nlink = 2
@@ -99,6 +105,43 @@ func TestSnapshotMetadataRejectsDarwinFlagsAndACLXattrs(t *testing.T) {
 	}
 	if isUnpreservableSpecTreeXattr("user.safe") {
 		t.Fatal("ordinary xattr rejected")
+	}
+}
+
+func TestApplyStagedPlatformFlagsDarwin(t *testing.T) {
+	originalFstat, originalFchflags := stageDarwinFstat, stageDarwinFchflags
+	t.Cleanup(func() {
+		stageDarwinFstat, stageDarwinFchflags = originalFstat, originalFchflags
+	})
+
+	const restricted = uint32(0x00080000)
+	current := restricted
+	stageDarwinFstat = func(_ int, stat *unix.Stat_t) error {
+		stat.Flags = current
+		return nil
+	}
+	setCalls := 0
+	stageDarwinFchflags = func(_ int, flags int) error {
+		setCalls++
+		current = uint32(flags)
+		return nil
+	}
+	if err := applyStagedPlatformFlags(3, restricted); err != nil || setCalls != 0 {
+		t.Fatalf("inherited flags = %v, set calls=%d", err, setCalls)
+	}
+	current = 0
+	if err := applyStagedPlatformFlags(3, restricted); err != nil || setCalls != 1 {
+		t.Fatalf("descriptor-preserved flags = %v, set calls=%d", err, setCalls)
+	}
+
+	current = 0
+	stageDarwinFchflags = func(int, int) error { return errors.New("fchflags denied") }
+	if err := applyStagedPlatformFlags(3, restricted); err == nil || !contains(err, "fchflags denied") {
+		t.Fatalf("fchflags failure = %v", err)
+	}
+	stageDarwinFstat = func(int, *unix.Stat_t) error { return errors.New("fstat failed") }
+	if err := applyStagedPlatformFlags(3, restricted); err == nil || !contains(err, "fstat failed") {
+		t.Fatalf("fstat failure = %v", err)
 	}
 }
 

@@ -1669,6 +1669,13 @@ func TestLifecycleDigestAndReceiptWriterErrorBranches(t *testing.T) {
 	if lifecycleSnapshotDigest(withFiles) == lifecycleSnapshotDigest(xattrChanged) {
 		t.Fatal("snapshot digest ignored extended attributes")
 	}
+	flagsChanged := rootSnapshot(map[string]string{"README.md": "content\n"})
+	flaggedFile := flagsChanged.files["README.md"]
+	flaggedFile.metadata.platformFlags = 0x00080000
+	flagsChanged.files["README.md"] = flaggedFile
+	if lifecycleSnapshotDigest(withFiles) == lifecycleSnapshotDigest(flagsChanged) || specTreeSnapshotsEqual(withFiles, flagsChanged) {
+		t.Fatal("snapshot identity ignored filesystem flags")
+	}
 	if err := writeLifecycleReceipt(&stagedSpecTree{}, LifecycleTransactionReceipt{ID: "bad.id"}); err == nil {
 		t.Fatal("unsafe receipt id accepted for write")
 	}

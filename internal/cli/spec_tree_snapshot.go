@@ -40,6 +40,7 @@ type specTreeEntryMetadata struct {
 	extendedAttributes map[string][]byte
 	accessTime         time.Time
 	modificationTime   time.Time
+	platformFlags      uint32
 }
 
 // stagedSpecTree keeps the descriptor used for every private-tree operation
@@ -278,13 +279,16 @@ func snapshotFileEqual(left, right specTreeSnapshot, rel string) bool {
 
 func snapshotEntryMetadataEqual(left, right specTreeEntryMetadata) bool {
 	return left.modificationTime.Equal(right.modificationTime) &&
+		left.platformFlags == right.platformFlags &&
 		reflect.DeepEqual(left.extendedAttributes, right.extendedAttributes)
 }
 
 func snapshotDirectoryEqual(left, right specTreeSnapshot, rel string) bool {
 	leftDirectory, leftExists := left.directories[rel]
 	rightDirectory, rightExists := right.directories[rel]
-	return leftExists == rightExists && (!leftExists || (leftDirectory.mode == rightDirectory.mode && reflect.DeepEqual(leftDirectory.metadata.extendedAttributes, rightDirectory.metadata.extendedAttributes)))
+	return leftExists == rightExists && (!leftExists || (leftDirectory.mode == rightDirectory.mode &&
+		leftDirectory.metadata.platformFlags == rightDirectory.metadata.platformFlags &&
+		reflect.DeepEqual(leftDirectory.metadata.extendedAttributes, rightDirectory.metadata.extendedAttributes)))
 }
 
 func specTreeSnapshotsEqual(left, right specTreeSnapshot) bool {

@@ -6,17 +6,42 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-// Darwin exposes BSD file flags in stat metadata. Recreating those flags can
-// require elevated authority, therefore nonzero flags fail closed.
-func validateSnapshotPlatformMetadata(_ int, info os.FileInfo) error {
+var (
+	stageDarwinFstat    = unix.Fstat
+	stageDarwinFchflags = unix.Fchflags
+)
+
+func snapshotPlatformFlags(_ int, info os.FileInfo) (uint32, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
-		return fmt.Errorf("unsupported stat metadata type %T", info.Sys())
+		return 0, fmt.Errorf("unsupported stat metadata type %T", info.Sys())
 	}
-	if stat.Flags != 0 {
-		return fmt.Errorf("filesystem flags %#x cannot be preserved by isolated lifecycle transaction", stat.Flags)
+	return stat.Flags, nil
+}
+
+// applyStagedPlatformFlags accepts inherited Darwin flags without requiring a
+// privileged write. When inheritance did not reproduce the snapshot, it uses
+// the held descriptor and verifies the exact result before publication.
+func applyStagedPlatformFlags(fd int, expected uint32) error {
+	var current unix.Stat_t
+	if err := stageDarwinFstat(fd, &current); err != nil {
+		return fmt.Errorf("inspecting staged filesystem flags: %w", err)
+	}
+	if current.Flags == expected {
+		return nil
+	}
+	if err := stageDarwinFchflags(fd, int(expected)); err != nil {
+		return fmt.Errorf("preserving filesystem flags %#x from staged value %#x: %w", expected, current.Flags, err)
+	}
+	if err := stageDarwinFstat(fd, &current); err != nil {
+		return fmt.Errorf("verifying staged filesystem flags: %w", err)
+	}
+	if current.Flags != expected {
+		return fmt.Errorf("staged filesystem flags are %#x after preservation; want %#x", current.Flags, expected)
 	}
 	return nil
 }
