@@ -120,6 +120,28 @@ func TestPublicInspectionAndRelationTransactionWrappersClassifyNoops(t *testing.
 	}
 }
 
+func TestInspectLegacyApplyPropagatesInspectionFailure(t *testing.T) {
+	root := t.TempDir()
+	lessonsDir := filepath.Join(root, "spec", "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "legacy.md")
+	if err := os.WriteFile(source, []byte("## L1 — reviewed rule\n\n**Status:** Recorded\n\ntext\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := inventoryLegacyForApply(t, source)
+	mapping := legacyMapping(inv, reviewedNew("L1#1", "reviewed-rule"))
+	original := inspectLegacyApplyPlanForPublic
+	t.Cleanup(func() { inspectLegacyApplyPlanForPublic = original })
+	inspectLegacyApplyPlanForPublic = func(string, LegacyInventory, legacyApplyPlan, lessonFS, func(string, string, lessonFS) (Occurrence, error)) (legacyApplyState, error) {
+		return legacyApplyState{}, errors.New("inspection failed")
+	}
+	if _, err := InspectLegacyApply(lessonsDir, []string{"process"}, inv, mapping); err == nil || !strings.Contains(err.Error(), "inspection failed") {
+		t.Fatalf("InspectLegacyApply error = %v, want inspection failure", err)
+	}
+}
+
 func TestRelationTransactionsRefusePreparationBeforePublication(t *testing.T) {
 	prepareErr := errors.New("prepare")
 	for _, typ := range []string{"related", "duplicates", "supersedes"} {

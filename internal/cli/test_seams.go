@@ -16,15 +16,17 @@ import (
 // Test seams — package-level vars wrapping external functions.
 // Production code calls these vars; tests replace them via t.Cleanup.
 var (
-	decisionScaffoldFn   = decision.Scaffold
-	decisionNextNumberFn = decision.NextNumber
-	ideaScaffoldFn       = idea.Scaffold
-	planScaffoldFn       = plan.Scaffold
-	planSyncIndexFn      = plan.SyncIndex
-	issueScaffoldFn      = issue.Scaffold
-	issueParseFn         = issue.Parse
-	featureFindRefsFn    = feature.FindFeatureRefs
-	filepathRelFn        = filepath.Rel
+	decisionScaffoldFn     = decision.Scaffold
+	decisionNextNumberFn   = decision.NextNumber
+	ideaScaffoldFn         = idea.Scaffold
+	planScaffoldFn         = plan.Scaffold
+	planSyncIndexFn        = plan.SyncIndex
+	planPreviewReconcileFn = plan.PreviewReconcile
+	planReconcileFn        = plan.Reconcile
+	issueScaffoldFn        = issue.Scaffold
+	issueParseFn           = issue.Parse
+	featureFindRefsFn      = feature.FindFeatureRefs
+	filepathRelFn          = filepath.Rel
 
 	idearelocateDiscoverSiblingsFn   = idearelocate.DiscoverSiblings
 	idearelocateExecuteCommitPhaseFn = idearelocate.ExecuteCommitPhase

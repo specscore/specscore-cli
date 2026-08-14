@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // planTasksPlaceholder is the exact TODO comment `plan new` scaffolds inside
@@ -176,6 +178,50 @@ func TestPlanReconcile_TreeTransactionValidationCreatesNoRecoveryState(t *testin
 		if entry.Name() == ".specscore-recovery" || strings.HasPrefix(entry.Name(), ".specscore-txn-") {
 			t.Fatalf("validation refusal created recovery state: %s", entry.Name())
 		}
+	}
+}
+
+func TestPlanReconcile_TreeTransactionStagedFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(t *testing.T)
+	}{
+		{
+			name: "staged snapshot parse",
+			arrange: func(t *testing.T) {
+				original := planReconcileFn
+				t.Cleanup(func() { planReconcileFn = original })
+				planReconcileFn = func(opts plan.ReconcileOptions) (plan.ReconcileResult, error) {
+					return plan.ReconcileResult{}, opts.ValidateSnapshot("invalid.md", []byte(strings.Repeat("x", (1<<20)+1)))
+				}
+			},
+		},
+		{
+			name: "staged reconcile",
+			arrange: func(t *testing.T) {
+				original := planReconcileFn
+				t.Cleanup(func() { planReconcileFn = original })
+				planReconcileFn = func(plan.ReconcileOptions) (plan.ReconcileResult, error) {
+					return plan.ReconcileResult{}, errors.New("staged reconcile failed")
+				}
+			},
+		},
+		{
+			name: "staged index sync",
+			arrange: func(t *testing.T) {
+				original := planSyncIndexFn
+				t.Cleanup(func() { planSyncIndexFn = original })
+				planSyncIndexFn = func(string) (bool, error) { return false, errors.New("staged sync failed") }
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stageReconcilablePlan(t, "auth", "Draft", "planning")
+			tc.arrange(t)
+			if _, _, err := runPlan(t, "reconcile", "auth", "--tasks=complete", "--note", "reason", "--tree-transaction"); err == nil {
+				t.Fatal("tree transaction unexpectedly succeeded")
+			}
+		})
 	}
 }
 

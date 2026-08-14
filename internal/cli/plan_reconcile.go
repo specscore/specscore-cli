@@ -215,7 +215,7 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 	var result plan.ReconcileResult
 	treeTransaction, _ := cmd.Flags().GetBool("tree-transaction")
 	if treeTransaction {
-		if _, err := plan.PreviewReconcile(opts); err != nil {
+		if _, err := planPreviewReconcileFn(opts); err != nil {
 			return err
 		}
 		writeSet := []string{
@@ -234,17 +234,17 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 			}
 			stagedOpts.PostMutation = func() error { return nil }
 			var reconcileErr error
-			result, reconcileErr = plan.Reconcile(stagedOpts)
+			result, reconcileErr = planReconcileFn(stagedOpts)
 			if reconcileErr != nil {
 				return reconcileErr
 			}
-			if _, syncErr := plan.SyncIndex(filepath.Join(stagedProjectRoot, "spec", "plans")); syncErr != nil {
+			if _, syncErr := planSyncIndexFn(filepath.Join(stagedProjectRoot, "spec", "plans")); syncErr != nil {
 				return exitcode.UnexpectedErrorf("syncing staged plans index: %v", syncErr)
 			}
 			return verifyLintPostMutation(filepath.Join(stagedProjectRoot, "spec"))
 		})
 	} else {
-		result, err = plan.Reconcile(opts)
+		result, err = planReconcileFn(opts)
 	}
 	if err != nil {
 		var committed *lifecycle.CommittedMutationError

@@ -30,6 +30,7 @@ var (
 	snapshotFgetxattr               = unix.Fgetxattr
 	snapshotFsetxattr               = unix.Fsetxattr
 	snapshotMetadataEntryTimes      = snapshotEntryTimes
+	snapshotPlatformFlagsForEntry   = snapshotPlatformFlags
 )
 
 func platformSupportsSecureLifecycleTransaction() bool { return true }
@@ -209,7 +210,7 @@ func captureSnapshotEntryMetadata(file *os.File, info os.FileInfo) (specTreeEntr
 	if !info.IsDir() && stat.Nlink != 1 {
 		return specTreeEntryMetadata{}, fmt.Errorf("hard-linked file with %d links cannot be preserved by isolated lint", stat.Nlink)
 	}
-	platformFlags, err := snapshotPlatformFlags(int(file.Fd()), info)
+	platformFlags, err := snapshotPlatformFlagsForEntry(int(file.Fd()), info)
 	if err != nil {
 		return specTreeEntryMetadata{}, err
 	}

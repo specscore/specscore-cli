@@ -22,6 +22,8 @@ import (
 //     (cli/parked#req:stale-surfaced).
 var parkedRuleNames = []string{"parked-shape", "parked-stale"}
 
+var parkedWalkMatchingFiles = walkMatchingFiles
+
 // dateLayout is the repo-wide ISO-8601 date convention (see
 // pkg/lifecycle.parkedTodayUTC and every kind's scaffold).
 const dateLayout = "2006-01-02"
@@ -54,7 +56,7 @@ func (c *parkedChecker) check(specRoot string) ([]Violation, error) {
 	staleDays := cfg.EffectiveParkedStaleDays()
 
 	var violations []Violation
-	walkErr := walkMatchingFiles(specRoot,
+	walkErr := parkedWalkMatchingFiles(specRoot,
 		func(_ string, _ int, name string) bool { return strings.HasSuffix(name, ".md") },
 		func(path string, content []byte) {
 			rel, _ := filepath.Rel(specRoot, path)

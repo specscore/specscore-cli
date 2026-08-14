@@ -295,10 +295,12 @@ func resetSnapshotNoFollowSeams(t *testing.T) {
 	openRoot, openAt := snapshotOpenRoot, snapshotOpenAt
 	stat, readNames, seek, closeFile := snapshotFileStat, snapshotReadDirNames, snapshotSeek, snapshotClose
 	listXattr, getXattr, setXattr, entryTimes := snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr, snapshotMetadataEntryTimes
+	platformFlags := snapshotPlatformFlagsForEntry
 	t.Cleanup(func() {
 		snapshotOpenRoot, snapshotOpenAt = openRoot, openAt
 		snapshotFileStat, snapshotReadDirNames, snapshotSeek, snapshotClose = stat, readNames, seek, closeFile
 		snapshotFlistxattr, snapshotFgetxattr, snapshotFsetxattr, snapshotMetadataEntryTimes = listXattr, getXattr, setXattr, entryTimes
+		snapshotPlatformFlagsForEntry = platformFlags
 	})
 }
 

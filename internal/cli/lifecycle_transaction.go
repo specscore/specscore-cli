@@ -68,14 +68,16 @@ var (
 	lifecycleTransactionRetainIntent      = retainLifecyclePublishingIntent
 	lifecycleReceiptMarshal               = json.MarshalIndent
 	lifecycleTransactionReadDir           = func(file *os.File) ([]os.DirEntry, error) { return file.ReadDir(-1) }
+	lifecycleProjectAbs                   = filepath.Abs
+	lifecycleProjectEvalSymlinks          = filepath.EvalSymlinks
 )
 
 func canonicalLifecycleProjectRoot(root string) (string, error) {
-	abs, err := filepath.Abs(root)
+	abs, err := lifecycleProjectAbs(root)
 	if err != nil {
 		return "", err
 	}
-	return filepath.EvalSymlinks(abs)
+	return lifecycleProjectEvalSymlinks(abs)
 }
 
 // RunLifecycleTransaction performs a lifecycle mutation in an isolated staged

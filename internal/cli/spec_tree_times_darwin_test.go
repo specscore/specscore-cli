@@ -143,6 +143,27 @@ func TestApplyStagedPlatformFlagsDarwin(t *testing.T) {
 	if err := applyStagedPlatformFlags(3, restricted); err == nil || !contains(err, "fstat failed") {
 		t.Fatalf("fstat failure = %v", err)
 	}
+
+	statCalls := 0
+	stageDarwinFstat = func(_ int, stat *unix.Stat_t) error {
+		statCalls++
+		if statCalls == 2 {
+			return errors.New("verify fstat failed")
+		}
+		stat.Flags = 0
+		return nil
+	}
+	stageDarwinFchflags = func(int, int) error { return nil }
+	if err := applyStagedPlatformFlags(3, restricted); err == nil || !contains(err, "verify fstat failed") {
+		t.Fatalf("verification stat failure = %v", err)
+	}
+	stageDarwinFstat = func(_ int, stat *unix.Stat_t) error {
+		stat.Flags = 0
+		return nil
+	}
+	if err := applyStagedPlatformFlags(3, restricted); err == nil || !contains(err, "after preservation") {
+		t.Fatalf("flag mismatch error = %v", err)
+	}
 }
 
 type fileInfoWithSys struct {

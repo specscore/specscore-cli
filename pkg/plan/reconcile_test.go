@@ -56,6 +56,62 @@ func TestPreviewReconcileValidatesWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestPreviewReconcileRefusalBranches(t *testing.T) {
+	valid := ReconcileOptions{SpecRoot: t.TempDir(), Slug: "auth", Note: "reason"}
+	for _, tc := range []struct {
+		name string
+		opts ReconcileOptions
+	}{
+		{name: "missing spec root", opts: ReconcileOptions{Slug: "auth", Note: "reason"}},
+		{name: "missing slug", opts: ReconcileOptions{SpecRoot: valid.SpecRoot, Note: "reason"}},
+		{name: "missing note", opts: ReconcileOptions{SpecRoot: valid.SpecRoot, Slug: "auth"}},
+		{name: "missing plan", opts: valid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := PreviewReconcile(tc.opts); err == nil {
+				t.Fatal("PreviewReconcile unexpectedly succeeded")
+			}
+		})
+	}
+
+	t.Run("directory form", func(t *testing.T) {
+		root := t.TempDir()
+		path := filepath.Join(root, "spec", "plans", "auth", "README.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(reconcilePlanBody("Draft", "planning")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := PreviewReconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "reason"}); err == nil {
+			t.Fatal("PreviewReconcile accepted directory-form plan")
+		}
+	})
+
+	t.Run("read failure", func(t *testing.T) {
+		root := t.TempDir()
+		flat := filepath.Join(root, "spec", "plans", "auth.md")
+		if err := os.MkdirAll(flat, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := PreviewReconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "reason"}); err == nil {
+			t.Fatal("PreviewReconcile accepted unreadable plan shape")
+		}
+	})
+
+	t.Run("snapshot validation failure", func(t *testing.T) {
+		root, _ := stageReconcilePlan(t, "auth", "Draft", "planning")
+		want := errors.New("snapshot rejected")
+		_, err := PreviewReconcile(ReconcileOptions{
+			SpecRoot: root, Slug: "auth", Note: "reason",
+			ValidateSnapshot: func(string, []byte) error { return want },
+		})
+		if !errors.Is(err, want) {
+			t.Fatalf("PreviewReconcile error = %v, want %v", err, want)
+		}
+	})
+}
+
 func TestReconcile_RefusesNonPlanWithoutMutation(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "spec", "plans", "auth.md")

@@ -95,6 +95,25 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 	if err := inspectJSON.Execute(); err != nil || !strings.Contains(inspectOut.String(), `"State": "committed"`) {
 		t.Fatalf("recovery inspect JSON = %q, %v", inspectOut.String(), err)
 	}
+	invalidInspect := lifecycleRecoveryCommand()
+	invalidInspect.SetArgs([]string{"inspect", "bad.id", "--project", project})
+	if err := invalidInspect.Execute(); err == nil {
+		t.Fatal("recovery inspect accepted an invalid transaction id")
+	}
+	invalidFormat := lifecycleRecoveryCommand()
+	invalidFormat.SetArgs([]string{"inspect", receipt.ID, "--project", project, "--format", "yaml"})
+	if err := invalidFormat.Execute(); err == nil || !strings.Contains(err.Error(), "invalid --format") {
+		t.Fatalf("recovery inspect format error = %v", err)
+	}
+	originalMarshal := lifecycleRecoveryMarshal
+	lifecycleRecoveryMarshal = func(any, string, string) ([]byte, error) { return nil, errors.New("marshal failed") }
+	t.Cleanup(func() { lifecycleRecoveryMarshal = originalMarshal })
+	marshalInspect := lifecycleRecoveryCommand()
+	marshalInspect.SetArgs([]string{"inspect", receipt.ID, "--project", project, "--format", "json"})
+	if err := marshalInspect.Execute(); err == nil || !strings.Contains(err.Error(), "marshal failed") {
+		t.Fatalf("recovery inspect marshal error = %v", err)
+	}
+	lifecycleRecoveryMarshal = originalMarshal
 	diff := lifecycleRecoveryCommand()
 	var diffOut bytes.Buffer
 	diff.SetOut(&diffOut)
@@ -1787,8 +1806,6 @@ func TestLifecycleDigestAndReceiptWriterErrorBranches(t *testing.T) {
 }
 
 func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
-	project := t.TempDir()
-	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "# Spec\n")
 	originalPlatform := lifecycleTransactionPlatformSupported
 	originalAbs := lifecycleTransactionAbs
 	originalAcquireLock := lifecycleTransactionAcquireLock
@@ -1834,9 +1851,14 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		t.Helper()
 		reset()
 		arrange()
+		project := t.TempDir()
+		mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "# Spec\n")
 		if _, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error { return nil }); err == nil {
 			t.Fatalf("%s: transaction unexpectedly succeeded", name)
 		}
+	}
+	if _, err := RunLifecycleTransaction(t.TempDir(), nil, func(string) error { return nil }); err == nil {
+		t.Fatal("transaction accepted an empty declared write set")
 	}
 	fails("unsupported platform", func() {
 		lifecycleTransactionPlatformSupported = func() bool { return false }
@@ -1851,7 +1873,12 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		lifecycleTransactionOpenProject = func(string) (*stagedSpecTree, error) { return nil, errors.New("project open failed") }
 	})
 	fails("spec open", func() {
-		lifecycleTransactionOpenChild = func(*stagedSpecTree, string) (*stagedSpecTree, error) { return nil, errors.New("spec open failed") }
+		lifecycleTransactionOpenChild = func(project *stagedSpecTree, name string) (*stagedSpecTree, error) {
+			if name == ".specscore-recovery" {
+				return nil, os.ErrNotExist
+			}
+			return nil, errors.New("spec open failed")
+		}
 	})
 	fails("baseline snapshot", func() {
 		lifecycleTransactionSnapshot = func(*stagedSpecTree) (specTreeSnapshot, error) {
@@ -1897,8 +1924,18 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		calls := 0
 		lifecycleTransactionWriteReceipt = func(project *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
 			calls++
-			if calls == 2 {
+			if calls == 3 {
 				return errors.New("staged receipt failed")
+			}
+			return originalWrite(project, receipt)
+		}
+	})
+	fails("stage-bound prepared receipt", func() {
+		calls := 0
+		lifecycleTransactionWriteReceipt = func(project *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
+			calls++
+			if calls == 2 {
+				return errors.New("stage-bound receipt failed")
 			}
 			return originalWrite(project, receipt)
 		}
@@ -1972,7 +2009,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		calls := 0
 		lifecycleTransactionChildMatches = func(*stagedSpecTree, string, *stagedSpecTree) error {
 			calls++
-			if calls == 3 {
+			if calls == 4 {
 				return errors.New("published identity failed")
 			}
 			return nil
@@ -1984,7 +2021,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		calls := 0
 		lifecycleTransactionChildMatches = func(*stagedSpecTree, string, *stagedSpecTree) error {
 			calls++
-			if calls == 4 {
+			if calls == 5 {
 				return errors.New("recovery identity failed")
 			}
 			return nil
@@ -2021,7 +2058,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		calls := 0
 		lifecycleTransactionWriteReceipt = func(project *stagedSpecTree, receipt LifecycleTransactionReceipt) error {
 			calls++
-			if calls == 3 {
+			if calls == 4 {
 				return errors.New("committed receipt failed")
 			}
 			return originalWrite(project, receipt)
@@ -2030,6 +2067,127 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		lifecycleTransactionExchange = func(*stagedSpecTree, *stagedSpecTree) error { return nil }
 		lifecycleTransactionVerifySnapshot = func(*stagedSpecTree, specTreeSnapshot) error { return nil }
 	})
+}
+
+func TestLifecycleTransactionRetentionAndCanonicalRootFailures(t *testing.T) {
+	originalAbs, originalEval := lifecycleProjectAbs, lifecycleProjectEvalSymlinks
+	t.Cleanup(func() {
+		lifecycleProjectAbs, lifecycleProjectEvalSymlinks = originalAbs, originalEval
+	})
+	lifecycleProjectAbs = func(string) (string, error) { return "", errors.New("absolute path failed") }
+	if _, err := canonicalLifecycleProjectRoot("project"); err == nil || !strings.Contains(err.Error(), "absolute path failed") {
+		t.Fatalf("canonical root error = %v", err)
+	}
+	lifecycleProjectAbs = originalAbs
+	lifecycleProjectEvalSymlinks = func(string) (string, error) { return "", errors.New("symlink resolution failed") }
+	if _, err := canonicalLifecycleProjectRoot("project"); err == nil || !strings.Contains(err.Error(), "symlink resolution failed") {
+		t.Fatalf("canonical symlink error = %v", err)
+	}
+	lifecycleProjectEvalSymlinks = originalEval
+
+	before := rootSnapshot(nil)
+	after := rootSnapshot(nil, "undeclared")
+	if err := validateLifecycleWriteSet([]string{"allowed.md"}, before, after); err == nil || !strings.Contains(err.Error(), "undeclared/") {
+		t.Fatalf("directory write-set error = %v", err)
+	}
+
+	originalReadDir, originalOpenChild := lifecycleTransactionReadDir, lifecycleTransactionOpenChild
+	t.Cleanup(func() {
+		lifecycleTransactionReadDir, lifecycleTransactionOpenChild = originalReadDir, originalOpenChild
+	})
+	if err := ensureLifecycleRecoveryCapacity(nil); err == nil || !strings.Contains(err.Error(), "descriptor is closed") {
+		t.Fatalf("nil project capacity error = %v", err)
+	}
+
+	openProject := func(t *testing.T, withJournal bool) *stagedSpecTree {
+		t.Helper()
+		root := t.TempDir()
+		if withJournal {
+			if err := os.Mkdir(filepath.Join(root, ".specscore-recovery"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		project, err := openLifecycleProjectNoFollow(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+		return project
+	}
+
+	t.Run("project enumeration", func(t *testing.T) {
+		project := openProject(t, false)
+		lifecycleTransactionReadDir = func(*os.File) ([]os.DirEntry, error) { return nil, errors.New("project read failed") }
+		if err := ensureLifecycleRecoveryCapacity(project); err == nil || !strings.Contains(err.Error(), "project read failed") {
+			t.Fatalf("capacity error = %v", err)
+		}
+	})
+
+	t.Run("journal enumeration", func(t *testing.T) {
+		project := openProject(t, true)
+		calls := 0
+		lifecycleTransactionReadDir = func(file *os.File) ([]os.DirEntry, error) {
+			calls++
+			if calls == 2 {
+				return nil, errors.New("journal read failed")
+			}
+			return originalReadDir(file)
+		}
+		if err := ensureLifecycleRecoveryCapacity(project); err == nil || !strings.Contains(err.Error(), "journal read failed") {
+			t.Fatalf("capacity error = %v", err)
+		}
+	})
+
+	t.Run("journal close", func(t *testing.T) {
+		project := openProject(t, true)
+		calls := 0
+		lifecycleTransactionReadDir = func(file *os.File) ([]os.DirEntry, error) {
+			calls++
+			entries, err := originalReadDir(file)
+			if calls == 2 {
+				_ = file.Close()
+			}
+			return entries, err
+		}
+		if err := ensureLifecycleRecoveryCapacity(project); err == nil || !strings.Contains(err.Error(), "closing lifecycle recovery journal") {
+			t.Fatalf("capacity error = %v", err)
+		}
+	})
+}
+
+func TestValidateLifecycleReceiptReportsProjectOpenFailure(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "project-file")
+	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receipt := LifecycleTransactionReceipt{
+		ID:             "receipt-open-failure",
+		State:          "prepared",
+		ProjectRoot:    root,
+		RecoveryRoot:   filepath.Join(root, ".specscore-txn-receipt-open-failure"),
+		BaselineDigest: "baseline",
+	}
+	if err := validateLifecycleReceipt(root, receipt); err == nil || !strings.Contains(err.Error(), "opening lifecycle project") {
+		t.Fatalf("validate receipt error = %v", err)
+	}
+}
+
+func TestRecoveryInspectReportsRootAndJournalFailures(t *testing.T) {
+	missingRoot := filepath.Join(t.TempDir(), "missing")
+	rootFailure := lifecycleRecoveryCommand()
+	rootFailure.SetArgs([]string{"inspect", "receipt", "--project", missingRoot})
+	if err := rootFailure.Execute(); err == nil {
+		t.Fatal("recovery inspect accepted a missing project")
+	}
+
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "# Spec\n")
+	journalFailure := lifecycleRecoveryCommand()
+	journalFailure.SetArgs([]string{"inspect", "receipt", "--project", project})
+	if err := journalFailure.Execute(); err == nil || !strings.Contains(err.Error(), "opening lifecycle recovery journal") {
+		t.Fatalf("recovery inspect journal error = %v", err)
+	}
 }
 
 func TestLifecycleDescriptorContextNativeFailureBranches(t *testing.T) {
