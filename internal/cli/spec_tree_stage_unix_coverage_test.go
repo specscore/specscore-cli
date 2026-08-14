@@ -5,6 +5,7 @@ package cli
 import (
 	"errors"
 	"io"
+	"os"
 	"testing"
 )
 
@@ -30,9 +31,20 @@ func TestStagedSpecTree_DescriptorFailureBranches(t *testing.T) {
 	}
 	withStage := func(t *testing.T, run func(*stagedSpecTree)) {
 		t.Helper()
+		before, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("read working directory before staged-tree test: %v", err)
+		}
 		stage := newStage(t)
 		resetStageUnixSeams(t)
 		run(stage)
+		after, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("read working directory after staged-tree test: %v", err)
+		}
+		if after != before {
+			t.Fatalf("staged-tree test changed working directory: before %q, after %q", before, after)
+		}
 	}
 	fileSnapshot := func() specTreeSnapshot { return rootSnapshot(map[string]string{"file.md": "body"}) }
 	dirSnapshot := func() specTreeSnapshot { return rootSnapshot(nil, "nested") }
@@ -73,6 +85,9 @@ func TestStagedSpecTree_DescriptorFailureBranches(t *testing.T) {
 			stageUnixFchdir = func(fd int) error {
 				calls++
 				if calls == 2 {
+					if err := originalFchdir(fd); err != nil {
+						return err
+					}
 					return errors.New("restore after success failed")
 				}
 				return originalFchdir(fd)
@@ -88,6 +103,9 @@ func TestStagedSpecTree_DescriptorFailureBranches(t *testing.T) {
 			stageUnixFchdir = func(fd int) error {
 				calls++
 				if calls == 2 {
+					if err := originalFchdir(fd); err != nil {
+						return err
+					}
 					return errors.New("restore failed")
 				}
 				return originalFchdir(fd)
