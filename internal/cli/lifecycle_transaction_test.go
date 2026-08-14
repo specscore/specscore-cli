@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +25,7 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 	mustWriteLifecycleFile(t, filepath.Join(project, ".github", "workflows", "ci.yml"), "name: ci\n")
 	mustWriteLifecycleFile(t, filepath.Join(project, ".git", "config"), "[remote \"origin\"]\nurl = https://example.test/org/repo.git\n")
 
-	receipt, err := RunLifecycleTransaction(project, func(stageRoot string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(stageRoot string) error {
 		if stageRoot != "." {
 			t.Fatalf("stage root = %q, want descriptor-anchored dot", stageRoot)
 		}
@@ -76,6 +78,23 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 	if !strings.Contains(listOut.String(), receipt.ID+"\tcommitted") {
 		t.Fatalf("recovery list output = %q", listOut.String())
 	}
+	inspect := lifecycleRecoveryCommand()
+	var inspectOut bytes.Buffer
+	inspect.SetOut(&inspectOut)
+	inspect.SetArgs([]string{"inspect", receipt.ID, "--project", project})
+	if err := inspect.Execute(); err != nil {
+		t.Fatalf("recovery inspect: %v", err)
+	}
+	if !strings.Contains(inspectOut.String(), "ID: "+receipt.ID) || !strings.Contains(inspectOut.String(), "Declared write set:") || !strings.Contains(inspectOut.String(), "new.md") {
+		t.Fatalf("recovery inspect output = %q", inspectOut.String())
+	}
+	inspectJSON := lifecycleRecoveryCommand()
+	inspectOut.Reset()
+	inspectJSON.SetOut(&inspectOut)
+	inspectJSON.SetArgs([]string{"inspect", receipt.ID, "--project", project, "--format", "json"})
+	if err := inspectJSON.Execute(); err != nil || !strings.Contains(inspectOut.String(), `"State": "committed"`) {
+		t.Fatalf("recovery inspect JSON = %q, %v", inspectOut.String(), err)
+	}
 	diff := lifecycleRecoveryCommand()
 	var diffOut bytes.Buffer
 	diff.SetOut(&diffOut)
@@ -91,7 +110,7 @@ func TestRunLifecycleTransactionStagesPublishesAndRetainsPredecessor(t *testing.
 func TestRunLifecycleTransactionFailureRetainsPreparedReceipt(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "# Spec\n")
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return errors.New("staged operation failed")
 	})
 	if err == nil || !strings.Contains(err.Error(), "staged operation failed") {
@@ -105,6 +124,75 @@ func TestRunLifecycleTransactionFailureRetainsPreparedReceipt(t *testing.T) {
 	}
 	if _, err := readLifecycleReceipt(project, receipt.ID); err != nil {
 		t.Fatalf("prepared receipt was not retained: %v", err)
+	}
+}
+
+func TestRunLifecycleTransactionRejectsUndeclaredStagedWrites(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "# Spec\n")
+	receipt, err := RunLifecycleTransaction(project, []string{"plans/expected.md"}, func(string) error {
+		return os.WriteFile(filepath.Join("spec", "unexpected.md"), []byte("unexpected\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "outside its declared write set: unexpected.md") {
+		t.Fatalf("undeclared write error = %v", err)
+	}
+	if receipt.State != "prepared" || receipt.ID == "" {
+		t.Fatalf("undeclared write receipt = %#v", receipt)
+	}
+	if _, err := os.Stat(filepath.Join(project, "spec", "unexpected.md")); !os.IsNotExist(err) {
+		t.Fatalf("undeclared staged write reached live spec: %v", err)
+	}
+}
+
+func TestRunLifecycleTransactionRefusesUnboundedRecoveryRetention(t *testing.T) {
+	project := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "# Spec\n")
+	for i := 0; i < maxRetainedLifecycleTransactions; i++ {
+		if err := os.Mkdir(filepath.Join(project, fmt.Sprintf(".specscore-txn-retained-%d", i)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	called := false
+	if _, err := RunLifecycleTransaction(project, []string{"README.md"}, func(string) error {
+		called = true
+		return nil
+	}); err == nil || !strings.Contains(err.Error(), "retention limit") {
+		t.Fatalf("retention refusal = %v", err)
+	}
+	if called {
+		t.Fatal("operation ran after retention limit was reached")
+	}
+	if _, err := os.Stat(filepath.Join(project, ".specscore-recovery")); !os.IsNotExist(err) {
+		t.Fatalf("retention refusal created recovery journal: %v", err)
+	}
+}
+
+func TestLifecycleWriteSetValidation(t *testing.T) {
+	for _, declarations := range [][]string{
+		nil,
+		{""},
+		{"."},
+		{"../plans"},
+		{"/plans"},
+		{`plans\README.md`},
+		{"plans//README.md"},
+	} {
+		if _, err := normalizeLifecycleWriteSet(declarations); err == nil {
+			t.Fatalf("invalid declarations accepted: %#v", declarations)
+		}
+	}
+	declarations, err := normalizeLifecycleWriteSet([]string{"plans/README.md", "plans/items/", "plans/README.md"})
+	if err != nil || !slices.Equal(declarations, []string{"plans/README.md", "plans/items/"}) {
+		t.Fatalf("normalized declarations = %#v, %v", declarations, err)
+	}
+	before := rootSnapshot(map[string]string{"plans/README.md": "before", "outside.md": "same"}, "plans", "plans/items")
+	after := rootSnapshot(map[string]string{"plans/README.md": "after", "plans/items/new.md": "new", "outside.md": "same"}, "plans", "plans/items")
+	if err := validateLifecycleWriteSet(declarations, before, after); err != nil {
+		t.Fatalf("declared writes rejected: %v", err)
+	}
+	after.files["outside.md"] = specTreeFile{content: []byte("changed"), mode: 0o644}
+	if err := validateLifecycleWriteSet(declarations, before, after); err == nil || !strings.Contains(err.Error(), "outside.md") {
+		t.Fatalf("undeclared file accepted: %v", err)
 	}
 }
 
@@ -134,7 +222,7 @@ func TestRunLifecycleTransactionWritesPreparedIntentBeforeCreatingStage(t *testi
 		return originalWrite(descriptor, receipt)
 	}
 	t.Cleanup(func() { lifecycleTransactionWriteReceipt = originalWrite })
-	if _, err := RunLifecycleTransaction(project, func(string) error { return nil }); err != nil {
+	if _, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error { return nil }); err != nil {
 		t.Fatalf("transaction with pre-stage prepared intent: %v", err)
 	}
 }
@@ -147,7 +235,7 @@ func TestRunLifecycleTransactionPreparedIntentFailureCreatesNoStage(t *testing.T
 		return errors.New("prepared intent persistence failed")
 	}
 	t.Cleanup(func() { lifecycleTransactionWriteReceipt = originalWrite })
-	if _, err := RunLifecycleTransaction(project, func(string) error { return nil }); err == nil {
+	if _, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error { return nil }); err == nil {
 		t.Fatal("prepared intent persistence failure accepted")
 	}
 	entries, err := os.ReadDir(project)
@@ -169,7 +257,7 @@ func TestRunLifecycleTransactionRejectsStagedManifestTampering(t *testing.T) {
 		return os.WriteFile(filepath.Join(stageSpec.path, "injected.md"), []byte("injected\n"), 0o600)
 	}
 	t.Cleanup(func() { lifecycleTransactionBeforePublication = originalBeforePublication })
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "expected.md"), []byte("expected\n"), 0o600)
 	})
 	if err == nil || !strings.Contains(err.Error(), "staged lifecycle output changed") {
@@ -196,7 +284,7 @@ func TestRunLifecycleTransactionDetectsPostExchangeManifestTampering(t *testing.
 		return os.WriteFile(filepath.Join(liveSpec.path, "injected.md"), []byte("injected\n"), 0o600)
 	}
 	t.Cleanup(func() { lifecycleTransactionAfterExchange = originalAfterExchange })
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "expected.md"), []byte("expected\n"), 0o600)
 	})
 	if err == nil || !strings.Contains(err.Error(), "published lifecycle output changed") {
@@ -225,7 +313,7 @@ func TestRunLifecycleTransactionRejectsRecoveryRootReplacementBeforePublication(
 		return os.MkdirAll(filepath.Join(stageRoot, "spec"), 0o700)
 	}
 	t.Cleanup(func() { lifecycleTransactionBeforePublication = originalBeforePublication })
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err == nil || !strings.Contains(err.Error(), "staged recovery identity") {
@@ -254,7 +342,7 @@ func TestRunLifecycleTransactionDetectsRecoveryRootReplacementAfterExchange(t *t
 		return os.MkdirAll(filepath.Join(stageRoot, "spec"), 0o700)
 	}
 	t.Cleanup(func() { lifecycleTransactionAfterExchange = originalAfterExchange })
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err == nil || !strings.Contains(err.Error(), "recovery root identity is uncertain") {
@@ -285,7 +373,7 @@ func TestRunLifecycleTransactionDetectsRecoveryRootReplacementBeforeTerminalRece
 		return os.MkdirAll(filepath.Join(receipt.RecoveryRoot, "spec"), 0o700)
 	}
 	t.Cleanup(func() { lifecycleTransactionRetainIntent = originalRetainIntent })
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
@@ -316,7 +404,7 @@ func TestRunLifecycleTransactionDetectsRecoveryRootReplacementDuringTerminalRece
 		return os.MkdirAll(filepath.Join(receipt.RecoveryRoot, "spec"), 0o700)
 	}
 	t.Cleanup(func() { lifecycleTransactionWriteReceipt = originalWriteReceipt })
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err == nil || !strings.Contains(err.Error(), "outcome uncertain") {
@@ -333,7 +421,7 @@ func TestRunLifecycleTransactionDetectsRecoveryRootReplacementDuringTerminalRece
 func TestLifecycleRecoveryRejectsStageIdentityReadFailure(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err != nil {
@@ -392,7 +480,7 @@ func TestRunLifecycleTransactionRetainsPublishingReceiptWhenPublicationSyncFails
 				}
 				return unix.Fsync(fd)
 			}
-			receipt, err := RunLifecycleTransaction(project, func(string) error {
+			receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 				return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 			})
 			if err == nil || !strings.Contains(err.Error(), "publication parent") {
@@ -442,12 +530,12 @@ func TestRunLifecycleTransactionReportsOutcomeUncertainOnFinalReceiptDurabilityF
 			project := t.TempDir()
 			mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
 			failure.arrange()
-			receipt, err := RunLifecycleTransaction(project, func(string) error {
+			receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 				return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 			})
 			if err == nil || !strings.Contains(err.Error(), "outcome uncertain") ||
 				!strings.Contains(err.Error(), receipt.ID) ||
-				!strings.Contains(err.Error(), "specscore recovery list --project "+project) {
+				!strings.Contains(err.Error(), "specscore recovery list --project "+receipt.ProjectRoot) {
 				t.Fatalf("outcome-uncertain error = %v", err)
 			}
 			if receipt.State != "outcome-uncertain" {
@@ -547,7 +635,7 @@ func TestLifecycleRecoveryAndContextRejectUnsafeInputs(t *testing.T) {
 	if err := os.Symlink("missing", filepath.Join(project, ".github")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RunLifecycleTransaction(project, func(string) error { return nil }); err == nil {
+	if _, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error { return nil }); err == nil {
 		t.Fatal("symlinked project context was accepted")
 	}
 }
@@ -733,7 +821,7 @@ func TestLifecycleReceiptValidationRejectsForgedRootsAndJournalEntries(t *testin
 }
 
 func TestLifecycleTransactionPrimitiveFailuresAreSafe(t *testing.T) {
-	if _, err := RunLifecycleTransaction(".", nil); err == nil {
+	if _, err := RunLifecycleTransaction(".", lifecycleTransactionTestWriteSet, nil); err == nil {
 		t.Fatal("nil lifecycle operation accepted")
 	}
 	project := t.TempDir()
@@ -1211,7 +1299,7 @@ func TestLifecyclePublishingIntentValidationBranches(t *testing.T) {
 func TestLifecycleRecoveryValidationRejectsStagePathSwapAfterSnapshot(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err != nil {
@@ -1246,7 +1334,7 @@ func TestLifecycleRecoveryDiffRejectsStagePathSwapAfterSnapshot(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
 	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err != nil {
@@ -1294,7 +1382,7 @@ func TestLifecycleRecoveryDiffUsesOneValidatedSnapshotPair(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
 	mustWriteLifecycleFile(t, filepath.Join(project, "specscore.yaml"), "schema: 1\n")
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err != nil {
@@ -1328,7 +1416,7 @@ func TestLifecycleRecoveryDiffUsesOneValidatedSnapshotPair(t *testing.T) {
 func TestLifecycleRecoveryListHoldsJournalAcrossReplacement(t *testing.T) {
 	project := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(project, "spec", "README.md"), "baseline\n")
-	receipt, err := RunLifecycleTransaction(project, func(string) error {
+	receipt, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error {
 		return os.WriteFile(filepath.Join("spec", "published.md"), []byte("published\n"), 0o600)
 	})
 	if err != nil {
@@ -1746,7 +1834,7 @@ func TestRunLifecycleTransactionFailsClosedAtEveryBoundary(t *testing.T) {
 		t.Helper()
 		reset()
 		arrange()
-		if _, err := RunLifecycleTransaction(project, func(string) error { return nil }); err == nil {
+		if _, err := RunLifecycleTransaction(project, lifecycleTransactionTestWriteSet, func(string) error { return nil }); err == nil {
 			t.Fatalf("%s: transaction unexpectedly succeeded", name)
 		}
 	}

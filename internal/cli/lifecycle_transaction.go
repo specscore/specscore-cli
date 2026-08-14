@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -36,11 +38,16 @@ type LifecycleTransactionReceipt struct {
 	// before any staged mutation so a committed receipt must retain and validate
 	// its publishing intent rather than silently accepting a missing sidecar.
 	PublishingIntentRequired bool
+	// DeclaredWriteSet is the canonical spec-relative mutation boundary that
+	// was verified against the staged output before publication.
+	DeclaredWriteSet []string
 }
+
+const maxRetainedLifecycleTransactions = 8
 
 var (
 	lifecycleTransactionPlatformSupported = transactionPlatformSupportsSecureMutation
-	lifecycleTransactionAbs               = filepath.Abs
+	lifecycleTransactionAbs               = canonicalLifecycleProjectRoot
 	lifecycleTransactionAcquireLock       = acquireLifecycleLock
 	lifecycleTransactionOpenProject       = openLifecycleProjectNoFollow
 	lifecycleTransactionOpenChild         = openLifecycleProjectChildNoFollow
@@ -60,7 +67,16 @@ var (
 	lifecycleTransactionWriteReceipt      = writeLifecycleReceipt
 	lifecycleTransactionRetainIntent      = retainLifecyclePublishingIntent
 	lifecycleReceiptMarshal               = json.MarshalIndent
+	lifecycleTransactionReadDir           = func(file *os.File) ([]os.DirEntry, error) { return file.ReadDir(-1) }
 )
+
+func canonicalLifecycleProjectRoot(root string) (string, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
 
 // RunLifecycleTransaction performs a lifecycle mutation in an isolated staged
 // project. The callback receives "." while the process CWD is descriptor-anchored
@@ -71,14 +87,19 @@ var (
 // The returned receipt is written before and after publication. Recovery is
 // deliberately read-only in this first surface: raw old-FD writes remain an
 // unavoidable operating-system limitation, so a predecessor is never removed
-// automatically or behind a retention cap.
-func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot string) error) (LifecycleTransactionReceipt, error) {
+// automatically. The bounded retention limit refuses new work before writing
+// a receipt; reclamation remains an explicit future operation.
+func RunLifecycleTransaction(realProjectRoot string, declaredWriteSet []string, op func(stagedProjectRoot string) error) (LifecycleTransactionReceipt, error) {
 	if !lifecycleTransactionPlatformSupported() {
 		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf(
 			"secure lifecycle transactions are unavailable on this platform; refusing filesystem mutation")
 	}
 	if op == nil {
 		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("lifecycle transaction operation is required")
+	}
+	writeSet, err := normalizeLifecycleWriteSet(declaredWriteSet)
+	if err != nil {
+		return LifecycleTransactionReceipt{}, err
 	}
 
 	projectRoot, err := lifecycleTransactionAbs(realProjectRoot)
@@ -96,6 +117,9 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("opening lifecycle project without following links: %v", err)
 	}
 	defer func() { _ = closeStagedSpecTree(project) }()
+	if err := ensureLifecycleRecoveryCapacity(project); err != nil {
+		return LifecycleTransactionReceipt{}, err
+	}
 	liveSpec, err := lifecycleTransactionOpenChild(project, "spec")
 	if err != nil {
 		return LifecycleTransactionReceipt{}, exitcode.UnexpectedErrorf("opening live spec tree without following links: %v", err)
@@ -118,6 +142,7 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 		BaselineDigest:           lifecycleSnapshotDigest(baseline),
 		CreatedAt:                time.Now().UTC().Format(time.RFC3339Nano),
 		PublishingIntentRequired: true,
+		DeclaredWriteSet:         writeSet,
 	}
 	if err := lifecycleTransactionWriteReceipt(project, receipt); err != nil {
 		return LifecycleTransactionReceipt{}, err
@@ -153,6 +178,9 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 	staged, err := lifecycleTransactionSnapshot(stageSpec)
 	if err != nil {
 		return receipt, exitcode.UnexpectedErrorf("snapshotting staged lifecycle output: %v", err)
+	}
+	if err := validateLifecycleWriteSet(writeSet, baseline, staged); err != nil {
+		return receipt, err
 	}
 	receipt.StagedDigest = lifecycleSnapshotDigest(staged)
 	receipt.State = "publishing"
@@ -213,6 +241,114 @@ func RunLifecycleTransaction(realProjectRoot string, op func(stagedProjectRoot s
 		return lifecycleOutcomeUncertainReceipt(receipt), lifecycleOutcomeUncertainError(projectRoot, receipt, err)
 	}
 	return committedReceipt, nil
+}
+
+func normalizeLifecycleWriteSet(declarations []string) ([]string, error) {
+	if len(declarations) == 0 {
+		return nil, exitcode.InvalidArgsError("lifecycle transaction declared write set is required")
+	}
+	unique := make(map[string]struct{}, len(declarations))
+	for _, declaration := range declarations {
+		declaration = strings.TrimSpace(declaration)
+		subtree := strings.HasSuffix(declaration, "/")
+		if declaration == "" || strings.Contains(declaration, `\`) || strings.HasPrefix(declaration, "/") {
+			return nil, exitcode.InvalidArgsErrorf("invalid lifecycle transaction write declaration %q", declaration)
+		}
+		clean := path.Clean(strings.TrimSuffix(declaration, "/"))
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || clean != strings.TrimSuffix(declaration, "/") {
+			return nil, exitcode.InvalidArgsErrorf("invalid lifecycle transaction write declaration %q", declaration)
+		}
+		if subtree {
+			clean += "/"
+		}
+		unique[clean] = struct{}{}
+	}
+	result := make([]string, 0, len(unique))
+	for declaration := range unique {
+		result = append(result, declaration)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func validateLifecycleWriteSet(declarations []string, before, after specTreeSnapshot) error {
+	var unexpected []string
+	for _, changed := range changedSnapshotFiles(before, after) {
+		if !lifecycleWriteDeclared(declarations, changed) {
+			unexpected = append(unexpected, changed)
+		}
+	}
+	for _, changed := range changedSnapshotDirectories(before, after) {
+		if !lifecycleWriteDeclared(declarations, changed) {
+			unexpected = append(unexpected, changed+"/")
+		}
+	}
+	if len(unexpected) > 0 {
+		sort.Strings(unexpected)
+		return exitcode.ConflictErrorf("staged lifecycle output changed outside its declared write set: %s", strings.Join(unexpected, ", "))
+	}
+	return nil
+}
+
+func lifecycleWriteDeclared(declarations []string, changed string) bool {
+	for _, declaration := range declarations {
+		if strings.HasSuffix(declaration, "/") {
+			root := strings.TrimSuffix(declaration, "/")
+			if changed == root || strings.HasPrefix(changed, declaration) {
+				return true
+			}
+			continue
+		}
+		if changed == declaration {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureLifecycleRecoveryCapacity(project *stagedSpecTree) error {
+	if project == nil || project.root == nil {
+		return exitcode.UnexpectedErrorf("inspecting lifecycle recovery retention: project descriptor is closed")
+	}
+	entries, err := lifecycleTransactionReadDir(project.root)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("inspecting retained lifecycle trees: %v", err)
+	}
+	retained := make(map[string]struct{})
+	for _, entry := range entries {
+		if id := strings.TrimPrefix(entry.Name(), ".specscore-txn-"); id != entry.Name() && id != "" {
+			retained[id] = struct{}{}
+		}
+	}
+	journal, err := lifecycleTransactionOpenChild(project, ".specscore-recovery")
+	if err == nil {
+		journalEntries, readErr := lifecycleTransactionReadDir(journal.root)
+		closeErr := closeStagedSpecTree(journal)
+		if readErr != nil {
+			return exitcode.UnexpectedErrorf("inspecting lifecycle recovery receipts: %v", readErr)
+		}
+		if closeErr != nil {
+			return exitcode.UnexpectedErrorf("closing lifecycle recovery journal after retention inspection: %v", closeErr)
+		}
+		for _, entry := range journalEntries {
+			name := strings.TrimSuffix(entry.Name(), ".publishing.json")
+			if name == entry.Name() {
+				name = strings.TrimSuffix(entry.Name(), ".json")
+			}
+			if name != entry.Name() && name != "" {
+				retained[name] = struct{}{}
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return exitcode.UnexpectedErrorf("opening lifecycle recovery journal for retention inspection: %v", err)
+	}
+	if len(retained) >= maxRetainedLifecycleTransactions {
+		return exitcode.ConflictErrorf(
+			"lifecycle recovery retention limit (%d) reached; inspect with specscore recovery list and preserve needed evidence before explicitly reclaiming old transactions",
+			maxRetainedLifecycleTransactions,
+		)
+	}
+	return nil
 }
 
 // lifecycleTransactionRecoveryStageMatches proves that the recovery-root name

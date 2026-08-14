@@ -24,6 +24,38 @@ func TestPreserveReadinessError(t *testing.T) {
 	}
 }
 
+func TestPreviewReconcileValidatesWithoutWriting(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "spec", "plans", "auth.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(reconcilePlanBody("Draft", "planning"))
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	validated := false
+	result, err := PreviewReconcile(ReconcileOptions{
+		SpecRoot: root,
+		Slug:     "auth",
+		Note:     "delivered outside the tracked flow",
+		ValidateSnapshot: func(gotPath string, before []byte) error {
+			validated = gotPath == path && string(before) == string(body)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("PreviewReconcile: %v", err)
+	}
+	if !validated || result.From != lifecycle.Status("Draft") || result.To != lifecycle.PlanImplemented {
+		t.Fatalf("preview result = %#v, validated=%v", result, validated)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(body) {
+		t.Fatalf("preview mutated plan: %v\n%s", err, after)
+	}
+}
+
 func TestReconcile_RefusesNonPlanWithoutMutation(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "spec", "plans", "auth.md")

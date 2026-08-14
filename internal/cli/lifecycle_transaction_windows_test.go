@@ -18,7 +18,7 @@ func TestRunLifecycleTransactionFailsClosedOnWindowsBeforeOperation(t *testing.T
 		t.Fatal(err)
 	}
 	called := false
-	if _, err := RunLifecycleTransaction(project, func(string) error {
+	if _, err := RunLifecycleTransaction(project, []string{"README.md"}, func(string) error {
 		called = true
 		return os.WriteFile(spec, []byte("after\n"), 0o600)
 	}); err == nil {

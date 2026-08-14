@@ -31,6 +31,7 @@ package plan
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -142,6 +143,45 @@ type ReconcileResult struct {
 	// normal all-task delivery reconciliation; Blocked is used only by the
 	// explicit ReopenTasks correction path.
 	Target TaskStatus
+}
+
+// PreviewReconcile runs the complete read-only reconciliation validation and
+// composition against the current Plan bytes. It is used by whole-tree
+// transactions to reject an invalid command before creating recovery state;
+// it never acquires a write lock, writes the Plan, or invokes PostMutation.
+func PreviewReconcile(opts ReconcileOptions) (ReconcileResult, error) {
+	if opts.SpecRoot == "" {
+		return ReconcileResult{}, exitcode.UnexpectedErrorf("PreviewReconcile: SpecRoot required")
+	}
+	if opts.Slug == "" {
+		return ReconcileResult{}, exitcode.InvalidArgsErrorf("PreviewReconcile: slug required")
+	}
+	if strings.TrimSpace(opts.Note) == "" {
+		return ReconcileResult{}, exitcode.InvalidArgsError(
+			"PreviewReconcile: --note required — describe why the plan is being reconciled")
+	}
+	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
+	flatPath := filepath.Join(plansDir, opts.Slug+".md")
+	resolved, err := resolvePlanFile(plansDir, opts.Slug)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	if resolved != flatPath {
+		return ReconcileResult{}, exitcode.InvalidStateErrorf(
+			"plan %q uses the directory form (spec/plans/%s/README.md); `plan reconcile` only supports the flat single-file form",
+			opts.Slug, opts.Slug)
+	}
+	before, err := os.ReadFile(flatPath)
+	if err != nil {
+		return ReconcileResult{}, exitcode.UnexpectedErrorf("reading plan %s for reconciliation preview: %v", opts.Slug, err)
+	}
+	if opts.ValidateSnapshot != nil {
+		if err := opts.ValidateSnapshot(flatPath, before); err != nil {
+			return ReconcileResult{}, err
+		}
+	}
+	result, _, err := reconcileBytes(opts, flatPath, before)
+	return result, err
 }
 
 // Reconcile performs a Plan-kind out-of-band status correction end-to-end.

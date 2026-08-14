@@ -23,9 +23,15 @@ import (
 //
 // Graced at "warning" severity during the migration rollout
 // (REQ:migration-sequencing): excluded at the default --severity=error.
-type footerFormatMirrorChecker struct{}
+type footerFormatMirrorChecker struct{ projectRoot string }
 
-func newFooterFormatMirrorChecker() checker { return &footerFormatMirrorChecker{} }
+func newFooterFormatMirrorChecker(projectRoot ...string) checker {
+	var root string
+	if len(projectRoot) > 0 {
+		root = projectRoot[0]
+	}
+	return &footerFormatMirrorChecker{projectRoot: root}
+}
 
 func (c *footerFormatMirrorChecker) name() string     { return "footer-format-mirror" }
 func (c *footerFormatMirrorChecker) severity() string { return "error" }
@@ -77,7 +83,7 @@ func (c *footerFormatMirrorChecker) fix(specRoot string) error {
 				return
 			}
 			updated := replaceLastSpecURL(content, format)
-			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
+			if err := writeLintFile(c.projectRoot, specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 			}
 		})

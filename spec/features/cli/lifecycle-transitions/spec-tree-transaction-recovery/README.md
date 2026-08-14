@@ -115,9 +115,10 @@ The staged tree and retained predecessor MUST preserve each supported entry's
 type, bytes, permission bits, modification time, and extended attributes. The
 implementation MUST define and test the contract for platform-specific metadata
 before enabling publication on that platform. In particular, macOS file flags
-(`st_flags`) are not silently omitted: until their required fidelity is decided
-and implemented, the whole-tree publisher fails closed when flags would be
-lost.
+(`st_flags`) are not silently omitted. The Darwin implementation captures them,
+accepts an identical inherited value, otherwise applies them through the held
+descriptor, and re-verifies the exact value before publication. If the platform
+refuses that preservation, the whole-tree publisher fails closed.
 
 #### REQ: read-only-recovery-first
 
@@ -130,10 +131,11 @@ approved contract.
 #### REQ: explicit-retention-reclamation
 
 The engine MUST bound retained transaction data without deleting the only copy
-of an uncertain or unacknowledged predecessor. Automatic retention may reclaim
-only receipts and trees whose committed outcome and durable event/outbox link
-are both proven and whose configured retention window has elapsed. Every other
-reclamation is explicit and names the transaction it affects.
+of an uncertain or unacknowledged predecessor. The first implementation retains
+at most eight transaction identities and refuses a ninth before writing a new
+receipt or invoking the mutation callback. It performs no automatic deletion.
+Any future reclamation is explicit, names the transaction it affects, and
+requires its own approved authorization and audit contract.
 
 ## Acceptance Criteria
 
@@ -222,9 +224,9 @@ tree, receipt, retention timestamp, or event/outbox record changes.
 
 **Verifies:** `explicit-retention-reclamation`
 
-Given the retention limit is exceeded by committed and uncertain transactions,
-when automatic reclamation runs, then only eligible proven-committed data beyond
-the retention window is removed and every uncertain predecessor remains
+Given eight retained committed or uncertain transaction identities, when a
+ninth transaction is requested, then it is refused before creating a receipt or
+invoking the mutation callback, and every existing predecessor remains
 available for inspection.
 
 ## Interaction with Other Features
@@ -236,20 +238,19 @@ available for inspection.
 
 ## Open Questions
 
-1. **Are macOS file flags part of required tree fidelity?** Recommendation: yes
-   for a whole-tree exchange. Until preserved and tested, fail closed when flags
-   are present rather than weakening the contract to make the old PR green.
-2. **Which commands opt in first?** Recommendation: only a bounded
-   multi-artifact command whose declared write set and event semantics are
-   already explicit. Do not replace single-artifact CAS across all verbs in the
-   first integration.
-3. **How do adjacent locks migrate into `.specscore/locks/` without splitting
+1. **How do adjacent locks migrate into `.specscore/locks/` without splitting
    mutual exclusion between old and new SpecScore CLI processes?** The current
    bounded fix ignores the existing adjacent identity files. A private namespace
    needs a versioned dual-lock or deployment-fence design before migration.
-4. **When may an operator destructively restore or reclaim a retained tree?**
+2. **When may an operator destructively restore or reclaim a retained tree?**
    The first recovery surface is deliberately list/inspect/diff only. Restore
    and reclaim need an approved concurrency, authorization, and audit contract.
+3. **How does a future Plan-reconciliation event share the tree transaction
+   identity?** `plan reconcile` does not currently emit an event/outbox record,
+   so the receipt is the only durable transaction identity in this opt-in path.
+   Before event emission is added, the callback API must expose the transaction
+   ID and link the outbox record bijectively; a second independent outcome
+   ledger is forbidden.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

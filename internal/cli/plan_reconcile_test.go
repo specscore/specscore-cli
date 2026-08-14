@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -125,6 +126,55 @@ func TestPlanReconcile_HappyPath_CLI(t *testing.T) {
 	for _, v := range vs {
 		if v.Severity == "error" {
 			t.Errorf("unexpected lint error after reconcile: %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message)
+		}
+	}
+}
+
+func TestPlanReconcile_TreeTransactionPublishesDeclaredPlanChanges(t *testing.T) {
+	root := stageReconcilablePlan(t, "auth", "Draft", "planning", "planning")
+	stdout, stderr, err := runPlan(t, "reconcile", "auth", "--tasks=complete",
+		"--note", "delivered outside the tracked flow", "--tree-transaction")
+	if err != nil {
+		t.Fatalf("tree transaction reconcile: %v (stderr=%s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "auth: Draft → Implemented") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	receipts, err := readLifecycleReceipts(root)
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("tree transaction receipts = %#v, %v", receipts, err)
+	}
+	receipt := receipts[0]
+	if receipt.State != "committed" || !slices.Equal(receipt.DeclaredWriteSet, []string{"plans/README.md", "plans/auth.md"}) {
+		t.Fatalf("tree transaction receipt = %#v", receipt)
+	}
+	live, err := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	if err != nil || !strings.Contains(string(live), "**Status:** Implemented") {
+		t.Fatalf("published Plan = %v\n%s", err, live)
+	}
+	predecessor, err := os.ReadFile(filepath.Join(receipt.RecoveryRoot, "spec", "plans", "auth.md"))
+	if err != nil || !strings.Contains(string(predecessor), "**Status:** Draft") {
+		t.Fatalf("retained predecessor = %v\n%s", err, predecessor)
+	}
+	index, err := os.ReadFile(filepath.Join(root, "spec", "plans", "README.md"))
+	if err != nil || !strings.Contains(string(index), "| [auth](auth.md) | Implemented |") {
+		t.Fatalf("published plans index = %v\n%s", err, index)
+	}
+}
+
+func TestPlanReconcile_TreeTransactionValidationCreatesNoRecoveryState(t *testing.T) {
+	root := stageReconcilablePlan(t, "auth", "Draft", "failed")
+	_, _, err := runPlan(t, "reconcile", "auth", "--tasks=complete", "--note", "unsupported claim", "--tree-transaction")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want %d: %v", got, exitcode.InvalidState, err)
+	}
+	entries, readErr := os.ReadDir(root)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".specscore-recovery" || strings.HasPrefix(entry.Name(), ".specscore-txn-") {
+			t.Fatalf("validation refusal created recovery state: %s", entry.Name())
 		}
 	}
 }

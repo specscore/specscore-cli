@@ -143,12 +143,16 @@ var docTypeTargets = []docTypeTarget{
 // adherenceFooterChecker verifies that every SpecScore document of a
 // Document or Index Kind carries the adherence footer URL corresponding
 // to its document type, as required by the Adherence Footer feature.
-type adherenceFooterChecker struct{}
+type adherenceFooterChecker struct{ projectRoot string }
 
 var adherenceFooterURLPattern = regexp.MustCompile(`^https://specscore\.md/[a-z0-9-]+-specification$`)
 
-func newAdherenceFooterChecker() checker {
-	return &adherenceFooterChecker{}
+func newAdherenceFooterChecker(projectRoot ...string) checker {
+	var root string
+	if len(projectRoot) > 0 {
+		root = projectRoot[0]
+	}
+	return &adherenceFooterChecker{projectRoot: root}
 }
 
 func (c *adherenceFooterChecker) name() string     { return "adherence-footer" }
@@ -196,7 +200,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 			rewritten, replaced := rewriteTrailingAdherenceFooterURL(s, target.url)
 			if replaced {
 				if rewritten != s {
-					if err := writeLintFile(specRoot, path, content, []byte(rewritten), 0o644); err != nil {
+					if err := writeLintFile(c.projectRoot, specRoot, path, content, []byte(rewritten), 0o644); err != nil {
 						writeErr = err
 					}
 				}
@@ -210,7 +214,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 				s += "\n"
 			}
 			s += "\n---\n*This document follows the " + target.url + "*\n"
-			if err := writeLintFile(specRoot, path, content, []byte(s), 0o644); err != nil {
+			if err := writeLintFile(c.projectRoot, specRoot, path, content, []byte(s), 0o644); err != nil {
 				writeErr = err
 			}
 		})

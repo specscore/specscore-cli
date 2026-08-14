@@ -5,6 +5,12 @@ import (
 	"testing"
 )
 
+var lifecycleTransactionTestWriteSet = []string{
+	"expected.md",
+	"new.md",
+	"published.md",
+}
+
 func resetSpecTreeSnapshotSeams(t *testing.T) {
 	t.Helper()
 	readFile, openFile := transactionReadFile, transactionOpenFile

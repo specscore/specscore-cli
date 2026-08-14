@@ -45,7 +45,7 @@ func newLinter(opts Options) *linter {
 	}
 
 	l.registerChecker(newReadmeExistsChecker())
-	oqChecker := newOQSectionChecker()
+	oqChecker := newOQSectionChecker(projectRoot)
 	l.registerChecker(oqChecker)
 	l.ruleSet["oq-not-empty"] = oqChecker
 	l.registerChecker(newIndexEntriesChecker())
@@ -53,10 +53,10 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(newPlanHierarchyChecker())
 	l.registerChecker(newPlanROIChecker())
 	l.registerChecker(newPlanIndexChecker())
-	l.registerChecker(newAdherenceFooterChecker())
+	l.registerChecker(newAdherenceFooterChecker(projectRoot))
 	l.registerChecker(newFormatFieldChecker())
-	l.registerChecker(newStatusMirrorChecker())
-	l.registerChecker(newFooterFormatMirrorChecker())
+	l.registerChecker(newStatusMirrorChecker(projectRoot))
+	l.registerChecker(newFooterFormatMirrorChecker(projectRoot))
 	l.registerChecker(newStudioToolbarChecker(projectRoot))
 	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion, projectRoot))
 	l.registerChecker(newImplementsReferenceChecker())
@@ -85,7 +85,7 @@ func newLinter(opts Options) *linter {
 
 	// Register parked checker under both parked-* rule IDs (one checker,
 	// two rule names/severities; per-violation filtering via Violation.Rule).
-	pkc := newParkedChecker()
+	pkc := newParkedChecker(projectRoot)
 	for _, n := range parkedRuleNames {
 		l.ruleSet[n] = pkc
 	}
@@ -153,7 +153,7 @@ func newLinter(opts Options) *linter {
 	}
 
 	// Register lesson-rules checker under all rule IDs (L-001..L-004).
-	lc := newLessonRulesChecker()
+	lc := newLessonRulesChecker(projectRoot)
 	lc.fixIndex = opts.fixRequested(lessonRuleIDs...)
 	for _, n := range lessonRuleIDs {
 		l.ruleSet[n] = lc

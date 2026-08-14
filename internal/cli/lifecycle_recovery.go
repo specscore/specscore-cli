@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -13,10 +14,11 @@ import (
 )
 
 var (
-	lifecycleRecoveryAbs          = filepath.Abs
+	lifecycleRecoveryAbs          = canonicalLifecycleProjectRoot
 	lifecycleRecoverySnapshot     = snapshotStagedSpecTreeNoFollow
 	lifecycleRecoveryDiffSnapshot = snapshotStagedSpecTreeNoFollow
 	lifecycleRecoveryValidate     = validateLifecycleReceiptSnapshots
+	lifecycleRecoveryMarshal      = json.MarshalIndent
 )
 
 type lifecycleRecoveryHandle struct {
@@ -32,7 +34,57 @@ func lifecycleRecoveryCommand() *cobra.Command {
 		Use:   "recovery",
 		Short: "Inspect retained lifecycle transaction predecessors",
 	}
-	cmd.AddCommand(lifecycleRecoveryListCommand(), lifecycleRecoveryDiffCommand())
+	cmd.AddCommand(lifecycleRecoveryListCommand(), lifecycleRecoveryInspectCommand(), lifecycleRecoveryDiffCommand())
+	return cmd
+}
+
+func lifecycleRecoveryInspectCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "inspect <transaction-id>",
+		Short: "Inspect and validate one lifecycle transaction receipt (read-only)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := lifecycleRecoveryProjectRoot(cmd)
+			if err != nil {
+				return err
+			}
+			handle, err := openLifecycleRecoveryHandleNoFollow(root)
+			if err != nil {
+				return exitcode.UnexpectedErrorf("opening lifecycle recovery journal without following links: %v", err)
+			}
+			defer func() { _ = closeLifecycleRecoveryHandle(handle) }()
+			receipt, _, _, err := readAndValidateLifecycleReceiptWithHandle(root, handle, args[0], lifecycleRecoverySnapshot)
+			if err != nil {
+				return err
+			}
+			format, _ := cmd.Flags().GetString("format")
+			switch format {
+			case "text":
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "ID: %s\nState: %s\nProject root: %s\nRecovery root: %s\nBaseline digest: %s\nStaged digest: %s\nDeclared write set: %s\nCreated at: %s\n",
+					receipt.ID,
+					receipt.State,
+					receipt.ProjectRoot,
+					receipt.RecoveryRoot,
+					receipt.BaselineDigest,
+					receipt.StagedDigest,
+					strings.Join(receipt.DeclaredWriteSet, ", "),
+					receipt.CreatedAt,
+				)
+				return nil
+			case "json":
+				data, marshalErr := lifecycleRecoveryMarshal(receipt, "", "  ")
+				if marshalErr != nil {
+					return exitcode.UnexpectedErrorf("encoding lifecycle recovery receipt: %v", marshalErr)
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", data)
+				return nil
+			default:
+				return exitcode.InvalidArgsErrorf("invalid --format %q; expected text or json", format)
+			}
+		},
+	}
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().String("format", "text", "output format: text or json")
 	return cmd
 }
 
@@ -281,6 +333,7 @@ func readLifecyclePublishingIntentIdentityWithHandle(handle *lifecycleRecoveryHa
 		intent.BaselineDigest != receipt.BaselineDigest ||
 		intent.StagedDigest != receipt.StagedDigest ||
 		intent.CreatedAt != receipt.CreatedAt ||
+		!slices.Equal(intent.DeclaredWriteSet, receipt.DeclaredWriteSet) ||
 		intent.PublishingIntentRequired != receipt.PublishingIntentRequired {
 		return nil, exitcode.UnexpectedErrorf("lifecycle publishing intent does not match receipt %s", receipt.ID)
 	}
@@ -352,13 +405,14 @@ func lifecycleRecoveryReceiptStageName(projectRoot string, receipt LifecycleTran
 	if err != nil {
 		return "", "", exitcode.UnexpectedErrorf("resolving recovery project root: %v", err)
 	}
-	if filepath.Clean(receipt.ProjectRoot) != root {
+	receiptProjectRoot, err := canonicalLifecycleProjectRoot(receipt.ProjectRoot)
+	if err != nil || receiptProjectRoot != root {
 		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt project-root mismatch")
 	}
 	recoveryRoot := filepath.Clean(receipt.RecoveryRoot)
-	rel, err := filepath.Rel(root, recoveryRoot)
 	stageName := ".specscore-txn-" + receipt.ID
-	if err != nil || rel != stageName {
+	recoveryParent, err := canonicalLifecycleProjectRoot(filepath.Dir(recoveryRoot))
+	if err != nil || recoveryParent != root || filepath.Base(recoveryRoot) != stageName {
 		return "", "", exitcode.UnexpectedErrorf("lifecycle receipt recovery-root does not match its transaction")
 	}
 	if receipt.BaselineDigest == "" ||

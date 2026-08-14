@@ -22,6 +22,12 @@ const migrateHint = " (run `specscore migrate` to backfill)"
 // Returns the spec-root-relative, slash-separated paths of the files it changed,
 // sorted.
 func Migrate(specRoot string) ([]string, error) {
+	return MigrateWithProjectRoot(lintProjectRoot("", specRoot), specRoot)
+}
+
+// MigrateWithProjectRoot performs Migrate with explicit project context so
+// staged callers never derive a live project path from their spec root.
+func MigrateWithProjectRoot(projectRoot, specRoot string) ([]string, error) {
 	var changed []string
 	for _, t := range docTypeTargets {
 		target := t
@@ -39,7 +45,7 @@ func Migrate(specRoot string) ([]string, error) {
 			if bytes.Equal(updated, content) {
 				return
 			}
-			if err := writeLintFile(specRoot, path, content, updated, 0o644); err != nil {
+			if err := writeLintFile(projectRoot, specRoot, path, content, updated, 0o644); err != nil {
 				writeErr = err
 				return
 			}

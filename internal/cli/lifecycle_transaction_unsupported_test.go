@@ -6,7 +6,7 @@ import "testing"
 
 func TestRunLifecycleTransactionFailsClosedOnUnsupportedPlatform(t *testing.T) {
 	called := false
-	if _, err := RunLifecycleTransaction(t.TempDir(), func(string) error {
+	if _, err := RunLifecycleTransaction(t.TempDir(), []string{"README.md"}, func(string) error {
 		called = true
 		return nil
 	}); err == nil {
