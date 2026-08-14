@@ -66,7 +66,8 @@ func lessonNewCommand() *cobra.Command {
 		Use:   "new <slug>",
 		Short: "Scaffold a new Lesson artifact",
 		Long: `Creates the canonical compact Lesson at
-spec/lessons/<slug>/README.md plus an empty occurrences/ directory. The README
+spec/lessons/<slug>/README.md plus a Git-preserved empty occurrences/ store
+(an empty .gitkeep marker until its first JSON occurrence). The README
 contains controlled classifications, relation/provenance fields, the durable
 Lesson and Process Gap, exact occurrence-schema Tracking line, deterministic
 Enforcement fields, Open Questions, and the adherence footer.
