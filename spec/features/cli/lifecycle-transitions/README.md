@@ -14,6 +14,12 @@ status: Stable
 
 This is **not a command group** — it has no CLI surface of its own. It is the shared cross-cutting contract every `specscore` verb that mutates the `Status` field of a SpecScore artifact MUST satisfy: atomic artifact mutation, declared post-commit recovery, output format, exit-code mapping, and the scope boundary between local file safety and distributed coordination. Verb features reference this feature instead of restating these rules.
 
+## Contents
+
+| Child | Description |
+|---|---|
+| [spec-tree-transaction-recovery](spec-tree-transaction-recovery/README.md) | Crash-safe copy-on-write publication and explicit recovery for lifecycle mutations spanning a declared Spec tree. |
+
 ## Problem
 
 Every lifecycle/state-transition verb has the same core: under its local artifact transaction, read the current status, validate the source state against the verb's legal transitions, compose the `**Status:**` change and any same-artifact fields, commit once, then run any derived work declared by that verb. The [source Idea](../../../ideas/lifecycle-verbs-for-idea-and-feature.md) plans seven such verbs across two doc kinds. Restating the core in seven feature specs would guarantee drift; this Meta feature centralizes it while each verb still declares whether it has a derived lint/index hook.

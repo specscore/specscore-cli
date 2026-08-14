@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/config"
 )
 
 func gitOrSkip(t *testing.T, dir string, args ...string) {
@@ -19,6 +21,7 @@ func gitOrSkip(t *testing.T, dir string, args ...string) {
 
 func TestRunInit_AddsLocalToGitignore(t *testing.T) {
 	dir := t.TempDir()
+	gitOrSkip(t, dir, "init")
 	if _, _, err := runInitCmd(t, strings.NewReader(""), "--project", dir); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -28,6 +31,15 @@ func TestRunInit_AddsLocalToGitignore(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "specscore.local.yaml") {
 		t.Errorf(".gitignore missing specscore.local.yaml:\n%s", data)
+	}
+	if !strings.Contains(string(data), config.LifecycleTransactionLockIgnorePattern) {
+		t.Errorf(".gitignore missing %s:\n%s", config.LifecycleTransactionLockIgnorePattern, data)
+	}
+	lockPath := filepath.Join("spec", "ideas", ".example.md.lifecycle-transaction.lock")
+	cmd := exec.Command("git", "check-ignore", "--quiet", lockPath)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated lifecycle lock is not ignored: %v: %s", err, out)
 	}
 }
 
