@@ -145,6 +145,14 @@ func snapshotDirectoryNoFollow(directory *os.File, rel string, snapshot *specTre
 		if rel == "." {
 			childRel = name
 		}
+		// Reject unsupported entry types before metadata ioctls. Devices,
+		// sockets, and FIFOs do not share regular-file filesystem-flag
+		// semantics, and querying them can obscure the intended fail-closed
+		// classification with a platform-specific ioctl error.
+		if !childInfo.IsDir() && !childInfo.Mode().IsRegular() {
+			_ = snapshotClose(child)
+			return fmt.Errorf("refusing non-regular file %s in lifecycle transaction", childRel)
+		}
 		metadata, err := captureSnapshotEntryMetadata(child, childInfo)
 		if err != nil {
 			_ = snapshotClose(child)
@@ -160,10 +168,6 @@ func snapshotDirectoryNoFollow(directory *os.File, rel string, snapshot *specTre
 				return fmt.Errorf("closing directory %s: %w", childRel, err)
 			}
 			continue
-		}
-		if !childInfo.Mode().IsRegular() {
-			_ = snapshotClose(child)
-			return fmt.Errorf("refusing non-regular file %s in lifecycle transaction", childRel)
 		}
 		content, readErr := transactionReadSnapshotFile(child)
 		if readErr != nil {
