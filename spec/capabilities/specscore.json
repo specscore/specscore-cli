@@ -816,6 +816,21 @@
               "modes": []
             },
             {
+              "path": "specscore task amend",
+              "flags": [
+                "--actor",
+                "--clear-evidence",
+                "--clear-note",
+                "--evidence",
+                "--force-coordination",
+                "--note",
+                "--plan",
+                "--project",
+                "--reason"
+              ],
+              "modes": []
+            },
+            {
               "path": "specscore task change-status",
               "flags": [
                 "--amend-provenance",
@@ -1765,6 +1780,88 @@
             {
               "path": "pkg/lint/lint_test.go",
               "name": "TestOQSection_FixRewritesLegacyHeading",
+              "kind": "unit"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": null
+    },
+    {
+      "id": "specscore.task.annotation-amend",
+      "feature_refs": [
+        "spec/features/cli/task/change-status/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore task amend",
+              "flags": [
+                "--actor",
+                "--clear-evidence",
+                "--clear-note",
+                "--evidence",
+                "--force-coordination",
+                "--note",
+                "--plan",
+                "--project",
+                "--reason"
+              ],
+              "modes": [
+                "replace or remove singleton annotations without changing Status or Implemented-by"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore task amend --help",
+              "contains": [
+                "without changing task Status",
+                "one fail-fast artifact transaction",
+                "--clear-note",
+                "--actor"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Full",
+          "skills": [
+            {
+              "path": "ai/skills/specscore-task/SKILL.md",
+              "marker": "capability: specscore.task.annotation-amend",
+              "examples": [
+                "specscore task amend land-plan --plan release --note \"merged to main\" --evidence \"834392f,https://github.com/specscore/specscore-cli/pull/140\" --actor codex --reason \"replace stale awaiting-merge record\""
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/task_amend_test.go",
+              "name": "TestTaskAmend_BoardReplaceAndClearPreservesLifecycleAndAudit",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/task_amend_test.go",
+              "name": "TestTaskAmend_RejectsDuplicateMalformedAndInvalidArgsWithoutWrites",
+              "kind": "integration"
+            },
+            {
+              "path": "pkg/lifecycle/cas_test.go",
+              "name": "TestTransformArtifact_ForeignEditBeforeRenameIsDetected",
               "kind": "unit"
             }
           ],

@@ -1,9 +1,6 @@
 package lifecycle
 
-import (
-	"os"
-	"strings"
-)
+import "strings"
 
 // resolutionHeading is the H2 heading under which an optional transition
 // --note is written, per lifecycle-transitions#REQ:optional-transition-note.
@@ -25,37 +22,39 @@ const resolutionHeading = "## Resolution"
 // The markdown is written verbatim except for trailing-newline normalization;
 // it is never reflowed, wrapped, truncated, or sanitized.
 //
-// On a write, original holds the exact pre-invocation file bytes so the caller
-// can roll back via RestoreBody as part of the surrounding atomic transition.
+// This wrapper is retained for historical compensating callers. On a write,
+// original holds its exact pre-invocation bytes, but that snapshot is not
+// post-commit rollback authority. Transaction-profile Task/Plan writers call
+// AppendResolutionNoteBytes inside their single artifact transaction.
 func AppendResolutionNote(artifactPath, note string) (original []byte, wrote bool, err error) {
 	if strings.TrimSpace(note) == "" {
 		return nil, false, nil
 	}
-
-	orig, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return nil, false, err
-	}
-
-	// Normalize the note's trailing whitespace/newlines; preserve internal
-	// content verbatim.
-	para := strings.TrimRight(note, "\n\r \t")
-
-	lines := splitKeepTerminators(orig)
-	newLines := insertResolutionNote(lines, para)
-
-	if err := writeFileAtomic(artifactPath, joinLines(newLines)); err != nil {
-		return nil, false, err
-	}
-	return orig, true, nil
+	err = TransformArtifact(artifactPath, func(before []byte) ([]byte, error) {
+		original = append([]byte(nil), before...)
+		var updated []byte
+		updated, wrote, err = AppendResolutionNoteBytes(before, note)
+		return updated, err
+	})
+	return original, wrote, err
 }
 
-// RestoreBody rewrites the artifact with original (the bytes returned by a
-// prior AppendResolutionNote call), restoring it byte-for-byte. It is the
-// body-mutation counterpart to lifecycle.Rollback and participates in the same
-// rollback path.
+// AppendResolutionNoteBytes appends a resolution paragraph in memory.
+func AppendResolutionNoteBytes(orig []byte, note string) ([]byte, bool, error) {
+	if strings.TrimSpace(note) == "" {
+		return orig, false, nil
+	}
+	para := strings.TrimRight(note, "\n\r \t")
+	return joinLines(insertResolutionNote(splitKeepTerminators(orig), para)), true, nil
+}
+
+// RestoreBody is the explicit legacy whole-body compensating writer. It is not
+// part of the Task/Plan transaction profile and MUST NOT be used after their
+// artifact commit or post-mutation callback failure.
 func RestoreBody(artifactPath string, original []byte) error {
-	return writeFileAtomic(artifactPath, original)
+	return TransformArtifact(artifactPath, func([]byte) ([]byte, error) {
+		return append([]byte(nil), original...), nil
+	})
 }
 
 // insertResolutionNote returns the lines with the note inserted: a new

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,15 +184,15 @@ func TestTaskChangeStatus_PlanInline_UnreadablePlan(t *testing.T) {
 // A post-validation rewrite I/O failure surfaces Unexpected (10). The plan file
 // is made read-only so the parse (a read) succeeds while the rewrite fails.
 func TestTaskChangeStatus_PlanInline_RewriteFailure(t *testing.T) {
-	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
-	if err := os.Chmod(planPath, 0o400); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(planPath, 0o644) })
+	stagePlanWithTasks(t, "auth", twoTaskPlanBody)
+	boom := errors.New("atomic transaction boom")
 
-	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete")
+	_, _, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: func(string, func([]byte) ([]byte, error)) error { return boom }}, "change-status", "setup", "--plan", "auth", "--to=complete")
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("error lost transaction cause: %v", err)
 	}
 }
 

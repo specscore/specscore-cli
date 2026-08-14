@@ -1,19 +1,21 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
 )
 
 // stagePlan bootstraps a spec repo, scaffolds a lint-clean plan via `plan new`,
 // patches its **Status:** to the requested value, runs lint --fix to sync the
 // plans index, and returns the project root (cwd is set to it). The fixture is
-// verified lint-clean before the test runs so the post-mutation rollback fires
+// verified lint-clean before the test runs so retained post-mutation failure
 // only on the verb under test.
 func stagePlan(t *testing.T, slug, status string) string {
 	t.Helper()
@@ -153,6 +155,7 @@ func TestPlanChangeStatus_ArgErrors_CLI(t *testing.T) {
 		{"withdrawn-no-note", []string{"change-status", "auth", "--to=withdrawn"}, exitcode.InvalidArgs},
 		{"superseded-no-note", []string{"change-status", "auth", "--to=superseded"}, exitcode.InvalidArgs},
 		{"superseded-no-successor", []string{"change-status", "auth", "--to=superseded", "--note", "x"}, exitcode.InvalidArgs},
+		{"superseded-invalid-successor", []string{"change-status", "auth", "--to=superseded", "--note", "x", "--successor", "../escape"}, exitcode.InvalidArgs},
 		{"successor-on-non-superseded", []string{"change-status", "auth", "--to=deprecated", "--note", "x", "--successor", "auth"}, exitcode.InvalidArgs},
 		{"illegal-transition", []string{"change-status", "auth", "--to=draft"}, exitcode.InvalidState},
 		{"not-found", []string{"change-status", "ghost", "--to=approved"}, exitcode.NotFound},
@@ -176,8 +179,9 @@ func TestPlanChangeStatus_SupersededUnresolvableSuccessor_CLI(t *testing.T) {
 	}
 }
 
-// AC: lint-failure-rolls-back — inject a lint failure via the lintLintFn seam.
-func TestPlanChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
+// AC: post-commit-callback-failure-is-recovery-required — derived lint failure
+// retains the durable Plan transaction and exposes the original cause.
+func TestPlanChangeStatus_LintFailureRetainsCommittedTransaction_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
 	orig := lintLintFn
 	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
@@ -192,9 +196,52 @@ func TestPlanChangeStatus_LintFailureRollsBack_CLI(t *testing.T) {
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
+	var committed *lifecycle.CommittedMutationError
+	if !errors.As(err, &committed) || committed.Phase != "post-mutation callback" {
+		t.Fatalf("error = %T %v, want committed callback failure", err, err)
+	}
 	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
-	if !strings.Contains(string(body), "**Status:** Draft") {
-		t.Errorf("status not rolled back after lint failure:\n%s", body)
+	if !strings.Contains(string(body), "**Status:** In Review") {
+		t.Errorf("committed status was not retained after lint failure:\n%s", body)
+	}
+}
+
+func TestPlanChangeStatus_ForceWarningSurvivesCommittedCallbackFailure_CLI(t *testing.T) {
+	root := stagePlan(t, "auth", "Draft")
+	path := filepath.Join(root, "spec", "plans", "auth.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCoordination := strings.Replace(string(body), "**Supersedes:** —", "**Supersedes:** —\n**Coordination:** specscore/specscore-cli@main", 1)
+	if withCoordination == string(body) {
+		t.Fatal("plan fixture has no Supersedes field for coordination insertion")
+	}
+	if err := os.WriteFile(path, []byte(withCoordination), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitInitWithRemoteAndBranch(t, root, "https://github.com/specscore/specscore-cli.git", "some-other-branch")
+
+	orig := lintLintFn
+	lintLintFn = func(opts lint.Options) ([]lint.Violation, error) {
+		if opts.Fix {
+			return nil, nil
+		}
+		return []lint.Violation{{File: "x", Line: 1, Rule: "P-001", Severity: "error", Message: "boom"}}, nil
+	}
+	t.Cleanup(func() { lintLintFn = orig })
+
+	_, stderr, err := runPlan(t, "change-status", "auth", "--to=in review", "--force-coordination")
+	if exitCodeOfErr(err) != exitcode.Unexpected || !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, "force-coordination") {
+		t.Fatalf("err=%v stderr=%q", err, stderr)
+	}
+	var committed *lifecycle.CommittedMutationError
+	if !errors.As(err, &committed) || committed.Phase != "post-mutation callback" {
+		t.Fatalf("error = %T %v, want preserved committed callback failure", err, err)
+	}
+	after, _ := os.ReadFile(path)
+	if !strings.Contains(string(after), "**Status:** In Review") {
+		t.Fatalf("committed status was not retained:\n%s", after)
 	}
 }
 

@@ -950,7 +950,7 @@ func TestRollback_CRLFRoundTrip(t *testing.T) {
 func TestWriteFileAtomic_StatFails(t *testing.T) {
 	t.Parallel()
 	// Write to a path that doesn't exist - os.Stat will fail.
-	err := writeFileAtomic(filepath.Join(t.TempDir(), "does-not-exist.md"), []byte("content"))
+	err := transformTo(filepath.Join(t.TempDir(), "does-not-exist.md"), []byte("content"))
 	if err == nil {
 		t.Fatal("writeFileAtomic should error when file doesn't exist (Stat fails)")
 	}
@@ -969,7 +969,7 @@ func TestWriteFileAtomic_UnwritableDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	err := writeFileAtomic(path, []byte("new content"))
+	err := transformTo(path, []byte("new content"))
 	if err == nil {
 		t.Fatal("writeFileAtomic should error when directory is not writable")
 	}

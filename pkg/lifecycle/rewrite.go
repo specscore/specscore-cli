@@ -13,12 +13,14 @@ import (
 
 // Testable indirections for OS operations. Tests inject failures via these.
 var (
-	osCreateTemp = os.CreateTemp
-	ioCopy       = io.Copy
-	osChmod      = os.Chmod
-	osRename     = os.Rename
-	fileSync     = func(f *os.File) error { return f.Sync() }
-	fileClose    = func(f *os.File) error { return f.Close() }
+	osCreateTemp       = os.CreateTemp
+	ioCopy             = io.Copy
+	osChmod            = os.Chmod
+	osRename           = os.Rename
+	osReadBeforeRename = os.ReadFile
+	osOpenDir          = func(path string) (*os.File, error) { return os.Open(path) }
+	fileSync           = func(f *os.File) error { return f.Sync() }
+	fileClose          = func(f *os.File) error { return f.Close() }
 )
 
 // statusLineRe matches a header line of the form `**Status:** <value>`,
@@ -48,18 +50,17 @@ var fmStatusLineRe = regexp.MustCompile(`^([ \t]*)status:[ \t]*([^\r\n]*?)([ \t]
 // does not contain a recognizable `**Status:**` line.
 var ErrStatusLineNotFound = errors.New("lifecycle: artifact has no **Status:** line")
 
-// Validate reads artifactPath, extracts its current Status, and checks that
-// the (kind, current, to) transition is legal. It does NOT mutate the file.
+// Validate is a legacy convenience that reads artifactPath, extracts its
+// current Status, and checks that the transition is legal. It does not mutate.
+// Transaction-profile writers MUST instead parse and call Transition from the
+// exact bytes supplied by TransformArtifact; stitching Validate and Rewrite
+// together would validate outside the artifact lock.
 //
 // It returns the from status on success. On failure it returns one of:
 //
 //   - an os error if the file cannot be opened or read
 //   - ErrStatusLineNotFound if the file has no recognizable **Status:** line
 //   - an *InvalidTransitionError if the transition is illegal in kind's matrix
-//
-// Validate is the primitive that the CLI verb runs FIRST, before any
-// mutation; it is the single check that guarantees REQ:
-// state-machine-strictness.
 func Validate(kind Kind, artifactPath string, to Status) (Status, error) {
 	from, err := readStatus(artifactPath)
 	if err != nil {
@@ -75,23 +76,31 @@ func Validate(kind Kind, artifactPath string, to Status) (Status, error) {
 // the value text. Every other byte of the file (line ordering, indentation,
 // line endings, trailing whitespace) is preserved (REQ: status-line-rewrite).
 //
-// The returned string is the ORIGINAL line content (including any line
-// terminator that was attached to it), suitable for passing to Rollback to
-// undo the mutation. The caller is responsible for retaining this value
-// until index sync is confirmed successful.
+// Rewrite is retained for historical single-field callers. The returned
+// string is the original line content for their explicitly documented legacy
+// compensation path. Transaction-profile Task/Plan writers use RewriteBytes
+// inside one TransformArtifact callback and never perform a late rollback.
 //
 // If the file has no `**Status:**` line, Rewrite returns ErrStatusLineNotFound
 // and the file is left untouched.
 func Rewrite(artifactPath string, newStatus Status) (string, error) {
-	original, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return "", err
-	}
+	var originalLine string
+	err := TransformArtifact(artifactPath, func(original []byte) ([]byte, error) {
+		updated, line, transformErr := RewriteBytes(original, newStatus)
+		originalLine = line
+		return updated, transformErr
+	})
+	return originalLine, err
+}
+
+// RewriteBytes rewrites Status (and its frontmatter mirror) in memory. It is
+// the pure transform used by compound artifact transactions.
+func RewriteBytes(original []byte, newStatus Status) ([]byte, string, error) {
 	lines := splitKeepTerminators(original)
 
 	idx := findStatusLineIndex(lines)
 	if idx < 0 {
-		return "", ErrStatusLineNotFound
+		return nil, "", ErrStatusLineNotFound
 	}
 
 	originalLine := lines[idx]
@@ -110,15 +119,27 @@ func Rewrite(artifactPath string, newStatus Status) (string, error) {
 		setFrontmatterStatusLine(lines, fmIdx, string(newStatus))
 	}
 
-	if err := writeFileAtomic(artifactPath, joinLines(lines)); err != nil {
-		return "", err
-	}
-	return originalLine, nil
+	return joinLines(lines), originalLine, nil
 }
 
-// Rollback restores the artifact's `**Status:**` line to its
-// pre-Rewrite content, identified by the originalStatusLine returned from
-// the prior Rewrite call.
+// StatusFromBytes returns the body Status parsed from bytes held by a compound
+// transaction. It never reads from disk.
+func StatusFromBytes(original []byte) (Status, error) {
+	lines := splitKeepTerminators(original)
+	idx := findStatusLineIndex(lines)
+	if idx < 0 {
+		return "", ErrStatusLineNotFound
+	}
+	body, _ := splitTerminator(lines[idx])
+	m := statusLineRe.FindStringSubmatch(body)
+	// findStatusLineIndex uses this same expression, so a selected line always
+	// has the capture groups needed here.
+	return Status(strings.TrimSpace(m[2])), nil
+}
+
+// Rollback is the explicit legacy compensating status-line writer. It is not
+// part of the Task/Plan transaction profile and MUST NOT be used after their
+// artifact commit or post-mutation callback failure.
 //
 // Rollback locates the file's current `**Status:**` line (which is now the
 // MUTATED value), replaces that single line with originalStatusLine, and
@@ -127,17 +148,20 @@ func Rewrite(artifactPath string, newStatus Status) (string, error) {
 //
 // If the file has been mutated externally between Rewrite and Rollback such
 // that no `**Status:**` line remains, Rollback returns ErrStatusLineNotFound.
-// Concurrent modification is outside the contract (REQ: no-coordination in
-// the lifecycle-transitions Meta spec).
+// It does not prove ownership of unrelated current bytes; callers that have
+// migrated to ArtifactTransaction must retain committed state instead.
 func Rollback(artifactPath string, originalStatusLine string) error {
-	current, err := os.ReadFile(artifactPath)
-	if err != nil {
-		return err
-	}
+	return TransformArtifact(artifactPath, func(current []byte) ([]byte, error) {
+		return RollbackBytes(current, originalStatusLine)
+	})
+}
+
+// RollbackBytes is the pure in-memory legacy status-line restoration transform.
+func RollbackBytes(current []byte, originalStatusLine string) ([]byte, error) {
 	lines := splitKeepTerminators(current)
 	idx := findStatusLineIndex(lines)
 	if idx < 0 {
-		return ErrStatusLineNotFound
+		return nil, ErrStatusLineNotFound
 	}
 	lines[idx] = originalStatusLine
 	// Re-mirror the frontmatter `status:` from the restored body value so the
@@ -148,7 +172,7 @@ func Rollback(artifactPath string, originalStatusLine string) error {
 			setFrontmatterStatusLine(lines, fmIdx, v)
 		}
 	}
-	return writeFileAtomic(artifactPath, joinLines(lines))
+	return joinLines(lines), nil
 }
 
 // findFrontmatterStatusLineIndex returns the index of the `status:` line inside
@@ -277,10 +301,12 @@ func joinLines(lines []string) []byte {
 	return buf.Bytes()
 }
 
-// writeFileAtomic writes content to dst via a same-directory temp file +
-// rename, so a partial write cannot leave a half-rewritten artifact on
-// disk. File mode is preserved from the existing dst.
-func writeFileAtomic(dst string, content []byte) error {
+// writeFileAtomicExpected stages content beside dst, performs a deterministic
+// final identity check against expected, then renames and syncs the containing
+// directory. The check detects non-cooperating edits observed before rename;
+// it is deliberately not called compare-and-swap because POSIX rename cannot
+// make the preceding read and replacement one indivisible filesystem action.
+func writeFileAtomicExpected(dst string, expected, content []byte) error {
 	stat, err := os.Stat(dst)
 	if err != nil {
 		return err
@@ -311,9 +337,29 @@ func writeFileAtomic(dst string, content []byte) error {
 		cleanup()
 		return err
 	}
+	current, err := osReadBeforeRename(dst)
+	if err != nil {
+		cleanup()
+		return err
+	}
+	if !bytes.Equal(current, expected) {
+		cleanup()
+		return ErrConcurrentMutation
+	}
 	if err := osRename(tmpName, dst); err != nil {
 		cleanup()
 		return err
+	}
+	dir, err := osOpenDir(dirOf(dst))
+	if err != nil {
+		return CommittedError(dst, "opening artifact directory for durable sync", err)
+	}
+	if err := fileSync(dir); err != nil {
+		_ = fileClose(dir)
+		return CommittedError(dst, "syncing artifact directory", err)
+	}
+	if err := fileClose(dir); err != nil {
+		return CommittedError(dst, "closing artifact directory", err)
 	}
 	return nil
 }

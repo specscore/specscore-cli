@@ -256,11 +256,11 @@ func TestPlanReconcile_LintFailureRollsBack_CLI(t *testing.T) {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
 	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
-	if !strings.Contains(string(body), "**Status:** Draft") {
-		t.Errorf("status not rolled back after lint failure:\n%s", body)
+	if !strings.Contains(string(body), "**Status:** Implemented") {
+		t.Errorf("committed status missing after lint failure:\n%s", body)
 	}
-	if strings.Contains(string(body), "**Reconciled:**") {
-		t.Errorf("reconciled marker must not survive rollback:\n%s", body)
+	if !strings.Contains(string(body), "**Reconciled:**") {
+		t.Errorf("reconciled marker missing from committed transaction:\n%s", body)
 	}
 }
 

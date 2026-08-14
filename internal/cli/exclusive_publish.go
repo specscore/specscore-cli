@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -93,4 +94,182 @@ func publishFileExclusiveWithOps(path string, data []byte, mode os.FileMode, ops
 
 func isExclusivePublishCollision(err error) bool {
 	return errors.Is(err, fs.ErrExist)
+}
+
+type ownedMarkerOps struct {
+	link     func(string, string) error
+	remove   func(string) error
+	syncDir  func(string) error
+	read     func(string) ([]byte, error)
+	lstat    func(string) (os.FileInfo, error)
+	sameFile func(os.FileInfo, os.FileInfo) bool
+}
+
+func defaultOwnedMarkerOps() ownedMarkerOps {
+	return ownedMarkerOps{link: os.Link, remove: os.Remove, syncDir: syncOwnedMarkerDir, read: os.ReadFile, lstat: os.Lstat, sameFile: os.SameFile}
+}
+
+func committedMarkerPath(path string) string { return path + ".committed" }
+
+type syncCloseFile interface {
+	Sync() error
+	Close() error
+}
+
+func syncOwnedMarkerDir(dir string) error {
+	return syncOwnedMarkerDirWithOpen(dir, func(path string) (syncCloseFile, error) { return os.Open(path) })
+}
+
+func syncOwnedMarkerDirWithOpen(dir string, open func(string) (syncCloseFile, error)) error {
+	d, err := open(dir)
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
+}
+
+// removeOwnedFileDurable finalizes a private prepared marker without an
+// unrecoverable remove-then-sync gap. It first creates and durably fences an
+// exclusive hard-linked committed receipt carrying the same owned bytes. Only
+// then may it remove the prepared name. Any failure before cleanup leaves at
+// least one exact receipt for retry; a foreign receipt is never overwritten.
+// Once removal of the final receipt succeeds, a following directory-sync
+// failure can at worst resurrect that harmless committed receipt after a
+// crash, so it is intentionally best-effort rather than a false recovery error.
+func removeOwnedFileDurable(path string, expected []byte) error {
+	return removeOwnedFileDurableWithOps(path, expected, defaultOwnedMarkerOps())
+}
+
+func removeOwnedFileDurableWithOps(path string, expected []byte, ops ownedMarkerOps) error {
+	finalPath := committedMarkerPath(path)
+	prepared, preparedErr := ops.read(path)
+	committed, committedErr := ops.read(finalPath)
+	preparedExists := preparedErr == nil
+	committedExists := committedErr == nil
+	if preparedErr != nil && !os.IsNotExist(preparedErr) {
+		return preparedErr
+	}
+	if committedErr != nil && !os.IsNotExist(committedErr) {
+		return committedErr
+	}
+	if !preparedExists && !committedExists {
+		return os.ErrNotExist
+	}
+	if (preparedExists && !bytes.Equal(prepared, expected)) || (committedExists && !bytes.Equal(committed, expected)) {
+		return fmt.Errorf("prepared marker changed before finalization")
+	}
+	dir := filepath.Dir(path)
+	var committedIdentity os.FileInfo
+	if !committedExists {
+		// Revalidate immediately before linking the pathname. A non-cooperating
+		// writer may have replaced it after the initial read.
+		if err := verifyOwnedMarker(ops, path, expected); err != nil {
+			return err
+		}
+		if err := ops.link(path, finalPath); err != nil {
+			return err
+		}
+		committedExists = true
+	}
+	// The two visible names must still carry the owned bytes and, while both
+	// exist, identify the same inode created by the hard-link receipt step.
+	// This detects a pathname replacement before either name is removed.
+	if preparedExists {
+		var identityErr error
+		committedIdentity, identityErr = verifyOwnedMarkerPair(ops, path, finalPath, expected)
+		if identityErr != nil {
+			return identityErr
+		}
+	} else {
+		var identityErr error
+		committedIdentity, identityErr = verifyOwnedMarkerIdentity(ops, finalPath, expected)
+		if identityErr != nil {
+			return identityErr
+		}
+	}
+	if err := ops.syncDir(dir); err != nil {
+		return err
+	}
+	if preparedExists {
+		currentIdentity, err := verifyOwnedMarkerPair(ops, path, finalPath, expected)
+		if err != nil {
+			return err
+		}
+		if !ops.sameFile(committedIdentity, currentIdentity) {
+			return fmt.Errorf("committed marker identity changed before finalization")
+		}
+		if err := ops.remove(path); err != nil {
+			return err
+		}
+		if err := ops.syncDir(dir); err != nil {
+			return err
+		}
+	}
+	if committedExists {
+		currentIdentity, err := verifyOwnedMarkerIdentity(ops, finalPath, expected)
+		if err != nil {
+			return err
+		}
+		if !ops.sameFile(committedIdentity, currentIdentity) {
+			return fmt.Errorf("committed marker identity changed before finalization")
+		}
+		if err := ops.remove(finalPath); err != nil {
+			return err
+		}
+		// The committed receipt was durably established above. If this final
+		// cleanup fence fails, returning an error would demand a retry without
+		// leaving a currently visible ownership receipt. Treat deletion as done;
+		// a crash may only bring the harmless receipt back for later cleanup.
+		_ = ops.syncDir(dir)
+	}
+	return nil
+}
+
+func verifyOwnedMarker(ops ownedMarkerOps, path string, expected []byte) error {
+	_, err := verifyOwnedMarkerIdentity(ops, path, expected)
+	return err
+}
+
+func verifyOwnedMarkerIdentity(ops ownedMarkerOps, path string, expected []byte) (os.FileInfo, error) {
+	beforeInfo, err := ops.lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if beforeInfo.Mode()&os.ModeSymlink != 0 || !beforeInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("prepared marker is not a regular file")
+	}
+	got, err := ops.read(path)
+	if err != nil {
+		return nil, err
+	}
+	afterInfo, err := ops.lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if afterInfo.Mode()&os.ModeSymlink != 0 || !afterInfo.Mode().IsRegular() || !ops.sameFile(beforeInfo, afterInfo) {
+		return nil, fmt.Errorf("prepared marker identity changed before finalization")
+	}
+	if !bytes.Equal(got, expected) {
+		return nil, fmt.Errorf("prepared marker changed before finalization")
+	}
+	return afterInfo, nil
+}
+
+func verifyOwnedMarkerPair(ops ownedMarkerOps, preparedPath, committedPath string, expected []byte) (os.FileInfo, error) {
+	preparedInfo, err := verifyOwnedMarkerIdentity(ops, preparedPath, expected)
+	if err != nil {
+		return nil, err
+	}
+	committedInfo, err := verifyOwnedMarkerIdentity(ops, committedPath, expected)
+	if err != nil {
+		return nil, err
+	}
+	if !ops.sameFile(preparedInfo, committedInfo) {
+		return nil, fmt.Errorf("prepared marker identity changed before finalization")
+	}
+	return committedInfo, nil
 }

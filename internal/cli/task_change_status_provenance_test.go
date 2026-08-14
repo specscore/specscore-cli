@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -173,18 +172,19 @@ func TestTaskChangeStatus_Board_NotDerivedFromHead(t *testing.T) {
 	}
 }
 
-// A provenance-write I/O failure surfaces Unexpected (10). The status Rewrite
-// (which uses os directly) succeeds; the seamed provenance write is forced to
-// fail.
-func TestTaskChangeStatus_Board_ProvenanceWriteFailure(t *testing.T) {
-	stageTaskWithStatus(t, "auth", "in_progress")
-	orig := osWriteFileFn
-	osWriteFileFn = func(string, []byte, os.FileMode) error { return errors.New("boom") }
-	t.Cleanup(func() { osWriteFileFn = orig })
-
+// Status and provenance now compose in one lifecycle transaction; a successful
+// completion therefore cannot expose Status=complete without provenance.
+func TestTaskChangeStatus_Board_StatusAndProvenanceCommitTogether(t *testing.T) {
+	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	_, _, err := runTask(t, "change-status", "auth", "--to=complete", "--commit", "a1b2c3d")
-	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := taskFileStatus(t, taskFile); got != "complete" {
+		t.Fatalf("status=%s", got)
+	}
+	if got := implementedByField(t, taskFile); got == "" {
+		t.Fatal("missing atomic provenance")
 	}
 }
 

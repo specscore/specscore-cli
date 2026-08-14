@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
@@ -617,6 +619,86 @@ func TestTaskChangeStatus_PlanInline_CoordinationForce_CLI(t *testing.T) {
 	}
 	if got := planTaskStatus(t, planPath, "setup"); got != "complete" {
 		t.Errorf("expected task completed after force-bypass, got %q", got)
+	}
+}
+
+func TestTaskChangeStatus_ForceWarningIsCommitGated(t *testing.T) {
+	root, planPath := stagePlanWithTasks(t, "auth", coordinatedPlanInlineBody)
+	gitInitWithRemoteAndBranch(t, root, "https://github.com/specscore/specscore-cli.git", "some-other-branch")
+	before, _ := os.ReadFile(planPath)
+	boom := errors.New("atomic write failed")
+	transformArtifact := func(path string, transform func([]byte) ([]byte, error)) error {
+		current, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if _, err := transform(current); err != nil {
+			return err
+		}
+		return boom
+	}
+	_, stderr, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: transformArtifact}, "change-status", "setup", "--plan", "auth", "--to=complete", "--force-coordination")
+	if !errors.Is(err, boom) || strings.Contains(stderr, "warning:") {
+		t.Fatalf("err=%v stderr=%q", err, stderr)
+	}
+	after, _ := os.ReadFile(planPath)
+	if !bytes.Equal(before, after) {
+		t.Fatal("fault-injected transaction changed Plan")
+	}
+}
+
+func TestPlanInlineTaskForceWarningSurvivesCommittedFailure(t *testing.T) {
+	boom := errors.New("directory fence failed")
+	for _, tc := range []struct {
+		name string
+		body string
+		args []string
+	}{
+		{
+			name: "status",
+			body: coordinatedPlanInlineBody,
+			args: []string{"change-status", "setup", "--plan", "auth", "--to=complete", "--force-coordination"},
+		},
+		{
+			name: "provenance",
+			body: strings.Replace(completeTaskPlanBody, "**Source Feature:** auth", "**Source Feature:** auth\n**Coordination:** specscore/specscore-cli@main", 1),
+			args: []string{"change-status", "setup", "--plan", "auth", "--amend-provenance", "--commit=abc1234", "--force-coordination"},
+		},
+		{
+			name: "annotation-amendment",
+			body: coordinatedPlanInlineBody,
+			args: []string{"amend", "setup", "--plan", "auth", "--note=clarified", "--actor=codex", "--reason=correct", "--force-coordination"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, planPath := stagePlanWithTasks(t, "auth", tc.body)
+			gitInitWithRemoteAndBranch(t, root, "https://github.com/specscore/specscore-cli.git", "some-other-branch")
+			transform := func(path string, transform func([]byte) ([]byte, error)) error {
+				before, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				after, err := transform(before)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(path, after, 0o644); err != nil {
+					return err
+				}
+				return lifecycle.CommittedError(path, "directory durability fence", boom)
+			}
+			_, stderr, err := runTaskWithMutationDeps(t, taskMutationDeps{transformArtifact: transform}, tc.args...)
+			var committed *lifecycle.CommittedMutationError
+			if !errors.As(err, &committed) || !errors.Is(err, boom) {
+				t.Fatalf("err=%T %v, want committed failure", err, err)
+			}
+			if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, "force-coordination") {
+				t.Fatalf("committed mutation lost force warning: %q", stderr)
+			}
+			if after, readErr := os.ReadFile(planPath); readErr != nil || bytes.Equal(after, []byte(tc.body)) {
+				t.Fatalf("committed mutation not visible: read=%v", readErr)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -74,6 +75,31 @@ func TestChangeStatus_HappyPath_DraftToInReview(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "status: In Review") {
 		t.Errorf("frontmatter mirror not rewritten:\n%s", body)
+	}
+}
+
+func TestChangeStatus_RewriteGrammarMismatchIsWriteFree(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ParseBytes historically accepts a status marker with no separating
+	// whitespace, while lifecycle.RewriteBytes deliberately rejects it.
+	// A reachable pure-transform error must abort the transaction, never be
+	// mistaken for a nil postimage and truncate the Plan.
+	malformed := []byte(strings.Replace(string(before), "**Status:** Draft", "**Status:**Draft", 1))
+	if err := os.WriteFile(path, malformed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview, PostMutation: okHook,
+	})
+	if !errors.Is(err, lifecycle.ErrStatusLineNotFound) {
+		t.Fatalf("err=%v, want status-line transform rejection", err)
+	}
+	if after, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(after, malformed) {
+		t.Fatalf("malformed Plan changed: read=%v\n%s", readErr, after)
 	}
 }
 
@@ -216,6 +242,68 @@ func TestChangeStatus_NoStatusLine(t *testing.T) {
 	}
 }
 
+func TestChangeStatus_DuplicatePlanStatusRejectedUnderTransaction(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	before, _ := os.ReadFile(path)
+	seeded := strings.Replace(string(before), "**Status:** Draft", "**Status:** Draft\n**Status:** Approved", 1)
+	if err := os.WriteFile(path, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview,
+		PostMutation: func() error { called = true; return nil },
+	})
+	if got := codeOf(t, err); got != exitcode.InvalidArgs {
+		t.Fatalf("exit=%d err=%v", got, err)
+	}
+	if called || string(mustPlanBytes(t, path)) != seeded {
+		t.Fatal("duplicate Plan status was not write-free")
+	}
+}
+
+func TestChangeStatus_SnapshotValidatorSeesCoordinationStateChangedBeforeLock(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	initial, _ := os.ReadFile(path)
+	initial = []byte(strings.Replace(string(initial), "**Supersedes:** —", "**Supersedes:** —\n**Coordination:** owner/repo@main", 1))
+	if err := os.WriteFile(path, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate coordination state changing after an earlier caller observation
+	// but before ChangeStatus acquires the artifact transaction.
+	changed := []byte(strings.Replace(string(initial), "owner/repo@main", "owner/repo@release", 1))
+	if err := os.WriteFile(path, changed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview,
+		ValidateSnapshot: func(gotPath string, before []byte) error {
+			called = true
+			if gotPath != path || !strings.Contains(string(before), "owner/repo@release") {
+				t.Fatalf("validator saw stale coordination bytes: %q", before)
+			}
+			return exitcode.ConflictError("coordination state changed")
+		},
+		PostMutation: okHook,
+	})
+	if got := codeOf(t, err); got != exitcode.Conflict || !called {
+		t.Fatalf("exit=%d called=%v err=%v", got, called, err)
+	}
+	if got := mustPlanBytes(t, path); string(got) != string(changed) {
+		t.Fatal("rejected changed coordination snapshot was mutated")
+	}
+}
+
+func mustPlanBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // TestChangeStatus_ReadStatusError covers the generic "reading plan status"
 // branch: resolving <slug> to a *directory* named auth.md lets os.Stat
 // succeed (so resolution picks it) but lifecycle.Validate's status read then
@@ -257,12 +345,12 @@ func TestChangeStatus_RewriteError(t *testing.T) {
 	if got := codeOf(t, err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
-	if !strings.Contains(err.Error(), "rewriting status line") {
-		t.Errorf("expected rewrite error, got: %q", err.Error())
+	if !strings.Contains(err.Error(), "reading plan status") {
+		t.Errorf("expected transaction error, got: %q", err.Error())
 	}
 }
 
-func TestChangeStatus_PostMutationFails_RollsBack(t *testing.T) {
+func TestChangeStatus_PostMutationFails_RetainsCommittedTransaction(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Approved")
 	boom := errors.New("lint failed")
 	_, err := ChangeStatus(ChangeStatusOptions{
@@ -274,54 +362,79 @@ func TestChangeStatus_PostMutationFails_RollsBack(t *testing.T) {
 		t.Fatalf("expected boom error, got %v", err)
 	}
 	body, _ := os.ReadFile(path)
-	// Full rollback: status restored, no note, no successor line.
-	if !strings.Contains(string(body), "**Status:** Approved") {
-		t.Errorf("status not rolled back:\n%s", body)
+	// The one-write artifact transaction is durable before derived work starts;
+	// a callback failure is retained for explicit recovery rather than a split
+	// rollback that could erase another writer.
+	if !strings.Contains(string(body), "**Status:** Superseded") {
+		t.Errorf("status not retained:\n%s", body)
 	}
-	if strings.Contains(string(body), "## Resolution") || strings.Contains(string(body), "Superseded By") {
-		t.Errorf("body mutations not rolled back:\n%s", body)
+	if !strings.Contains(string(body), "## Resolution") || !strings.Contains(string(body), "Superseded By") {
+		t.Errorf("transaction fields not retained:\n%s", body)
 	}
 }
 
-func TestChangeStatus_SuccessorWriteFails_RollsBack(t *testing.T) {
-	root, path := stageFlatPlan(t, "auth", "Approved")
-	orig := setSupersededByFn
-	setSupersededByFn = func(string, string) ([]byte, bool, error) {
-		return nil, false, errors.New("successor write boom")
+func TestChangeStatus_AtomicFenceFailurePreservesCommittedTypeAndCause(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	boom := errors.New("directory fence failed")
+	transformArtifact := func(gotPath string, transform func([]byte) ([]byte, error)) error {
+		before, err := os.ReadFile(gotPath)
+		if err != nil {
+			return err
+		}
+		after, err := transform(before)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(gotPath, after, 0o644); err != nil {
+			return err
+		}
+		return lifecycle.CommittedError(gotPath, "directory durability fence", boom)
 	}
-	t.Cleanup(func() { setSupersededByFn = orig })
+	postCalled := false
+	result, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview,
+		PostMutation:      func() error { postCalled = true; return nil },
+		transformArtifact: transformArtifact,
+	})
+	var committed *lifecycle.CommittedMutationError
+	if !errors.As(err, &committed) || !errors.Is(err, boom) {
+		t.Fatalf("err=%T %v, want committed fence error preserving cause", err, err)
+	}
+	if postCalled || result.Slug != "auth" || result.From != lifecycle.PlanDraft || result.To != lifecycle.PlanInReview {
+		t.Fatalf("result=%+v postCalled=%v", result, postCalled)
+	}
+	if body := string(mustPlanBytes(t, path)); !strings.Contains(body, "**Status:** In Review") {
+		t.Fatalf("committed bytes not retained:\n%s", body)
+	}
+}
 
+func TestChangeStatus_SuccessorTransformSucceedsInOneWrite(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Approved")
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot: root, Slug: "auth", To: lifecycle.PlanSuperseded,
 		Note: "replaced", Successor: "auth-v2", PostMutation: okHook,
 	})
-	if got := codeOf(t, err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	if err != nil {
+		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "**Status:** Approved") {
-		t.Errorf("status not rolled back after successor-write failure:\n%s", body)
+	if !strings.Contains(string(body), "**Superseded By:** auth-v2") {
+		t.Errorf("missing successor:\n%s", body)
 	}
 }
 
-func TestChangeStatus_NoteWriteFails_RollsBack(t *testing.T) {
+func TestChangeStatus_NoteTransformSucceedsInOneWrite(t *testing.T) {
 	root, path := stageFlatPlan(t, "auth", "Approved")
-	orig := appendNoteFn
-	appendNoteFn = func(string, string) ([]byte, bool, error) {
-		return nil, false, errors.New("note write boom")
-	}
-	t.Cleanup(func() { appendNoteFn = orig })
-
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot: root, Slug: "auth", To: lifecycle.PlanWithdrawn,
 		Note: "why", PostMutation: okHook,
 	})
-	if got := codeOf(t, err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d", got, exitcode.Unexpected)
+	if err != nil {
+		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(path)
-	if !strings.Contains(string(body), "**Status:** Approved") {
-		t.Errorf("status not rolled back after note-write failure:\n%s", body)
+	if !strings.Contains(string(body), "## Resolution") {
+		t.Errorf("missing note:\n%s", body)
 	}
 }
 

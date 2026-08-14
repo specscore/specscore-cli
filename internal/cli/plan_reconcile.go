@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/spf13/cobra"
 )
@@ -72,6 +75,13 @@ refuses (exit 1) unless the current git repo/branch matches — reconciling a
 coordinated plan from anywhere else is a process violation, not a merge
 chore. --force-coordination bypasses the check for this invocation only,
 printing a warning naming what was bypassed.
+
+The Plan status, every selected Task status, the reconciliation marker, and
+the Resolution audit are composed under one fail-fast Plan artifact lock and
+published with one atomic durable write. Lint/index work begins only after the
+lock is released. If it fails, the committed reconciliation remains visible
+and the command returns a recovery-required error; it never rolls back stale
+bytes.
 
 Examples:
 
@@ -173,35 +183,34 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Coordination-branch enforcement: when the plan declares
-	// **Coordination:**, reconciliation is authoritative only on the declared
-	// repo/branch (spec/features/plan/README.md#coordination-branch,
-	// upstream; see cli/plan/reconcile for the enforcement contract).
-	planPath, perr := resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
-	if perr != nil {
-		return perr
-	}
-	parsedPlan, perr := plan.Parse(planPath)
-	if perr != nil {
-		return exitcode.UnexpectedErrorf("parsing plan %s: %v", slug, perr)
-	}
 	forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-	if cerr := enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, cmd.ErrOrStderr()); cerr != nil {
-		return cerr
-	}
+	var coordinationWarning bytes.Buffer
 
 	result, err := plan.Reconcile(plan.ReconcileOptions{
-		SpecRoot:     specRoot,
-		Slug:         slug,
-		Note:         note,
-		Evidence:     evidence,
-		ForceTasks:   forceTasks,
-		ReopenTasks:  reopenTasks,
+		SpecRoot:    specRoot,
+		Slug:        slug,
+		Note:        note,
+		Evidence:    evidence,
+		ForceTasks:  forceTasks,
+		ReopenTasks: reopenTasks,
+		ValidateSnapshot: func(path string, before []byte) error {
+			parsedPlan, parseErr := plan.ParseBytes(path, before)
+			if parseErr != nil {
+				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
+			}
+			return enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, &coordinationWarning)
+		},
 		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
 	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+			return exitcode.UnexpectedErrorCause(err.Error(), err)
+		}
 		return err
 	}
+	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
 
 	msg := fmt.Sprintf("%s: %s → %s (reconciled, %d task(s) marked %s",
 		result.Slug, string(result.From), string(result.To), result.TasksReconciled, result.Target)

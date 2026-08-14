@@ -2,7 +2,7 @@
 //
 // This file hosts ChangeStatus, the kind-specific orchestrator invoked by
 // `specscore plan change-status`. It composes pkg/lifecycle/ primitives
-// (state-machine validation, status-line rewrite, rollback) and adds the
+// (state-machine validation and one atomic artifact transaction) and adds the
 // Plan-specific structured `**Superseded By:**` successor reference.
 //
 // `plan change-status` owns ONLY the human-authored arcs: the prep band
@@ -16,8 +16,8 @@
 // LINT INVOCATION lives in the cobra adapter (internal/cli/plan.go), NOT
 // here, to avoid an import cycle: pkg/lint imports pkg/plan for the plan-*
 // lint rules, so pkg/plan cannot depend back on pkg/lint. The adapter passes
-// a PostMutationHook callback into ChangeStatus; this package only knows
-// "run the post-mutation hook, and roll back if it fails".
+// a PostMutationHook callback into ChangeStatus. It runs after the Plan lock is
+// released; failure retains the committed Plan and reports recovery required.
 //
 // Cross-references:
 //
@@ -28,6 +28,7 @@ package plan
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,18 +37,23 @@ import (
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 )
 
-// appendNoteFn / setSupersededByFn are testable indirections for the lifecycle
-// body-mutation helpers, so tests can exercise the failure-rollback branches.
-var (
-	appendNoteFn      = lifecycle.AppendResolutionNote
-	setSupersededByFn = lifecycle.SetSupersededBy
-)
-
 // PostMutationHook is the callback the cobra adapter wires to
 // `specscore spec lint --fix` (plus a verify pass). It MUST return nil on
-// success; a non-nil return triggers full rollback of every on-disk mutation
-// and the error is returned by ChangeStatus.
+// success; a non-nil return is wrapped as a committed/recovery-required error.
 type PostMutationHook func() error
+
+type artifactTransform func(path string, transform func([]byte) ([]byte, error)) error
+
+func transformPlanArtifact(transform artifactTransform, path string, fn func([]byte) ([]byte, error)) error {
+	if transform == nil {
+		transform = lifecycle.TransformArtifact
+	}
+	return transform(path, fn)
+}
+
+// SnapshotValidator checks caller-specific preconditions against the exact
+// bytes read under the Plan artifact lock. It must not mutate the artifact.
+type SnapshotValidator func(path string, before []byte) error
 
 // ChangeStatusOptions packages the inputs to ChangeStatus.
 type ChangeStatusOptions struct {
@@ -77,9 +83,18 @@ type ChangeStatusOptions struct {
 	// It is written as a `**Superseded By:** <slug>` header line.
 	Successor string
 
+	// ValidateSnapshot runs under the Plan artifact lock before lifecycle
+	// validation and transformation. CLI coordination-branch enforcement is
+	// supplied here so it cannot authorize one snapshot and mutate another.
+	ValidateSnapshot SnapshotValidator
+
 	// PostMutation is the post-rewrite hook (typically a spec-lint pass).
 	// Required; ChangeStatus returns exit 10 if nil.
 	PostMutation PostMutationHook
+
+	// transformArtifact is an instance-scoped fault dependency for package
+	// tests. Production callers leave it nil and use lifecycle.TransformArtifact.
+	transformArtifact artifactTransform
 }
 
 // ChangeStatusResult is the success payload returned on exit 0. The cobra
@@ -96,15 +111,11 @@ type ChangeStatusResult struct {
 //
 //  1. Resolve <slug> to an existing Plan file (flat or directory form). A
 //     missing file returns exit 3.
-//  2. lifecycle.Validate against the KindPlan matrix. Illegal transitions
-//     return exit 4.
-//  3. lifecycle.Rewrite the **Status:** line; capture original for rollback.
-//  4. Optionally write the `**Superseded By:**` successor reference and the
-//     `## Resolution` note, each rolled back together with the status line.
-//  5. Invoke the PostMutation hook. Failure → full rollback + exit 10.
-//
-// ChangeStatus performs all rollback internally — by the time it returns an
-// error, the on-disk state is byte-identical to its pre-invocation shape.
+//  2. Under the Plan artifact lock, read the exact bytes, validate against the
+//     KindPlan matrix, and compose Status, successor, and Resolution in memory.
+//  3. Commit those bytes with one atomic durable replacement and release.
+//  4. Invoke PostMutation. Failure retains the committed Plan and returns a
+//     typed recovery-required error.
 func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	if opts.SpecRoot == "" {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: SpecRoot required")
@@ -126,9 +137,53 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, err
 	}
 
-	// (2) State-machine validation.
-	from, err := lifecycle.Validate(lifecycle.KindPlan, path, opts.To)
+	var from lifecycle.Status
+	err = transformPlanArtifact(opts.transformArtifact, path, func(before []byte) ([]byte, error) {
+		// Validation occurs only after the artifact fence is held and is derived
+		// from the exact bytes this callback transforms.
+		if opts.ValidateSnapshot != nil {
+			if validateErr := opts.ValidateSnapshot(path, before); validateErr != nil {
+				return nil, validateErr
+			}
+		}
+		parsed, parseErr := ParseBytes(path, before)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if parsed.StatusCount == 0 {
+			return nil, lifecycle.ErrStatusLineNotFound
+		}
+		if parsed.StatusCount > 1 {
+			return nil, exitcode.InvalidArgsErrorf("plan %q must have exactly one header **Status:** field; found %d", opts.Slug, parsed.StatusCount)
+		}
+		from = lifecycle.Status(parsed.Status)
+		var validateErr error
+		if validateErr = lifecycle.Transition(lifecycle.KindPlan, from, opts.To); validateErr != nil {
+			return nil, validateErr
+		}
+		updated, _, transformErr := lifecycle.RewriteBytes(before, opts.To)
+		if transformErr != nil {
+			return nil, transformErr
+		}
+		if opts.Successor != "" {
+			updated, _, _ = lifecycle.SetSupersededByBytes(updated, opts.Successor)
+		}
+		updated, _, _ = lifecycle.AppendResolutionNoteBytes(updated, opts.Note)
+		return updated, nil
+	})
 	if err != nil {
+		var committed *lifecycle.CommittedMutationError
+		if errors.As(err, &committed) {
+			return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, err
+		}
+		if errors.Is(err, lifecycle.ErrConcurrentMutation) {
+			return ChangeStatusResult{}, exitcode.Wrap(exitcode.Conflict,
+				fmt.Sprintf("plan %s is busy; retry from fresh state", opts.Slug), err)
+		}
+		var coded *exitcode.Error
+		if errors.As(err, &coded) {
+			return ChangeStatusResult{}, err
+		}
 		var ite *lifecycle.InvalidTransitionError
 		if errors.As(err, &ite) {
 			targets := statusNames(ite.LegalTargets)
@@ -142,53 +197,17 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 				opts.Slug, string(ite.From), strings.Join(targets, ", "))
 		}
 		if errors.Is(err, lifecycle.ErrStatusLineNotFound) {
-			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
-				"plan %s has no **Status:** line", path)
+			return ChangeStatusResult{}, exitcode.UnexpectedErrorCause(
+				fmt.Sprintf("plan %s has no **Status:** line", path), err)
 		}
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading plan status: %v", err)
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorCause(fmt.Sprintf("reading plan status: %v", err), err)
 	}
 
-	// (3) Status line rewrite.
-	origLine, err := lifecycle.Rewrite(path, opts.To)
-	if err != nil {
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("rewriting status line: %v", err)
-	}
-	fullRollback := func() {
-		_ = lifecycle.Rollback(path, origLine)
-	}
-
-	// (4a) Optional structured `**Superseded By:**` successor reference.
-	origSucc, succWritten, err := setSupersededByFn(path, opts.Successor)
-	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing successor reference: %v", err)
-	}
-	if succWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origSucc)
-			prev()
-		}
-	}
-
-	// (4b) Optional transition note → `## Resolution` section.
-	origBody, noteWritten, err := appendNoteFn(path, opts.Note)
-	if err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("writing transition note: %v", err)
-	}
-	if noteWritten {
-		prev := fullRollback
-		fullRollback = func() {
-			_ = lifecycle.RestoreBody(path, origBody)
-			prev()
-		}
-	}
-
-	// (5) PostMutation hook — typically `spec lint --fix` + verify.
+	// The artifact commit is now durable. Post-mutation derived work runs after
+	// release so it may take its own ordered artifact/index locks. A failure is
+	// deliberately retained rather than attempting an unsafe split rollback.
 	if err := opts.PostMutation(); err != nil {
-		fullRollback()
-		return ChangeStatusResult{}, err
+		return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, lifecycle.CommittedError(path, "post-mutation callback", err)
 	}
 
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil
@@ -204,14 +223,14 @@ func resolvePlanFile(plansDir, slug string) (string, error) {
 	if _, err := os.Stat(flat); err == nil {
 		return flat, nil
 	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorf("stat %s: %v", flat, err)
+		return "", exitcode.UnexpectedErrorCause(fmt.Sprintf("stat %s: %v", flat, err), err)
 	}
 
 	dir := filepath.Join(plansDir, slug, "README.md")
 	if _, err := os.Stat(dir); err == nil {
 		return dir, nil
 	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorf("stat %s: %v", dir, err)
+		return "", exitcode.UnexpectedErrorCause(fmt.Sprintf("stat %s: %v", dir, err), err)
 	}
 
 	return "", exitcode.NotFoundErrorf("plan not found at %s", flat)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -43,6 +44,38 @@ func TestTaskChangeStatus_Board_NoteOnNonCompleteTransition(t *testing.T) {
 	}
 	if got := taskFieldValue(t, taskFile, "Note"); got != "picking this up now" {
 		t.Errorf("note = %q; want %q", got, "picking this up now")
+	}
+}
+
+func TestTaskChangeStatus_Board_AnnotationUpsertRemainsSingleton(t *testing.T) {
+	_, taskFile := stageTaskWithStatus(t, "auth", "queued")
+	before, _ := os.ReadFile(taskFile)
+	seeded := strings.Replace(string(before), "**Status:** queued", "**Status:** queued\n**Note:** old", 1)
+	if err := os.WriteFile(taskFile, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runTask(t, "change-status", "auth", "--to=in_progress", "--note", "new"); err != nil {
+		t.Fatal(err)
+	}
+	got := string(mustRead(taskFile))
+	if strings.Count(got, "**Note:**") != 1 || !strings.Contains(got, "**Note:** new") {
+		t.Fatalf("annotation was not upserted as a singleton:\n%s", got)
+	}
+}
+
+func TestTaskChangeStatus_Board_DuplicateSingletonRejectedWriteFree(t *testing.T) {
+	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
+	before, _ := os.ReadFile(taskFile)
+	seeded := strings.Replace(string(before), "**Status:** in_progress", "**Status:** in_progress\n**Note:** one\n**Note:** two", 1)
+	if err := os.WriteFile(taskFile, []byte(seeded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runTask(t, "change-status", "auth", "--to=blocked", "--note", "new")
+	if exitCodeOfErr(err) != exitcode.InvalidArgs {
+		t.Fatalf("duplicate singleton err=%v", err)
+	}
+	if got := string(mustRead(taskFile)); got != seeded {
+		t.Fatalf("duplicate singleton mutation was not write-free:\n%s", got)
 	}
 }
 
@@ -195,6 +228,32 @@ func TestTaskChangeStatus_PlanInline_NoteOnBlocked(t *testing.T) {
 	if got := taskFieldValue(t, planPath, "Note"); got != "waiting on Firebase console access" {
 		t.Errorf("note = %q", got)
 	}
+}
+
+func TestTaskChangeStatus_PlanInline_AnnotationUpsertAndDuplicateRejection(t *testing.T) {
+	t.Run("upsert", func(t *testing.T) {
+		seeded := strings.Replace(twoTaskPlanBody, "**Status:** in_progress", "**Status:** in_progress\n**Note:** old", 1)
+		_, planPath := stagePlanWithTasks(t, "auth", seeded)
+		if _, _, err := runTask(t, "change-status", "setup", "--plan", "auth", "--to=blocked", "--note", "new"); err != nil {
+			t.Fatal(err)
+		}
+		got := string(mustRead(planPath))
+		if strings.Count(got, "**Note:**") != 1 || !strings.Contains(got, "**Note:** new") {
+			t.Fatalf("plan annotation was not upserted:\n%s", got)
+		}
+	})
+	t.Run("duplicate", func(t *testing.T) {
+		seeded := strings.Replace(twoTaskPlanBody, "**Status:** in_progress", "**Status:** in_progress\n**Implemented-by:** one\n**Implemented-by:** two", 1)
+		_, planPath := stagePlanWithTasks(t, "auth", seeded)
+		before := mustRead(planPath)
+		_, _, err := runTask(t, "change-status", "setup", "--plan", "auth", "--to=blocked")
+		if exitCodeOfErr(err) != exitcode.InvalidArgs {
+			t.Fatalf("duplicate provenance err=%v", err)
+		}
+		if got := mustRead(planPath); !bytes.Equal(got, before) {
+			t.Fatal("duplicate plan singleton mutation was not write-free")
+		}
+	})
 }
 
 // --- chess-shaped fixture: 7 tasks, one completing with note+evidence+provenance ---
