@@ -18,6 +18,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var discoverIdeasForTransitions = idea.Discover
+
 // ideaCommand returns the "idea" command group — query and scaffold Idea artifacts.
 func ideaCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -44,7 +46,7 @@ func ideaTransitionsCommand() *cobra.Command {
 			if _, statErr := os.Stat(activePath); statErr == nil {
 				return activePath, nil
 			}
-			discovered, discoverErr := idea.Discover(filepath.Join(specRoot, "spec"))
+			discovered, discoverErr := discoverIdeasForTransitions(filepath.Join(specRoot, "spec"))
 			if discoverErr != nil {
 				return "", exitcode.UnexpectedErrorf("discovering idea %q: %v", slug, discoverErr)
 			}

@@ -11,6 +11,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Package-local seams keep the defensive no-write guards testable. The
+// lifecycle package currently writes whenever these calls succeed, but the
+// CLI must still reject a future implementation that reports success without
+// changing the artifact.
+var (
+	setFeatureParkedFn   = lifecycle.SetParked
+	clearFeatureParkedFn = lifecycle.ClearParked
+)
+
 // featureParkCommand registers `specscore feature park <feature_id> --reason`.
 //
 // Parked is an axis orthogonal to **Status:** — see pkg/lifecycle/parked.go
@@ -68,7 +77,7 @@ func runFeaturePark(cmd *cobra.Command, args []string) error {
 	}
 	readmePath := feature.ReadmePath(featuresDir, featureID)
 
-	orig, wrote, err := lifecycle.SetParked(readmePath, reason)
+	orig, wrote, err := setFeatureParkedFn(readmePath, reason)
 	if err != nil {
 		if errors.Is(err, lifecycle.ErrParkReasonRequired) {
 			return exitcode.InvalidArgsError("park requires --reason (a non-empty reason for the deferral)")
@@ -136,7 +145,7 @@ func runFeatureUnpark(cmd *cobra.Command, args []string) error {
 	}
 	readmePath := feature.ReadmePath(featuresDir, featureID)
 
-	orig, wrote, err := lifecycle.ClearParked(readmePath)
+	orig, wrote, err := clearFeatureParkedFn(readmePath)
 	if err != nil {
 		if errors.Is(err, lifecycle.ErrNotParked) {
 			return exitcode.InvalidStateErrorf("%s is not parked; nothing to unpark", featureID)

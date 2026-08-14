@@ -137,7 +137,12 @@ func printJSON(w io.Writer, v any) error {
 	return nil
 }
 
-func printYAML(w io.Writer, v any) error {
+func printYAML(w io.Writer, v any) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = exitcode.UnexpectedErrorf("marshaling yaml: %v", recovered)
+		}
+	}()
 	b, err := yaml.Marshal(v)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("marshaling yaml: %v", err)

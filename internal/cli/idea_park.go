@@ -12,6 +12,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var statIdeaForParking = os.Stat
+
+// See feature_park.go: these seams preserve coverage of the CLI's defensive
+// no-write guard without changing production behavior.
+var (
+	setIdeaParkedFn   = lifecycle.SetParked
+	clearIdeaParkedFn = lifecycle.ClearParked
+)
+
 // ideaParkCommand registers `specscore idea park <slug> --reason "..."`.
 //
 // Parked is an axis orthogonal to **Status:** — see pkg/lifecycle/parked.go
@@ -76,14 +85,14 @@ func runIdeaPark(cmd *cobra.Command, args []string) error {
 	}
 
 	path := ideaFilePath(specRoot, slug)
-	if _, statErr := os.Stat(path); statErr != nil {
+	if _, statErr := statIdeaForParking(path); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return exitcode.NotFoundErrorf("idea not found: %s", path)
 		}
 		return exitcode.UnexpectedErrorf("stat %s: %v", path, statErr)
 	}
 
-	orig, wrote, err := lifecycle.SetParked(path, reason)
+	orig, wrote, err := setIdeaParkedFn(path, reason)
 	if err != nil {
 		if errors.Is(err, lifecycle.ErrParkReasonRequired) {
 			return exitcode.InvalidArgsError("park requires --reason (a non-empty reason for the deferral)")
@@ -149,14 +158,14 @@ func runIdeaUnpark(cmd *cobra.Command, args []string) error {
 	}
 
 	path := ideaFilePath(specRoot, slug)
-	if _, statErr := os.Stat(path); statErr != nil {
+	if _, statErr := statIdeaForParking(path); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return exitcode.NotFoundErrorf("idea not found: %s", path)
 		}
 		return exitcode.UnexpectedErrorf("stat %s: %v", path, statErr)
 	}
 
-	orig, wrote, err := lifecycle.ClearParked(path)
+	orig, wrote, err := clearIdeaParkedFn(path)
 	if err != nil {
 		if errors.Is(err, lifecycle.ErrNotParked) {
 			return exitcode.InvalidStateErrorf("%s is not parked; nothing to unpark", slug)

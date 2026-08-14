@@ -14,6 +14,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	discoverIssuesForTransitions = issue.DiscoverAll
+	parseIssueForTransitions     = issue.Parse
+)
+
 // issueCommand returns the "issue" command group — scaffold, transition, and list Issue artifacts.
 func issueCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -78,7 +83,7 @@ func runIssueTransitions(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	specDir := filepath.Join(specRoot, "spec")
-	discovered, err := issue.DiscoverAll(specDir)
+	discovered, err := discoverIssuesForTransitions(specDir)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("discovering issues: %v", err)
 	}
@@ -92,7 +97,7 @@ func runIssueTransitions(cmd *cobra.Command, args []string) error {
 	if issuePath == "" {
 		return exitcode.NotFoundErrorf("issue %q not found under %s", slug, specDir)
 	}
-	parsed, err := issue.Parse(issuePath)
+	parsed, err := parseIssueForTransitions(issuePath)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("reading %s: %v", issuePath, err)
 	}
