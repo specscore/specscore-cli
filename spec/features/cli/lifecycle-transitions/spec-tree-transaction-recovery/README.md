@@ -119,6 +119,9 @@ before enabling publication on that platform. In particular, macOS file flags
 accepts an identical inherited value, otherwise applies them through the held
 descriptor, and re-verifies the exact value before publication. If the platform
 refuses that preservation, the whole-tree publisher fails closed.
+On Linux, the kernel-managed `FS_EXTENT_FL` allocation-layout bit is excluded
+from declarative metadata because ordinary ext4 entries acquire it
+automatically; every other non-zero `FS_IOC_GETFLAGS` bit remains fail-closed.
 
 #### REQ: read-only-recovery-first
 
