@@ -35,6 +35,21 @@ func runLessonNewWithTestDeps(t *testing.T, slug string, deps lessonCLIDeps) err
 	return runLessonNewWithDeps(cmd, []string{slug}, deps)
 }
 
+func TestLessonNewHelpDocumentsGitPreservedOccurrenceStore(t *testing.T) {
+	long := lessonNewCommand().Long
+	for _, want := range []string{
+		"Git-preserved empty occurrences/ store",
+		"empty .gitkeep marker until its first JSON occurrence",
+	} {
+		if !strings.Contains(long, want) {
+			t.Errorf("lesson new help missing %q:\\n%s", want, long)
+		}
+	}
+	if strings.Contains(long, "plus an empty occurrences/ directory") {
+		t.Errorf("lesson new help misstates the tracked occurrence store:\\n%s", long)
+	}
+}
+
 func TestLessonScaffoldSnapshotRestorePreservesCapturedMode(t *testing.T) {
 	// Historical name retained for deletion-audit continuity. The production
 	// path now performs a read-only write-set preflight and never snapshots an
