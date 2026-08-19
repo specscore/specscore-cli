@@ -402,13 +402,12 @@ func TestWriteFileAtomic_CreateTempError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := osCreateTemp
-	osCreateTemp = func(dir, pattern string) (*os.File, error) {
+	ops := defaultArtifactTransactionOps()
+	ops.createTemp = func(dir, pattern string) (artifactTransactionFile, error) {
 		return nil, fmt.Errorf("injected createtemp error")
 	}
-	t.Cleanup(func() { osCreateTemp = old })
 
-	err := transformTo(path, []byte("new content"))
+	err := transformToWithOps(path, []byte("new content"), ops)
 	if err == nil {
 		t.Fatal("expected error from injected CreateTemp failure")
 	}
@@ -420,7 +419,7 @@ func TestWriteFileAtomic_CreateTempError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// writeFileAtomic — injected io.Copy failure
+// writeFileAtomic — injected copy failure
 // ---------------------------------------------------------------------------
 
 func TestWriteFileAtomic_CopyError(t *testing.T) {
@@ -431,13 +430,12 @@ func TestWriteFileAtomic_CopyError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := ioCopy
-	ioCopy = func(dst io.Writer, src io.Reader) (int64, error) {
+	ops := defaultArtifactTransactionOps()
+	ops.copy = func(dst io.Writer, src io.Reader) (int64, error) {
 		return 0, fmt.Errorf("injected copy error")
 	}
-	t.Cleanup(func() { ioCopy = old })
 
-	err := transformTo(path, []byte("new content"))
+	err := transformToWithOps(path, []byte("new content"), ops)
 	if err == nil {
 		t.Fatal("expected error from injected Copy failure")
 	}
@@ -449,7 +447,7 @@ func TestWriteFileAtomic_CopyError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// writeFileAtomic — injected os.Chmod failure
+// writeFileAtomic — injected Chmod failure
 // ---------------------------------------------------------------------------
 
 func TestWriteFileAtomic_ChmodError(t *testing.T) {
@@ -460,13 +458,17 @@ func TestWriteFileAtomic_ChmodError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := osChmod
-	osChmod = func(name string, mode os.FileMode) error {
-		return fmt.Errorf("injected chmod error")
+	ops := defaultArtifactTransactionOps()
+	realCreateTemp := ops.createTemp
+	ops.createTemp = func(dir, pattern string) (artifactTransactionFile, error) {
+		f, err := realCreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		return txFault{artifactTransactionFile: f, chmodErr: fmt.Errorf("injected chmod error")}, nil
 	}
-	t.Cleanup(func() { osChmod = old })
 
-	err := transformTo(path, []byte("new content"))
+	err := transformToWithOps(path, []byte("new content"), ops)
 	if err == nil {
 		t.Fatal("expected error from injected Chmod failure")
 	}
@@ -478,10 +480,11 @@ func TestWriteFileAtomic_ChmodError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// writeFileAtomic — injected os.Rename failure
+// writeFileAtomic — injected quarantine rename failure (dst -> quarantine,
+// the first of the two no-replace renames the CAS swap performs)
 // ---------------------------------------------------------------------------
 
-func TestWriteFileAtomic_RenameError(t *testing.T) {
+func TestWriteFileAtomic_QuarantineRenameError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.md")
 	original := []byte("original content")
@@ -489,15 +492,14 @@ func TestWriteFileAtomic_RenameError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := osRename
-	osRename = func(oldpath, newpath string) error {
+	ops := defaultArtifactTransactionOps()
+	ops.renameNoReplace = func(oldpath, newpath string) error {
 		return fmt.Errorf("injected rename error")
 	}
-	t.Cleanup(func() { osRename = old })
 
-	err := transformTo(path, []byte("new content"))
+	err := transformToWithOps(path, []byte("new content"), ops)
 	if err == nil {
-		t.Fatal("expected error from injected Rename failure")
+		t.Fatal("expected error from injected rename failure")
 	}
 	// Original file should be unchanged.
 	got, _ := os.ReadFile(path)
@@ -507,7 +509,7 @@ func TestWriteFileAtomic_RenameError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// writeFileAtomic — injected fileSync failure
+// writeFileAtomic — injected Sync failure
 // ---------------------------------------------------------------------------
 
 func TestWriteFileAtomic_SyncError(t *testing.T) {
@@ -518,13 +520,17 @@ func TestWriteFileAtomic_SyncError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := fileSync
-	fileSync = func(f *os.File) error {
-		return fmt.Errorf("injected sync error")
+	ops := defaultArtifactTransactionOps()
+	realCreateTemp := ops.createTemp
+	ops.createTemp = func(dir, pattern string) (artifactTransactionFile, error) {
+		f, err := realCreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		return txFault{artifactTransactionFile: f, syncErr: fmt.Errorf("injected sync error")}, nil
 	}
-	t.Cleanup(func() { fileSync = old })
 
-	err := transformTo(path, []byte("new content"))
+	err := transformToWithOps(path, []byte("new content"), ops)
 	if err == nil {
 		t.Fatal("expected error from injected Sync failure")
 	}
@@ -536,7 +542,7 @@ func TestWriteFileAtomic_SyncError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// writeFileAtomic — injected fileClose failure
+// writeFileAtomic — injected Close failure
 // ---------------------------------------------------------------------------
 
 func TestWriteFileAtomic_CloseError(t *testing.T) {
@@ -547,14 +553,17 @@ func TestWriteFileAtomic_CloseError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := fileClose
-	fileClose = func(f *os.File) error {
-		_ = f.Close() // actually close so no fd leak
-		return fmt.Errorf("injected close error")
+	ops := defaultArtifactTransactionOps()
+	realCreateTemp := ops.createTemp
+	ops.createTemp = func(dir, pattern string) (artifactTransactionFile, error) {
+		f, err := realCreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		return txFault{artifactTransactionFile: f, closeErr: fmt.Errorf("injected close error")}, nil
 	}
-	t.Cleanup(func() { fileClose = old })
 
-	err := transformTo(path, []byte("new content"))
+	err := transformToWithOps(path, []byte("new content"), ops)
 	if err == nil {
 		t.Fatal("expected error from injected Close failure")
 	}

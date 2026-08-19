@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/gofrs/flock"
@@ -40,6 +39,27 @@ func CommittedError(path, phase string, err error) error {
 	return &CommittedMutationError{Path: path, Phase: phase, Err: err}
 }
 
+// RecoveryRequiredError reports a fail-closed pre-publication state. The
+// requested postimage was not published, but a durable preimage receipt was
+// retained because a non-cooperating writer or filesystem fault prevented a
+// safe restoration. Callers must preserve both paths for explicit recovery.
+type RecoveryRequiredError struct {
+	Path         string
+	RecoveryPath string
+	Phase        string
+	Err          error
+}
+
+func (e *RecoveryRequiredError) Error() string {
+	return fmt.Sprintf("artifact transaction at %s requires recovery from %s after %s: %v", e.Path, e.RecoveryPath, e.Phase, e.Err)
+}
+
+func (e *RecoveryRequiredError) Unwrap() error { return e.Err }
+
+func recoveryRequired(path, recoveryPath, phase string, err error) error {
+	return &RecoveryRequiredError{Path: path, RecoveryPath: recoveryPath, Phase: phase, Err: err}
+}
+
 // ArtifactTransaction is the one existing-artifact mutation boundary. Before
 // is read only after the path lock is acquired. Commit may be called at most
 // once and performs the final expected-byte check, atomic replacement, and
@@ -48,6 +68,7 @@ type ArtifactTransaction struct {
 	path      string
 	before    []byte
 	committed bool
+	ops       artifactTransactionOps
 }
 
 func (t *ArtifactTransaction) Before() []byte { return append([]byte(nil), t.before...) }
@@ -60,7 +81,7 @@ func (t *ArtifactTransaction) Commit(after []byte) error {
 		t.committed = true
 		return nil
 	}
-	if err := writeFileAtomicExpected(t.path, t.before, after); err != nil {
+	if err := writeFileAtomicExpectedWithOps(t.path, t.before, after, t.ops); err != nil {
 		return err
 	}
 	t.committed = true
@@ -73,16 +94,20 @@ func (t *ArtifactTransaction) Commit(after []byte) error {
 // then commit the board/index bytes through tx.Commit; ordinary writers should
 // use TransformArtifact's pure callback.
 func WithArtifactTransaction(path string, fn func(*ArtifactTransaction) error) error {
-	lock, err := acquireArtifactLock(path)
+	return withArtifactTransactionOps(path, defaultArtifactTransactionOps(), fn)
+}
+
+func withArtifactTransactionOps(path string, ops artifactTransactionOps, fn func(*ArtifactTransaction) error) error {
+	lock, err := acquireArtifactLockWithOps(path, ops)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Unlock() }()
-	before, err := os.ReadFile(path)
+	before, err := ops.readFile(path)
 	if err != nil {
 		return err
 	}
-	tx := &ArtifactTransaction{path: path, before: before}
+	tx := &ArtifactTransaction{path: path, before: before, ops: ops}
 	if err := fn(tx); err != nil {
 		var committed *CommittedMutationError
 		if tx.committed && !errors.As(err, &committed) {
@@ -99,7 +124,11 @@ func WithArtifactTransaction(path string, fn func(*ArtifactTransaction) error) e
 // transform returns changed bytes. Transform must be pure: it must not call a
 // public lifecycle writer (which would acquire the same non-reentrant lock).
 func TransformArtifact(path string, transform func(before []byte) (after []byte, err error)) error {
-	return WithArtifactTransaction(path, func(tx *ArtifactTransaction) error {
+	return transformArtifactWithOps(path, defaultArtifactTransactionOps(), transform)
+}
+
+func transformArtifactWithOps(path string, ops artifactTransactionOps, transform func(before []byte) (after []byte, err error)) error {
+	return withArtifactTransactionOps(path, ops, func(tx *ArtifactTransaction) error {
 		before := tx.Before()
 		after, err := transform(before)
 		if err != nil {
@@ -114,10 +143,14 @@ type artifactLock interface {
 	Unlock() error
 }
 
-var newArtifactLock = func(path string) artifactLock { return flock.New(path) }
+func newFlockArtifactLock(path string) artifactLock { return flock.New(path) }
 
 func acquireArtifactLock(path string) (artifactLock, error) {
-	lock := newArtifactLock(filepath.Join(dirOf(path), "."+filepath.Base(path)+".lifecycle-transaction.lock"))
+	return acquireArtifactLockWithOps(path, defaultArtifactTransactionOps())
+}
+
+func acquireArtifactLockWithOps(path string, ops artifactTransactionOps) (artifactLock, error) {
+	lock := ops.newLock(filepath.Join(dirOf(path), "."+filepath.Base(path)+".lifecycle-transaction.lock"))
 	locked, err := lock.TryLock()
 	if err != nil {
 		return nil, err

@@ -10,18 +10,6 @@ import (
 	"strings"
 )
 
-// Testable indirections for OS operations. Tests inject failures via these.
-var (
-	osCreateTemp       = os.CreateTemp
-	ioCopy             = io.Copy
-	osChmod            = os.Chmod
-	osRename           = os.Rename
-	osReadBeforeRename = os.ReadFile
-	osOpenDir          = func(path string) (*os.File, error) { return os.Open(path) }
-	fileSync           = func(f *os.File) error { return f.Sync() }
-	fileClose          = func(f *os.File) error { return f.Close() }
-)
-
 // statusLineRe matches a header line of the form `**Status:** <value>`,
 // allowing leading horizontal whitespace before the `**` marker and tolerating
 // trailing whitespace after the value. The matcher operates on a single line
@@ -304,60 +292,159 @@ func joinLines(lines []string) []byte {
 // directory. The check detects non-cooperating edits observed before rename;
 // it is deliberately not called compare-and-swap because POSIX rename cannot
 // make the preceding read and replacement one indivisible filesystem action.
+//
+// It is the production entry point; writeFileAtomicExpectedWithOps is the one
+// implementation, wired here with the default (real filesystem) ops so tests
+// exercise the same code by substituting ops instead of a second copy.
 func writeFileAtomicExpected(dst string, expected, content []byte) error {
-	stat, err := os.Stat(dst)
+	return writeFileAtomicExpectedWithOps(dst, expected, content, defaultArtifactTransactionOps())
+}
+
+// pinnedArtifact is a snapshot of an artifact's exact bytes and identity
+// (inode/file-id, captured via a hardened, non-symlink-following open)
+// taken at one instant.
+type pinnedArtifact struct {
+	data []byte
+	info os.FileInfo
+}
+
+// readArtifactIdentity opens path with the hardened identity primitives
+// (which refuse to follow a symlink at path), reads its complete current
+// content, and captures its FileInfo, closing the handle before returning.
+// A failure at any step — open, read, stat, or close — makes the identity
+// unusable and is returned as-is; callers do not need to distinguish which
+// step failed.
+func readArtifactIdentity(ops artifactTransactionOps, path string) (pinnedArtifact, error) {
+	f, err := ops.openIdentity(path)
 	if err != nil {
-		return err
+		return pinnedArtifact{}, err
 	}
-	tmp, err := osCreateTemp(dirOf(dst), ".lifecycle-rewrite-*")
+	data, err := io.ReadAll(f)
 	if err != nil {
-		return err
+		_ = f.Close()
+		return pinnedArtifact{}, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return pinnedArtifact{}, err
+	}
+	if err := f.Close(); err != nil {
+		return pinnedArtifact{}, err
+	}
+	return pinnedArtifact{data: data, info: info}, nil
+}
+
+// stageArtifactContent writes content to a fresh temp file beside dst,
+// chmods it to mode, and durably syncs and closes it before returning its
+// path. On any failure the temp file is removed; the caller owns removing
+// it on the success path (either directly, or by installing it in place of
+// the artifact it replaces).
+func stageArtifactContent(ops artifactTransactionOps, dst string, content []byte, mode os.FileMode) (string, error) {
+	tmp, err := ops.createTemp(dirOf(dst), ".lifecycle-rewrite-*")
+	if err != nil {
+		return "", err
 	}
 	tmpName := tmp.Name()
-	cleanup := func() {
-		_ = os.Remove(tmpName)
-	}
-	if _, err := ioCopy(tmp, bytes.NewReader(content)); err != nil {
+	fail := func(err error) (string, error) {
 		_ = tmp.Close()
-		cleanup()
-		return err
+		_ = ops.remove(tmpName)
+		return "", err
 	}
-	if err := fileSync(tmp); err != nil {
-		_ = fileClose(tmp)
-		cleanup()
-		return err
+	if _, err := ops.copy(tmp, bytes.NewReader(content)); err != nil {
+		return fail(err)
 	}
-	if err := fileClose(tmp); err != nil {
-		cleanup()
-		return err
+	if err := tmp.Chmod(mode); err != nil {
+		return fail(err)
 	}
-	if err := osChmod(tmpName, stat.Mode().Perm()); err != nil {
-		cleanup()
-		return err
+	if err := tmp.Sync(); err != nil {
+		return fail(err)
 	}
-	current, err := osReadBeforeRename(dst)
+	if err := tmp.Close(); err != nil {
+		_ = ops.remove(tmpName)
+		return "", err
+	}
+	return tmpName, nil
+}
+
+// quarantineRestoreOrRecover attempts to move the artifact that
+// writeFileAtomicExpectedWithOps quarantined back to its public path after a
+// failure partway through replacement. When the restoration itself fails —
+// because a fault or a third writer now occupies dst — discarding either
+// copy would lose data, so both paths are surfaced together via
+// RecoveryRequiredError for explicit manual recovery instead.
+func quarantineRestoreOrRecover(ops artifactTransactionOps, dst, quarantine, phase string, cause error) error {
+	if restoreErr := ops.renameNoReplace(quarantine, dst); restoreErr != nil {
+		return recoveryRequired(dst, quarantine, phase, errors.Join(cause, restoreErr))
+	}
+	return cause
+}
+
+// writeFileAtomicExpectedWithOps is the ops-injectable twin of
+// writeFileAtomicExpected: production code and tests share this one
+// implementation, routed entirely through the artifactTransactionOps seam.
+//
+// A bytes-only compare-before-rename (as writeFileAtomicExpected originally
+// did on its own) cannot detect a non-cooperating writer that unlinks and
+// recreates dst with coincidentally identical bytes — the rename would still
+// silently discard that writer's file. This pins dst's identity (not just its
+// bytes) via openArtifactIdentity and verifies it with os.SameFile after
+// staging, closing that gap.
+//
+// The swap itself moves the current dst out of the way with a no-replace
+// rename before installing the new content, so a failure partway through
+// never discards data outright: either the preimage is restored to dst, or —
+// when that restoration is itself unsafe — both paths are surfaced via
+// RecoveryRequiredError for manual recovery. It remains true, as before, that
+// POSIX rename cannot make the final identity check and the install one
+// indivisible filesystem action; this only narrows the race window and makes
+// its failure modes explicit and recoverable rather than silent data loss.
+func writeFileAtomicExpectedWithOps(dst string, expected, content []byte, ops artifactTransactionOps) error {
+	pinned, err := readArtifactIdentity(ops, dst)
 	if err != nil {
-		cleanup()
 		return err
 	}
-	if !bytes.Equal(current, expected) {
-		cleanup()
+	if !bytes.Equal(pinned.data, expected) {
 		return ErrConcurrentMutation
 	}
-	if err := osRename(tmpName, dst); err != nil {
-		cleanup()
+
+	tmpName, err := stageArtifactContent(ops, dst, content, pinned.info.Mode().Perm())
+	if err != nil {
 		return err
 	}
-	dir, err := osOpenDir(dirOf(dst))
+
+	quarantine := dst + ".lifecycle-cas-quarantine"
+	if err := ops.renameNoReplace(dst, quarantine); err != nil {
+		_ = ops.remove(tmpName)
+		return err
+	}
+
+	moved, moveErr := readArtifactIdentity(ops, quarantine)
+	if moveErr != nil || !os.SameFile(pinned.info, moved.info) {
+		_ = ops.remove(tmpName)
+		if moveErr == nil {
+			moveErr = ErrConcurrentMutation
+		}
+		return quarantineRestoreOrRecover(ops, dst, quarantine, "verifying artifact identity before replacement", moveErr)
+	}
+
+	if err := ops.renameNoReplace(tmpName, dst); err != nil {
+		return quarantineRestoreOrRecover(ops, dst, quarantine, "installing new artifact content", err)
+	}
+
+	dir, err := ops.openDir(dirOf(dst))
 	if err != nil {
 		return CommittedError(dst, "opening artifact directory for durable sync", err)
 	}
-	if err := fileSync(dir); err != nil {
-		_ = fileClose(dir)
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
 		return CommittedError(dst, "syncing artifact directory", err)
 	}
-	if err := fileClose(dir); err != nil {
+	if err := dir.Close(); err != nil {
 		return CommittedError(dst, "closing artifact directory", err)
+	}
+	if err := ops.remove(quarantine); err != nil {
+		return CommittedError(dst, "removing artifact quarantine copy", err)
 	}
 	return nil
 }
@@ -375,4 +462,16 @@ func dirOf(p string) string {
 		}
 	}
 	return "."
+}
+
+// baseOf returns the final path element, mirroring dirOf's dependency-light
+// style. Used by openArtifactIdentityWithRoot to resolve a path relative to
+// an *os.Root confined to its directory.
+func baseOf(p string) string {
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' || p[i] == '\\' {
+			return p[i+1:]
+		}
+	}
+	return p
 }

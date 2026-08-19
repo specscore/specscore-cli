@@ -3,6 +3,8 @@ package lifecycle
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -163,21 +165,58 @@ func TestSetParked_AddsTerminatorToUnterminatedStatus(t *testing.T) {
 	}
 }
 
-func TestParkedWrites_SurfaceCompareBeforeRenameFailure(t *testing.T) {
+// SetParked and ClearParked call the package's shared, unexported
+// writeFileAtomicExpected (no test-only seam of its own — that seam lives on
+// writeFileAtomicExpectedWithOps, which cas_test.go exercises directly with
+// an injected ops fault). This proves the (original, wrote, err) contract at
+// the SetParked/ClearParked level instead: a real write failure — the
+// artifact's directory refuses new files — must surface as wrote:false,
+// err!=nil, and the artifact itself must be left untouched.
+func TestParkedWrites_SurfacePublicationFailureWithoutPartialWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write-permission enforcement is not exercised on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses directory permission checks")
+	}
 	freezeParkedToday(t, "2026-08-14")
-	boom := errors.New("compare before rename")
-	originalReader := osReadBeforeRename
-	osReadBeforeRename = func(string) ([]byte, error) { return nil, boom }
-	t.Cleanup(func() { osReadBeforeRename = originalReader })
 
-	path := writeHeaderFixture(t, "**Status:** Draft\n")
-	if _, wrote, err := SetParked(path, "deferred"); !errors.Is(err, boom) || wrote {
+	body := "**Status:** Draft\n"
+	path := writeHeaderFixture(t, body)
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, wrote, err := SetParked(path, "deferred"); err == nil || wrote {
 		t.Fatalf("SetParked = wrote:%v err:%v", wrote, err)
 	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != body {
+		t.Fatalf("artifact mutated on write failure: got %q err %v", got, err)
+	}
 
-	path = writeHeaderFixture(t, "**Status:** Draft\n**Parked:** true\n**Parked Reason:** deferred\n**Parked Date:** 2026-08-14\n")
-	if _, wrote, err := ClearParked(path); !errors.Is(err, boom) || wrote {
+	parkedBody := "**Status:** Draft\n**Parked:** true\n**Parked Reason:** deferred\n**Parked Date:** 2026-08-14\n"
+	path = writeHeaderFixture(t, parkedBody)
+	dir = filepath.Dir(path)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, wrote, err := ClearParked(path); err == nil || wrote {
 		t.Fatalf("ClearParked = wrote:%v err:%v", wrote, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil || string(got) != parkedBody {
+		t.Fatalf("artifact mutated on write failure: got %q err %v", got, err)
 	}
 }
 
