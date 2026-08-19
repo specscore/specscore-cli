@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
