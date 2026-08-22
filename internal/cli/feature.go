@@ -1045,6 +1045,20 @@ func featureChangeStatusMutate(root, featureID, toFlag string) (feature.ChangeSt
 		return feature.ChangeStatusResult{}, exitcode.UnexpectedError(sb.String())
 	}
 
+	// A clean lint pass proves only that the derived-index work did not
+	// ERROR — never that it left the requested status on disk. `--fix`
+	// rules rewrite **Status:** lines themselves, so confirm the write
+	// survived before the caller prints `<feature_id>: <from> → <to>`.
+	// Reporting a success the file does not carry is a self-concealing
+	// failure: the success line quotes the correct pair either way.
+	if verifyErr := lifecycle.VerifyPersistedStatus(result.ReadmePath, result.To); verifyErr != nil {
+		if rbErr := result.Restore(); rbErr != nil {
+			return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf(
+				"%v; rollback also failed: %v", verifyErr, rbErr)
+		}
+		return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf("%v (rolled back)", verifyErr)
+	}
+
 	return *result, nil
 }
 

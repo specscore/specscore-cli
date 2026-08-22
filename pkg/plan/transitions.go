@@ -221,6 +221,17 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, lifecycle.CommittedError(path, "post-mutation callback", err)
 	}
 
+	// The callback returning nil proves only that the derived work did not
+	// ERROR — not that the committed status is still the one on disk after its
+	// `--fix` rewrites. Reporting a transition the artifact does not carry is a
+	// self-concealing failure, so surface it as recovery-required rather than
+	// printing a success line over it. Per this kind's transaction profile the
+	// commit is RETAINED, never rolled back behind another writer.
+	if err := lifecycle.VerifyPersistedStatus(path, opts.To); err != nil {
+		return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To},
+			lifecycle.CommittedError(path, "post-mutation status verification", err)
+	}
+
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil
 }
 

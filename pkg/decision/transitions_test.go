@@ -997,3 +997,36 @@ func TestLegalTransitionMatrix_Rendering(t *testing.T) {
 		}
 	}
 }
+
+// TestChangeStatus_PostMutationRevertFailsLoudly pins the shared persistence
+// guarantee for the Decision kind: when the post-mutation hook returns success
+// but leaves a different status on disk (the defect class that let
+// `idea change-status` print a success line over an unchanged file), the verb
+// MUST roll back and fail rather than return a success result.
+func TestChangeStatus_PostMutationRevertFailsLoudly(t *testing.T) {
+	root, path := stageDecision(t, "0001-auth", "Draft")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read decision: %v", err)
+	}
+
+	revert := func() error {
+		return os.WriteFile(path, before, 0o644)
+	}
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "0001-auth", To: lifecycle.DecisionInReview, PostMutation: revert,
+	})
+	if got := codeOf(t, err); got != exitcode.Unexpected {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	}
+	if !strings.Contains(err.Error(), "did not persist") {
+		t.Errorf("message does not name the failure: %v", err)
+	}
+	after, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatalf("read decision after rollback: %v", rerr)
+	}
+	if string(after) != string(before) {
+		t.Errorf("decision not restored after a failed transition:\n%s", after)
+	}
+}
