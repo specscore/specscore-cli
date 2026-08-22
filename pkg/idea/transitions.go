@@ -40,6 +40,10 @@ var osStatFn = os.Stat
 // so tests can exercise the note-write failure rollback branch.
 var appendNoteFn = lifecycle.AppendResolutionNote
 
+// parseIdeaFn is a testable indirection for Parse, used by the derived-band
+// precondition check so tests can exercise its unparseable-artifact branch.
+var parseIdeaFn = Parse
+
 // discoverIdeasFn is a testable indirection for Discover. Change-request
 // proposals use the Idea lifecycle but live beneath their target Feature,
 // so change-status falls back to discovery when the canonical active-Idea
@@ -230,6 +234,14 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading idea status: %v", err)
 	}
 
+	// (2a) Derived-band precondition. The forward specification band is
+	// derived from the Features that promote the Idea; asking for one of
+	// those statuses with no promoting Feature cannot survive the
+	// post-mutation index sync, so refuse before writing anything.
+	if err := checkPromotionInvariant(activePath, opts.Slug, opts.To); err != nil {
+		return ChangeStatusResult{}, err
+	}
+
 	// (3) Status line rewrite.
 	origLine, err := lifecycle.Rewrite(activePath, opts.To)
 	if err != nil {
@@ -266,11 +278,82 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, err
 	}
 
+	// (5) Persistence check. The hook returning nil proves only that the
+	// derived-index pass did not ERROR — never that it left the requested
+	// status on disk. `spec lint --fix` rewrites Idea statuses itself
+	// (idea-sync-lint-strict re-derives them from the promoting Features),
+	// so without this check the verb can print `<slug>: <from> → <to>` and
+	// exit 0 over a file that is byte-identical to its pre-invocation
+	// state. Treat a disagreement as a failed transition: restore and fail
+	// loudly rather than report a success that did not happen.
+	if err := lifecycle.VerifyPersistedStatus(activePath, opts.To); err != nil {
+		fullRollback()
+		if derivedBandStatuses[opts.To] {
+			return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
+				"%v (rolled back). The forward specification band is derived from the Features that "+
+					"promote this Idea (idea-sync-lint-strict) — advance the promoting Feature instead, "+
+					"and the Idea follows", err)
+		}
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("%v (rolled back)", err)
+	}
+
 	return ChangeStatusResult{
 		Slug: opts.Slug,
 		From: from,
 		To:   opts.To,
 	}, nil
+}
+
+// derivedBandStatuses are the Idea statuses that ASSERT at least one Feature
+// promotes the Idea. `spec lint --fix` derives every one of them from the
+// promoting Features (idea-sync-lint-strict), and the
+// idea-specified-requires-promotion rule rejects any of them on an Idea whose
+// `**Promotes To:**` list is empty. An Idea therefore cannot hold one of these
+// statuses without a promoting Feature — see
+// spec/features/cli/idea/change-status/README.md#req-derived-band-precondition.
+var derivedBandStatuses = map[lifecycle.Status]bool{
+	lifecycle.IdeaSpecifying:   true,
+	lifecycle.IdeaSpecified:    true,
+	lifecycle.IdeaImplementing: true,
+	lifecycle.IdeaImplemented:  true,
+}
+
+// checkPromotionInvariant refuses a transition into the derived specification
+// band when no Feature promotes the Idea. Without it, the transition is
+// written, `spec lint --fix` re-derives the status back to its prior value,
+// and the verb reports a success that left the file byte-identical.
+//
+// Two kinds of Idea are exempt, matching the derivation rule's own exemptions:
+// change-request Ideas (author-managed — the derivation rules skip them) and
+// Ideas whose `**Promotes To:**` names a cross-repo Feature (the promoting
+// Feature's status is not visible in this tree, so the status is
+// author-managed here too).
+//
+// A parse failure is NOT treated as a rejection: the artifact was already read
+// successfully by the state-machine step, so an unreadable file here is a race
+// the post-mutation persistence check will catch with a better message.
+func checkPromotionInvariant(activePath, slug string, to lifecycle.Status) error {
+	if !derivedBandStatuses[to] {
+		return nil
+	}
+	parsed, err := parseIdeaFn(activePath)
+	if err != nil {
+		return nil
+	}
+	if parsed.EffectiveType() == "change-request" {
+		return nil
+	}
+	if len(parsed.PromotesTo()) > 0 {
+		return nil
+	}
+	return exitcode.InvalidStateErrorf(
+		"idea %q cannot move to %q: that status is derived from the Features that promote this Idea, "+
+			"and **Promotes To:** is empty. Create the Feature that specifies this Idea with "+
+			"`**Source Ideas:** %s` in its header; `specscore spec lint --fix` then advances the Idea "+
+			"to the status its Features imply (Draft/In Review Feature → Specifying, Approved → Specified, "+
+			"Implementing → Implementing, Stable → Implemented). "+
+			"Setting it here would be undone by that same index sync",
+		slug, string(to), slug)
 }
 
 // statusNames converts a slice of Status values to plain strings, for

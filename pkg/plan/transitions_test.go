@@ -711,3 +711,27 @@ func TestLegalTransitionMatrix_Rendering(t *testing.T) {
 		t.Errorf("matrix should list Executing as a disposition From-state:\n%s", out)
 	}
 }
+
+// TestChangeStatus_PostMutationRevertIsRecoveryRequired covers the shared
+// persistence guarantee under this kind's transaction profile: when the
+// post-mutation callback succeeds but leaves a different status on disk, the
+// commit is RETAINED (never rolled back behind another writer) and the caller
+// gets a recovery-required error instead of a success line.
+func TestChangeStatus_PostMutationRevertIsRecoveryRequired(t *testing.T) {
+	root, path := stageFlatPlan(t, "auth", "Draft")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "auth", To: lifecycle.PlanInReview,
+		PostMutation: func() error { return os.WriteFile(path, before, 0o644) },
+	})
+	if err == nil {
+		t.Fatal("expected a failure when the post-mutation pass reverts the status")
+	}
+	if !strings.Contains(err.Error(), "did not persist") {
+		t.Errorf("error does not name the failure: %v", err)
+	}
+}

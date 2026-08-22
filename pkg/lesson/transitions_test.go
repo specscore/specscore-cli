@@ -504,3 +504,25 @@ func TestProjectRootForCanonicalAndFlatLessonPaths(t *testing.T) {
 		})
 	}
 }
+
+// TestChangeStatus_PostMutationRevertFailsLoudly covers the shared persistence
+// guarantee: a hook that succeeds while rewriting the status line must not
+// yield a success result.
+func TestChangeStatus_PostMutationRevertFailsLoudly(t *testing.T) {
+	root, path := stageLesson(t, "kinder-fake", "Recorded")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read lesson: %v", err)
+	}
+
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "kinder-fake", To: lifecycle.LessonStated,
+		PostMutation: func() error { return os.WriteFile(path, before, 0o644) },
+	})
+	if err == nil {
+		t.Fatal("expected a failure when the post-mutation pass reverts the status")
+	}
+	if !strings.Contains(err.Error(), "did not persist") {
+		t.Errorf("error does not name the failure: %v", err)
+	}
+}

@@ -56,7 +56,7 @@ Only the transitions in the table below are accepted. Any other `(from, to)` pai
 | `Implementing` | `Rejected` | Status rewrite + ideas-index sync |
 | `Implementing` | `Stale` | Status rewrite + ideas-index sync |
 
-The human-authored prep band (`Draft → In Review → Approved`) and the disposition transitions (`→ Rejected` from `Draft`, review, or any of `Approved`/`Specifying`/`Specified`/`Implementing`; `→ Stale` from any pre-terminal state including `Implementing`) are author-managed. For **feature-request** ideas, the forward specification band (`Approved → Specifying → Specified → Implementing → Implemented`) is derived from Feature status by the `idea-sync-lint-strict` lint rule; the `change-status` verb is the user-facing surface for manual override or when a transition is needed ahead of the derivation rule. For **change-request** ideas, all transitions are author-managed (not derived) — the lint derivation rules skip change-request ideas entirely.
+The human-authored prep band (`Draft → In Review → Approved`) and the disposition transitions (`→ Rejected` from `Draft`, review, or any of `Approved`/`Specifying`/`Specified`/`Implementing`; `→ Stale` from any pre-terminal state including `Implementing`) are author-managed. For **feature-request** ideas, the forward specification band (`Approved → Specifying → Specified → Implementing → Implemented`) is DERIVED from Feature status by the `idea-sync-lint-strict` lint rule, and the derivation is authoritative: the post-mutation index sync re-derives the Idea's status from its promoting Features, so `change-status` cannot be used to override it (see [derived-band-precondition](#req-derived-band-precondition)). The verb accepts these targets only where the derivation agrees — e.g. an Idea whose `**Promotes To:**` names a Feature in another repository, whose status this tree cannot see. To move an Idea through that band, transition the promoting Feature; the Idea follows. For **change-request** ideas, all transitions are author-managed (not derived) — the lint derivation rules skip change-request ideas entirely.
 
 `Approved → Rejected` closes a gap where an agreed-but-not-yet-specified Idea (`Approved`, no Feature created from it yet) could only decay to `Stale` — never be actively turned down. `Specifying → Rejected`, `Specified → Rejected`, and `Implementing → Rejected` carried the same principle across the rest of the pre-terminal lifecycle; `Implementing → Stale` closed the matching passive-decay gap — before that row, `Implementing`'s only exit was `→ Implemented`, so a build that simply petered out (nobody decided against it, work just stopped) had no legal terminal status to record that at all.
 
@@ -67,6 +67,16 @@ The human-authored prep band (`Draft → In Review → Approved`) and the dispos
 #### REQ: legal-transition-matrix
 
 The verb MUST accept only `(from, to)` pairs listed in the legal-transition matrix above. Any other pair MUST exit `4` (InvalidTransition) per the Meta contract, with a stderr message naming both the current status and the legal target statuses from the current state.
+
+### Derived-band precondition
+
+#### REQ: derived-band-precondition
+
+The forward specification band (`Specifying`, `Specified`, `Implementing`, `Implemented`) asserts that at least one Feature promotes the Idea: `idea-sync-lint-strict` derives every one of those statuses from the promoting Features, and `idea-specified-requires-promotion` rejects any of them on an Idea whose `**Promotes To:**` list is empty. A transition into that band on an Idea with an empty `**Promotes To:**` therefore cannot survive the post-mutation index sync — before this REQ, the verb wrote it, `spec lint --fix` re-derived it away, and the verb still printed its success line over an unchanged file.
+
+The verb MUST refuse such a transition BEFORE any write, exiting `4` (InvalidState) with a message that names the empty `**Promotes To:**` and the route that works: create the Feature carrying `**Source Ideas:** <slug>`, after which the index sync advances the Idea to the status its Features imply.
+
+Two exemptions mirror the derivation rule's own: **change-request** Ideas (author-managed — the derivation rules skip them entirely) and Ideas whose `**Promotes To:**` names a cross-repo Feature (that Feature's status is not visible in this tree, so the Idea's status is author-managed here too). Beyond this precondition, every transition is still subject to the shared [status-persistence-verified](../../lifecycle-transitions/README.md#req-status-persistence-verified) check after the index sync runs.
 
 ### Target-status flag
 
@@ -110,8 +120,8 @@ The post-mutation `specscore spec lint --fix` invocation (per [lifecycle-transit
 | `0` | Transition succeeded; `**Status:**` rewritten in place; index synced. |
 | `2` | Missing or malformed `<slug>`, missing `--to`, or unrecognized `--to` value. |
 | `3` | No active Idea or change-request Proposal exists for `<slug>`. |
-| `4` | `(current_status, --to)` is not a legal transition per the matrix above. |
-| `10` | I/O failure during rewrite or `spec lint --fix` (rollback applied). |
+| `4` | `(current_status, --to)` is not a legal transition per the matrix above, or `--to` names a derived-band status on an Idea no Feature promotes (per [derived-band-precondition](#req-derived-band-precondition)) — no file is written either way. |
+| `10` | I/O failure during rewrite or `spec lint --fix`, or the index sync left a status other than `--to` on disk (per [lifecycle-transitions#req:status-persistence-verified](../../lifecycle-transitions/README.md#req-status-persistence-verified)) — rollback applied. |
 
 ## Interaction with Other Features
 
@@ -229,6 +239,24 @@ Given `spec/features/auth/proposals/add-mfa.md` is a change-request Proposal con
 **Requirements:** [lifecycle-transitions#req:rollback-on-lint-failure](../../lifecycle-transitions/README.md#req-rollback-on-lint-failure)
 
 Given a transition whose post-mutation `spec lint --fix` surfaces an error-severity violation, the verb exits `10` and restores `spec/ideas/foo.md` with its original `**Status:**` line (byte-identical to pre-invocation).
+
+### AC: derived-band-without-promotion-refused
+
+**Requirements:** [cli/idea/change-status#req:derived-band-precondition](#req-derived-band-precondition)
+
+Given `spec/ideas/foo.md` at `**Status:** Approved` with `**Promotes To:** —` and no Feature naming it in `**Source Ideas:**`, running `specscore idea change-status foo --to=Specifying` exits `4`, writes nothing to stdout, leaves the file byte-identical, and writes a stderr message naming the empty `**Promotes To:**` and the `**Source Ideas:** foo` route that works. Before this AC, the same invocation printed `foo: Approved → Specifying` and exited `0` over an unchanged file.
+
+### AC: index-sync-revert-fails-loudly
+
+**Requirements:** [lifecycle-transitions#req:status-persistence-verified](../../lifecycle-transitions/README.md#req-status-persistence-verified)
+
+Given an Idea at `**Status:** Specified` promoted by a Feature at `Approved`, running `specscore idea change-status foo --to=Implementing` exits `10` (the post-mutation `spec lint --fix` re-derives `Specified` from the Feature), writes nothing to stdout, restores the file byte-identical, and writes a stderr message stating the transition did not persist, naming both the requested status and the one on disk.
+
+### AC: every-lifecycle-step-reaches-disk
+
+**Requirements:** [lifecycle-transitions#req:status-persistence-verified](../../lifecycle-transitions/README.md#req-status-persistence-verified), [lifecycle-transitions#req:status-line-rewrite](../../lifecycle-transitions/README.md#req-status-line-rewrite)
+
+Walking an Idea through its whole lifecycle — `Draft → Approved` by `idea change-status`, then `Specifying → Specified → Implementing → Implemented` by transitioning the promoting Feature — leaves, after EVERY step, a changed file whose body `**Status:**` AND frontmatter `status:` both read the new status. No step may be reported as done while the artifact still carries the old value.
 
 ## Open Questions
 

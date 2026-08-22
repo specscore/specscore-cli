@@ -72,6 +72,14 @@ On valid transition, the artifact's `**Status:** <old>` line MUST be rewritten t
 
 When a verb's feature declares derived index synchronization, after a successful artifact transaction it MUST invoke `specscore spec lint --fix` scoped to the project root (full-tree today). The verb's exit code MUST be `0` only if the artifact transaction and declared lint pass both succeed. A verb with no derived index surface, including board Task mutation, MUST say so in its own feature rather than implying an unavailable callback.
 
+#### REQ: status-persistence-verified
+
+A clean post-mutation pass proves only that the declared derived work did not ERROR — never that it left the requested status on the artifact. Derived `--fix` rules rewrite `**Status:**` lines themselves (Idea statuses in the forward specification band are re-derived by `idea-sync-lint-strict`), so a verb MUST re-read the artifact after its post-mutation callback returns success and confirm BOTH status surfaces — the body `**Status:**` line and, when the artifact carries one, the YAML frontmatter `status:` mirror — read the requested target. A verb MUST NOT print its success line or exit `0` before that check passes.
+
+On disagreement the verb MUST exit `10`, write nothing to stdout, and name the status actually on disk. Compensating verbs (Idea, Feature, Decision, Issue) MUST restore their pre-invocation state first; transaction-profile verbs (Plan, Lesson) MUST retain the committed artifact and return the recovery-required error their profile defines, never a late split rollback. A verb whose target status is derived rather than authored SHOULD also refuse the transition BEFORE writing, when the artifact's own preconditions make the requested status underivable (see [cli/idea/change-status#req:derived-band-precondition](../idea/change-status/README.md#req-derived-band-precondition)).
+
+Without this check the failure is self-concealing: the verb prints `<id>: <from> → <to>` and exits `0` over a file that is byte-identical to its pre-invocation state, and the success line quotes the correct pair either way.
+
 #### REQ: rollback-on-lint-failure
 
 The identifier is retained for compatibility with existing cross-references;

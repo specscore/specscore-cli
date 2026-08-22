@@ -170,6 +170,14 @@ func changeStatusUnlocked(opts ChangeStatusOptions) (ChangeStatusResult, error) 
 		return ChangeStatusResult{}, mutationFailure(MutationUncertain, err)
 	}
 
+	// A hook that returns nil has not proven the requested status survived its
+	// own `--fix` rewrites. Verify the artifact actually carries it before the
+	// caller prints `<slug>: <from> → <to>`.
+	if err := lifecycle.VerifyPersistedStatus(path, opts.To); err != nil {
+		return ChangeStatusResult{}, mutationFailure(MutationUncertain,
+			exitcode.UnexpectedErrorf("%v", err))
+	}
+
 	return ChangeStatusResult{Slug: opts.Slug, From: from, To: opts.To}, nil
 }
 

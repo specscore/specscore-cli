@@ -407,6 +407,20 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		return ChangeStatusResult{}, err
 	}
 
+	// (9) Persistence check. The hook returning nil proves only that the
+	// derived-index pass did not ERROR, not that the requested status is
+	// still the one on disk after its `--fix` rewrites. Verify at the FINAL
+	// path (a disposition relocated the file), so the caller never prints
+	// `<slug>: <from> → <to>` over a file that says something else.
+	finalPath := activePath
+	if resultArchivedPath != "" {
+		finalPath = resultArchivedPath
+	}
+	if err := lifecycle.VerifyPersistedStatus(finalPath, opts.To); err != nil {
+		fullRollback()
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("%v (rolled back)", err)
+	}
+
 	return ChangeStatusResult{
 		Slug:         opts.Slug,
 		From:         from,

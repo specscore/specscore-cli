@@ -184,6 +184,23 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 		}
 	}
 
+	// (8) Persistence check. The hook returning nil proves only that the
+	// derived-index pass did not ERROR, not that the requested status is the
+	// one on disk after its `--fix` rewrites. An Issue keeps its status in the
+	// frontmatter only, so verify there. Never report a transition the file
+	// does not carry.
+	if persisted, readErr := readFile(issuePath); readErr != nil {
+		_ = writeFile(issuePath, content, 0o644)
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
+			"re-reading %s after the post-mutation hook: %v (rolled back)", issuePath, readErr)
+	} else if got := extractFrontmatterValue(string(persisted), "status"); got != string(opts.To) {
+		_ = writeFile(issuePath, content, 0o644)
+		return ChangeStatusResult{}, exitcode.UnexpectedErrorf(
+			"transition did not persist: %s requested status %q but still reads %q "+
+				"after the post-mutation index sync (rolled back)",
+			issuePath, string(opts.To), got)
+	}
+
 	return ChangeStatusResult{
 		Slug: opts.Slug,
 		Path: issuePath,

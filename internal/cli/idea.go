@@ -77,7 +77,17 @@ Archival is NOT a status. To file an Idea out of active view, use
 ` + "`specscore idea archive <slug>`" + ` (it keeps the Idea's terminal status
 and adds the **Archived:** axis). If anything fails after the status rewrite
 (lint failure, I/O error), the status line is restored to its pre-invocation
-value before the verb exits.
+value before the verb exits — and the verb exits non-zero saying so. It never
+prints the success line over an unchanged file: after the index sync it
+re-reads the Idea and exits 10 if the status on disk is not the one requested.
+
+The forward specification band (Specifying, Specified, Implementing,
+Implemented) is DERIVED from the Features that promote the Idea, by the
+` + "`idea-sync-lint-strict`" + ` lint rule. Asking for one of those statuses on an
+Idea with an empty **Promotes To:** exits 4 without writing: create the
+Feature carrying ` + "`**Source Ideas:** <slug>`" + ` and the index sync advances
+the Idea for you. To move a promoted Idea along that band, transition its
+Feature — the Idea follows.
 
 ` + idea.LegalTransitionMatrix() + `
 Examples:

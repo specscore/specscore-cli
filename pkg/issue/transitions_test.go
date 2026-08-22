@@ -1029,3 +1029,72 @@ func TestChangeStatus_SeverityProvidedWhenMissing(t *testing.T) {
 		t.Error("severity should be written when provided")
 	}
 }
+
+// TestChangeStatus_PostMutationRevertFailsLoudly covers the shared persistence
+// guarantee for the Issue kind, whose status lives in the frontmatter only:
+// when the post-mutation hook succeeds but leaves a different status on disk,
+// the verb rolls back and fails rather than reporting a transition the file
+// does not carry.
+func TestChangeStatus_PostMutationRevertFailsLoudly(t *testing.T) {
+	root := setupIssueProject(t, "revert-test", "open", "high")
+	issuePath := filepath.Join(root, "spec", "issues", "revert-test.md")
+	original, err := os.ReadFile(issuePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root,
+		Slug:     "revert-test",
+		To:       "investigating",
+		// A --fix pass that puts the old status back and reports success.
+		PostMutation: func() error { return os.WriteFile(issuePath, original, 0o644) },
+	})
+	if err == nil {
+		t.Fatal("expected a failure when the post-mutation pass reverts the status")
+	}
+	if !strings.Contains(err.Error(), "did not persist") {
+		t.Errorf("error does not name the failure: %v", err)
+	}
+	restored, err := os.ReadFile(issuePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != string(original) {
+		t.Errorf("issue not restored after a failed transition:\n%s", restored)
+	}
+}
+
+// The re-read itself can fail (the artifact vanished under us). That is also a
+// failed transition, not a success.
+func TestChangeStatus_PostMutationReReadFailureFailsLoudly(t *testing.T) {
+	root := setupIssueProject(t, "reread-test", "open", "high")
+
+	origRead := readFile
+	readFile = func(path string) ([]byte, error) {
+		if strings.HasSuffix(path, "reread-test.md") && changeStatusReReadFailed {
+			return nil, errors.New("injected re-read failure")
+		}
+		return origRead(path)
+	}
+	changeStatusReReadFailed = false
+	t.Cleanup(func() { readFile = origRead; changeStatusReReadFailed = false })
+
+	_, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root,
+		Slug:     "reread-test",
+		To:       "investigating",
+		// Arm the injected failure only for the post-hook re-read, so the
+		// verb's earlier reads still see the real file.
+		PostMutation: func() error { changeStatusReReadFailed = true; return nil },
+	})
+	if err == nil {
+		t.Fatal("expected a failure when the artifact cannot be re-read")
+	}
+	if !strings.Contains(err.Error(), "re-reading") {
+		t.Errorf("error does not name the failure: %v", err)
+	}
+}
+
+// changeStatusReReadFailed arms the injected re-read failure above.
+var changeStatusReReadFailed bool
