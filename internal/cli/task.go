@@ -1054,17 +1054,24 @@ func runTaskInfo(cmd *cobra.Command, _ []string) error {
 		return exitcode.UnexpectedErrorf("parsing task file: %v", err)
 	}
 
-	// Read status from board.
-	status := string(task.StatusPlanning) // default
-	boardPath := filepath.Join(tasksDir, "README.md")
-	boardData, err := osReadFileFn(boardPath)
-	if err == nil {
-		bv, parseErr := task.ParseBoard(boardData)
-		if parseErr == nil {
-			for _, r := range bv.Rows {
-				if r.Task == taskFlag {
-					status = string(r.Status)
-					break
+	// The task's own **Status:** line is authoritative once present — see
+	// https://github.com/specscore/specscore/blob/main/spec/features/index/README.md#req-file-authoritative-over-index: an index (here, the board) is
+	// a derived projection, never the source of truth. Fall back to the board
+	// only for a task file that predates the line (not yet migrated); once
+	// migrated, or for any task created after this fix, the file always wins.
+	status := tfd.Status
+	if status == "" {
+		status = string(task.StatusPlanning) // default
+		boardPath := filepath.Join(tasksDir, "README.md")
+		boardData, err := osReadFileFn(boardPath)
+		if err == nil {
+			bv, parseErr := task.ParseBoard(boardData)
+			if parseErr == nil {
+				for _, r := range bv.Rows {
+					if r.Task == taskFlag {
+						status = string(r.Status)
+						break
+					}
 				}
 			}
 		}
@@ -1154,7 +1161,12 @@ func runTaskNew(cmd *cobra.Command, _ []string, mutationDeps taskMutationDeps) e
 
 	taskDir := filepath.Join(tasksDir, taskFlag)
 	tfd := task.TaskFileData{
-		Title:       titleFlag,
+		Title: titleFlag,
+		// Every new task is scaffolded with its **Status:** line so it never
+		// reaches the no-Status-line state that made `task change-status`
+		// exit 10 on existing boards (see the lesson
+		// task-change-status-requires-a-status-line-no-scaffold-writes-one).
+		Status:      string(task.StatusPlanning),
 		Description: descFlag,
 		DependsOn:   dependencySlugs,
 	}

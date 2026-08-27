@@ -9,6 +9,7 @@ import (
 // TaskFileData holds the parsed contents of a task README.md.
 type TaskFileData struct {
 	Title       string
+	Status      string
 	Description string
 	DependsOn   []string
 	Summary     string
@@ -20,6 +21,8 @@ type TaskFileData struct {
 //
 //	# Title
 //
+//	**Status:** planning
+//
 //	Description text
 //
 //	## Dependencies
@@ -30,6 +33,13 @@ type TaskFileData struct {
 //	## Summary
 //
 //	Summary text
+//
+// The **Status:** line is OPTIONAL for backward compatibility with task
+// files written before it existed (and with `specscore migrate`, which
+// backfills it from the board index — see pkg/lint.migrateTaskBoardStatus).
+// Status is "" when absent; callers needing a value fall back to the board,
+// but once a file carries its own line, THAT line is authoritative for every
+// subsequent read — see https://github.com/specscore/specscore/blob/main/spec/features/index/README.md#req-file-authoritative-over-index.
 func ParseTaskFile(data []byte) (TaskFileData, error) {
 	content := string(data)
 
@@ -48,8 +58,22 @@ func ParseTaskFile(data []byte) (TaskFileData, error) {
 	// Split the remainder on "\n## " to locate H2 sections.
 	parts := strings.Split(rest, "\n## ")
 
-	// parts[0] is everything before the first H2 -- the description.
-	description := strings.TrimSpace(parts[0])
+	// parts[0] is everything before the first H2: an optional leading
+	// **Status:** line, then the description.
+	pre := parts[0]
+	status := ""
+	trimmedPre := strings.TrimLeft(pre, "\n")
+	if strings.HasPrefix(trimmedPre, "**Status:**") {
+		if nl := strings.IndexByte(trimmedPre, '\n'); nl < 0 {
+			status = strings.TrimSpace(strings.TrimPrefix(trimmedPre, "**Status:**"))
+			trimmedPre = ""
+		} else {
+			status = strings.TrimSpace(strings.TrimPrefix(trimmedPre[:nl], "**Status:**"))
+			trimmedPre = trimmedPre[nl+1:]
+		}
+		pre = trimmedPre
+	}
+	description := strings.TrimSpace(pre)
 
 	sections := make(map[string]string, len(parts)-1)
 	for _, p := range parts[1:] {
@@ -91,17 +115,26 @@ func ParseTaskFile(data []byte) (TaskFileData, error) {
 
 	return TaskFileData{
 		Title:       title,
+		Status:      status,
 		Description: description,
 		DependsOn:   deps,
 		Summary:     summary,
 	}, nil
 }
 
-// RenderTaskFile renders a TaskFileData to markdown bytes.
+// RenderTaskFile renders a TaskFileData to markdown bytes. When d.Status is
+// non-empty it is written as a **Status:** line immediately after the title —
+// callers creating a new task (which always starts `planning`) should always
+// set it, so a task never again reaches the no-Status-line state that made
+// `task change-status` unusable on existing boards.
 func RenderTaskFile(d TaskFileData) []byte {
 	var buf bytes.Buffer
 
 	_, _ = fmt.Fprintf(&buf, "# %s\n", d.Title)
+
+	if d.Status != "" {
+		_, _ = fmt.Fprintf(&buf, "\n**Status:** %s\n", d.Status)
+	}
 
 	if d.Description != "" {
 		_, _ = fmt.Fprintf(&buf, "\n%s\n", d.Description)

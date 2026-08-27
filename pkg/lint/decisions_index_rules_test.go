@@ -33,7 +33,7 @@ func TestDecisionsIndexListSectionHeading(t *testing.T) {
 			"decisions/README.md":    validDecisionsIndex(),
 			"decisions/0001-test.md": acceptedDecisionContent(),
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +57,7 @@ None.
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/README.md": content,
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ None.
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/README.md": content,
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,7 +109,7 @@ None.
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/README.md": content,
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -139,7 +139,7 @@ None.
 			"decisions/0001-first.md":  acceptedDecisionContent(),
 			"decisions/0002-second.md": validDecisionContent(),
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -167,7 +167,7 @@ None.
 			"decisions/0001-first.md":  acceptedDecisionContent(),
 			"decisions/0002-second.md": validDecisionContent(),
 		})
-		vs, err := checkDecisionsIndex(root, true)
+		vs, _, err := checkDecisionsIndex(root, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +206,7 @@ None.
 			"decisions/README.md":    content,
 			"decisions/0001-test.md": validDecisionContent(),
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,7 +274,7 @@ None at this time.
 			"decisions/README.md":            content,
 			"decisions/archived/0001-old.md": archivedContent,
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -291,14 +291,14 @@ func TestActiveDecisionsIndexFixSynchronisesRenamedDecisionRow(t *testing.T) {
 	decision = strings.Replace(decision, "None at this time.\n\n---", "- cli\n- website\n\n---", 1)
 	index := strings.Replace(validDecisionsIndex(), "Test Decision | Approved | 2026-05-20 | — | —", "Old Product Name | Draft | 2020-01-01 | old | legacy", 1)
 	root := setupDecisionTestTree(t, map[string]string{"decisions/README.md": index, "decisions/0001-test.md": decision})
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !hasDecisionViolation(vs, "DI-row-content-sync", "0001-test") {
 		t.Fatalf("expected stale decision row violation, got %+v", vs)
 	}
-	vs, err = checkDecisionsIndex(root, true)
+	vs, _, err = checkDecisionsIndex(root, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,12 +312,35 @@ func TestActiveDecisionsIndexFixSynchronisesRenamedDecisionRow(t *testing.T) {
 	if !strings.Contains(string(data), "Competios Naming | Draft | 2026-08-06 | naming, migration | cli, website") {
 		t.Fatalf("decision index row was not canonicalised:\n%s", data)
 	}
-	vs, err = checkDecisionsIndex(root, false)
+	vs, _, err = checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hasDecisionViolation(vs, "DI-row-content-sync", "") {
 		t.Fatalf("re-lint found stale row: %+v", vs)
+	}
+}
+
+// TestActiveDecisionsIndexFixReconcilesStatusOnly isolates a Status-only
+// drift (title/date/tags/affected all already match), proving the fixer
+// reports a Reconciliation naming exactly the status field — the case
+// TestActiveDecisionsIndexFixSynchronisesRenamedDecisionRow does not
+// exercise because that fixture's index and file already agree on status.
+func TestActiveDecisionsIndexFixReconcilesStatusOnly(t *testing.T) {
+	index := strings.Replace(validDecisionsIndex(), "Test Decision | Approved | 2026-05-20 | — | —", "Test Decision | Approved | 2026-05-26 | — | —", 1)
+	root := setupDecisionTestTree(t, map[string]string{"decisions/README.md": index, "decisions/0001-test.md": validDecisionContent()})
+
+	c := newDecisionsIndexChecker()
+	if err := c.fix(root); err != nil {
+		t.Fatal(err)
+	}
+	rc := c.takeReconciliations()
+	if len(rc) != 1 || rc[0].Artifact != "0001-test" {
+		t.Fatalf("expected exactly 1 reconciliation for 0001-test, got %+v", rc)
+	}
+	if len(rc[0].Changes) != 1 || rc[0].Changes[0].Field != "status" ||
+		rc[0].Changes[0].IndexValue != "Approved" || rc[0].Changes[0].FileValue != "Draft" {
+		t.Fatalf("expected a single status change Approved->Draft, got %+v", rc[0].Changes)
 	}
 }
 
@@ -340,7 +363,7 @@ None.
 	decision = strings.Replace(decision, "None at this time.\n\n---", "- products | creators\n\n---", 1)
 	root := setupDecisionTestTree(t, map[string]string{"decisions/README.md": index, "decisions/0001-test.md": decision})
 
-	if _, err := checkDecisionsIndex(root, true); err != nil {
+	if _, _, err := checkDecisionsIndex(root, true); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "decisions", "README.md"))
@@ -350,7 +373,7 @@ None.
 	if !strings.Contains(string(data), "Creator \\| Competitor | Draft \\| Scheduled | 2026-05-26 \\| provisional | creators \\| chess | products \\| creators |") {
 		t.Fatalf("derived decision cells did not escape pipes:\n%s", data)
 	}
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +390,7 @@ func TestDecisionsIndexArchivedCompleteness(t *testing.T) {
 		"decisions/archived/README.md":   archivedIndex,
 		"decisions/archived/0001-old.md": decision,
 	})
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +407,7 @@ func TestDecisionsIndexArchivedStatusExcludesActive(t *testing.T) {
 		"decisions/archived/README.md": archivedIndex,
 		"decisions/0001-active.md":     acceptedDecisionContent(),
 	})
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +426,7 @@ func TestDecisionsIndexArchivedChronological(t *testing.T) {
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/archived/README.md": content,
 		})
-		vs, err := checkDecisionsIndex(root, false)
+		vs, _, err := checkDecisionsIndex(root, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -421,7 +444,7 @@ func TestDecisionsIndexArchivedChronological(t *testing.T) {
 		root := setupDecisionTestTree(t, map[string]string{
 			"decisions/archived/README.md": content,
 		})
-		vs, err := checkDecisionsIndex(root, true)
+		vs, _, err := checkDecisionsIndex(root, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -444,7 +467,7 @@ func TestDecisionsIndexArchivedChronological(t *testing.T) {
 
 func TestDecisionsIndexNoDecisionsDir(t *testing.T) {
 	root := t.TempDir()
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}

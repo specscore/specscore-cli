@@ -37,6 +37,14 @@ Add the root-visible `migrate` verb, keep `spec migrate` equivalent, and impleme
 
 Run `specscore migrate` against this repo to backfill every existing artifact (feature READMEs, idea files, `*-index` READMEs, directory-form plan READMEs), then flip `format-field`, `status-mirror`, and `footer-format-mirror` from `warning` to `error` in the rules registry and checkers. Verify the migrated tree passes `specscore spec lint` at the post-cutover `error` severity, and that removing an artifact's frontmatter is then flagged as an error. Land as a single commit so the repo is never left migrated-but-unenforced or enforced-but-unmigrated.
 
+### Task 3: Backfill the flat task board's body Status line
+
+**Verifies:** cli/spec/migrate#ac:existing-board-task-gains-status-line, cli/spec/migrate#ac:task-board-status-backfill-never-invents-a-value
+
+**Depends-On:** 1
+
+Closes a 2026-08-27 gap: `task change-status` requires an existing body `**Status:**` line and has no path that initializes an absent one, so any task board created before `task new` scaffolded that line (every board that existed before this task) is permanently unable to transition through the sanctioned CLI. Add `migrateTaskBoardStatus` (`pkg/lint/task_board_migrate.go`), invoked from `MigrateWithProjectRoot`: for the flat project-root `tasks/` board (outside `spec/`, so not covered by the existing `docTypeTargets` walk), insert a `**Status:**` line into any `tasks/<slug>/README.md` that lacks one, sourced from that slug's `tasks/README.md` row — a one-time bootstrap, never overwriting an existing line and never inventing a value for a slug with no board row. Companion changes landed in the same effort (tracked by their own Features, not this plan): `cli/task/new#req:status-scaffolded` scaffolds the line on every new task, and a new `task-index-row-sync` lint rule reconciles the board's Status cell from the file after a transition — the file remains authoritative per the `specscore` meta-spec's Index feature `REQ: file-authoritative-over-index`.
+
 ## Open Questions
 
 None at this time.

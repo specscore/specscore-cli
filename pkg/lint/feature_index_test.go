@@ -71,7 +71,7 @@ func TestFeatureIndex_CleanCase(t *testing.T) {
 		"features/billing/README.md": featureReadme("Billing", "Implementing"),
 	})
 
-	vs, _ := featureIndexRules(specRoot, false)
+	vs, _, _ := featureIndexRules(specRoot, false)
 	if len(vs) != 0 {
 		t.Fatalf("expected 0 violations on clean tree, got %d: %+v", len(vs), vs)
 	}
@@ -83,7 +83,7 @@ func TestFeatureIndex_CleanCase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vs, fixed := featureIndexRules(specRoot, true)
+	vs, fixed, _ := featureIndexRules(specRoot, true)
 	if len(vs) != 0 {
 		t.Fatalf("expected 0 violations with --fix on clean tree, got %d: %+v", len(vs), vs)
 	}
@@ -109,7 +109,7 @@ func TestFeatureIndex_DriftReported(t *testing.T) {
 		"features/auth/README.md": featureReadme("Auth", "Approved"),
 	})
 
-	vs, _ := featureIndexRules(specRoot, false)
+	vs, _, _ := featureIndexRules(specRoot, false)
 	if !hasRule(vs, "feature-index-row-sync") {
 		t.Fatalf("expected feature-index-row-sync violation, got: %+v", vs)
 	}
@@ -143,7 +143,7 @@ func TestFeatureIndex_FixRewritesRow(t *testing.T) {
 		"features/auth/README.md": featureReadme("Auth", "Approved"),
 	})
 
-	vs, fixed := featureIndexRules(specRoot, true)
+	vs, fixed, _ := featureIndexRules(specRoot, true)
 	if !fixed {
 		t.Fatalf("expected fixed=true after running --fix on drifted tree")
 	}
@@ -174,7 +174,7 @@ func TestFeatureIndex_FixRewritesRow(t *testing.T) {
 	}
 
 	// Re-lint must report 0 violations.
-	vs2, _ := featureIndexRules(specRoot, false)
+	vs2, _, _ := featureIndexRules(specRoot, false)
 	if len(vs2) != 0 {
 		t.Fatalf("expected 0 violations after --fix + re-lint, got %d: %+v", len(vs2), vs2)
 	}
@@ -185,11 +185,11 @@ func TestFeatureIndex_FixRepairsRenamedTitleAndSummary(t *testing.T) {
 		"features/README.md":      featureIndexHeader + "| [Old Product Name](auth/README.md) | Draft | Command | Old summary |\n",
 		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
 	})
-	vs, _ := featureIndexRules(specRoot, false)
+	vs, _, _ := featureIndexRules(specRoot, false)
 	if !hasRule(vs, "feature-index-row-sync") {
 		t.Fatalf("expected stale rename violation, got %+v", vs)
 	}
-	vs, fixed := featureIndexRules(specRoot, true)
+	vs, fixed, _ := featureIndexRules(specRoot, true)
 	if !fixed || len(vs) != 0 {
 		t.Fatalf("fix = (%v, %+v)", fixed, vs)
 	}
@@ -214,7 +214,7 @@ func TestFeatureIndex_FixPreservesTailCellsWithoutDescription(t *testing.T) {
 		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
 	})
 
-	vs, fixed := featureIndexRules(specRoot, true)
+	vs, fixed, rc := featureIndexRules(specRoot, true)
 	if !fixed || len(vs) != 0 {
 		t.Fatalf("fix = (%v, %+v)", fixed, vs)
 	}
@@ -228,6 +228,18 @@ func TestFeatureIndex_FixPreservesTailCellsWithoutDescription(t *testing.T) {
 	}
 	if strings.Contains(body, "Lists public competitions.") {
 		t.Fatalf("summary must not overwrite a non-Description tail cell:\n%s", body)
+	}
+	// The table has no Description column, so the parsed Summary
+	// ("Lists public competitions.") was never written — the reconciliation
+	// report must not claim a "summary" field changed for a cell that was
+	// never actually touched on disk.
+	if len(rc) != 1 {
+		t.Fatalf("expected exactly 1 reconciliation, got %d: %+v", len(rc), rc)
+	}
+	for _, c := range rc[0].Changes {
+		if c.Field == "summary" {
+			t.Fatalf("reconciliation must not report a summary change with no Description column: %+v", rc[0])
+		}
 	}
 }
 
@@ -243,7 +255,7 @@ func TestFeatureIndex_FixUsesNonfinalDescriptionColumn(t *testing.T) {
 		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
 	})
 
-	vs, fixed := featureIndexRules(specRoot, true)
+	vs, fixed, _ := featureIndexRules(specRoot, true)
 	if !fixed || len(vs) != 0 {
 		t.Fatalf("fix = (%v, %+v)", fixed, vs)
 	}
@@ -262,7 +274,7 @@ func TestFeatureIndex_FixEscapesPipesInDerivedCells(t *testing.T) {
 		"features/auth/README.md": "# Feature: Creator | Competitor\n\n**Status:** Approved\n\n## Summary\n\nA creator | competitor event.\n",
 	})
 
-	vs, fixed := featureIndexRules(specRoot, true)
+	vs, fixed, _ := featureIndexRules(specRoot, true)
 	if !fixed || len(vs) != 0 {
 		t.Fatalf("fix = (%v, %+v)", fixed, vs)
 	}
@@ -274,7 +286,7 @@ func TestFeatureIndex_FixEscapesPipesInDerivedCells(t *testing.T) {
 	if !strings.Contains(body, "[Creator \\| Competitor](auth/README.md) | Approved | Command | A creator \\| competitor event. |") {
 		t.Fatalf("derived pipe values were not escaped safely:\n%s", body)
 	}
-	if vs, _ := featureIndexRules(specRoot, false); len(vs) != 0 {
+	if vs, _, _ := featureIndexRules(specRoot, false); len(vs) != 0 {
 		t.Fatalf("escaped row should be clean on re-lint, got %+v", vs)
 	}
 }
@@ -340,7 +352,7 @@ func TestFeatureIndexRules_SkipsFeatureWithoutParseableTitle(t *testing.T) {
 		// reports the scanner error instead of silently deriving an empty title.
 		"features/auth/README.md": "**Status:** Draft\n" + strings.Repeat("x", 70*1024),
 	})
-	violations, fixed := featureIndexRules(specRoot, true)
+	violations, fixed, _ := featureIndexRules(specRoot, true)
 	if fixed || len(violations) != 0 {
 		t.Fatalf("unparseable feature title must be skipped, got fixed=%v violations=%+v", fixed, violations)
 	}
@@ -354,7 +366,7 @@ func TestFeatureIndexRules_SkipsFeatureWithUnreadableSummary(t *testing.T) {
 		"features/README.md":      featureIndexHeader + "| [Auth](auth/README.md) | Draft | Command | desc-auth |\n",
 		"features/auth/README.md": "# Feature: Auth\n\n**Status:** Draft\n\n## Summary\n\nDescription.\n",
 	})
-	violations, fixed := featureIndexRules(specRoot, true)
+	violations, fixed, _ := featureIndexRules(specRoot, true)
 	if fixed || len(violations) != 0 {
 		t.Fatalf("unreadable summary must be skipped, got fixed=%v violations=%+v", fixed, violations)
 	}
@@ -378,7 +390,7 @@ func TestFeatureIndex_TopLevelOnly(t *testing.T) {
 		"features/cli/idea/change-status/README.md": featureReadme("Change Status", "Approved"),
 	})
 
-	vs, _ := featureIndexRules(specRoot, false)
+	vs, _, _ := featureIndexRules(specRoot, false)
 	if hasRule(vs, "feature-index-row-sync") {
 		t.Fatalf("expected no feature-index-row-sync violation for sub-feature rows, got: %+v", vs)
 	}

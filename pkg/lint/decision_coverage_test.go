@@ -725,7 +725,7 @@ func TestCheckDecisionsIndex_DecisionsDirIsFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "decisions"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -758,7 +758,7 @@ None at this time.
 		"decisions/README.md":    indexContent,
 		"decisions/0001-test.md": acceptedDecisionContent(),
 	})
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -792,12 +792,12 @@ None.
 		"decisions/README.md":    indexContent,
 		"decisions/0001-test.md": acceptedDecisionContent(),
 	})
-	vs, err := checkDecisionsIndex(root, true)
+	vs, _, err := checkDecisionsIndex(root, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Re-run without --fix; the entry should now be present.
-	vs2, err := checkDecisionsIndex(root, false)
+	vs2, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -854,7 +854,7 @@ None.
 		"decisions/README.md":    indexContent,
 		"decisions/0001-test.md": decision,
 	})
-	if _, err := checkDecisionsIndex(root, true); err != nil {
+	if _, _, err := checkDecisionsIndex(root, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "decisions", "README.md"))
@@ -880,7 +880,7 @@ func TestArchivedDecisionsIndex_InOrder(t *testing.T) {
 	root := setupDecisionTestTree(t, map[string]string{
 		"decisions/archived/README.md": content,
 	})
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1317,7 +1317,7 @@ func TestCheckDecisionsIndex_ActiveReadFails(t *testing.T) {
 		return orig(path)
 	}
 	t.Cleanup(func() { osReadFileDecisionIndex = orig })
-	_, err := checkDecisionsIndex(root, false)
+	_, _, err := checkDecisionsIndex(root, false)
 	if !errors.Is(err, errSeamSentinel) {
 		t.Errorf("expected seam sentinel error; got %v", err)
 	}
@@ -1343,7 +1343,7 @@ func TestCheckDecisionsIndex_ArchivedReadFails(t *testing.T) {
 		return orig(path)
 	}
 	t.Cleanup(func() { osReadFileDecisionIndex = orig })
-	_, err := checkDecisionsIndex(root, false)
+	_, _, err := checkDecisionsIndex(root, false)
 	if !errors.Is(err, errSeamSentinel) {
 		t.Errorf("expected seam sentinel error; got %v", err)
 	}
@@ -1377,7 +1377,7 @@ None.
 		"decisions/0001-test.md":   acceptedDecisionContent(),
 		"decisions/0002-second.md": acceptedDecisionContent(),
 	})
-	vs, err := checkDecisionsIndex(root, false)
+	vs, _, err := checkDecisionsIndex(root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1420,7 +1420,7 @@ None.
 		return errSeamSentinel
 	}
 	t.Cleanup(func() { osWriteFileDecisionIndex = orig })
-	vs, err := checkDecisionsIndex(root, true)
+	vs, _, err := checkDecisionsIndex(root, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1464,7 +1464,7 @@ func TestActiveDecisionsIndex_CompletenessDiscoverError(t *testing.T) {
 	_ = indexPath
 	// Best-effort: just verify the outer checkDecisionsIndex returns the
 	// error somehow when the dir is unreadable. Don't assert specifics.
-	_, err := checkDecisionsIndex(root, false)
+	_, _, err := checkDecisionsIndex(root, false)
 	// Either an error surfaces, or violations are returned — either is OK
 	// here, the point is to exercise the discoverDecisionFiles branch.
 	_ = err
@@ -1535,7 +1535,7 @@ None at this time.
 		"decisions/0001-test.md": decision,
 	})
 	// Run with fix=true so the completeness branch invokes the rewrite path.
-	if _, err := checkDecisionsIndex(root, true); err != nil {
+	if _, _, err := checkDecisionsIndex(root, true); err != nil {
 		t.Fatal(err)
 	}
 	// The index now contains the row; we don't assert on date content —
@@ -1576,7 +1576,7 @@ None.
 	}
 	t.Cleanup(func() { osWriteFileDecisionIndex = origWrite })
 
-	vs, err := checkDecisionsIndex(root, true)
+	vs, _, err := checkDecisionsIndex(root, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1626,7 +1626,7 @@ func TestArchivedDecisionsIndex_FixSortsBySlugWhenDateTies(t *testing.T) {
 	root := setupDecisionTestTree(t, map[string]string{
 		"decisions/archived/README.md": content,
 	})
-	if _, err := checkDecisionsIndex(root, true); err != nil {
+	if _, _, err := checkDecisionsIndex(root, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "decisions", "archived", "README.md"))
@@ -1885,7 +1885,7 @@ func TestActiveDecisionsIndex_CompletenessDiscoverErrorViaSeam(t *testing.T) {
 		return nil, errSeamSentinel
 	}
 	t.Cleanup(func() { osReadDirDecision = orig })
-	vs, err := checkActiveDecisionsIndex(root, indexPath, false)
+	vs, _, err := checkActiveDecisionsIndex(root, indexPath, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1921,7 +1921,7 @@ None.
 		"decisions/0002-second.md": acceptedDecisionContent(),
 		"decisions/0001-first.md":  acceptedDecisionContent(),
 	})
-	if _, err := checkDecisionsIndex(root, true); err != nil {
+	if _, _, err := checkDecisionsIndex(root, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "decisions", "README.md"))
@@ -1953,7 +1953,7 @@ func TestArchivedDecisionsIndex_FixFailed(t *testing.T) {
 		return errSeamSentinel
 	}
 	t.Cleanup(func() { osWriteFileDecisionIndex = orig })
-	vs, err := checkDecisionsIndex(root, true)
+	vs, _, err := checkDecisionsIndex(root, true)
 	if err != nil {
 		t.Fatal(err)
 	}

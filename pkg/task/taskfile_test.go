@@ -38,6 +38,93 @@ func TestTaskFileRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTaskFileRoundTrip_WithStatus proves a **Status:** line survives a
+// render/parse round trip and is written immediately after the title (the
+// exact gap `specscore task change-status` needs closed — see
+// pkg/lint.migrateTaskBoardStatus and internal/cli.runTaskNew).
+func TestTaskFileRoundTrip_WithStatus(t *testing.T) {
+	original := TaskFileData{
+		Title:       "Implement API endpoints",
+		Status:      "planning",
+		Description: "Description paragraph here.",
+		DependsOn:   []string{"setup-db"},
+		Summary:     "Some summary text",
+	}
+
+	rendered := RenderTaskFile(original)
+	if !strings.Contains(string(rendered), "# Implement API endpoints\n\n**Status:** planning\n") {
+		t.Fatalf("rendered file does not carry **Status:** immediately after the title:\n%s", rendered)
+	}
+
+	parsed, err := ParseTaskFile(rendered)
+	if err != nil {
+		t.Fatalf("round-trip parse failed: %v", err)
+	}
+	if parsed.Status != original.Status {
+		t.Errorf("status: got %q, want %q", parsed.Status, original.Status)
+	}
+	if parsed.Description != original.Description {
+		t.Errorf("description: got %q, want %q", parsed.Description, original.Description)
+	}
+}
+
+// TestTaskFileRoundTrip_WithStatusNoDescription covers a task with a Status
+// line but no description paragraph, so the Status line's trailing blank line
+// is not mistaken for description content.
+func TestTaskFileRoundTrip_WithStatusNoDescription(t *testing.T) {
+	original := TaskFileData{Title: "Bare task", Status: "queued"}
+	rendered := RenderTaskFile(original)
+	parsed, err := ParseTaskFile(rendered)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if parsed.Status != "queued" {
+		t.Errorf("status: got %q, want %q", parsed.Status, "queued")
+	}
+	if parsed.Description != "" {
+		t.Errorf("description: got %q, want empty", parsed.Description)
+	}
+}
+
+// TestTaskFileParse_NoStatusLineIsBackwardCompatible proves a pre-existing
+// task README with no **Status:** line at all (every board written before
+// this fix, or any hand-authored file) still parses cleanly, with Status
+// reported as "" rather than an error — this is the exact shape that made
+// `task change-status` exit 10 on an existing board.
+func TestTaskFileParse_NoStatusLineIsBackwardCompatible(t *testing.T) {
+	md := "# My Task\n\nSome description.\n\n## Dependencies\n\nNone\n\n## Summary\n\nNone\n"
+	parsed, err := ParseTaskFile([]byte(md))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if parsed.Status != "" {
+		t.Errorf("status: got %q, want empty (no **Status:** line present)", parsed.Status)
+	}
+	if parsed.Description != "Some description." {
+		t.Errorf("description: got %q, want %q", parsed.Description, "Some description.")
+	}
+}
+
+// TestTaskFileParse_StatusLineDirectlyBeforeDependencies covers the case
+// where the **Status:** line is immediately followed by "## Dependencies"
+// with no blank-line description in between. strings.Split's "\n## "
+// delimiter consumes the newline that would otherwise separate the Status
+// line from the next content, so parts[0] here has NO internal newline at
+// all — the nl<0 branch in the Status-line extraction.
+func TestTaskFileParse_StatusLineDirectlyBeforeDependencies(t *testing.T) {
+	md := "# Bare Task\n**Status:** planning\n## Dependencies\n\nNone\n\n## Summary\n\nNone\n"
+	parsed, err := ParseTaskFile([]byte(md))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if parsed.Status != "planning" {
+		t.Errorf("status: got %q, want %q", parsed.Status, "planning")
+	}
+	if parsed.Description != "" {
+		t.Errorf("description: got %q, want empty", parsed.Description)
+	}
+}
+
 func TestTaskFileParseNoneDepsAndSummary(t *testing.T) {
 	md := "# My Task\n\nSome description.\n\n## Dependencies\n\nNone\n\n## Summary\n\nNone\n"
 	parsed, err := ParseTaskFile([]byte(md))

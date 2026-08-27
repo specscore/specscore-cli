@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lint"
 )
 
 // stageTaskWithStatus creates a SpecScore project with a tasks/ board and a
@@ -239,5 +240,73 @@ func TestTaskChangeStatus_ProjectResolveError(t *testing.T) {
 	_, _, err := runTask(t, "change-status", "auth", "--to=queued", "--project", bare)
 	if err == nil {
 		t.Fatal("expected resolve error, got nil")
+	}
+}
+
+// TestTaskChangeStatus_AfterMigrateOnExistingBoard is the existing-board case
+// the task-change-status-requires-a-status-line-no-scaffold-writes-one lesson
+// named: a task README with NO **Status:** line at all — the exact shape of
+// every board written before this fix (sneat-co/backstage had 17 of them) —
+// first backfilled by `specscore migrate` (pkg/lint.MigrateWithProjectRoot,
+// which is what the `specscore migrate` / `specscore spec migrate` CLI verbs
+// call), then successfully transitioned by `task change-status`. Before the
+// fix this reproduced verbatim as TestTaskChangeStatus_NoStatusLine's
+// standalone exit 10; this test proves the sanctioned two-step recovery a
+// real board now has.
+func TestTaskChangeStatus_AfterMigrateOnExistingBoard(t *testing.T) {
+	root, taskFile := stageTaskWithStatus(t, "auth", "planning")
+	// Overwrite with the pre-fix shape: no **Status:** line anywhere, exactly
+	// like a hand-written or pre-fix `task new` board.
+	noStatus := "# Auth\n\nBody only.\n\n## Dependencies\n\nNone\n\n## Summary\n\nNone\n"
+	if err := os.WriteFile(taskFile, []byte(noStatus), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Reproduce the bug first: change-status on an unmigrated board still
+	// exits 10, exactly as it always did.
+	if _, _, err := runTask(t, "change-status", "auth", "--to=queued"); exitCodeOfErr(err) != exitcode.Unexpected {
+		t.Fatalf("expected the pre-migrate exit 10, got %v", err)
+	}
+
+	changed, err := lint.MigrateWithProjectRoot(root, filepath.Join(root, "spec"))
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != "tasks/auth/README.md" {
+		t.Fatalf("expected migrate to report the task README changed, got %v", changed)
+	}
+	if got := taskFileStatus(t, taskFile); got != "planning" {
+		t.Fatalf("migrate backfilled status = %q, want %q (from the board row)", got, "planning")
+	}
+
+	// Migrate never invents fields it isn't told to backfill or overwrites
+	// unrelated content: the body text survives byte-for-byte.
+	if data, _ := os.ReadFile(taskFile); !strings.Contains(string(data), "Body only.") {
+		t.Fatalf("migrate must preserve existing body content:\n%s", data)
+	}
+
+	// Now the sanctioned CLI verb works — the whole point of the fix.
+	stdout, stderr, err := runTask(t, "change-status", "auth", "--to=queued")
+	if err != nil {
+		t.Fatalf("change-status after migrate: %v (stderr=%s)", err, stderr)
+	}
+	if want := "auth: planning → queued\n"; stdout != want {
+		t.Errorf("stdout = %q; want %q", stdout, want)
+	}
+	if got := taskFileStatus(t, taskFile); got != "queued" {
+		t.Errorf("task status = %q; want %q", got, "queued")
+	}
+
+	// A second migrate run is a no-op: the file's line is now authoritative,
+	// never re-derived from the (now-stale) board index row.
+	changed2, err := lint.MigrateWithProjectRoot(root, filepath.Join(root, "spec"))
+	if err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	if len(changed2) != 0 {
+		t.Fatalf("second migrate run must be a no-op, got %v", changed2)
+	}
+	if got := taskFileStatus(t, taskFile); got != "queued" {
+		t.Errorf("migrate must never rewrite an existing Status line from a stale index row; got %q", got)
 	}
 }

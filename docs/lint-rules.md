@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 166
+Total rules: 167
 
 ## capability
 
@@ -259,3 +259,9 @@ Total rules: 166
 | Rule | Severity | Description |
 | --- | --- | --- |
 | sidekick-seed | error | Requires sidekick seed files to be well-formed. |
+
+## task-index
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| task-index-row-sync | error | Requires each task board row's Status to match its task README's **Status:** line. |

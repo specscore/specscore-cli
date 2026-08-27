@@ -375,7 +375,7 @@ func TestResolvePublicationProjectRoot_AutoDiscoverMissNotRequired(t *testing.T)
 
 func TestOutputLintFixEnvelope_NilSlicesEmitEmptyArrays(t *testing.T) {
 	var buf bytes.Buffer
-	if err := outputLintFixEnvelope(&buf, nil, nil, "json"); err != nil {
+	if err := outputLintFixEnvelope(&buf, nil, nil, nil, "json"); err != nil {
 		t.Fatalf("envelope json: %v", err)
 	}
 	got := buf.String()
@@ -385,14 +385,14 @@ func TestOutputLintFixEnvelope_NilSlicesEmitEmptyArrays(t *testing.T) {
 }
 
 func TestOutputLintFixEnvelope_YAMLWriterError(t *testing.T) {
-	err := outputLintFixEnvelope(covErrWriter{}, []string{"a"}, []lint.Violation{}, "yaml")
+	err := outputLintFixEnvelope(covErrWriter{}, []string{"a"}, nil, []lint.Violation{}, "yaml")
 	if err == nil {
 		t.Fatal("expected yaml encode error")
 	}
 }
 
 func TestOutputLintFixEnvelope_JSONWriterError(t *testing.T) {
-	err := outputLintFixEnvelope(covErrWriter{}, []string{"a"}, []lint.Violation{}, "json")
+	err := outputLintFixEnvelope(covErrWriter{}, []string{"a"}, nil, []lint.Violation{}, "json")
 	if err == nil {
 		t.Fatal("expected json encode error")
 	}

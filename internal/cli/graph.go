@@ -240,7 +240,7 @@ func runGraphLint(cmd *cobra.Command, _ []string) error {
 	// envelope (matching `spec lint --fix`); otherwise report fixed files to
 	// stderr and violations to stdout.
 	if fix && (format == "json" || format == "yaml") {
-		if err := outputLintFixEnvelope(w, res.Fixed, res.Violations, format); err != nil {
+		if err := outputLintFixEnvelope(w, res.Fixed, nil, res.Violations, format); err != nil {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
 	} else {

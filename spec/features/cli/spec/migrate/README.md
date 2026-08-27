@@ -14,9 +14,13 @@ status: Draft
 
 `specscore migrate` performs the one-shot, deterministic, per-repo migration that brings every existing artifact into conformance with the artifact-frontmatter-convention (defined in the sibling `specscore` meta-spec): it backfills the leading-frontmatter `format:` field (the canonical spec URL for each artifact's type) and, for status-bearing types, the `status:` field (mirrored from the body `**Status:**`), and keeps each adherence-footer URL aligned with `format:`. The existing nested form, `specscore spec migrate`, remains an equivalent invocation for scripts and users who discover the verb through the `spec` command group. It is the migration step that lets the graced frontmatter lint rules (`format-field`, `status-mirror`, `footer-format-mirror`) flip from `warning` to `error` against an already-conformant tree.
 
+`migrate` also performs a second, unrelated one-time backfill on the flat project-root task board (`tasks/README.md` + `tasks/<slug>/README.md`, which lives outside `spec/`): it seeds a missing body `**Status:**` line on an existing task README from that task's own board row, so `task change-status` (which requires the line to already exist) is never permanently unusable on a board created before the line was scaffolded. See [task-board-status-backfill](#req-task-board-status-backfill).
+
 ## Problem
 
 The frontmatter convention ships its lint rules graced (warning-only) so existing repos do not break on landing — but the artifacts themselves still lack frontmatter. In this repo alone that is dozens of feature READMEs, the idea files, the `*-index` READMEs, and the directory-form plan READMEs, none of which carry `format:`/`status:`. Hand-editing them is error-prone and non-deterministic, and `specscore spec lint --fix` deliberately does not fabricate frontmatter blocks (`status-mirror` only upserts into an existing block; `format-field` has no fixer). A single deterministic command is needed to backfill the whole tree at once, so the graced rules can then be flipped to `error` with the repo already conformant.
+
+Separately, every task board created before `task new` scaffolded a body `**Status:**` line (see [`cli/task/new`](../../task/new/README.md#req-status-scaffolded)) has task READMEs with no such line at all. `task change-status` requires the line to exist (it rewrites it in place; it has no path that initializes an absent one), so those boards could not reach `complete` — or any other transition — through the sanctioned CLI, with no symptom until the first close attempt. `migrate` is the one CLI-sanctioned, deterministic place that backfill can happen, sourcing the value from the board row (the only place a value exists before the bootstrap) — see [task-board-status-backfill](#req-task-board-status-backfill).
 
 ## Behavior
 
@@ -55,6 +59,12 @@ For a status-bearing artifact (Idea, Feature, Plan, Task, Decision), `migrate` M
 #### REQ: idempotent
 
 Re-running `migrate` on an already-migrated tree MUST be a no-op — exit `0` with no file changes.
+
+### Task board Status backfill
+
+#### REQ: task-board-status-backfill
+
+For the flat project-root task board (`tasks/README.md` plus `tasks/<slug>/README.md`, which lives outside `spec/` — a different location from the nested `spec/plans/**/tasks/*/README.md` sub-tasks the frontmatter-convention walk already covers), `migrate` MUST insert a body `**Status:**` line, immediately after the title, into any `tasks/<slug>/README.md` that has none, taking the value from that slug's row in `tasks/README.md`. A task README that already carries a `**Status:**` line MUST be left byte-unchanged — this is a one-time bootstrap of a value the file did not yet have, never a resync of a value it already has (the board index is a derived projection of the file once the file has one; see the `specscore` meta-spec's [Index feature — REQ: file-authoritative-over-index](https://github.com/specscore/specscore/blob/main/spec/features/index/README.md#req-file-authoritative-over-index)). A board row with no matching task directory, or a task README with no matching board row, is left unchanged — the command never invents a status.
 
 ### Rule cutover
 
@@ -111,6 +121,22 @@ Once the target repo is migrated, the graced frontmatter rules (`format-field`, 
 **Given** a migrated repo with the frontmatter rules flipped to `error` severity
 **When** `specscore spec lint` runs
 **Then** it reports no frontmatter violations; and an artifact whose frontmatter is removed is then flagged at `error` severity.
+
+### AC: existing-board-task-gains-status-line
+
+**Requirements:** [cli/spec/migrate#req:task-board-status-backfill](#req-task-board-status-backfill)
+
+**Given** a project whose `tasks/README.md` board lists `fleet-core-modules-bump` at `queued`, and whose `tasks/fleet-core-modules-bump/README.md` has no `**Status:**` line at all (the shape of every task board created before `task new` scaffolded one)
+**When** `specscore migrate` runs
+**Then** the task README gains `**Status:** queued` immediately after its title, every other byte of the file is preserved, `specscore task change-status fleet-core-modules-bump --to=in_progress` (which previously exited `10` with "task file has no `**Status:**` line") now succeeds, and a second `migrate` run changes nothing.
+
+### AC: task-board-status-backfill-never-invents-a-value
+
+**Requirements:** [cli/spec/migrate#req:task-board-status-backfill](#req-task-board-status-backfill)
+
+**Given** a task README that already carries a `**Status:**` line, and a separate task directory with a README but no matching row in `tasks/README.md`
+**When** `specscore migrate` runs
+**Then** the already-stamped task README is left byte-unchanged even if its value disagrees with the board row, and the row-less task README gains no `**Status:**` line at all.
 
 ## Open Questions
 

@@ -876,7 +876,7 @@ func TestFeatureIndexChecker_FixFailFallback(t *testing.T) {
 	defer func() { _ = os.Chmod(indexPath, 0o644) }()
 
 	// featureIndexRules with fix=true should fall back to reporting violations
-	vs, fixed := featureIndexRules(root, true)
+	vs, fixed, _ := featureIndexRules(root, true)
 	if fixed {
 		t.Error("expected fixed=false when rewrite fails")
 	}
@@ -937,7 +937,7 @@ func TestLinterFix_DisabledRulesSkipped(t *testing.T) {
 		Ignore:   []string{"adherence-footer", "studio-toolbar"},
 		Fix:      true,
 	})
-	err := l.fix()
+	_, err := l.fix()
 	if err != nil {
 		t.Errorf("fix should not error with disabled rules: %v", err)
 	}
@@ -5890,7 +5890,7 @@ func TestFeatureIndex_ReadFeatureIndexRowsOpenError(t *testing.T) {
 	_ = os.Chmod(indexPath, 0o000)
 	defer func() { _ = os.Chmod(indexPath, 0o644) }()
 
-	vs, fixed := featureIndexRules(root, false)
+	vs, fixed, _ := featureIndexRules(root, false)
 	if fixed {
 		t.Error("should not fix when file is unreadable")
 	}

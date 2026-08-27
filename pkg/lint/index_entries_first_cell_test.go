@@ -27,7 +27,7 @@ func TestIndexEntries_IgnoresSummaryLinksAfterFeatureRowSync(t *testing.T) {
 		"features/parent/nested/README.md": "# Feature: Nested\n",
 	})
 
-	violations, fixed := featureIndexRules(root, true)
+	violations, fixed, _ := featureIndexRules(root, true)
 	if !fixed || len(violations) != 0 {
 		t.Fatalf("row-sync fix = (%v, %+v), want fixed with no violations", fixed, violations)
 	}
