@@ -32,7 +32,7 @@ Task boards live as Markdown (`tasks/README.md` plus `tasks/<slug>/README.md` pe
 
 ### info
 
-Reads `tasks/<slug>/README.md` and the task's row on the board. Returns YAML or JSON with title, status, description, dependencies, and summary.
+Reads `tasks/<slug>/README.md`. Status comes from the task's own `**Status:**` line when present (the file is authoritative — see the `specscore` meta-spec's [Index feature — REQ: file-authoritative-over-index](https://github.com/specscore/specscore/blob/main/spec/features/index/README.md#req-file-authoritative-over-index)); it falls back to the board row only for a task file that predates that line. Returns YAML or JSON with title, status, description, dependencies, and summary.
 
 ### list
 

@@ -102,6 +102,13 @@ func (o Options) fixRequested(names ...string) bool {
 type Result struct {
 	Violations []Violation
 	Fixed      []string
+	// Reconciled lists every itemized index-vs-file correction a --fix pass
+	// performed (see Reconciliation) — populated only when opts.Fix is true.
+	// A rewrite that regenerates a derived index row from its artifact file
+	// MUST report here rather than silently overwriting the row: see
+	// Reconciliation's doc comment for why silence destroys the only signal
+	// that file and index had diverged.
+	Reconciled []Reconciliation
 }
 
 // Lint runs all enabled lint rules against the spec tree.
@@ -129,14 +136,17 @@ func LintWithResult(opts Options) (Result, error) {
 	l := newLinter(opts)
 
 	var fixed []string
+	var reconciled []Reconciliation
 	if opts.Fix {
 		before, err := snapshotSpecTreeFn(opts.SpecRoot)
 		if err != nil {
 			return Result{}, fmt.Errorf("fix snapshot error: %w", err)
 		}
-		if err := l.fix(); err != nil {
+		rc, err := l.fix()
+		if err != nil {
 			return Result{}, fmt.Errorf("fix error: %w", err)
 		}
+		reconciled = rc
 		after, err := snapshotSpecTreeFn(opts.SpecRoot)
 		if err != nil {
 			return Result{}, fmt.Errorf("fix snapshot error: %w", err)
@@ -154,7 +164,7 @@ func LintWithResult(opts Options) (Result, error) {
 		violations = FilterBySeverity(violations, opts.Severity)
 	}
 
-	return Result{Violations: violations, Fixed: fixed}, nil
+	return Result{Violations: violations, Fixed: fixed, Reconciled: reconciled}, nil
 }
 
 // snapshotSpecTreeFn is the snapshot implementation, injectable for testing the

@@ -559,7 +559,7 @@ func TestTaskNewResidualIdentityAndFilesystemFaults(t *testing.T) {
 		root := setupTaskProjectForNew(t)
 		board := filepath.Join(root, "tasks", "README.md")
 		boardBytes, _ := os.ReadFile(board)
-		taskBytes := task.RenderTaskFile(task.TaskFileData{Title: "Foreign Post"})
+		taskBytes := task.RenderTaskFile(task.TaskFileData{Title: "Foreign Post", Status: string(task.StatusPlanning)})
 		_, _, marker := taskNewPaths(root, "foreign-post")
 		m := taskNewPrepared{SchemaVersion: 2, TaskID: "foreign-post", TaskPath: "foreign-post/README.md", ContentSHA256: taskNewDigest(taskBytes), BoardBeforeSHA256: taskNewDigest(boardBytes), BoardAfterSHA256: "foreign"}
 		if err := os.WriteFile(marker, m.bytes(), 0o600); err != nil {

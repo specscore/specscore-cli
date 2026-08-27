@@ -240,7 +240,7 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// both the fixed-files report and the violations. Without --fix the
 	// pre-existing bare-array contract is preserved.
 	if fix && (format == "json" || format == "yaml") {
-		if err := outputLintFixEnvelope(w, fixedRel, violations, format); err != nil {
+		if err := outputLintFixEnvelope(w, fixedRel, res.Reconciled, violations, format); err != nil {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
 	} else {
@@ -252,6 +252,19 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintf(ew, "Fixed %d file(s):\n", len(fixedRel))
 			for _, f := range fixedRel {
 				_, _ = fmt.Fprintf(ew, "  %s\n", f)
+			}
+		}
+		// Reconciled index-vs-file corrections are reported unconditionally
+		// (never gated on --format): a fixer that regenerates a derived index
+		// row from its artifact file MUST say so loudly. The tool's "file
+		// wins" default is safe only because the index is derived — it is not
+		// a claim the file's prior value was correct, so silently rewriting
+		// the index would destroy the only signal that the two had diverged.
+		if fix && format == "text" && len(res.Reconciled) > 0 {
+			ew := cmd.ErrOrStderr()
+			_, _ = fmt.Fprintf(ew, "Reconciled %d index row(s) from their artifact file(s):\n", len(res.Reconciled))
+			for _, r := range res.Reconciled {
+				_, _ = fmt.Fprintf(ew, "  %s\n", r.String())
 			}
 		}
 		if err := outputLintViolations(w, violations, format); err != nil {
@@ -297,22 +310,28 @@ func writeHowToFix(w io.Writer, violations []lint.Violation) {
 }
 
 // lintFixEnvelope is the stdout shape under `--fix --format json|yaml`: a
-// single object carrying both the fixed-files report and the violations.
+// single object carrying the fixed-files report, every itemized index-vs-file
+// Reconciliation the fix pass performed, and the remaining violations.
 type lintFixEnvelope struct {
-	Fixed      []string         `json:"fixed" yaml:"fixed"`
-	Violations []lint.Violation `json:"violations" yaml:"violations"`
+	Fixed      []string              `json:"fixed" yaml:"fixed"`
+	Reconciled []lint.Reconciliation `json:"reconciled" yaml:"reconciled"`
+	Violations []lint.Violation      `json:"violations" yaml:"violations"`
 }
 
-// outputLintFixEnvelope marshals the {fixed, violations} envelope. Both arrays
-// serialize as `[]` (never `null`) when empty, matching the non-fix contract.
-func outputLintFixEnvelope(w io.Writer, fixed []string, violations []lint.Violation, format string) error {
+// outputLintFixEnvelope marshals the {fixed, reconciled, violations} envelope.
+// All three arrays serialize as `[]` (never `null`) when empty, matching the
+// non-fix contract.
+func outputLintFixEnvelope(w io.Writer, fixed []string, reconciled []lint.Reconciliation, violations []lint.Violation, format string) error {
 	if fixed == nil {
 		fixed = []string{}
+	}
+	if reconciled == nil {
+		reconciled = []lint.Reconciliation{}
 	}
 	if violations == nil {
 		violations = []lint.Violation{}
 	}
-	env := lintFixEnvelope{Fixed: fixed, Violations: violations}
+	env := lintFixEnvelope{Fixed: fixed, Reconciled: reconciled, Violations: violations}
 	switch format {
 	case "yaml":
 		enc := newYAMLEnc(w)

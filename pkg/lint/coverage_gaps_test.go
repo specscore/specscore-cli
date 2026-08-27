@@ -637,7 +637,7 @@ func TestLinterFix_AccumulatesFirstErr(t *testing.T) {
 	fixer1 := &writeErrFixer{name_: "test-fixer-1"}
 	l.ruleSet["test-fixer-1"] = fixer1
 
-	err := l.fix()
+	_, err := l.fix()
 	if err == nil {
 		t.Error("expected error from failing fixer")
 	}

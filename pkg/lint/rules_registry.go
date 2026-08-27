@@ -110,6 +110,9 @@ var builtinRules = []Rule{
 	// Feature index lint rules.
 	{ID: "feature-index-row-sync", Family: "feature-index", Severity: "error", Description: "Requires each feature index row to match its feature file."},
 
+	// Task board index lint rule.
+	{ID: "task-index-row-sync", Family: "task-index", Severity: "error", Description: "Requires each task board row's Status to match its task README's **Status:** line."},
+
 	// Sidekick-seed lint rule.
 	{ID: "sidekick-seed", Family: "sidekick", Severity: "error", Description: "Requires sidekick seed files to be well-formed."},
 

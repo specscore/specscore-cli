@@ -51,6 +51,10 @@ The command produces exactly two changes in the working tree:
 
 `task new` MUST set status to `planning`. Creating tasks in other statuses is out of scope (see [parent cli/task#req:no-lifecycle-in-mvp](../README.md#req-no-lifecycle-in-mvp)). Callers cannot override this via a flag.
 
+#### REQ: status-scaffolded
+
+The written `tasks/<slug>/README.md` MUST include a body `**Status:** planning` line immediately after its title, in the same fixed position `task change-status` expects when it later rewrites the field in place. A task created without this line can never transition through the sanctioned CLI (`task change-status` has no path that initializes an absent line — see [`cli/task/change-status`](../change-status/README.md)); this REQ is what keeps every NEW task from ever reaching that state. An existing board predating this REQ is backfilled once by [`specscore migrate`](../../spec/migrate/README.md#req-task-board-status-backfill), never by `task new` retroactively.
+
 #### REQ: atomic-board-update
 
 The command MUST acquire the board artifact's fail-fast lock before it reads the board, checks the target path, or allocates the task identity. Only after proving both board row and target path absent may it publish an exclusive durable prepared marker binding task id, target path, exact README digest, and the exact pre- and intended post-mutation board digests. It then publishes the README exclusively and commits that bound postimage through one atomic durable board transaction.
@@ -121,6 +125,14 @@ Running the command twice with the same slug exits `1` on the second run. No sta
 **Requirements:** cli/task/new#req:planning-only
 
 Every task created by this command has status `planning`. The command exposes no flag for overriding this.
+
+### AC: new-task-carries-status-line
+
+**Requirements:** [cli/task/new#req:status-scaffolded](#req-status-scaffolded)
+
+**Given** `specscore task new --task auth --title Auth`
+**When** the command completes
+**Then** `tasks/auth/README.md` contains `**Status:** planning` immediately after its title, and `specscore task change-status auth --to=queued` succeeds on the very first attempt.
 
 ## Open Questions
 

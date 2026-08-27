@@ -16,11 +16,17 @@ const migrateHint = " (run `specscore migrate` to backfill)"
 // (cli/spec/migrate): for every artifact the convention rules walk, it ensures
 // a leading frontmatter block carrying the type's canonical `format:` URL and,
 // for status-bearing types, a `status:` mirroring the body `**Status:**`; it
-// then aligns the adherence-footer URL to `format:`. It is deterministic,
-// offline, and idempotent (a conformant artifact is left byte-unchanged).
+// then aligns the adherence-footer URL to `format:`. It also backfills a
+// missing body `**Status:**` line on the flat project-root task board (see
+// migrateTaskBoardStatus) — the gap that otherwise leaves `task change-status`
+// permanently unusable on a board whose task READMEs predate that line. It is
+// deterministic, offline, and idempotent (a conformant artifact is left
+// byte-unchanged).
 //
-// Returns the spec-root-relative, slash-separated paths of the files it changed,
-// sorted.
+// Returns the spec-root-relative, slash-separated paths of the files it
+// changed, sorted — EXCEPT the task-board paths from migrateTaskBoardStatus,
+// which are returned relative to projectRoot instead, since that board lives
+// outside spec/ and has no spec-root-relative path to report.
 func Migrate(specRoot string) ([]string, error) {
 	return MigrateWithProjectRoot(lintProjectRoot("", specRoot), specRoot)
 }
@@ -62,6 +68,13 @@ func MigrateWithProjectRoot(projectRoot, specRoot string) ([]string, error) {
 			return nil, writeErr
 		}
 	}
+
+	taskBoardChanged, err := migrateTaskBoardStatus(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	changed = append(changed, taskBoardChanged...)
+
 	sort.Strings(changed)
 	return changed, nil
 }

@@ -23,6 +23,7 @@ var decisionsIndexRuleIDs = []string{
 
 type decisionsIndexChecker struct {
 	autofix bool
+	pending []Reconciliation
 }
 
 func newDecisionsIndexChecker() *decisionsIndexChecker {
@@ -33,12 +34,25 @@ func (c *decisionsIndexChecker) name() string     { return "DI-list-section-head
 func (c *decisionsIndexChecker) severity() string { return "error" }
 
 func (c *decisionsIndexChecker) check(specRoot string) ([]Violation, error) {
-	return checkDecisionsIndex(specRoot, c.autofix)
+	vs, _, err := checkDecisionsIndex(specRoot, c.autofix)
+	return vs, err
 }
 
+// fix rewrites drifted decisions-index content from each decision artifact.
+// Every DI-row-content-sync correction is recorded (see reconcile.go) so the
+// rewrite is loud, not silent — the file wins mechanically, but the fact
+// that it disagreed with the index is preserved for a human or agent to
+// notice (the index could have been the side that was actually right).
 func (c *decisionsIndexChecker) fix(specRoot string) error {
-	_, err := checkDecisionsIndex(specRoot, true)
+	_, rc, err := checkDecisionsIndex(specRoot, true)
+	c.pending = append(c.pending, rc...)
 	return err
+}
+
+func (c *decisionsIndexChecker) takeReconciliations() []Reconciliation {
+	rc := c.pending
+	c.pending = nil
+	return rc
 }
 
 // decisionsIndexRow represents one parsed row of the decisions index table.
@@ -62,22 +76,24 @@ var decisionsIndexSeparatorRe = regexp.MustCompile(
 	`^\|[-\s|]+\|$`,
 )
 
-func checkDecisionsIndex(specRoot string, fix bool) ([]Violation, error) {
+func checkDecisionsIndex(specRoot string, fix bool) ([]Violation, []Reconciliation, error) {
 	var vs []Violation
+	var reconciled []Reconciliation
 
 	decisionsDir := filepath.Join(specRoot, "decisions")
 	if info, err := os.Stat(decisionsDir); err != nil || !info.IsDir() {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Check active index
 	activeIdx := filepath.Join(decisionsDir, "README.md")
 	if _, err := os.Stat(activeIdx); err == nil {
-		v, err := checkActiveDecisionsIndex(specRoot, activeIdx, fix)
+		v, rc, err := checkActiveDecisionsIndex(specRoot, activeIdx, fix)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		vs = append(vs, v...)
+		reconciled = append(reconciled, rc...)
 	}
 
 	// Check archived index
@@ -85,21 +101,21 @@ func checkDecisionsIndex(specRoot string, fix bool) ([]Violation, error) {
 	if _, err := os.Stat(archivedIdx); err == nil {
 		v, err := checkArchivedDecisionsIndex(specRoot, archivedIdx, fix)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		vs = append(vs, v...)
 	}
 
-	return vs, nil
+	return vs, reconciled, nil
 }
 
-func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violation, error) {
+func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violation, []Reconciliation, error) {
 	var vs []Violation
 	rel, _ := filepath.Rel(specRoot, indexPath)
 
 	data, err := osReadFileDecisionIndex(indexPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	content := string(data)
 	lines := strings.Split(content, "\n")
@@ -121,7 +137,7 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 			Rule:    "DI-list-section-heading",
 			Message: "decisions index must contain a `## Decisions` section",
 		})
-		return vs, nil
+		return vs, nil, nil
 	}
 
 	// Find the table within the ## Decisions section
@@ -152,7 +168,7 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 			Rule:    "DI-index-columns",
 			Message: "decisions index table must include columns: #, Decision, Status, Date, Tags, Affected (in that order)",
 		})
-		return vs, nil
+		return vs, nil, nil
 	}
 
 	// Parse table rows
@@ -217,7 +233,7 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 	// DI-completeness: every active decision must have a row
 	decisions, err := discoverDecisionFiles(specRoot)
 	if err != nil {
-		return vs, nil
+		return vs, nil, nil
 	}
 
 	listedSet := make(map[string]bool)
@@ -235,16 +251,35 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 		}
 	}
 	var stale []string
+	var reconciled []Reconciliation
 	for i := range rows {
 		d, ok := bySlug[rows[i].slug]
 		if !ok {
 			continue
 		}
+		before := rows[i]
 		want := canonicalDecisionIndexRow(d)
-		if rows[i].title != want.title || rows[i].status != want.status || rows[i].date != want.date || rows[i].tags != want.tags || rows[i].affected != want.affected {
+		if before.title != want.title || before.status != want.status || before.date != want.date || before.tags != want.tags || before.affected != want.affected {
 			stale = append(stale, rows[i].slug)
 			if fix {
 				rows[i] = want
+				var changes []FieldChange
+				if before.title != want.title {
+					changes = append(changes, FieldChange{Field: "title", IndexValue: before.title, FileValue: want.title})
+				}
+				if before.status != want.status {
+					changes = append(changes, FieldChange{Field: "status", IndexValue: before.status, FileValue: want.status})
+				}
+				if before.date != want.date {
+					changes = append(changes, FieldChange{Field: "date", IndexValue: before.date, FileValue: want.date})
+				}
+				if before.tags != want.tags {
+					changes = append(changes, FieldChange{Field: "tags", IndexValue: before.tags, FileValue: want.tags})
+				}
+				if before.affected != want.affected {
+					changes = append(changes, FieldChange{Field: "affected", IndexValue: before.affected, FileValue: want.affected})
+				}
+				reconciled = append(reconciled, Reconciliation{Rule: "DI-row-content-sync", Artifact: before.slug, Changes: changes})
 			}
 		}
 	}
@@ -256,6 +291,7 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 		fresh, readErr := osReadFileDecisionIndex(indexPath)
 		if readErr != nil || rewriteDecisionsIndexTable(indexPath, strings.Split(string(fresh), "\n"), decisionsHeadingLine, rows) != nil {
 			vs = append(vs, Violation{File: rel, Line: 0, Severity: "error", Rule: "DI-row-content-sync", Message: "active decisions index rows drifted from decision artifacts (fix failed)"})
+			reconciled = nil
 		}
 	}
 
@@ -308,7 +344,7 @@ func checkActiveDecisionsIndex(specRoot, indexPath string, fix bool) ([]Violatio
 		}
 	}
 
-	return vs, nil
+	return vs, reconciled, nil
 }
 
 func canonicalDecisionIndexRow(d *parsedDecision) decisionsIndexRow {

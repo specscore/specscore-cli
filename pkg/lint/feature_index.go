@@ -15,7 +15,9 @@ import (
 // in report mode from `check()`, once in mutation mode from `fix()` —
 // matching the `checker` / `fixer` split used by every other rule in
 // this package.
-type featureIndexChecker struct{}
+type featureIndexChecker struct {
+	pending []Reconciliation
+}
 
 func newFeatureIndexChecker() *featureIndexChecker {
 	return &featureIndexChecker{}
@@ -25,7 +27,7 @@ func (c *featureIndexChecker) name() string     { return "feature-index-row-sync
 func (c *featureIndexChecker) severity() string { return "error" }
 
 func (c *featureIndexChecker) check(specRoot string) ([]Violation, error) {
-	vs, _ := featureIndexRules(specRoot, false)
+	vs, _, _ := featureIndexRules(specRoot, false)
 	return vs, nil
 }
 
@@ -33,10 +35,19 @@ func (c *featureIndexChecker) check(specRoot string) ([]Violation, error) {
 // the features-index to match each feature README. The check
 // pass that follows reports zero violations because the rewrite is
 // complete; idempotency is satisfied because the second pass finds no
-// drift to rewrite.
+// drift to rewrite. Every drifted cell is also recorded as a Reconciliation
+// (see reconcile.go) so the rewrite is loud, not silent — the file wins
+// mechanically, but the fact that it disagreed with the index is preserved.
 func (c *featureIndexChecker) fix(specRoot string) error {
-	_, _ = featureIndexRules(specRoot, true)
+	_, _, rc := featureIndexRules(specRoot, true)
+	c.pending = append(c.pending, rc...)
 	return nil
+}
+
+func (c *featureIndexChecker) takeReconciliations() []Reconciliation {
+	rc := c.pending
+	c.pending = nil
+	return rc
 }
 
 // featureIndexRules enforces:
@@ -52,24 +63,26 @@ func (c *featureIndexChecker) fix(specRoot string) error {
 // are sub-features and are NOT listed in the features-index).
 //
 // What --fix does: rewrites the derived cells in the index row to match the
-// feature README. Other schema-specific cells remain untouched.
-func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
+// feature README. Other schema-specific cells remain untouched. Every
+// rewritten row is also returned as a Reconciliation (see reconcile.go) so
+// the correction is loud rather than silent.
+func featureIndexRules(specRoot string, fix bool) ([]Violation, bool, []Reconciliation) {
 	var vs []Violation
 	fixed := false
 
 	featuresDir := filepath.Join(specRoot, "features")
 	if info, err := os.Stat(featuresDir); err != nil || !info.IsDir() {
-		return nil, false
+		return nil, false, nil
 	}
 
 	indexPath := filepath.Join(featuresDir, "README.md")
 	if _, err := os.Stat(indexPath); err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	rows, err := readFeatureIndexRows(indexPath)
 	if err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	type drift struct {
@@ -127,7 +140,7 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 	}
 
 	if len(drifts) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	rel, _ := filepath.Rel(specRoot, indexPath)
@@ -138,7 +151,25 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 			updates[d.slug] = d.want
 		}
 		if err := rewriteFeatureIndexRows(indexPath, updates); err == nil {
-			return nil, true
+			sort.Slice(drifts, func(i, j int) bool { return drifts[i].slug < drifts[j].slug })
+			reconciled := make([]Reconciliation, 0, len(drifts))
+			for _, d := range drifts {
+				var changes []FieldChange
+				if d.actual.title != d.want.title {
+					changes = append(changes, FieldChange{Field: "title", IndexValue: d.actual.title, FileValue: d.want.title})
+				}
+				if d.actual.status != d.want.status {
+					changes = append(changes, FieldChange{Field: "status", IndexValue: d.actual.status, FileValue: d.want.status})
+				}
+				if d.actual.summary != d.want.summary {
+					changes = append(changes, FieldChange{Field: "summary", IndexValue: d.actual.summary, FileValue: d.want.summary})
+				}
+				if len(changes) == 0 {
+					continue
+				}
+				reconciled = append(reconciled, Reconciliation{Rule: "feature-index-row-sync", Artifact: d.slug, Changes: changes})
+			}
+			return nil, true, reconciled
 		}
 		// Fall through to reporting if the rewrite failed.
 		slugs := make([]string, 0, len(drifts))
@@ -151,7 +182,7 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 			Rule:    "feature-index-row-sync",
 			Message: fmt.Sprintf("features-index rows drifted from feature READMEs: %s (fix failed)", strings.Join(slugs, ", ")),
 		})
-		return vs, false
+		return vs, false, nil
 	}
 
 	sort.Slice(drifts, func(i, j int) bool { return drifts[i].slug < drifts[j].slug })
@@ -162,7 +193,7 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool) {
 			Message: fmt.Sprintf("features-index row for %q is stale (title/status/summary) (run `specscore spec lint --fix`)", d.slug),
 		})
 	}
-	return vs, fixed
+	return vs, fixed, nil
 }
 
 // featureIndexRow captures one parsed top-level row of the features

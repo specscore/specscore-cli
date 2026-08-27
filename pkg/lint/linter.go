@@ -92,6 +92,11 @@ func newLinter(opts Options) *linter {
 	// Register feature-index checker (feature-index-row-sync).
 	l.registerChecker(newFeatureIndexChecker())
 
+	// Register task-index checker (task-index-row-sync) — the flat
+	// project-root tasks/README.md board, which lives outside spec/, so it
+	// needs projectRoot rather than deriving everything from specRoot.
+	l.registerChecker(newTaskIndexChecker(projectRoot))
+
 	// Register sidekick-seed checker.
 	l.registerChecker(newSidekickSeedChecker())
 
@@ -205,7 +210,10 @@ func (l *linter) isRuleEnabled(ruleName string) bool {
 // fix invokes every enabled checker that implements the fixer interface,
 // mutating the spec tree to resolve the violations those checkers report.
 // Fix failures are aggregated but do not stop subsequent fixers from running.
-func (l *linter) fix() error {
+// It also collects every Reconciliation reported by a fixer that rewrote a
+// derived index row from an artifact file (see reconciler) — this is the
+// mechanism that keeps such rewrites loud rather than silent.
+func (l *linter) fix() ([]Reconciliation, error) {
 	// checker -> the rule names it is registered under.
 	ruleNamesByChecker := map[checker][]string{}
 	for ruleName, c := range l.ruleSet {
@@ -215,6 +223,7 @@ func (l *linter) fix() error {
 
 	seen := make(map[checker]bool)
 	var firstErr error
+	var reconciled []Reconciliation
 	for _, c := range l.ruleSet {
 		if seen[c] {
 			continue
@@ -253,8 +262,11 @@ func (l *linter) fix() error {
 		if err := f.fix(l.opts.SpecRoot); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("fixer %s: %v", c.name(), err)
 		}
+		if rc, ok := c.(reconciler); ok {
+			reconciled = append(reconciled, rc.takeReconciliations()...)
+		}
 	}
-	return firstErr
+	return reconciled, firstErr
 }
 
 // lint runs all enabled checkers and returns violations.
