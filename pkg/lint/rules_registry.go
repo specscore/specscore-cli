@@ -76,6 +76,7 @@ var builtinRules = []Rule{
 	{ID: "studio-toolbar", Family: "core", Severity: "error", Description: "Requires the SpecStudio toolbar block on managed documents."},
 	{ID: "dogfood-version-bump", Family: "core", Severity: "warning", Description: "Warns when a workflow pins a stale specscore CLI version."},
 	{ID: "config-user-scoped-key", Family: "core", Severity: "error", Description: "Rejects user-scoped keys in the project-scoped config file."},
+	{ID: "lifecycle-lock-committed", Family: "core", Severity: "error", Description: "Rejects a committed per-artifact lifecycle-transaction lock file; these are zero-byte flock identities that must stay untracked."},
 
 	// Idea lint rules.
 	{ID: "idea-location", Family: "idea", Severity: "error", Description: "Requires idea files to live under spec/ideas/."},
