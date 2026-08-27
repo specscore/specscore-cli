@@ -81,6 +81,7 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(newImplementsReferenceChecker())
 	l.registerChecker(newImplementationMatrixChecker())
 	l.registerChecker(newOtherPlatformsChecker())
+	l.registerChecker(newLifecycleLockLitterChecker())
 
 	// Register idea checker under every idea-* rule name.
 	ic := newIdeaChecker()

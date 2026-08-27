@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 167
+Total rules: 168
 
 ## capability
 
@@ -20,6 +20,7 @@ Total rules: 167
 | config-user-scoped-key | error | Rejects user-scoped keys in the project-scoped config file. |
 | dogfood-version-bump | warning | Warns when a workflow pins a stale specscore CLI version. |
 | index-entries | error | Requires index README files to list every child entry. |
+| lifecycle-lock-committed | error | Rejects a committed per-artifact lifecycle-transaction lock file; these are zero-byte flock identities that must stay untracked. |
 | oq-not-empty | error | Warns when the Open Questions section is empty. |
 | oq-section | error | Requires an Open Questions section in feature README files. |
 | plan-hierarchy | error | Requires plan tasks to form a valid hierarchy. |
