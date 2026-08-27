@@ -102,7 +102,7 @@ jobs:
 
   release:
     needs: release-artifact-smoke-darwin-arm64
-    uses: strongo/cicd/.github/workflows/release.yml@v1
+    uses: strongo/cicd/.github/workflows/release.yml@main
     permissions:
       contents: write
     with:
