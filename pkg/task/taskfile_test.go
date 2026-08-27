@@ -105,6 +105,26 @@ func TestTaskFileParse_NoStatusLineIsBackwardCompatible(t *testing.T) {
 	}
 }
 
+// TestTaskFileParse_StatusLineDirectlyBeforeDependencies covers the case
+// where the **Status:** line is immediately followed by "## Dependencies"
+// with no blank-line description in between. strings.Split's "\n## "
+// delimiter consumes the newline that would otherwise separate the Status
+// line from the next content, so parts[0] here has NO internal newline at
+// all — the nl<0 branch in the Status-line extraction.
+func TestTaskFileParse_StatusLineDirectlyBeforeDependencies(t *testing.T) {
+	md := "# Bare Task\n**Status:** planning\n## Dependencies\n\nNone\n\n## Summary\n\nNone\n"
+	parsed, err := ParseTaskFile([]byte(md))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if parsed.Status != "planning" {
+		t.Errorf("status: got %q, want %q", parsed.Status, "planning")
+	}
+	if parsed.Description != "" {
+		t.Errorf("description: got %q, want empty", parsed.Description)
+	}
+}
+
 func TestTaskFileParseNoneDepsAndSummary(t *testing.T) {
 	md := "# My Task\n\nSome description.\n\n## Dependencies\n\nNone\n\n## Summary\n\nNone\n"
 	parsed, err := ParseTaskFile([]byte(md))

@@ -113,6 +113,52 @@ func TestTaskIndex_DriftReportedAndFixed(t *testing.T) {
 	}
 }
 
+// TestTaskIndex_MultipleDriftsAreSortedBySlug proves ordering is
+// deterministic across more than one drifted row (exercising the sort.Slice
+// comparator, which a single-drift fixture never invokes).
+func TestTaskIndex_MultipleDriftsAreSortedBySlug(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{})
+	projectRoot := writeTaskBoard(t, specRoot, map[string]string{
+		"README.md":       taskBoard([2]string{"zeta", "planning"}, [2]string{"alpha", "planning"}),
+		"zeta/README.md":  taskReadmeWithStatus("Zeta", "queued"),
+		"alpha/README.md": taskReadmeWithStatus("Alpha", "in_progress"),
+	})
+	vs, _, _ := taskIndexRules(projectRoot, specRoot, false)
+	if len(vs) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].Message, `"alpha"`) || !strings.Contains(vs[1].Message, `"zeta"`) {
+		t.Fatalf("expected violations sorted by slug (alpha, zeta), got %+v", vs)
+	}
+
+	_, fixed, rc := taskIndexRules(projectRoot, specRoot, true)
+	if !fixed || len(rc) != 2 {
+		t.Fatalf("expected a clean fix with 2 reconciliations, got fixed=%v rc=%+v", fixed, rc)
+	}
+	if rc[0].Artifact != "alpha" || rc[1].Artifact != "zeta" {
+		t.Fatalf("expected reconciliations sorted by slug (alpha, zeta), got %+v", rc)
+	}
+}
+
+// TestTaskIndex_RelPathFallback covers filepath.Rel failing to compute the
+// board's path relative to specRoot (an absolute boardPath against an empty
+// specRoot) — the reported File falls back to the absolute board path rather
+// than erroring the rule out.
+func TestTaskIndex_RelPathFallback(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{})
+	projectRoot := writeTaskBoard(t, specRoot, map[string]string{
+		"README.md":      taskBoard([2]string{"auth", "planning"}),
+		"auth/README.md": taskReadmeWithStatus("Auth", "queued"),
+	})
+	vs, _, _ := taskIndexRules(projectRoot, "", false)
+	if len(vs) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %+v", len(vs), vs)
+	}
+	if vs[0].File != filepath.Join(projectRoot, "tasks", "README.md") {
+		t.Fatalf("expected the fallback to the absolute board path, got %q", vs[0].File)
+	}
+}
+
 // TestTaskIndex_UnmigratedTaskIsSkipped proves a task file with no
 // **Status:** line at all (not yet migrated) is left alone by this rule —
 // that gap is specscore migrate's job, never task-index-row-sync's, so it
@@ -250,6 +296,38 @@ func TestTaskIndex_MalformedRowIsSkippedDuringRewrite(t *testing.T) {
 func TestRewriteTaskBoardRows_ReadError(t *testing.T) {
 	if err := rewriteTaskBoardRows(filepath.Join(t.TempDir(), "does-not-exist.md"), map[string]string{"auth": "queued"}); err == nil {
 		t.Fatal("expected a read error for a nonexistent board")
+	}
+}
+
+// TestRewriteTaskBoardRows_UnrelatedRowLeftAlone proves a well-formed row
+// whose slug is not in updates is skipped (not just a malformed one), and
+// that an updates map naming no slug present in the board is a true no-op
+// (the final !changed early return).
+func TestRewriteTaskBoardRows_UnrelatedRowLeftAlone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	content := taskBoard([2]string{"auth", "queued"}, [2]string{"billing", "planning"})
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteTaskBoardRows(path, map[string]string{"auth": "in_progress"}); err != nil {
+		t.Fatal(err)
+	}
+	got := readFile(t, path)
+	if !strings.Contains(got, "`in_progress`") {
+		t.Fatalf("targeted row not rewritten:\n%s", got)
+	}
+	if !strings.Contains(got, "`planning`") {
+		t.Fatalf("unrelated row must be left alone:\n%s", got)
+	}
+
+	// No matching slug at all: byte-for-byte no-op.
+	before := readFile(t, path)
+	if err := rewriteTaskBoardRows(path, map[string]string{"does-not-exist": "queued"}); err != nil {
+		t.Fatal(err)
+	}
+	if after := readFile(t, path); after != before {
+		t.Fatalf("expected a no-op write when no slug matches:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 

@@ -86,9 +86,10 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool, []Reconcil
 	}
 
 	type drift struct {
-		slug         string
-		actual, want featureIndexValue
-		lineNum      int
+		slug           string
+		actual, want   featureIndexValue
+		hasDescription bool
+		lineNum        int
 	}
 	var drifts []drift
 	for _, r := range rows {
@@ -134,7 +135,8 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool, []Reconcil
 		}
 		if r.title != want.title || r.status != want.status || (r.hasDescription && r.summary != want.summary) {
 			drifts = append(drifts, drift{
-				slug: r.slug, actual: featureIndexValue{title: r.title, status: r.status, summary: r.summary}, want: want, lineNum: r.lineNum,
+				slug: r.slug, actual: featureIndexValue{title: r.title, status: r.status, summary: r.summary}, want: want,
+				hasDescription: r.hasDescription, lineNum: r.lineNum,
 			})
 		}
 	}
@@ -161,11 +163,15 @@ func featureIndexRules(specRoot string, fix bool) ([]Violation, bool, []Reconcil
 				if d.actual.status != d.want.status {
 					changes = append(changes, FieldChange{Field: "status", IndexValue: d.actual.status, FileValue: d.want.status})
 				}
-				if d.actual.summary != d.want.summary {
+				// Mirror the drift-detection guard exactly: rewriteFeatureIndexRows
+				// only ever writes the Description cell when the table declares
+				// one (schema.descriptionColumn >= 0, i.e. r.hasDescription).
+				// Without that guard here, a row with no Description column but a
+				// feature file that DOES have a parsed Summary would report a
+				// "summary changed" reconciliation for a cell that was never
+				// actually written to disk.
+				if d.hasDescription && d.actual.summary != d.want.summary {
 					changes = append(changes, FieldChange{Field: "summary", IndexValue: d.actual.summary, FileValue: d.want.summary})
-				}
-				if len(changes) == 0 {
-					continue
 				}
 				reconciled = append(reconciled, Reconciliation{Rule: "feature-index-row-sync", Artifact: d.slug, Changes: changes})
 			}

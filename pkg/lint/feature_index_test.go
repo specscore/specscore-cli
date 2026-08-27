@@ -214,7 +214,7 @@ func TestFeatureIndex_FixPreservesTailCellsWithoutDescription(t *testing.T) {
 		"features/auth/README.md": "# Feature: Competios Discovery\n\n**Status:** Approved\n\n## Summary\n\nLists public competitions.\n",
 	})
 
-	vs, fixed, _ := featureIndexRules(specRoot, true)
+	vs, fixed, rc := featureIndexRules(specRoot, true)
 	if !fixed || len(vs) != 0 {
 		t.Fatalf("fix = (%v, %+v)", fixed, vs)
 	}
@@ -228,6 +228,18 @@ func TestFeatureIndex_FixPreservesTailCellsWithoutDescription(t *testing.T) {
 	}
 	if strings.Contains(body, "Lists public competitions.") {
 		t.Fatalf("summary must not overwrite a non-Description tail cell:\n%s", body)
+	}
+	// The table has no Description column, so the parsed Summary
+	// ("Lists public competitions.") was never written — the reconciliation
+	// report must not claim a "summary" field changed for a cell that was
+	// never actually touched on disk.
+	if len(rc) != 1 {
+		t.Fatalf("expected exactly 1 reconciliation, got %d: %+v", len(rc), rc)
+	}
+	for _, c := range rc[0].Changes {
+		if c.Field == "summary" {
+			t.Fatalf("reconciliation must not report a summary change with no Description column: %+v", rc[0])
+		}
 	}
 }
 

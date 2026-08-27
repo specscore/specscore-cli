@@ -224,6 +224,24 @@ func TestMigrate_TaskBoardStatusLeavesOrphanAndExistingLineAlone(t *testing.T) {
 // (task.ParseBoard fails) surfaces as a hard Migrate error rather than being
 // silently skipped, matching migrateArtifact's error-propagation convention
 // for a genuinely unreadable structure.
+// TestMigrate_TaskBoardNoBoardFileIsSkipped covers a tasks/ directory that
+// exists but has no README.md board at all — nothing to source a value from,
+// so migrate leaves it alone rather than erroring.
+func TestMigrate_TaskBoardNoBoardFileIsSkipped(t *testing.T) {
+	specRoot := writeSpec(t, map[string]string{})
+	projectRoot := filepath.Dir(specRoot)
+	if err := os.MkdirAll(filepath.Join(projectRoot, "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := MigrateWithProjectRoot(projectRoot, specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("expected no-op with no board file, got %v", changed)
+	}
+}
+
 func TestMigrate_TaskBoardParseErrorIsReturned(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{})
 	projectRoot := writeTaskBoard(t, specRoot, map[string]string{
@@ -273,6 +291,15 @@ func TestMigrate_TaskBoardTitleNotRecognizedIsSkipped(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(projectRoot, "tasks", "auth", "README.md")); got != "Not a title line at all.\n" {
 		t.Fatalf("file must be byte-unchanged, got:\n%s", got)
+	}
+}
+
+// TestInsertTaskBodyStatus_NoTrailingNewlineIsRejected covers a title line
+// with no trailing newline at all (a single-line file) — insertTaskBodyStatus
+// refuses to guess where the title ends rather than corrupting the file.
+func TestInsertTaskBodyStatus_NoTrailingNewlineIsRejected(t *testing.T) {
+	if _, ok := insertTaskBodyStatus([]byte("# Title, no newline at all"), "queued"); ok {
+		t.Fatal("expected insertTaskBodyStatus to reject a title line with no trailing newline")
 	}
 }
 
