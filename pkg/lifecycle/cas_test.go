@@ -1,12 +1,16 @@
 package lifecycle
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type failingArtifactLock struct{ err error }
@@ -647,4 +651,110 @@ func TestRewrite_LockFaultLeavesArtifactUntouched(t *testing.T) {
 	if got, _ := os.ReadFile(p); !bytes.Equal(got, before) {
 		t.Fatalf("lock fault wrote %q", got)
 	}
+}
+
+// TestAcquireArtifactLock_RecoversAfterHolderProcessIsKilled exercises the
+// actually-interrupted case, not just a successful run: a real child process
+// acquires the per-artifact lock and is then SIGKILLed (no defer, no
+// cleanup code of any kind runs in it), simulating an agent process killed
+// mid-transaction.
+//
+// The guarantee under test: acquireArtifactLock's mutual exclusion is a pure
+// OS-level flock(2)/LockFileEx advisory lock, scoped to the holder's open
+// file description. The kernel releases it unconditionally the instant that
+// process's descriptors are closed — which happens on ANY process exit,
+// including a SIGKILL that runs no Go code at all. So a later invocation on
+// the same artifact must be able to re-acquire the lock and proceed with no
+// staleness heuristic in this package and no human deleting the lock file.
+//
+// What this does NOT prove: that the lock *file* is ever removed. It isn't,
+// on success or on failure — see LifecycleTransactionLockIgnorePattern in
+// pkg/config/gitignore.go for why deleting it would reopen a delete-and-
+// recreate race across concurrent CLI processes on the same path. This test
+// only proves the lock stops blocking new work after its holder dies; a
+// happy-path-only test could not distinguish "recovers automatically" from
+// "would hang forever waiting for a lock nobody will ever release".
+func TestAcquireArtifactLock_RecoversAfterHolderProcessIsKilled(t *testing.T) {
+	if os.Getenv("SPECSCORE_TEST_LOCK_HOLDER") == "1" {
+		runLockHolderHelperProcess()
+		return
+	}
+
+	dir := t.TempDir()
+	artifact := filepath.Join(dir, "widget.md")
+	if err := os.WriteFile(artifact, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestAcquireArtifactLock_RecoversAfterHolderProcessIsKilled$")
+	cmd.Env = append(os.Environ(),
+		"SPECSCORE_TEST_LOCK_HOLDER=1",
+		"SPECSCORE_TEST_LOCK_PATH="+artifact,
+	)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start lock-holder helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	ready := bufio.NewReader(stdout)
+	line, err := ready.ReadString('\n')
+	if err != nil || strings.TrimSpace(line) != "locked" {
+		t.Fatalf("lock-holder helper did not report ready: line=%q err=%v stderr=%s", line, err, stderr.String())
+	}
+
+	// Contention: the artifact is genuinely locked while the holder is alive.
+	if _, err := acquireArtifactLock(artifact); !errors.Is(err, ErrConcurrentMutation) {
+		t.Fatalf("expected ErrConcurrentMutation while the holder is alive, got %v", err)
+	}
+
+	// Kill it exactly like an OOM-killed or force-stopped agent process: no
+	// signal handler, no deferred lock.Unlock(), nothing.
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill lock-holder helper: %v", err)
+	}
+	_ = cmd.Wait()
+
+	// The interrupted-run guarantee: a subsequent run recovers on its own.
+	lock, err := acquireArtifactLock(artifact)
+	if err != nil {
+		t.Fatalf("expected the lock to be acquirable after its holder was killed (no human cleanup should be required), got %v", err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	// The lock file's identity persists across the crash by design (see the
+	// doc comment above) — confirm it is still exactly where old and new
+	// processes both expect to contend on it.
+	lockPath := filepath.Join(dir, ".widget.md.lifecycle-transaction.lock")
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected the lock file to still exist after recovery, got %v", err)
+	}
+}
+
+// runLockHolderHelperProcess is the child body for
+// TestAcquireArtifactLock_RecoversAfterHolderProcessIsKilled. It is only
+// entered by the separately executed test binary (guarded by
+// SPECSCORE_TEST_LOCK_HOLDER) and never returns on its own: the parent
+// SIGKILLs it once it has confirmed the lock is held.
+func runLockHolderHelperProcess() {
+	path := os.Getenv("SPECSCORE_TEST_LOCK_PATH")
+	lock, err := acquireArtifactLock(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lock-holder helper: acquire failed:", err)
+		os.Exit(1)
+	}
+	_ = lock
+	fmt.Println("locked")
+	// Block without ever reaching a deferred Unlock — the parent kills this
+	// process. time.Sleep (rather than an empty select{}) avoids tripping
+	// the Go runtime's own all-goroutines-asleep deadlock detector.
+	time.Sleep(time.Hour)
 }

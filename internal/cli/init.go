@@ -44,7 +44,12 @@ and infers project metadata from git remote / cwd / flags.
 
 Refuses to clobber an existing specscore.yaml unless --force.
 Idempotent on partial state — completes missing pieces without
-erroring on what's already there.`,
+erroring on what's already there. Safe to re-run on an already-
+initialized project: it only fills in what init itself scaffolds
+(e.g. the .gitignore entries for specscore.local.yaml and the
+per-artifact *.lifecycle-transaction.lock files), so a project
+initialized before one of those entries existed picks it up by
+re-running init — no other files are touched.`,
 		Args: cobra.NoArgs,
 		RunE: runInit,
 	}
