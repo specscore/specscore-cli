@@ -47,7 +47,7 @@ func TestReleaseCallerDefersCaskInstallSmokeUntilNotarization(t *testing.T) {
 	}
 	workflowText := string(workflow)
 	for _, required := range []string{
-		"uses: strongo/cicd/.github/workflows/release.yml@v1",
+		"uses: strongo/cicd/.github/workflows/release.yml@main",
 		"release-artifact-smoke-darwin-arm64:",
 		"artifact_smoke_test_homebrew_cask: false",
 	} {

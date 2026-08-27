@@ -77,7 +77,7 @@ jobs:
           # toolchain; the action's default is a v1 build that fails to run
           # against this Go version (the reason this step was previously
           # non-blocking). Blocking again now that the backlog is zero.
-          version: v2.11.3
+          version: v2.13.1
 
       - name: go build
         run: go build ./...
