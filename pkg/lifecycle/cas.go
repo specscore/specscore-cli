@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/gofrs/flock"
 )
@@ -143,6 +146,46 @@ type artifactLock interface {
 	Unlock() error
 }
 
+// artifactTransactionLock owns both the project lock and the per-artifact
+// lock. The project lock serializes unlinking the per-artifact pathname with
+// the next acquisition, so clean transactions can remove their zero-byte
+// identity without opening a delete-and-recreate race. The project lock's
+// stable pathname is retained for crash recovery; the artifact lock is
+// removed only after its OS lock has been released.
+type artifactTransactionLock struct {
+	project      artifactLock
+	artifact     artifactLock
+	artifactPath string
+	remove       func(string) error
+	processState *lifecycleProcessLockState
+	once         sync.Once
+	unlockErr    error
+}
+
+func (l *artifactTransactionLock) TryLock() (bool, error) {
+	return false, errors.New("lifecycle: transaction lock cannot be reacquired")
+}
+
+func (l *artifactTransactionLock) Unlock() error {
+	l.once.Do(func() {
+		var errs []error
+		if err := l.artifact.Unlock(); err != nil {
+			errs = append(errs, err)
+		} else if err := l.remove(l.artifactPath); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("removing lifecycle transaction lock %s: %w", l.artifactPath, err))
+		}
+		if err := l.project.Unlock(); err != nil {
+			errs = append(errs, err)
+		}
+		l.processState.mu.Lock()
+		l.processState.active.Delete(l.artifactPath)
+		l.processState.mu.Unlock()
+		l.processState.gate <- struct{}{}
+		l.unlockErr = errors.Join(errs...)
+	})
+	return l.unlockErr
+}
+
 func newFlockArtifactLock(path string) artifactLock { return flock.New(path) }
 
 func acquireArtifactLock(path string) (artifactLock, error) {
@@ -150,13 +193,125 @@ func acquireArtifactLock(path string) (artifactLock, error) {
 }
 
 func acquireArtifactLockWithOps(path string, ops artifactTransactionOps) (artifactLock, error) {
-	lock := ops.newLock(filepath.Join(dirOf(path), "."+filepath.Base(path)+".lifecycle-transaction.lock"))
-	locked, err := lock.TryLock()
+	artifactPath := filepath.Join(dirOf(path), "."+filepath.Base(path)+".lifecycle-transaction.lock")
+	projectPath := filepath.Join(lifecycleLockRoot(path), ".specscore-lifecycle.lock")
+	// Some Unix implementations scope flock contention differently for
+	// independent descriptors in one process. A process guard makes the
+	// cross-artifact serialization contract deterministic there as well as
+	// across processes (where projectPath's flock is authoritative). Return
+	// immediately for a same-process re-entry on the same artifact: callers
+	// rely on the bounded ErrConcurrentMutation result rather than a deadlock.
+	processState := &lifecycleProcessState
+	processState.mu.Lock()
+	if processState.active.Contains(artifactPath) {
+		processState.mu.Unlock()
+		return nil, ErrConcurrentMutation
+	}
+	processState.mu.Unlock()
+	<-processState.gate
+	projectLock := ops.newLock(projectPath)
+	locked, err := projectLock.TryLock()
 	if err != nil {
+		processState.gate <- struct{}{}
 		return nil, err
 	}
 	if !locked {
+		processState.gate <- struct{}{}
 		return nil, ErrConcurrentMutation
 	}
-	return lock, nil
+
+	artifactLock := ops.newLock(artifactPath)
+	locked, err = artifactLock.TryLock()
+	if err != nil {
+		_ = projectLock.Unlock()
+		processState.gate <- struct{}{}
+		return nil, err
+	}
+	if !locked {
+		_ = projectLock.Unlock()
+		processState.gate <- struct{}{}
+		return nil, ErrConcurrentMutation
+	}
+	processState.mu.Lock()
+	processState.active.Add(artifactPath)
+	processState.mu.Unlock()
+	return &artifactTransactionLock{
+		project:      projectLock,
+		artifact:     artifactLock,
+		artifactPath: artifactPath,
+		remove:       ops.remove,
+		processState: processState,
+	}, nil
+}
+
+type lifecycleProcessLockState struct {
+	mu     sync.Mutex
+	active lifecycleArtifactPathSet
+	gate   chan struct{}
+}
+
+type lifecycleArtifactPathSet map[string]struct{}
+
+func (s lifecycleArtifactPathSet) Contains(path string) bool {
+	_, ok := s[path]
+	return ok
+}
+
+func (s lifecycleArtifactPathSet) Add(path string) {
+	s[path] = struct{}{}
+}
+
+func (s lifecycleArtifactPathSet) Delete(path string) {
+	delete(s, path)
+}
+
+var lifecycleProcessState = lifecycleProcessLockState{
+	active: make(lifecycleArtifactPathSet),
+	gate:   lifecycleProcessGate(),
+}
+
+func lifecycleProcessGate() chan struct{} {
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	return gate
+}
+
+// lifecycleLockRoot returns the nearest project or staged-transaction root.
+// A staged tree may be nested inside a project that already holds its stable
+// project lock, so choosing the nearest root keeps nested artifact writes
+// independent while live-project writers still coordinate through the same
+// .specscore-lifecycle.lock pathname.
+func lifecycleLockRoot(path string) string {
+	abs, err := lifecycleLockAbs(path)
+	if err != nil {
+		return dirOf(path)
+	}
+	dir := filepath.Dir(abs)
+	for {
+		base := filepath.Base(dir)
+		if strings.HasPrefix(base, ".specscore-txn-") {
+			return dir
+		}
+		// Test fixtures and partially initialized projects may have no git
+		// metadata or specscore.yaml yet. The conventional spec/ boundary is
+		// still enough to keep one stable project fence above every artifact.
+		if base == "spec" {
+			return filepath.Dir(dir)
+		}
+		if fileOrDirExists(filepath.Join(dir, "specscore.yaml")) || fileOrDirExists(filepath.Join(dir, ".git")) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Dir(abs)
+		}
+		dir = parent
+	}
+}
+
+var lifecycleLockAbs = filepath.Abs
+
+func fileOrDirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

@@ -17,21 +17,20 @@ import (
 //
 // pkg/lifecycle.TransformArtifact (used by every artifact-mutating command,
 // including `specscore spec lint --fix`) acquires an flock on a sibling file
-// named ".<artifact>.lifecycle-transaction.lock" and deliberately never
-// removes it — see config.LifecycleTransactionLockIgnorePattern. The file
-// stays next to its artifact forever, by design, so an old and a new CLI
-// process always contend on the same lock path. That is harmless as long as
-// the file stays untracked: config.EnsureLocalGitignored writes the required
+// named ".<artifact>.lifecycle-transaction.lock". Clean transactions remove
+// it while holding the stable project lock; an interrupted transaction may
+// leave it behind for the next run to reclaim safely. That is harmless as long
+// as the file stays untracked: config.EnsureLocalGitignored writes the required
 // ignore pattern during `specscore init`, but nothing re-checks it on later
 // commands, so a repo initialized before that pattern existed (or one where
-// .gitignore drifted) can have a `git add -A`/`git add .` sweep these zero-
-// byte lock files into a commit. That is exactly what happened to
+// .gitignore drifted) can have a `git add -A`/`git add .` sweep these zero-byte
+// lock files into a commit. That is exactly what happened to
 // sneat-co/backstage on 2026-08-26 (90 files landed by a `lint --fix` sync
 // commit). This rule makes that failure mode fail lint/CI instead of landing
 // silently.
 //
-// Untracked instances are expected, permanent, harmless disk state and are
-// never reported — only a committed one is a defect.
+// Untracked crash leftovers are expected, harmless disk state and are never
+// reported — only a committed one is a defect.
 type lifecycleLockLitterChecker struct {
 	isTracked func(repoRoot, relPath string) (bool, error)
 }

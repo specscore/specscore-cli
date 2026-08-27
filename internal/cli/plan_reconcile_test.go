@@ -130,6 +130,9 @@ func TestPlanReconcile_HappyPath_CLI(t *testing.T) {
 			t.Errorf("unexpected lint error after reconcile: %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message)
 		}
 	}
+	if locks := transactionLockFiles(t, filepath.Join(root, "spec")); len(locks) != 0 {
+		t.Fatalf("successful plan reconcile left transaction-lock artifacts: %v", locks)
+	}
 }
 
 func TestPlanReconcile_TreeTransactionPublishesDeclaredPlanChanges(t *testing.T) {
@@ -178,6 +181,9 @@ func TestPlanReconcile_TreeTransactionValidationCreatesNoRecoveryState(t *testin
 		if entry.Name() == ".specscore-recovery" || strings.HasPrefix(entry.Name(), ".specscore-txn-") {
 			t.Fatalf("validation refusal created recovery state: %s", entry.Name())
 		}
+	}
+	if locks := transactionLockFiles(t, filepath.Join(root, "spec")); len(locks) != 0 {
+		t.Fatalf("failed plan reconcile left transaction-lock artifacts: %v", locks)
 	}
 }
 

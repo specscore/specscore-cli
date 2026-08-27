@@ -420,6 +420,9 @@ func TestFeatureChangeStatus_AlreadyAtTargetRejected(t *testing.T) {
 	if got := readAuthStatus(t, root); got != "Approved" {
 		t.Errorf("file mutated unexpectedly: got %q, want Approved", got)
 	}
+	if locks := transactionLockFiles(t, filepath.Join(root, "spec")); len(locks) != 0 {
+		t.Fatalf("idempotent feature transition left transaction-lock artifacts: %v", locks)
+	}
 }
 
 // AC: unrecognized-to-value-rejected — --to=banana exits 2 BEFORE the

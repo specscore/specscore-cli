@@ -14,10 +14,17 @@ var (
 	writeFileFn = os.WriteFile
 )
 
-// LifecycleTransactionLockIgnorePattern keeps persistent flock identity files
-// out of source control. The files deliberately remain next to the artifacts
-// they protect so old and new CLI processes contend on the same lock.
+// LifecycleTransactionLockIgnorePattern keeps crash-leftover flock identity
+// files out of source control. Clean transactions remove their per-artifact
+// lock after the stable project lock has serialized cleanup; an interrupted
+// process can still leave one behind for the next run to reclaim safely.
 const LifecycleTransactionLockIgnorePattern = "**/.*.lifecycle-transaction.lock"
+
+// LifecycleProjectLockIgnorePattern keeps the stable cross-process lifecycle
+// fence out of source control. It is intentionally retained after a clean
+// release so an interrupted process can be distinguished from a missing lock
+// identity without relying on pathname creation races.
+const LifecycleProjectLockIgnorePattern = ".specscore-lifecycle.lock"
 
 func runGit(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
@@ -78,7 +85,7 @@ func EnsureLocalGitignoredMsg(repoRoot string) string {
 }
 
 func missingGitignoreEntries(content string) []string {
-	required := []string{LocalFile, LifecycleTransactionLockIgnorePattern}
+	required := []string{LocalFile, LifecycleTransactionLockIgnorePattern, LifecycleProjectLockIgnorePattern}
 	present := make(map[string]bool, len(required))
 	for _, line := range strings.Split(content, "\n") {
 		present[strings.TrimSpace(line)] = true
