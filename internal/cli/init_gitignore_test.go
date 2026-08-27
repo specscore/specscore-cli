@@ -35,6 +35,9 @@ func TestRunInit_AddsLocalToGitignore(t *testing.T) {
 	if !strings.Contains(string(data), config.LifecycleTransactionLockIgnorePattern) {
 		t.Errorf(".gitignore missing %s:\n%s", config.LifecycleTransactionLockIgnorePattern, data)
 	}
+	if !strings.Contains(string(data), config.LifecycleProjectLockIgnorePattern) {
+		t.Errorf(".gitignore missing %s:\n%s", config.LifecycleProjectLockIgnorePattern, data)
+	}
 	lockPath := filepath.Join("spec", "ideas", ".example.md.lifecycle-transaction.lock")
 	cmd := exec.Command("git", "check-ignore", "--quiet", lockPath)
 	cmd.Dir = dir

@@ -35,11 +35,14 @@ func TestEnsureLocalGitignored_AddsWhenMissing(t *testing.T) {
 	if !strings.Contains(readGitignore(t, repo), LifecycleTransactionLockIgnorePattern) {
 		t.Errorf(".gitignore missing %s", LifecycleTransactionLockIgnorePattern)
 	}
+	if !strings.Contains(readGitignore(t, repo), LifecycleProjectLockIgnorePattern) {
+		t.Errorf(".gitignore missing %s", LifecycleProjectLockIgnorePattern)
+	}
 }
 
 func TestEnsureLocalGitignored_AlreadyPresent(t *testing.T) {
 	repo := t.TempDir()
-	writeLayer(t, filepath.Join(repo, ".gitignore"), "node_modules\n"+LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n")
+	writeLayer(t, filepath.Join(repo, ".gitignore"), "node_modules\n"+LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n"+LifecycleProjectLockIgnorePattern+"\n")
 	added, _, err := EnsureLocalGitignored(repo)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -59,7 +62,7 @@ func TestEnsureLocalGitignored_AppendsNoTrailingNewline(t *testing.T) {
 	if !added {
 		t.Error("added = false")
 	}
-	if got := readGitignore(t, repo); got != "node_modules\n"+LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n" {
+	if got := readGitignore(t, repo); got != "node_modules\n"+LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n"+LifecycleProjectLockIgnorePattern+"\n" {
 		t.Errorf("content = %q", got)
 	}
 }
@@ -70,7 +73,7 @@ func TestEnsureLocalGitignored_AppendsWithTrailingNewline(t *testing.T) {
 	if _, _, err := EnsureLocalGitignored(repo); err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got := readGitignore(t, repo); got != "node_modules\n"+LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n" {
+	if got := readGitignore(t, repo); got != "node_modules\n"+LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n"+LifecycleProjectLockIgnorePattern+"\n" {
 		t.Errorf("content = %q", got)
 	}
 }
@@ -81,7 +84,7 @@ func TestEnsureLocalGitignored_AddsOnlyMissingEntry(t *testing.T) {
 	if _, _, err := EnsureLocalGitignored(repo); err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if got := readGitignore(t, repo); got != LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n" {
+	if got := readGitignore(t, repo); got != LocalFile+"\n"+LifecycleTransactionLockIgnorePattern+"\n"+LifecycleProjectLockIgnorePattern+"\n" {
 		t.Errorf("content = %q", got)
 	}
 }

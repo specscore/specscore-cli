@@ -2556,6 +2556,9 @@ func TestFeatureChangeStatus_SuccessfulTransition(t *testing.T) {
 	if !strings.Contains(string(readme), "In Review") {
 		t.Errorf("README = %q, want 'In Review'", readme)
 	}
+	if locks := transactionLockFiles(t, filepath.Join(root, "spec")); len(locks) != 0 {
+		t.Fatalf("successful feature transition left transaction-lock artifacts: %v", locks)
+	}
 }
 
 // ---------------------------------------------------------------------------

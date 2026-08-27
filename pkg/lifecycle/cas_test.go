@@ -18,6 +18,145 @@ type failingArtifactLock struct{ err error }
 func (l failingArtifactLock) TryLock() (bool, error) { return false, l.err }
 func (l failingArtifactLock) Unlock() error          { return nil }
 
+type configuredArtifactLock struct {
+	locked    bool
+	tryErr    error
+	unlockErr error
+}
+
+func (l configuredArtifactLock) TryLock() (bool, error) { return l.locked, l.tryErr }
+func (l configuredArtifactLock) Unlock() error          { return l.unlockErr }
+
+func TestArtifactTransactionLock_UnlockErrorsAndReacquireGuard(t *testing.T) {
+	if ok, err := (&artifactTransactionLock{}).TryLock(); ok || err == nil {
+		t.Fatal("transaction wrapper unexpectedly reacquired")
+	}
+
+	t.Run("artifact unlock failure", func(t *testing.T) {
+		state := &lifecycleProcessState
+		<-state.gate
+		state.mu.Lock()
+		state.active.Add("artifact")
+		state.mu.Unlock()
+		lock := &artifactTransactionLock{
+			project:      configuredArtifactLock{unlockErr: errors.New("project unlock")},
+			artifact:     configuredArtifactLock{unlockErr: errors.New("artifact unlock")},
+			artifactPath: "artifact",
+			remove:       func(string) error { t.Fatal("removed while artifact unlock failed"); return nil },
+			processState: state,
+		}
+		if err := lock.Unlock(); err == nil || !strings.Contains(err.Error(), "artifact unlock") || !strings.Contains(err.Error(), "project unlock") {
+			t.Fatalf("unlock error = %v", err)
+		}
+		if err := lock.Unlock(); err == nil {
+			t.Fatal("second unlock lost the original error")
+		}
+	})
+
+	t.Run("remove failure", func(t *testing.T) {
+		state := &lifecycleProcessState
+		<-state.gate
+		lock := &artifactTransactionLock{
+			project:      configuredArtifactLock{},
+			artifact:     configuredArtifactLock{},
+			artifactPath: "artifact",
+			remove:       func(string) error { return errors.New("remove failed") },
+			processState: state,
+		}
+		if err := lock.Unlock(); err == nil || !strings.Contains(err.Error(), "remove failed") {
+			t.Fatalf("unlock error = %v", err)
+		}
+	})
+}
+
+func artifactLockSequence(locks ...artifactLock) func(string) artifactLock {
+	i := 0
+	return func(string) artifactLock {
+		lock := locks[i]
+		i++
+		return lock
+	}
+}
+
+func TestAcquireArtifactLockWithOps_FailureBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		new  func(string) artifactLock
+	}{
+		{name: "project error", new: func(string) artifactLock { return configuredArtifactLock{tryErr: errors.New("project")} }},
+		{name: "project contention", new: func(string) artifactLock { return configuredArtifactLock{} }},
+		{name: "artifact error", new: artifactLockSequence(
+			configuredArtifactLock{locked: true},
+			configuredArtifactLock{tryErr: errors.New("artifact")},
+		)},
+		{name: "artifact contention", new: artifactLockSequence(
+			configuredArtifactLock{locked: true},
+			configuredArtifactLock{},
+		)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ops := defaultArtifactTransactionOps()
+			ops.newLock = tt.new
+			_, err := acquireArtifactLockWithOps(filepath.Join(t.TempDir(), "artifact.md"), ops)
+			if err == nil {
+				t.Fatal("expected acquisition failure")
+			}
+		})
+	}
+}
+
+func TestLifecycleLockRoot_RecognizesProjectAndStagedRoots(t *testing.T) {
+	tests := []struct {
+		name string
+		prep func()
+		path func(string) string
+	}{
+		{name: "spec boundary", path: func(root string) string { return filepath.Join(root, "spec", "features", "auth", "README.md") }},
+		{name: "staged transaction", path: func(root string) string {
+			return filepath.Join(root, ".specscore-txn-abc", "artifact.md")
+		}},
+		{name: "config marker", prep: func() {}, path: func(root string) string {
+			_ = os.WriteFile(filepath.Join(root, "specscore.yaml"), nil, 0o644)
+			return filepath.Join(root, "docs", "artifact.md")
+		}},
+		{name: "git marker", prep: func() {}, path: func(root string) string {
+			_ = os.Mkdir(filepath.Join(root, ".git"), 0o755)
+			return filepath.Join(root, "docs", "artifact.md")
+		}},
+		{name: "directory fallback", path: func(root string) string { return filepath.Join(root, "docs", "artifact.md") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tt.prep != nil {
+				tt.prep()
+			}
+			path := tt.path(root)
+			want := root
+			switch tt.name {
+			case "staged transaction":
+				want = filepath.Join(root, ".specscore-txn-abc")
+			case "directory fallback":
+				want = filepath.Join(root, "docs")
+			}
+			if got := lifecycleLockRoot(path); got != want {
+				t.Fatalf("root = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLifecycleLockRoot_AbsFailureFallsBackToDirectory(t *testing.T) {
+	original := lifecycleLockAbs
+	lifecycleLockAbs = func(string) (string, error) { return "", errors.New("abs failed") }
+	t.Cleanup(func() { lifecycleLockAbs = original })
+	path := filepath.Join(t.TempDir(), "artifact.md")
+	if got, want := lifecycleLockRoot(path), filepath.Dir(path); got != want {
+		t.Fatalf("root = %q, want %q", got, want)
+	}
+}
+
 func TestTransformArtifact(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "task.md")
 	if err := os.WriteFile(p, []byte("before"), 0o644); err != nil {
@@ -33,6 +172,68 @@ func TestTransformArtifact(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(p); string(got) != "after" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestTransformArtifact_RemovesLockOnEveryOutcome(t *testing.T) {
+	tests := []struct {
+		name      string
+		transform func([]byte) ([]byte, error)
+		configure func(*artifactTransactionOps)
+		wantErr   bool
+	}{
+		{
+			name: "success",
+			transform: func([]byte) ([]byte, error) {
+				return []byte("after"), nil
+			},
+		},
+		{
+			name: "transform failure",
+			transform: func([]byte) ([]byte, error) {
+				return nil, errors.New("transform failed")
+			},
+			wantErr: true,
+		},
+		{
+			name: "idempotent",
+			transform: func(before []byte) ([]byte, error) {
+				return before, nil
+			},
+		},
+		{
+			name: "write failure",
+			transform: func([]byte) ([]byte, error) {
+				return []byte("after"), nil
+			},
+			configure: func(ops *artifactTransactionOps) {
+				ops.renameNoReplace = func(string, string) error { return errors.New("write failed") }
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "task.md")
+			if err := os.WriteFile(p, []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ops := defaultArtifactTransactionOps()
+			if tt.configure != nil {
+				tt.configure(&ops)
+			}
+
+			err := transformArtifactWithOps(p, ops, tt.transform)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr=%v", err, tt.wantErr)
+			}
+			lockPath := filepath.Join(dir, ".task.md.lifecycle-transaction.lock")
+			if _, statErr := os.Stat(lockPath); !os.IsNotExist(statErr) {
+				t.Fatalf("artifact lock residue: stat=%v", statErr)
+			}
+		})
 	}
 }
 
@@ -667,11 +868,10 @@ func TestRewrite_LockFaultLeavesArtifactUntouched(t *testing.T) {
 // the same artifact must be able to re-acquire the lock and proceed with no
 // staleness heuristic in this package and no human deleting the lock file.
 //
-// What this does NOT prove: that the lock *file* is ever removed. It isn't,
-// on success or on failure — see LifecycleTransactionLockIgnorePattern in
-// pkg/config/gitignore.go for why deleting it would reopen a delete-and-
-// recreate race across concurrent CLI processes on the same path. This test
-// only proves the lock stops blocking new work after its holder dies; a
+// The project lock serializes artifact-lock cleanup with the next acquisition,
+// so a clean release removes the per-artifact pathname without reopening a
+// delete-and-recreate race across concurrent CLI processes. This test only
+// proves the lock stops blocking new work after its holder dies; a
 // happy-path-only test could not distinguish "recovers automatically" from
 // "would hang forever waiting for a lock nobody will ever release".
 func TestAcquireArtifactLock_RecoversAfterHolderProcessIsKilled(t *testing.T) {
@@ -728,14 +928,17 @@ func TestAcquireArtifactLock_RecoversAfterHolderProcessIsKilled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected the lock to be acquirable after its holder was killed (no human cleanup should be required), got %v", err)
 	}
-	defer func() { _ = lock.Unlock() }()
-
-	// The lock file's identity persists across the crash by design (see the
-	// doc comment above) — confirm it is still exactly where old and new
-	// processes both expect to contend on it.
+	// The interrupted holder's lock file is exactly where old and new processes
+	// both expect to contend on it while this recovery transaction is active.
 	lockPath := filepath.Join(dir, ".widget.md.lifecycle-transaction.lock")
 	if _, err := os.Stat(lockPath); err != nil {
-		t.Fatalf("expected the lock file to still exist after recovery, got %v", err)
+		t.Fatalf("expected the lock file to exist while recovery holds it, got %v", err)
+	}
+	if err := lock.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("expected recovered artifact lock to be removed after release, got %v", err)
 	}
 }
 
