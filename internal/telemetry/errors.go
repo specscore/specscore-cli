@@ -56,7 +56,13 @@ var setupErrorsChannel = func() {
 		// environment — implements REQ:stack-frame-scrubber clause 3
 		// ("strip local-variable values from frame metadata ... disable
 		// explicitly").
-		SendDefaultPII: false,
+		//
+		// sentry-go now prefers the newer DataCollection field for this,
+		// but that's a genuine behavior migration (granular per-category
+		// toggles vs. one bool) that deserves its own REQ-governed review
+		// rather than a drive-by rename under a CI-toolchain fix. Keeping
+		// the explicit, well-understood SendDefaultPII=false pending that.
+		SendDefaultPII: false, //nolint:staticcheck // deprecated in favor of DataCollection; migration tracked separately, see comment above
 		// Release tag is set per-event by transmitErrors (see Task 3)
 		// using Event.CLIVersion. Leaving Release empty here lets the
 		// per-event tag take effect.
