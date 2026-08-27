@@ -106,6 +106,14 @@ jobs:
     permissions:
       contents: write
     with:
+      # strongo/cicd's go_version input defaults to '1.26' and drives the
+      # setup-go step the shared release job's `go mod tidy`/`go generate`
+      # before-hooks run under — those hooks execute ahead of GoReleaser's
+      # own build matrix and do not see .goreleaser.yml's builds[0].env
+      # GOTOOLCHAIN pin. Pin it to match go.mod's `go 1.27.0` directive so
+      # those hooks don't fail with "go.mod requires go >= 1.27.0" before
+      # the release build ever starts.
+      go_version: '1.27.0'
       # Pre-1.0: cap an accidental major (feat!:) to a minor bump. Cut v1.0.0
       # only by pushing that tag explicitly.
       allow_major_version_bump: false
