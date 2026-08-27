@@ -38,6 +38,7 @@ Add the optional `--parent <plan-ref>` flag to the `plan new` cobra command. On 
 - cli/plan/new#ac:existing-file-conflict — already implemented; no-clobber behavior is unchanged.
 - cli/plan/new#ac:invalid-slug-rejected — already implemented; slug validation is unchanged.
 - cli/plan/new#ac:ancestor-indexes-materialized — already implemented; ancestor-index materialization is unchanged.
+- cli/plan/new#ac:source-without-acceptance-criteria-is-lint-clean — covered by the issue-166 generator-through-production-lint regression; the gallery's placeholder AC guidance is comment-only.
 
 ## Open Questions
 

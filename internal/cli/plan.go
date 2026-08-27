@@ -15,6 +15,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
+	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
@@ -216,6 +217,9 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 // coordinationRoot stays on the real project during a preview because the
 // sandbox intentionally contains only spec/ and is not a Git checkout.
 func planChangeStatusMutate(artifactRoot, coordinationRoot, slug string, to lifecycle.Status, note, successor string, forceCoordination bool, coordinationWarning *bytes.Buffer) (plan.ChangeStatusResult, error) {
+	if err := preflightPlanChangeStatus(artifactRoot); err != nil {
+		return plan.ChangeStatusResult{}, err
+	}
 	return plan.ChangeStatus(plan.ChangeStatusOptions{
 		SpecRoot:  artifactRoot,
 		Slug:      slug,
@@ -239,6 +243,32 @@ func planChangeStatusMutate(artifactRoot, coordinationRoot, slug string, to life
 		},
 		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(artifactRoot, "spec"))),
 	})
+}
+
+// preflightPlanChangeStatus validates the complete tree before ChangeStatus
+// acquires and commits the Plan artifact. The post-mutation lint pass remains
+// necessary for derived index synchronization, but it is too late to protect
+// an invalid source/AC reference: by then the Plan status is durable. Keeping
+// this pass read-only makes an invalid lifecycle request write-free.
+func preflightPlanChangeStatus(projectRoot string) error {
+	violations, err := lint.Lint(lint.Options{
+		SpecRoot: filepath.Join(projectRoot, "spec"),
+		Severity: "error",
+	})
+	if err != nil {
+		return exitcode.UnexpectedErrorf("preflight lint before plan status change: %v", err)
+	}
+	if len(violations) == 0 {
+		return nil
+	}
+	var details strings.Builder
+	for i, v := range violations {
+		if i > 0 {
+			details.WriteString("; ")
+		}
+		fmt.Fprintf(&details, "%s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message)
+	}
+	return exitcode.ConflictErrorf("preflight lint failed; no Plan or index changes were made: %s", details.String())
 }
 
 func handlePlanChangeStatusError(err error, coordinationWarning *bytes.Buffer, stderr io.Writer) error {
@@ -426,7 +456,8 @@ func buildPlanBody(cmd *cobra.Command, slug, title, owner, featureSrc, ideaSrc s
 	if err != nil {
 		return nil, err
 	}
-	return normalizePlanTaskStatusVocabulary(body), nil
+	body = normalizePlanTaskStatusVocabulary(body)
+	return normalizePlanTaskACPlaceholders(body), nil
 }
 
 // normalizePlanTaskStatusVocabulary protects the generated Plan contract when
@@ -439,6 +470,26 @@ func normalizePlanTaskStatusVocabulary(body []byte) []byte {
 		if line == "**Status:** pending" {
 			lines[i] = "**Status:** planning"
 		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+// normalizePlanTaskACPlaceholders keeps gallery task examples out of the
+// Plan's live AC-reference fields. A placeholder such as
+// `<feature-slug>#ac:<ac-slug>` is useful authoring guidance, but after the
+// source Feature substitution it would otherwise become a syntactically live
+// reference and P-002 would reject a brand-new Feature that has no ACs yet.
+// Keep the guidance in an HTML comment so the author still sees it while the
+// generated Plan remains valid until they add a real `**Verifies:**` field.
+func normalizePlanTaskACPlaceholders(body []byte) []byte {
+	lines := strings.Split(string(body), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "**Verifies:**") || !strings.Contains(trimmed, "<ac-slug>") {
+			continue
+		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		lines[i] = indent + "<!-- TODO: add " + trimmed + " -->"
 	}
 	return []byte(strings.Join(lines, "\n"))
 }

@@ -1,12 +1,12 @@
 ---
 format: https://specscore.md/feature-specification
-status: Approved
+status: Implementing
 ---
 
 # Feature: Plan Change-Status
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/change-status?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/change-status?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/change-status?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/change-status?op=request-change) |
-**Status:** Approved
+**Status:** Implementing
 **Date:** 2026-06-17
 **Owner:** alexander.trakhimenok
 **Source Ideas:** —
@@ -31,6 +31,13 @@ Plans move through a document lifecycle, but historically there was **no CLI ver
 ## Behavior
 
 This verb inherits every cross-cutting rule from [lifecycle-transitions](../../lifecycle-transitions/README.md), including one committed artifact transaction, fail-fast lock contention, and retained recovery-required derived-work failures.
+
+Before acquiring the Plan mutation transaction, the verb runs a read-only
+production lint preflight over the complete spec tree. This protects the
+status/index pair from an already-invalid Plan: a stale source AC reference or
+other error-severity violation exits before any Plan rewrite, index sync, or
+per-artifact lifecycle lock is created. The post-mutation lint pass remains
+responsible for derived index synchronization after a valid commit.
 
 ### Legal-transition matrix
 
@@ -86,6 +93,16 @@ A `Superseded` plan MUST reference its successor plan (canonical [plan#req:valid
 #### REQ: plans-index-sync
 
 The post-mutation lint/index sync runs after the committed Plan transaction. Exit `0` requires both stages; a derived-work failure exits `10` with the committed Plan retained for recovery.
+
+#### REQ: invalid-tree-preflight
+
+The verb MUST run a read-only production lint pass before rewriting the Plan.
+When that pass reports an error-severity violation, the command MUST exit `1`
+without changing the Plan, any derived index, or creating a new lifecycle
+transaction-lock artifact. The error MUST identify that preflight blocked the
+transition and include the lint finding so the author has a direct recovery
+path. A valid tree continues to the one-write Plan transaction and the normal
+post-mutation index synchronization.
 
 #### REQ: coordination-branch-enforcement
 
@@ -147,6 +164,18 @@ The verb MUST accept a `--force-coordination` boolean flag. When set, a coordina
 **Given** `spec/plans/auth.md` containing `**Status:** Draft`
 **When** the user runs `specscore plan change-status auth --to="in review"`
 **Then** the command exits `0`, writes exactly `auth: Draft → In Review\n` to stdout, rewrites the Status line to `In Review`, and leaves all other bytes unchanged.
+
+### AC: invalid-plan-preflight-is-write-free
+
+**Requirements:** [cli/plan/change-status#req:invalid-tree-preflight](#req-invalid-tree-preflight)
+
+**Given** `spec/plans/auth.md` contains a live `auth-source#ac:missing`
+reference, but the source Feature has no such AC
+**When** the user runs `specscore plan change-status auth --to="In Review"`
+**Then** the command exits `1` with a preflight lint error, leaves the Plan and
+plans index byte-identical, and leaves no new per-artifact lifecycle lock
+artifact. After the stale reference is replaced with a real AC, the same
+transition succeeds through the normal post-mutation lint/index path.
 
 ### AC: in-review-back-to-draft
 

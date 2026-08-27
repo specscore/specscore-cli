@@ -1,13 +1,13 @@
 ---
 format: https://specscore.md/feature-specification
-status: Approved
+status: Implementing
 ---
 
 # Feature: Plan New
 
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/plan/new?op=request-change) |
 
-**Status:** Approved
+**Status:** Implementing
 **Source Ideas:** —
 
 ## Summary
@@ -65,6 +65,15 @@ The scaffold MUST emit the flat-file plan model that `specscore spec lint` actua
 #### REQ: emits-frontmatter
 
 The scaffold MUST emit, per the [artifact-frontmatter-convention](../../../../../../specscore/spec/features/artifact-frontmatter-convention/README.md) feature, a `format:` frontmatter field carrying the plan spec URL (`https://specscore.md/plan-specification`) and a `status:` frontmatter field mirroring the initial body `**Status:** Draft`. The footer URL and `format:` MUST agree on creation.
+
+#### REQ: placeholder-ac-not-live
+
+When the published Plan template contains task guidance such as
+`<feature-slug>#ac:<ac-slug>`, `plan new` MUST preserve that guidance only in
+an HTML comment (or omit it) after substituting the requested source Feature.
+It MUST NOT emit a live `**Verifies:**` field containing the placeholder. A
+Feature with no acceptance criteria MUST therefore remain a valid source for a
+newly scaffolded Plan until the author adds real task coverage.
 
 ### Overwrite behavior
 
@@ -127,6 +136,16 @@ A plan scaffolded by `plan new` carries a frontmatter `format: https://specscore
 **Requirements:** cli/plan/new#req:source-required
 
 `specscore plan new my-plan` with neither `--feature` nor `--idea`, and the same command with both, each exit `2` naming the conflict; supplying exactly one succeeds.
+
+### AC: source-without-acceptance-criteria-is-lint-clean
+
+**Requirements:** cli/plan/new#req:scaffolds-lint-clean, cli/plan/new#req:placeholder-ac-not-live
+
+**Given** a Feature created by `specscore feature new` with no acceptance
+criteria
+**When** the user runs `specscore plan new mechanical-worktree-merge --feature mechanical-worktree-merge`
+**Then** the generated Plan contains no live placeholder AC reference and a
+subsequent production `specscore spec lint` exits `0` before customization.
 
 ### AC: parent-recorded-verbatim
 
