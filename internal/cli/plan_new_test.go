@@ -12,6 +12,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
 // testPlanTemplate mirrors the published new/plan.md gallery template: a bare
@@ -350,6 +351,56 @@ func TestPlanNew_FetchedTemplateIsLintClean(t *testing.T) {
 	_, stderr, err := runSpecLintCmd(t, "--project", root)
 	if err != nil {
 		t.Fatalf("fetched plan must pass spec lint: %v\nstderr:\n%s", err, stderr)
+	}
+}
+
+// AC: scaffolded-plan-is-lint-clean — a real Feature created without any
+// acceptance criteria must be a valid source for a freshly generated Plan.
+// The gallery task template may describe where an author will add coverage,
+// but its placeholder must not become a live stale AC reference before the
+// author has customized the Plan.
+func TestPlanNew_FeatureThenPlanThenProductionLint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(testPlanTemplate))
+	}))
+	defer srv.Close()
+	t.Setenv("SPECSCORE_TEMPLATE_BASE_URL", srv.URL)
+
+	root := setupLintCleanProject(t)
+	withCwd(t, root)
+	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{Project: &projectdef.ProjectConfig{
+		Host: "github.com", Org: "specscore", Repo: "specscore-cli",
+	}}); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if _, _, err := runFeature(t, "new",
+		"--title", "Mechanical Worktree Merge",
+		"--slug", "mechanical-worktree-merge",
+		"--status", "Approved",
+		"--description", "Mechanical merge orchestration.",
+		"--project", root); err != nil {
+		t.Fatalf("feature new: %v", err)
+	}
+	if _, _, err := runPlan(t, "new", "mechanical-worktree-merge",
+		"--feature", "mechanical-worktree-merge",
+		"--title", "Mechanical Worktree Merge implementation plan",
+		"--project", root); err != nil {
+		t.Fatalf("plan new: %v", err)
+	}
+
+	generated := readPlan(t, root, "mechanical-worktree-merge")
+	for _, line := range strings.Split(generated, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "<!--") {
+			continue
+		}
+		if strings.Contains(trimmed, "mechanical-worktree-merge#ac:<ac-slug>") ||
+			strings.Contains(trimmed, "**Verifies:** <feature-slug>#ac:<ac-slug>") {
+			t.Fatalf("generated Plan contains a live placeholder AC reference: %q\n%s", line, generated)
+		}
+	}
+	if stdout, stderr, err := runSpecLintCmd(t, "--project", root); err != nil {
+		t.Fatalf("Feature -> Plan scaffold must pass production spec lint: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 }
 

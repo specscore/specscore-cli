@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -204,6 +205,87 @@ func TestPlanChangeStatus_LintFailureRetainsCommittedTransaction_CLI(t *testing.
 	if !strings.Contains(string(body), "**Status:** In Review") {
 		t.Errorf("committed status was not retained after lint failure:\n%s", body)
 	}
+}
+
+// AC: invalid-tree-preflight-is-write-free — a Plan with a stale live AC
+// reference is rejected before its status or derived index can be changed.
+// This is the user-visible recovery guarantee for the issue-166 failure mode.
+func TestPlanChangeStatus_InvalidPlanPreflightIsWriteFree(t *testing.T) {
+	root := stagePlan(t, "auth", "Draft")
+	path := filepath.Join(root, "spec", "plans", "auth.md")
+	planBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(root, "spec", "plans", "README.md")
+	indexBefore, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(string(planBefore), "**Source:** none", "**Source Feature:** auth-source", 1)
+	mutated = strings.Replace(mutated, "## Tasks\n\n<!-- TODO:",
+		"## Tasks\n\n### Task 1: stale reference\n\n**Verifies:** auth-source#ac:missing\n**Status:** planning\n\n<!-- TODO:", 1)
+	if mutated == string(planBefore) {
+		t.Fatal("test fixture failed to add stale source/AC reference")
+	}
+	if err := os.WriteFile(path, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The source Feature exists, but deliberately has no matching AC. This
+	// makes the stale reference a production P-002 violation rather than a
+	// missing-Feature setup error.
+	featureDir := filepath.Join(root, "spec", "features", "auth-source")
+	if err := os.MkdirAll(featureDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	featureBody := "---\nformat: https://specscore.md/feature-specification\nstatus: Approved\n---\n\n" +
+		"# Feature: Auth Source\n\n**Status:** Approved\n**Source Ideas:** —\n\n" +
+		"## Summary\n\nSource.\n\n## Open Questions\n\nNone at this time.\n\n" +
+		"---\n*This document follows the https://specscore.md/feature-specification*\n"
+	if err := os.WriteFile(filepath.Join(featureDir, "README.md"), []byte(featureBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	locksBefore := transactionLockFiles(t, filepath.Join(root, "spec"))
+
+	_, _, err = runPlan(t, "change-status", "auth", "--to=in review")
+	if err == nil {
+		t.Fatal("expected invalid Plan preflight failure")
+	}
+	if got := exitCodeOfErr(err); got != exitcode.Conflict {
+		t.Fatalf("exit=%d err=%v, want lint conflict", got, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != string(mutated) {
+		t.Fatalf("invalid Plan changed during preflight:\n%s", got)
+	}
+	if got, _ := os.ReadFile(indexPath); string(got) != string(indexBefore) {
+		t.Fatalf("plans index changed during preflight:\n%s", got)
+	}
+	if got := transactionLockFiles(t, filepath.Join(root, "spec")); strings.Join(got, "\n") != strings.Join(locksBefore, "\n") {
+		t.Fatalf("invalid Plan preflight left transaction-lock artifacts:\nbefore=%v\nafter=%v", locksBefore, got)
+	}
+}
+
+func transactionLockFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var paths []string
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".lifecycle-transaction.lock") {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			paths = append(paths, filepath.ToSlash(rel))
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk transaction locks: %v", err)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func TestPlanChangeStatus_ForceWarningSurvivesCommittedCallbackFailure_CLI(t *testing.T) {
