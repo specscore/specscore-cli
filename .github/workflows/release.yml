@@ -102,7 +102,11 @@ jobs:
 
   release:
     needs: release-artifact-smoke-darwin-arm64
-    uses: strongo/cicd/.github/workflows/release.yml@main
+    # Pinned to the stable strongo/cicd@v1 tag (matches the other repos in
+    # this ecosystem: sneat-dev/wb, chatwright/cli, datatug/datatug-cli,
+    # filetug/filetug, code-grapher/codegrapher). The previous @main pin was
+    # unpinned CI — it silently took whatever landed upstream.
+    uses: strongo/cicd/.github/workflows/release.yml@v1
     permissions:
       contents: write
     with:
