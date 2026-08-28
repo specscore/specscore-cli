@@ -62,6 +62,26 @@ checksum:
   name_template: "specscore_{{ .Version }}_checksums.txt"
   algorithm: sha256
 
+# specscore: cli/release-distribution#req:macos-signed-and-notarized-artifact
+# The five values are repository secrets forwarded only for the release job.
+# The gate keeps local/snapshot builds and pre-credential releases unchanged;
+# the reusable workflow's `require_notarized_macos: true` makes a missing or
+# invalid credential set a release failure rather than shipping an artifact
+# macOS Gatekeeper will block after Homebrew applies quarantine.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids: [specscore]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        wait: true
+        issuer_id: "{{ .Env.NOTARIZE_ISSUER_ID }}"
+        key_id: "{{ .Env.NOTARIZE_KEY_ID }}"
+        key: "{{ .Env.NOTARIZE_KEY }}"
+        timeout: 20m
+
 changelog:
   sort: asc
   filters:
