@@ -29,13 +29,12 @@ func TestReleaseDistributionMacOSNotarizationContract(t *testing.T) {
 		}
 	}
 
-	// require_notarized_macos: true is deliberately NOT asserted here yet.
-	// spec/features/cli/release-distribution/README.md#req:fail-closed-macos-release-gate
-	// permits merging that flip only after an operator confirms all five
-	// secrets below exist as real repository secrets — that confirmation
-	// hasn't happened. TestReleaseCallerDefersCaskInstallSmokeUntilNotarization
-	// (workflow_contract_test.go) is the test that enforces it stays absent
-	// until then; do not duplicate or contradict that guard here.
+	// require_notarized_macos: true is asserted in
+	// TestReleaseCallerEnforcesNotarizedMacOSRelease (workflow_contract_test.go),
+	// not here, to avoid duplicating that guard. The operator confirmed all
+	// five secrets below exist as real repository secrets — see
+	// spec/features/cli/release-distribution/README.md#req:fail-closed-macos-release-gate —
+	// so that flip is now merged.
 	for _, secret := range []string{
 		"MACOS_SIGN_P12",
 		"MACOS_SIGN_PASSWORD",
