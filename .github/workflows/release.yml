@@ -102,11 +102,16 @@ jobs:
 
   release:
     needs: release-artifact-smoke-darwin-arm64
-    # Pinned to the stable strongo/cicd@v1 tag (matches the other repos in
-    # this ecosystem: sneat-dev/wb, chatwright/cli, datatug/datatug-cli,
-    # filetug/filetug, code-grapher/codegrapher). The previous @main pin was
-    # unpinned CI — it silently took whatever landed upstream.
-    uses: strongo/cicd/.github/workflows/release.yml@v1
+    # Pinned to the exact strongo/cicd@v1.14.14 tag, not the moving
+    # strongo/cicd@v1 major tag. strongo/cicd@v1 accepts the
+    # require_notarized_macos input but does not contain the
+    # macos_signing_preflight job behind it, so on that tag the flag is a
+    # silent no-op; strongo/cicd@v1.14.14 has both, and defines all three
+    # `with:` inputs this workflow passes (go_version,
+    # allow_major_version_bump, artifact_smoke_test_homebrew_cask). The
+    # sibling repos in this ecosystem (ingitdb-cli, chatwright/cli,
+    # datatug-cli) are now pinned to strongo/cicd@v1.14.14 too.
+    uses: strongo/cicd/.github/workflows/release.yml@v1.14.14
     permissions:
       contents: write
     with:
@@ -121,22 +126,23 @@ jobs:
       # Pre-1.0: cap an accidental major (feat!:) to a minor bump. Cut v1.0.0
       # only by pushing that tag explicitly.
       allow_major_version_bump: false
-      # specscore: cli/release-distribution#req:block-homebrew-cask-until-verified
-      # Retain dormant cask packaging, but do not collect cask install, upgrade,
-      # or runtime evidence until notarization and Gatekeeper validation are
-      # fail-closed. The raw release artifact smoke remains enabled.
-      artifact_smoke_test_homebrew_cask: false
       # specscore: cli/release-distribution#req:fail-closed-macos-release-gate
-      # Target end state (see spec/features/cli/release-distribution/README.md):
-      # flip the notarization-gate input to true, once an operator has
-      # confirmed all five named Apple secrets below exist as real repository
-      # secrets. Deliberately not flipped here yet — doing so before that
-      # confirmation would either no-op (secrets absent so GoReleaser's
-      # notarize.macos step never enables) or, worse, look like a real
-      # fail-closed gate while never actually having been exercised.
-      # TestReleaseCallerDefersCaskInstallSmokeUntilNotarization
-      # (workflow_contract_test.go) enforces this input stays absent until
-      # that operator step lands as its own change.
+      # The operator has confirmed all five named Apple secrets below exist,
+      # with fresh update timestamps, in every org secret store that needs
+      # them — the confirmation this gate was waiting for. Flip it fail-
+      # closed: an absent, invalid, improperly signed, or unnotarized
+      # published Darwin artifact now fails the release outright.
+      require_notarized_macos: true
+      # specscore: cli/release-distribution#req:block-homebrew-cask-until-verified
+      # Verified end to end against a real published artifact:
+      # ingitdb/ingitdb-cli v0.65.11 (toolchain go1.27.0) satisfies its
+      # Designated Requirement (`certificate 1[...6.2.6]`, not the broken
+      # `certificate root[...6.2.6]`), `spctl` accepts it as Notarized
+      # Developer ID, and it executes; that release's own "Smoke test
+      # Homebrew cask install (darwin/arm64)" job passed. With the
+      # notarization gate above now fail-closed, collect the same
+      # cask-install evidence here.
+      artifact_smoke_test_homebrew_cask: true
     secrets:
       # Cross-repo PAT (classic, public_repo) for the Homebrew tap, Scoop
       # bucket, and WinGet fork. Forwarded to GoReleaser as

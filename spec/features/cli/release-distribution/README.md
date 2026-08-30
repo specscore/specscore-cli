@@ -12,10 +12,10 @@ status: Implementing
 
 ## Summary
 
-Publishes release archives, signs and notarizes the Darwin artifact, and
-retains dormant Homebrew-cask packaging while blocking every cask install,
-upgrade, and runtime-evidence path until an operator explicitly verifies
-signing, notarization, and Gatekeeper validation are fail-closed end to end.
+Publishes release archives, signs and notarizes the Darwin artifact, and now
+recommends the Homebrew cask as a supported macOS installation and upgrade
+channel, on the strength of operator-verified signing, notarization, and
+Gatekeeper validation running fail-closed end to end.
 
 ## Problem
 
@@ -24,11 +24,9 @@ unsigned binary fails Gatekeeper assessment for an interactive user even when
 it ran fine in a build job. Without fail-closed Developer ID signing, Apple
 notarization, and Gatekeeper validation, neither an automated smoke nor a
 user-facing cask recommendation can establish that an interactive user can
-safely run the installed binary. The release still needs raw archive
-validation, and the cask remains dormant packaging metadata, but no cask
-install, upgrade, or runtime evidence may run prematurely — and a release must
-not claim the cask is installable unless its Darwin artifact is signed with a
-real Developer ID and notarized by Apple.
+safely run the installed binary. The release needs raw archive validation
+plus verified evidence that a Gatekeeper-cleared Developer ID artifact reaches
+the cask before a release may claim the cask is installable.
 
 ## Behavior
 
@@ -61,37 +59,47 @@ That makes an absent, invalid, improperly signed, or unnotarized published
 Darwin artifact fail the release rather than leave a quarantined Homebrew cask
 that macOS blocks. This setting may be merged only after an operator confirms
 all five named repository secrets exist; that confirmation is operational
-evidence, not a value an agent may access or infer.
+evidence, not a value an agent may access or infer. **That confirmation has
+occurred**: the operator confirmed all five named secrets exist, with fresh
+update timestamps, in every org secret store that needs them, and the setting
+is merged.
 
 ### Retain cask packaging
 
 #### REQ: retain-homebrew-cask-packaging
 
-GoReleaser MUST continue to publish the SpecScore CLI Homebrew cask. Deferring
+GoReleaser MUST continue to publish the SpecScore CLI Homebrew cask. Verifying
 the cask-install smoke check MUST NOT remove `homebrew_casks` configuration or
 change the cask release channel.
 
-### Block cask use until notarization and Gatekeeper enforcement are proven
+### Cask use verified against fail-closed notarization and Gatekeeper enforcement
 
 #### REQ: block-homebrew-cask-until-verified
 
-**Cask distribution status:** Blocked.
+**Cask distribution status:** Verified.
 
-Until the release contract enforces Developer ID signing, macOS notarization,
-and Gatekeeper validation fail-closed, SpecScore MUST NOT recommend, install,
-upgrade, or collect runtime evidence through the Homebrew cask. Its shared
-release-workflow caller MUST explicitly set
-`artifact_smoke_test_homebrew_cask: false` and leave raw published-artifact
-validation enabled. macOS installation guidance MUST use the temporary current
-source-built channel and MUST NOT teach quarantine removal or any Gatekeeper
-bypass. Automated or agent evidence MUST pin an exact released tag or merged
-commit SHA, verify the resulting build identity, and never use a moving source
-branch.
+The release contract now enforces Developer ID signing, macOS notarization,
+and Gatekeeper validation fail-closed (`require_notarized_macos: true`, above),
+so SpecScore MAY recommend, install, upgrade, and collect runtime evidence
+through the Homebrew cask. This was verified on a real published artifact —
+`ingitdb/ingitdb-cli` `v0.65.11` (built with `toolchain go1.27.0`) satisfied its
+Designated Requirement (`certificate 1[...6.2.6]`, not the broken
+`certificate root[...6.2.6]` produced by a p12 lacking the Apple Root CA),
+`spctl` accepted it as Notarized Developer ID, it executed successfully, and
+that release's own `Smoke test Homebrew cask install (darwin/arm64)` job
+passed — plus `require_notarized_macos: true` making the gate fail-closed
+against a future regression. Its shared release-workflow caller MUST
+explicitly set `artifact_smoke_test_homebrew_cask: true` and leave raw
+published-artifact validation enabled. macOS installation guidance MUST
+recommend the Homebrew cask as a supported channel and MUST NOT teach
+quarantine removal or any Gatekeeper bypass. Automated or agent evidence MUST
+pin an exact released tag or merged commit SHA, verify the resulting build
+identity, and never use a moving source branch.
 
-The cask may be restored only by an explicit, reviewed change of this cask
-distribution status from **Blocked** to **Verified**, made after the required
-signing, notarization, and Gatekeeper evidence is fail-closed in the release
-contract.
+The cask distribution status may be reverted from **Verified** back to
+**Blocked** only by an explicit, reviewed change, made if signing,
+notarization, or Gatekeeper evidence in the release contract is found to have
+regressed.
 
 ## Acceptance Criteria
 
@@ -108,20 +116,19 @@ fails if the published artifact does not pass the notarization gate.
 
 **Requirements:** cli/release-distribution#req:retain-homebrew-cask-packaging, cli/release-distribution#req:block-homebrew-cask-until-verified
 
-**Given** the SpecScore CLI release path does not yet have operator-verified
-Gatekeeper validation end-to-end,
+**Given** the SpecScore CLI release path now has operator-verified Gatekeeper
+validation end-to-end,
 **When** it publishes a release,
-**Then** GoReleaser retains the dormant Homebrew cask configuration, the raw
-release artifact smoke remains enabled, no cask install/upgrade/runtime
-evidence runs, and macOS guidance names only the temporary source-build
-channel with immutable automated evidence.
+**Then** GoReleaser retains the Homebrew cask configuration, the raw release
+artifact smoke remains enabled, cask install/upgrade/runtime evidence runs via
+`artifact_smoke_test_homebrew_cask: true`, and macOS guidance recommends the
+Homebrew cask with immutable automated evidence.
 
 ## Open Questions
 
 None. The required secret names and fail-closed enforcement contract are
-fixed; the remaining operator action is to provision the five values in
-repository secrets without exposing them to agents, then separately confirm
-Gatekeeper validation before flipping cask distribution status from
+fixed; the operator has provisioned the five values in repository secrets and
+confirmed Gatekeeper validation, and cask distribution status is flipped from
 **Blocked** to **Verified**.
 
 ---

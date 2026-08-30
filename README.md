@@ -20,7 +20,19 @@ We build with our own tooling:
 
 ## Install
 
-### macOS — source build (current channel)
+### macOS — Homebrew cask (recommended)
+
+```bash
+brew install --cask specscore/tap/specscore
+```
+
+The Darwin artifact is signed with a Developer ID, notarized by Apple, and the
+release fails closed (`require_notarized_macos: true`) if that ever regresses
+— see [`spec/features/cli/release-distribution/`](spec/features/cli/release-distribution/README.md)
+for the verification evidence. Upgrade with `brew upgrade --cask specscore`.
+Do not bypass Gatekeeper or remove quarantine attributes.
+
+### macOS — source build (secondary)
 
 ```bash
 go install github.com/specscore/specscore-cli/cmd/specscore@latest
@@ -28,10 +40,7 @@ go install github.com/specscore/specscore-cli/cmd/specscore@latest
 
 This compiles the latest published source release locally. Automated or agent
 evidence MUST instead pin an exact released tag or merged commit SHA, then
-verify the resulting build identity; never use `@main`. Until the macOS
-release path has fail-closed signing, notarization, and Gatekeeper validation,
-the Homebrew cask is blocked and is not an installation or upgrade path. Do not
-bypass Gatekeeper or remove quarantine attributes.
+verify the resulting build identity; never use `@main`.
 
 ### Linux — curl
 
@@ -170,7 +179,7 @@ specscore self-update --yes      # skip the confirmation prompt (non-interactive
 specscore self-update --dry-run  # show what would happen (target version, download URL) without changing anything
 ```
 
-`self-update` detects how `specscore` was installed. **Package-managed installs** are never overwritten; the command reports the manager-owned next step. **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified. On macOS, keep using the current source-build channel above while the cask remains blocked.
+`self-update` detects how `specscore` was installed. **Package-managed installs** are never overwritten; the command reports the manager-owned next step. **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified. On macOS, a Homebrew cask install reports the manager-owned `brew upgrade --cask specscore` next step; the source-build channel above upgrades in place like any other manual install.
 
 The detection, download, verification, and replacement logic all live in the shared [`github.com/strongo/selfupdate`](https://github.com/strongo/selfupdate) module — specscore only supplies its own release identity (binary name, repository, managers) and exit-code contract. See [`spec/features/cli/self-update/`](spec/features/cli/self-update/) for what's specscore's own versus inherited from the library.
 
