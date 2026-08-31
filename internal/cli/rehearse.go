@@ -221,7 +221,7 @@ func runRehearseRun(cmd *cobra.Command, args []string, filters []string) error {
 	// so the user always sees scenario results. An unwritable path exits 2.
 	// Feature: cli/rehearse/evidence (REQ: report-out)
 	if reportOut != "" {
-		if err := writeReportFn(reportOut, version, startedAt, reports, cwd); err != nil {
+		if err := writeReportFn(reportOut, buildInfo.Version, startedAt, reports, cwd); err != nil {
 			return exitcode.InvalidArgsErrorf("cannot write report to %q: %v", reportOut, err)
 		}
 	}

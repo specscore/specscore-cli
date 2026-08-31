@@ -298,7 +298,7 @@ func runStudioProbe(cmd *cobra.Command, _ []string) error {
 	var produced []fact.Fact
 	var warnings []string
 	if kind == kindDomain || kind == kindAll {
-		res := probeRunDomainFn(existing, version, now)
+		res := probeRunDomainFn(existing, buildInfo.Version, now)
 		kinds = append(kinds, res.Kinds...)
 		produced = append(produced, res.Facts...)
 		warnings = append(warnings, res.Warnings...)
@@ -308,7 +308,7 @@ func runStudioProbe(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return err
 		}
-		res := probeRunCIFn(repos, version, now)
+		res := probeRunCIFn(repos, buildInfo.Version, now)
 		kinds = append(kinds, res.Kinds...)
 		produced = append(produced, res.Facts...)
 		warnings = append(warnings, res.Warnings...)
@@ -641,7 +641,7 @@ func runStudioContradictions(cmd *cobra.Command, _ []string) error {
 	noWrite, _ := cmd.Flags().GetBool("no-write")
 	if !noWrite && len(active) > 0 {
 		now := studioNowFn()
-		contraFacts := contradictions.ToFacts(active, now.UTC().Format(time.RFC3339), version)
+		contraFacts := contradictions.ToFacts(active, now.UTC().Format(time.RFC3339), buildInfo.Version)
 		if _, err := storeMergeFn(dbPath, contraFacts); err != nil {
 			return fmt.Errorf("writing contradicts facts: %w", err)
 		}

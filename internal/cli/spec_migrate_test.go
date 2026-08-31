@@ -111,7 +111,7 @@ func TestSpecMigrate_Error(t *testing.T) {
 
 func runRoot(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
-	cmd := newRootCommand()
+	cmd, _ := newRootCommand()
 	cmd.SilenceUsage = true
 	cmd.PersistentPreRun = nil
 	var out, errOut bytes.Buffer

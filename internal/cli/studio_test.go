@@ -1074,7 +1074,7 @@ func TestStudioIndex_MissingRehearseDirectorySilent(t *testing.T) {
 // --- root registration ---
 
 func TestRootCommand_HasStudio(t *testing.T) {
-	root := newRootCommand()
+	root, _ := newRootCommand()
 	for _, c := range root.Commands() {
 		if c.Name() == "studio" {
 			return

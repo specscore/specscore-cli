@@ -22,9 +22,9 @@ type exitCoder interface{ ExitCode() int }
 // test binary was built.
 func withVersion(t *testing.T, v string) {
 	t.Helper()
-	prev := version
-	version = v
-	t.Cleanup(func() { version = prev })
+	prev := buildInfo.Version
+	buildInfo.Version = v
+	t.Cleanup(func() { buildInfo.Version = prev })
 }
 
 // --- command shape: name, alias, flag surface --------------------------

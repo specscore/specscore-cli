@@ -185,7 +185,7 @@ func emitInvocationEvent(runErr error) {
 		Success:    runErr == nil,
 		DurationMs: time.Since(invocation.StartTime).Milliseconds(),
 		ExitCode:   exit,
-		CLIVersion: version,
+		CLIVersion: buildInfo.Version,
 		OS:         runtime.GOOS,
 		Arch:       runtime.GOARCH,
 		Caller:     telemetry.ResolveCaller(callerFlag, os.Getenv("SPECSCORE_CALLER")),
@@ -220,12 +220,21 @@ func silentSignalErrorHandler(w io.Writer, styles fang.Styles, err error) {
 // with the documented unexpected-error code rather than Go's default
 // panic-exit code 2.
 //
+// extraOpts carries the []fang.Option newRootCommand() got back from
+// cobracmd.Wire (in practice, fang.WithVersion(buildInfo.Short())) so the
+// --version/-v flag it enables agrees with the `version` subcommand Wire
+// also added. fang.WithoutVersion() is deliberately NOT set here anymore:
+// that option previously deferred version reporting entirely to cobra's
+// own --version flag; now that Wire supplies fang.WithVersion explicitly,
+// setting both would conflict.
+//
 // Implements cli/telemetry/errors-telemetry#req:trigger-on-panic-recovery.
-func executeWithPanicRecovery(rootCmd *cobra.Command) (returnErr error) {
+func executeWithPanicRecovery(rootCmd *cobra.Command, extraOpts ...fang.Option) (returnErr error) {
 	var (
 		panicVal   any
 		panicStack []byte
 	)
+	opts := append([]fang.Option{fang.WithErrorHandler(silentSignalErrorHandler)}, extraOpts...)
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -233,10 +242,7 @@ func executeWithPanicRecovery(rootCmd *cobra.Command) (returnErr error) {
 				panicStack = debug.Stack()
 			}
 		}()
-		returnErr = fang.Execute(context.Background(), rootCmd,
-			fang.WithoutVersion(),
-			fang.WithErrorHandler(silentSignalErrorHandler),
-		)
+		returnErr = fang.Execute(context.Background(), rootCmd, opts...)
 	}()
 
 	if panicVal != nil {
