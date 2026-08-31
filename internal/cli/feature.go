@@ -870,6 +870,10 @@ func buildFeatureChangeStatusMatrix() string {
 		lifecycle.FeatureImplementing,
 		lifecycle.FeatureStable,
 		lifecycle.FeatureAmending,
+		// Planned is not part of the normal forward progression — it is a
+		// legacy side-entry (see lifecycle.FeaturePlanned's doc comment) —
+		// so it is appended at the end rather than interleaved above.
+		lifecycle.FeaturePlanned,
 	}
 	const fromWidth = 14
 	var b strings.Builder

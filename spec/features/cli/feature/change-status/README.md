@@ -51,10 +51,15 @@ Only the transitions in the table below are accepted. Any other `(from, to)` pai
 | `Amending` | `Stable` | Status rewrite + features-index sync |
 | `Amending` | `Approved` | Status rewrite + features-index sync |
 | `Stable` | `Deprecated` | Status rewrite + features-index sync |
+| `Planned` | `In Review` | Status rewrite + features-index sync |
+| `Planned` | `Approved` | Status rewrite + features-index sync |
+| `Planned` | `Deprecated` | Status rewrite + features-index sync |
 
 The `Draft → Approved` direct path is permitted: not every Feature requires a review phase. `Draft → Deprecated` and `Implementing → Deprecated` are also direct paths: a Feature abandoned before or during implementation MUST be honestly retirable without first detouring through `Stable` — the only prior route to `Deprecated`.
 
 `Approved → Amending`, `Amending → Approved`, `Approved → Rejected`, and `Approved → Deprecated` close a gap where an agreed-but-unbuilt Feature (`Approved`, no code written from it yet) had exactly one legal exit (`→ Implementing`): a design that was approved and then needed to change, be cancelled, or be retired before any code existed had nowhere legal to go. `Approved → Amending` covers reworking that design in place; `Amending → Approved` returns it to the band it came from once the rework is resolved — `Amending` MUST NOT force a return through `Stable`, which would claim an implementation that was never built. (`Stable → Amending → Stable` remains the parallel arc for a design that already has a working implementation.) `Approved → Rejected` covers cancelling an agreed-but-unbuilt design outright; `Approved → Deprecated` covers retiring one. Reverse transitions into the pre-approval bands (e.g., `Approved → Draft`, `Deprecated → Stable`) are still NOT in the matrix and exit `4`. They MAY land in a follow-on revision once concrete reuse patterns surface.
+
+`Planned` is a legacy, pre-vocabulary status found in the wild (e.g. `datatug/datatug-cli`'s `spec/features/cli/version/README.md`) that predates this Feature status vocabulary — it is not otherwise documented as part of it, is not selectable via `feature new --status=`, and is not itself a legal `--to` target (no arc goes INTO `Planned`, mirroring the `Draft` guard below). No authoritative rename table exists for what `Planned` "really" means (checked the upstream `specscore/specscore` meta-spec's status-vocabulary Feature and this repo's own git history; neither documents it), so rather than guess a canonical rename, this matrix treats `Planned` as a symmetric legacy alias of `Draft`'s edge set: the same "no legal predecessor" shape as `Draft`, given the exact same three forward-only outgoing edges, so a Feature stuck at `Planned` has a forward exit through `change-status` without silently rewriting its on-disk status text.
 
 #### REQ: legal-transition-matrix
 
@@ -64,7 +69,7 @@ The verb MUST accept only `(from, to)` pairs listed above. Any other pair MUST e
 
 #### REQ: target-status-flag
 
-The verb MUST accept the target status via a required `--to=<status>` flag. The flag value MUST be a recognized Feature status (`Draft`, `In Review`, `Approved`, `Implementing`, `Stable`, `Amending`, `Rejected`, `Deprecated`); unrecognized values exit `2` (InvalidArgs). Flag value matching is case-insensitive; the canonical title-case value is what gets written. Multi-word values use shell quoting: `--to="In Review"`.
+The verb MUST accept the target status via a required `--to=<status>` flag. The flag value MUST be a recognized Feature status (`Draft`, `In Review`, `Approved`, `Implementing`, `Stable`, `Amending`, `Rejected`, `Deprecated`, `Planned`); unrecognized values exit `2` (InvalidArgs). Flag value matching is case-insensitive; the canonical title-case value is what gets written. Multi-word values use shell quoting: `--to="In Review"`.
 
 ### Kind-specific identifier resolution
 
@@ -88,7 +93,7 @@ The post-mutation `specscore spec lint --fix` invocation MUST rely on the `featu
 
 | Flag | Required | Description |
 |---|---|---|
-| `--to` | Yes | Target status. Legal values: `in review`, `approved`, `implementing`, `stable`, `amending`, `rejected`, `deprecated` (case-insensitive; `draft` is not a legal target — there is no transition INTO `Draft`). |
+| `--to` | Yes | Target status. Legal values: `in review`, `approved`, `implementing`, `stable`, `amending`, `rejected`, `deprecated` (case-insensitive; `draft` and `planned` are not legal targets — there is no transition INTO `Draft` or `Planned`). |
 | `--project` | No | Project root. Autodetected per [CLI#req:project-autodetect](../../README.md#req-project-autodetect). |
 
 ## Exit codes
@@ -179,6 +184,12 @@ Given `spec/features/auth/README.md` containing `**Status:** Approved`, running 
 **Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix)
 
 Given `spec/features/auth/README.md` containing `**Status:** Approved`, running `specscore feature change-status auth --to=deprecated` exits `0`, with stdout `auth: Approved → Deprecated\n`. An agreed-but-unbuilt design can be retired without ever reaching `Implementing`.
+
+### AC: planned-legacy-status-can-advance
+
+**Requirements:** [cli/feature/change-status#req:legal-transition-matrix](#req-legal-transition-matrix), [cli/feature/change-status#req:target-status-flag](#req-target-status-flag), [lifecycle-transitions#req:status-line-rewrite](../../lifecycle-transitions/README.md#req-status-line-rewrite), [lifecycle-transitions#req:index-sync-on-success](../../lifecycle-transitions/README.md#req-index-sync-on-success), [lifecycle-transitions#req:success-output-format](../../lifecycle-transitions/README.md#req-success-output-format)
+
+Given `spec/features/cli/version/README.md` containing the legacy `**Status:** Planned` (a status that predates this Feature status vocabulary; see the legal-transition matrix note above), running `specscore feature change-status cli/version --to="in review"` exits `0`, writes exactly `cli/version: Planned → In Review\n` to stdout, rewrites the Status line, and syncs the features-index row. `Planned → Approved` and `Planned → Deprecated` are legal for the same reason (parity with `Draft`'s own edge set) but are not required to be exercised by every implementation of this AC.
 
 ### AC: nested-feature-id-resolves
 

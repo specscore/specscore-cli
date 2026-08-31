@@ -82,6 +82,23 @@ func TestBidirectionalMatrix_TerminalAndInitialStatusesAreVisible(t *testing.T) 
 	if draft.IsTerminal() {
 		t.Error("Draft: expected IsTerminal()==false — it has outgoing arcs")
 	}
+
+	// Planned is a legacy, pre-vocabulary status (see FeaturePlanned's doc
+	// comment) with the same "no legal predecessor" shape as Draft. Before
+	// this fix it had NO outgoing arcs either, so it rendered as BOTH
+	// initial-only AND terminal — a dead end indistinguishable from a
+	// genuinely terminal status. It now has outgoing arcs, so it must read
+	// as initial-only but NOT terminal, same as Draft.
+	planned, ok := byStatus[FeaturePlanned]
+	if !ok {
+		t.Fatal("expected Planned in the Feature matrix")
+	}
+	if !planned.IsInitialOnly() {
+		t.Errorf("Planned: expected IsInitialOnly()==true (Previous=%v)", planned.Previous)
+	}
+	if planned.IsTerminal() {
+		t.Error("Planned: expected IsTerminal()==false — it now has outgoing arcs")
+	}
 }
 
 func TestEdgeFor_MatchesBidirectionalMatrixEntry(t *testing.T) {

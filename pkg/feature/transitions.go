@@ -79,6 +79,16 @@ func ChangeStatus(featuresDir, featureID, toRaw string) (*ChangeStatusResult, er
 			toRaw,
 		)
 	}
+	// `planned` is recognized as a kind status (it's a legal FROM-state, see
+	// FeaturePlanned's doc comment) but is NOT a legal `--to` target — no arc
+	// goes INTO Planned, mirroring the Draft guard above. Reject it at the
+	// flag layer so `--to=planned` exits 2, not 4.
+	if to == lifecycle.FeaturePlanned {
+		return nil, exitcode.InvalidArgsErrorf(
+			"unrecognized status %q for kind feature (Planned is not a legal target: no transition INTO Planned)",
+			toRaw,
+		)
+	}
 
 	readmePath, err := resolveFeatureID(featuresDir, featureID)
 	if err != nil {

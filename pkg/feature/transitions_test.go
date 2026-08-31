@@ -145,6 +145,8 @@ func TestResolveFeatureID(t *testing.T) {
 //   - approved-to-deprecated-happy-path
 //   - approved-to-implementing-happy-path (not numbered in AC list but
 //     part of the matrix — guarded so the matrix stays complete).
+//   - planned-legacy-status-can-advance (Planned → In Review; the other two
+//     Planned arcs are covered here too for parity with Draft's own set).
 func TestChangeStatus_HappyPaths(t *testing.T) {
 	cases := []struct {
 		name string
@@ -167,6 +169,9 @@ func TestChangeStatus_HappyPaths(t *testing.T) {
 		{"stable → deprecated", "Stable", "deprecated", "Deprecated"},
 		{"draft → deprecated", "Draft", "deprecated", "Deprecated"},
 		{"implementing → deprecated", "Implementing", "deprecated", "Deprecated"},
+		{"planned → in review", "Planned", "in review", "In Review"},
+		{"planned → approved", "Planned", "approved", "Approved"},
+		{"planned → deprecated", "Planned", "deprecated", "Deprecated"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -242,6 +247,10 @@ func TestChangeStatus_CaseInsensitiveFlag(t *testing.T) {
 // AC: reverse-transition-rejected — Stable → Implementing exits 4.
 // AC: already-at-target-rejected — Approved → Approved exits 4 per
 // REQ: not-idempotent (self-loops are forbidden in the matrix).
+// Planned → Implementing / Planned → Planned mirror the Draft rows
+// immediately above/below them for parity: Planned has the same
+// forward-only edge set as Draft (see FeaturePlanned's doc comment), so it
+// must reject the same shape of illegal arcs Draft does.
 func TestChangeStatus_IllegalTransitions(t *testing.T) {
 	cases := []struct {
 		name string
@@ -256,6 +265,9 @@ func TestChangeStatus_IllegalTransitions(t *testing.T) {
 		{"deprecated → stable (reverse)", "Deprecated", "stable"},
 		{"approved → approved (self-loop)", "Approved", "approved"},
 		{"draft → draft (self-loop, also blocked by --to=draft guard)", "Draft", "draft"},
+		{"planned → implementing (skips review)", "Planned", "implementing"},
+		{"planned → stable", "Planned", "stable"},
+		{"planned → planned (self-loop, also blocked by --to=planned guard)", "Planned", "planned"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -265,12 +277,12 @@ func TestChangeStatus_IllegalTransitions(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected error for %s → %s, got result %+v", tc.from, tc.to, result)
 			}
-			// --to=draft is intercepted at the flag layer (exit-2),
-			// not the state-machine layer (exit-4). Both are valid
-			// rejections; the matrix-strictness REQ is what we care
-			// about — the artifact MUST stay unchanged either way.
+			// --to=draft and --to=planned are intercepted at the flag
+			// layer (exit-2), not the state-machine layer (exit-4). Both
+			// are valid rejections; the matrix-strictness REQ is what we
+			// care about — the artifact MUST stay unchanged either way.
 			expectedExit := exitcode.InvalidState
-			if strings.EqualFold(tc.to, "draft") {
+			if strings.EqualFold(tc.to, "draft") || strings.EqualFold(tc.to, "planned") {
 				expectedExit = exitcode.InvalidArgs
 			}
 			if got := exitCodeOf(err); got != expectedExit {
@@ -299,10 +311,11 @@ func TestChangeStatus_IllegalTransitions(t *testing.T) {
 }
 
 // AC: unrecognized-to-value-rejected — `--to=banana` exits 2 BEFORE
-// any state-machine check. Same for `--to=archived` (Idea-only) and
-// `--to=draft` (no arc INTO Draft, treated as not a legal target).
+// any state-machine check. Same for `--to=archived` (Idea-only),
+// `--to=draft` (no arc INTO Draft, treated as not a legal target), and
+// `--to=planned` (no arc INTO Planned, same guard shape as Draft).
 func TestChangeStatus_UnrecognizedToValue(t *testing.T) {
-	for _, raw := range []string{"banana", "archived", "specified", "DRAFT", "draft"} {
+	for _, raw := range []string{"banana", "archived", "specified", "DRAFT", "draft", "planned"} {
 		raw := raw
 		t.Run(raw, func(t *testing.T) {
 			featDir := writeFeatureFixture(t, "Draft")

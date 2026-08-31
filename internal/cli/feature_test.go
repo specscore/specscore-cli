@@ -253,6 +253,66 @@ func TestFeatureChangeStatus_ImplementingToDeprecated(t *testing.T) {
 	}
 }
 
+// AC: planned-legacy-status-can-advance — a Feature carrying the legacy,
+// pre-vocabulary `Planned` status (e.g. datatug/datatug-cli's
+// spec/features/cli/version/README.md) gets the same forward exits Draft
+// has. Mirrors TestFeatureChangeStatus_DraftToInReview exactly, substituting
+// Planned for Draft.
+func TestFeatureChangeStatus_PlannedToInReview(t *testing.T) {
+	root := setupFeatureSpec(t, "Planned")
+
+	out, errOut, err := runFeature(t, "change-status", "auth", "--to=in review")
+	if err != nil {
+		t.Fatalf("unexpected err: %v\nstderr=%s", err, errOut)
+	}
+	if got, want := out, "auth: Planned → In Review\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	if got := readAuthStatus(t, root); got != "In Review" {
+		t.Errorf("README Status = %q, want In Review", got)
+	}
+	if got := readIndexStatus(t, root); got != "In Review" {
+		t.Errorf("index Status = %q, want In Review (feature-index-row-sync)", got)
+	}
+}
+
+// AC: planned-legacy-status-can-advance (Approved arc) — mirrors
+// TestFeatureChangeStatus_DraftDirectToApproved, substituting Planned for
+// Draft.
+func TestFeatureChangeStatus_PlannedDirectToApproved(t *testing.T) {
+	root := setupFeatureSpec(t, "Planned")
+
+	out, errOut, err := runFeature(t, "change-status", "auth", "--to=approved")
+	if err != nil {
+		t.Fatalf("unexpected err: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.HasPrefix(out, "auth: Planned → Approved") {
+		t.Errorf("stdout = %q, want prefix `auth: Planned → Approved`", out)
+	}
+	if got := readAuthStatus(t, root); got != "Approved" {
+		t.Errorf("Status = %q, want Approved", got)
+	}
+}
+
+// AC: planned-legacy-status-can-advance (Deprecated arc) — mirrors
+// TestFeatureChangeStatus_DraftToDeprecated, substituting Planned for Draft:
+// a Planned feature can be retired directly, without ever passing through
+// review/approval/implementation.
+func TestFeatureChangeStatus_PlannedToDeprecated(t *testing.T) {
+	root := setupFeatureSpec(t, "Planned")
+
+	out, _, err := runFeature(t, "change-status", "auth", "--to=deprecated")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got, want := out, "auth: Planned → Deprecated\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	if got := readAuthStatus(t, root); got != "Deprecated" {
+		t.Errorf("Status = %q, want Deprecated", got)
+	}
+}
+
 // AC: nested-feature-id-resolves — a sub-feature at
 // spec/features/cli/idea/change-status/README.md transitions correctly
 // via the slash-bearing id.
