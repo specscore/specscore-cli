@@ -111,7 +111,7 @@ jobs:
     # allow_major_version_bump, artifact_smoke_test_homebrew_cask). The
     # sibling repos in this ecosystem (ingitdb-cli, chatwright/cli,
     # datatug-cli) are now pinned to strongo/cicd@v1.14.14 too.
-    uses: strongo/cicd/.github/workflows/release.yml@v1.14.14
+    uses: strongo/cicd/.github/workflows/release.yml@v1.14.17
     permissions:
       contents: write
     with:
