@@ -215,7 +215,7 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		Severity:   severity,
 		Fix:        fix,
 		FixTargets: fixTargets,
-		CLIVersion: version,
+		CLIVersion: buildInfo.Version,
 	}
 
 	res, err := lint.LintWithResult(opts)

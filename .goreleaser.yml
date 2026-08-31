@@ -30,9 +30,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X github.com/specscore/specscore-cli/internal/cli.version={{.Version}}
-      - -X github.com/specscore/specscore-cli/internal/cli.commit={{.Commit}}
-      - -X github.com/specscore/specscore-cli/internal/cli.date={{.Date}}
+      - -X github.com/strongo/buildinfo.version={{.Version}}
+      - -X github.com/strongo/buildinfo.commit={{.FullCommit}}
+      - -X github.com/strongo/buildinfo.date={{.Date}}
       # Telemetry — PostHog write key injected from the GitHub Actions secret
       # POSTHOG_WRITE_KEY at release time per
       # cli/telemetry/usage-telemetry#req:posthog-write-key-embedded-at-build-time.

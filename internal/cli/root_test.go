@@ -165,13 +165,22 @@ func TestRun_UnknownCommand(t *testing.T) {
 	}
 }
 
-// --- versionCommand ---
+// --- version subcommand (wired by fangcmd.Wire) ---
 
 func TestVersionCommand_Output(t *testing.T) {
-	cmd := versionCommand()
+	root, _ := newRootCommand()
+	cmd, _, err := root.Find([]string{"version"})
+	if err != nil {
+		t.Fatalf("root.Find([version]) error = %v", err)
+	}
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.Run(cmd, nil)
+	if cmd.RunE == nil {
+		t.Fatal("version command has no RunE")
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("version command RunE() error = %v", err)
+	}
 	if !strings.Contains(out.String(), "specscore") {
 		t.Errorf("output = %q, want to contain 'specscore'", out.String())
 	}

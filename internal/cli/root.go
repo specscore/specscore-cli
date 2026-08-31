@@ -5,16 +5,25 @@ import (
 	"os"
 	"strings"
 
+	"charm.land/fang/v2"
 	"github.com/spf13/cobra"
+	"github.com/strongo/buildinfo"
+	"github.com/strongo/buildinfo/fangcmd"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+// buildInfo is this process's resolved build identity (version, commit,
+// build date), resolved once at package-init time by
+// github.com/strongo/buildinfo. It replaces the old ldflags-stamped
+// version/commit/date package vars: every command that previously read
+// those directly now reads buildInfo.Version — the only field anything
+// besides the `version` subcommand and `--version`/`-v` flag ever needed.
+// Those two surfaces are wired directly from buildInfo by fangcmd.Wire in
+// newRootCommand(), so they cannot disagree.
+var buildInfo = buildinfo.Get("specscore")
 
+var (
 	// osExit is a testable indirection for os.Exit. Tests replace it with a
 	// stub to verify exit codes without killing the test process.
 	osExit = os.Exit
@@ -22,32 +31,33 @@ var (
 
 // Run executes the specscore CLI with the given arguments.
 func Run(args []string) error {
-	rootCmd := newRootCommand()
+	rootCmd, fangOpts := newRootCommand()
 
 	if len(args) > 1 {
 		rootCmd.SetArgs(args[1:])
 	}
-	return executeWithPanicRecovery(rootCmd)
+	return executeWithPanicRecovery(rootCmd, fangOpts...)
 }
 
-func newRootCommand() *cobra.Command {
+// newRootCommand builds the root cobra command and returns the
+// []fang.Option that fangcmd.Wire produced for it (e.g. the resolved
+// --version/-v value). Callers MUST pass those options into fang.Execute
+// alongside the returned command so the `version` subcommand it wires in
+// and the --version/-v flag stay in agreement.
+func newRootCommand() (*cobra.Command, []fang.Option) {
 	rootCmd := &cobra.Command{
 		Use:           "specscore",
 		Short:         "SpecScore CLI — validate and query specification repositories",
-		Version:       version,
+		Version:       buildInfo.Short(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
-	// `--version` prints just the bare semver (e.g. `0.11.0`) for scripting.
-	// Use the `version` subcommand for the full human-readable line with commit and date.
-	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.SetErr(os.Stderr)
 
 	rootCmd.AddCommand(
-		versionCommand(),
 		agentCommand(),
 		codeCommand(),
 		entityCommand(),
@@ -78,11 +88,17 @@ func newRootCommand() *cobra.Command {
 		selfUpdateCommand(),
 	)
 
+	// `version` subcommand + `--version`/`-v` flag are both wired from
+	// buildInfo here, so the two surfaces cannot disagree. Wire also sets
+	// rootCmd's version template to print the bare version with no
+	// decoration, which is what the fang.Option below relies on.
+	fangOpts := fangcmd.Wire(rootCmd, buildInfo)
+
 	// Attach telemetry persistent-flag + PersistentPreRun. Emission happens
 	// after Execute returns so the actual exit code is captured.
 	attachTelemetry(rootCmd)
 
-	return rootCmd
+	return rootCmd, fangOpts
 }
 
 func rootMigrateCommand() *cobra.Command {
@@ -90,16 +106,6 @@ func rootMigrateCommand() *cobra.Command {
 	cmd.Short = "Backfill artifact-frontmatter-convention frontmatter across the spec tree"
 	cmd.Long = "Equivalent to `specscore spec migrate`.\n\n" + cmd.Long
 	return cmd
-}
-
-func versionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print the specscore version",
-		Run: func(cmd *cobra.Command, _ []string) {
-			_, _ = cmd.OutOrStdout().Write([]byte("specscore " + version + " (" + commit + ") " + date + "\n"))
-		},
-	}
 }
 
 // mapUnsupportedCommand maps cobra's "unknown command" error to the dedicated

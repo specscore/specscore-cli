@@ -61,7 +61,7 @@ func selfUpdateConfig() selfupdate.Config {
 	return selfupdate.Config{
 		BinaryName:           "specscore",
 		Repository:           "specscore/specscore-cli",
-		CurrentVersion:       version,
+		CurrentVersion:       buildInfo.Version,
 		UndeterminedVersions: []string{"dev"},
 		Managers: []selfupdate.Manager{
 			selfupdate.Homebrew("brew upgrade specscore"),

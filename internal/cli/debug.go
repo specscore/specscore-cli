@@ -104,10 +104,10 @@ func runDebugError(w io.Writer, text string, force bool) error {
 	}
 	_, _ = fmt.Fprintf(w,
 		"%s: message=%q debug=true unscrubbed=%v release=%s\n",
-		scope, resolved, isUnscrubbed, version)
+		scope, resolved, isUnscrubbed, buildInfo.Version)
 
 	// Build a synthetic Event tagged as debug. The debug=true tag at the
 	// emit-event level is what the operator-runbook alert filter excludes.
-	telemetry.DebugCrashReports(text, version)
+	telemetry.DebugCrashReports(text, buildInfo.Version)
 	return nil
 }

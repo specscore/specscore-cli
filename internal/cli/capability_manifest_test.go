@@ -355,7 +355,8 @@ func assertRepoEvidencePath(t *testing.T, root, capabilityID, path string) {
 
 func TestCapabilityManifestCoversPublicCommandTree(t *testing.T) {
 	_, manifest := loadCapabilityManifest(t)
-	want := publicCapabilityCommandTree(newRootCommand())
+	root, _ := newRootCommand()
+	want := publicCapabilityCommandTree(root)
 	got := map[string]bool{}
 	for _, capability := range manifest.Capabilities {
 		for _, command := range capability.Surfaces.Runtime.Commands {
@@ -447,7 +448,7 @@ func TestCapabilityManifestHelpAnchorsAndGeneratedMatrix(t *testing.T) {
 			if len(parts) == 0 || parts[0] != "specscore" {
 				t.Fatalf("%s has invalid help command %q", capability.ID, anchor.Command)
 			}
-			command := newRootCommand()
+			command, _ := newRootCommand()
 			var stdout, stderr bytes.Buffer
 			command.SetOut(&stdout)
 			command.SetErr(&stderr)
@@ -487,7 +488,7 @@ func parseCapabilityExample(example string) error {
 	if len(parts) < 2 || parts[0] != "specscore" {
 		return fmt.Errorf("example must begin with specscore")
 	}
-	root := newRootCommand()
+	root, _ := newRootCommand()
 	command, _, err := root.Find(parts[1:])
 	if err != nil {
 		return err
