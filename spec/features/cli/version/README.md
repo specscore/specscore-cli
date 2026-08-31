@@ -72,15 +72,15 @@ The version, commit, and date fields are populated at build time and baked into 
 
 #### REQ: ldflag-injection
 
-The three values MUST be injected via Go linker flags against package-level `var` symbols in `internal/cli`:
+The three values MUST be injected via Go linker flags against the package-level `var` symbols in the shared build-identity module `github.com/strongo/buildinfo`, which `internal/cli` wires up via `buildinfo.Get("specscore")` (resolved once at package-init time):
 
 ```
--X github.com/specscore/specscore-cli/internal/cli.version=<semver>
--X github.com/specscore/specscore-cli/internal/cli.commit=<full-sha>
--X github.com/specscore/specscore-cli/internal/cli.date=<rfc3339>
+-X github.com/strongo/buildinfo.version=<semver>
+-X github.com/strongo/buildinfo.commit=<full-sha>
+-X github.com/strongo/buildinfo.date=<rfc3339>
 ```
 
-A release build MUST supply all three. The release workflow (goreleaser / equivalent) is the canonical producer of these values.
+A release build MUST supply all three. The release workflow (goreleaser / equivalent) is the canonical producer of these values; see `.goreleaser.yml`'s `ldflags` block, which passes `{{.Version}}`, `{{.FullCommit}}` (the full SHA, not GoReleaser's short-SHA `{{.Commit}}`), and `{{.Date}}`.
 
 #### REQ: published-artifact-revalidation
 
@@ -88,12 +88,22 @@ The repository MUST provide a manually dispatched, validation-only workflow that
 
 #### REQ: default-placeholders
 
-When the binary is built without `-ldflags` (typical of `go run`, `go build` during development, or `go install` from a consumer), the three fields MUST fall back to literal placeholders: `version="dev"`, `commit="none"`, `date="unknown"`. The CLI MUST NOT error on missing version information — placeholders are a valid state.
+When the binary is built without `-ldflags` (typical of `go run`, `go build` during development, or `go install` from a consumer), `github.com/strongo/buildinfo`'s `Get` MUST fall back to `runtime/debug.ReadBuildInfo()` for whichever of version, commit, and date the linker left unset, and MUST NOT error or panic when version information is missing.
 
-A `dev` binary therefore prints:
+`ReadBuildInfo()` resolves real values whenever any VCS information is available to the Go toolchain at build time — which is the common case for any `go build`/`go run`/`go install` invoked inside a git checkout:
 
-- `specscore --version` → `dev`
-- `specscore version` → `specscore dev (none) unknown`
+- **Version** comes from the main module's resolved version: the exact tag (e.g. `0.37.12`) when the build commit is exactly on a clean, tagged commit; otherwise a Go pseudo-version derived from the nearest tag, commit timestamp, and short SHA (e.g. `0.37.13-0.20260831115230-0532fcee7af1`).
+- **Commit** comes from the `vcs.revision` build setting — the full commit SHA.
+- **Date** comes from the `vcs.time` build setting — the commit's timestamp, not the build's wall-clock time.
+- If the working tree has uncommitted changes (`vcs.modified=true`), a `+dirty` suffix is appended to both the version and the commit (each independently, per Go's and buildinfo's own dirty-marking — e.g. `0.37.13-0.20260831115230-0532fcee7af1+dirty` and `0532fcee7af1ba6483a10b08e506a19616bd3908+dirty`).
+
+Only when `ReadBuildInfo()` itself cannot resolve anything at all — no VCS metadata reachable by the Go toolchain, e.g. a build outside any git checkout or with `-buildvcs=false` — MUST the fields fall back to genuine placeholders: `version="dev"`, with commit and date left empty (rendered as the word `unknown` by the `version` subcommand's formatter; see below). The CLI MUST NOT error in this case either — this is the terminal fallback, not an error condition.
+
+A binary built this way therefore prints, depending on which fallback tier applies:
+
+- Inside a git checkout exactly on a clean tag: `specscore --version` → `0.37.12`; `specscore version` → `specscore 0.37.12 (0532fcee7af1ba6483a10b08e506a19616bd3908) 2026-08-31T10:36:37Z`.
+- Inside a git checkout not exactly on a tag (or with a dirty tree): `specscore --version` → a pseudo-version such as `0.37.13-0.20260831115230-0532fcee7af1`; `specscore version` → `specscore 0.37.13-0.20260831115230-0532fcee7af1 (0532fcee7af1ba6483a10b08e506a19616bd3908) 2026-08-31T11:52:30Z`.
+- With no VCS information resolvable at all: `specscore --version` → `dev`; `specscore version` → `specscore dev (unknown) unknown`.
 
 ### No public API
 
@@ -113,7 +123,7 @@ None. Neither the subcommand nor the flag accepts arguments.
 |---|---|
 | `0` | Success (always, for both surfaces) |
 
-The version command cannot fail under normal operation — missing build metadata falls back to placeholders rather than erroring. Exits other than `0` indicate an unexpected runtime fault in the CLI itself, handled by the shared error path defined in the [CLI parent feature](../README.md).
+The version command cannot fail under normal operation — missing ldflags-stamped build metadata falls back to VCS-derived values or, failing that, to placeholders (see [REQ: default-placeholders](#req-default-placeholders)) rather than erroring. Exits other than `0` indicate an unexpected runtime fault in the CLI itself, handled by the shared error path defined in the [CLI parent feature](../README.md).
 
 ## Interaction with Other Features
 
@@ -143,7 +153,10 @@ The installation documentation in `docs/installation.md` shows users how to veri
 
 **Requirements:** cli/version#req:default-placeholders
 
-A `specscore` binary built without `-ldflags` (e.g., `go run ./cmd/specscore --version`) exits `0` and prints `dev`. `specscore version` prints `specscore dev (none) unknown`. The CLI never errors or panics because version metadata is missing.
+A `specscore` binary built without `-ldflags` exits `0` and never errors or panics because version metadata is missing. What it prints depends on what `runtime/debug.ReadBuildInfo()` can resolve:
+
+- Built inside a git checkout (e.g., `go run ./cmd/specscore --version` from this repo), it reports real VCS-derived values, not placeholders: the exact tag when the checkout is exactly on a clean tag, otherwise a Go pseudo-version (with a `+dirty` suffix when the tree has uncommitted changes), alongside the real commit SHA and commit timestamp.
+- Only with no VCS information resolvable at all (e.g. built with `-buildvcs=false` or outside any git checkout) does it fall back to genuine placeholders: `specscore --version` prints `dev`; `specscore version` prints `specscore dev (unknown) unknown`.
 
 ### AC: go-idiom-format
 
