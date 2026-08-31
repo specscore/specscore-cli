@@ -221,7 +221,7 @@ func silentSignalErrorHandler(w io.Writer, styles fang.Styles, err error) {
 // panic-exit code 2.
 //
 // extraOpts carries the []fang.Option newRootCommand() got back from
-// cobracmd.Wire (in practice, fang.WithVersion(buildInfo.Short())) so the
+// fangcmd.Wire (in practice, fang.WithVersion(buildInfo.Short())) so the
 // --version/-v flag it enables agrees with the `version` subcommand Wire
 // also added. fang.WithoutVersion() is deliberately NOT set here anymore:
 // that option previously deferred version reporting entirely to cobra's

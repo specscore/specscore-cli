@@ -8,7 +8,7 @@ import (
 	"charm.land/fang/v2"
 	"github.com/spf13/cobra"
 	"github.com/strongo/buildinfo"
-	"github.com/strongo/buildinfo/cobracmd"
+	"github.com/strongo/buildinfo/fangcmd"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
@@ -19,7 +19,7 @@ import (
 // version/commit/date package vars: every command that previously read
 // those directly now reads buildInfo.Version — the only field anything
 // besides the `version` subcommand and `--version`/`-v` flag ever needed.
-// Those two surfaces are wired directly from buildInfo by cobracmd.Wire in
+// Those two surfaces are wired directly from buildInfo by fangcmd.Wire in
 // newRootCommand(), so they cannot disagree.
 var buildInfo = buildinfo.Get("specscore")
 
@@ -40,7 +40,7 @@ func Run(args []string) error {
 }
 
 // newRootCommand builds the root cobra command and returns the
-// []fang.Option that cobracmd.Wire produced for it (e.g. the resolved
+// []fang.Option that fangcmd.Wire produced for it (e.g. the resolved
 // --version/-v value). Callers MUST pass those options into fang.Execute
 // alongside the returned command so the `version` subcommand it wires in
 // and the --version/-v flag stay in agreement.
@@ -92,7 +92,7 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 	// buildInfo here, so the two surfaces cannot disagree. Wire also sets
 	// rootCmd's version template to print the bare version with no
 	// decoration, which is what the fang.Option below relies on.
-	fangOpts := cobracmd.Wire(rootCmd, buildInfo)
+	fangOpts := fangcmd.Wire(rootCmd, buildInfo)
 
 	// Attach telemetry persistent-flag + PersistentPreRun. Emission happens
 	// after Execute returns so the actual exit code is captured.

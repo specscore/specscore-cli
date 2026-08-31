@@ -165,7 +165,7 @@ func TestRun_UnknownCommand(t *testing.T) {
 	}
 }
 
-// --- version subcommand (wired by cobracmd.Wire) ---
+// --- version subcommand (wired by fangcmd.Wire) ---
 
 func TestVersionCommand_Output(t *testing.T) {
 	root, _ := newRootCommand()
