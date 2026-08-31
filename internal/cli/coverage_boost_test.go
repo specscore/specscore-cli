@@ -1539,6 +1539,12 @@ func TestBuildFeatureChangeStatusMatrix_NotEmpty(t *testing.T) {
 	if !strings.Contains(m, "Draft") {
 		t.Errorf("matrix missing 'Draft': %q", m)
 	}
+	// Planned is a legacy, pre-vocabulary side-entry (see
+	// lifecycle.FeaturePlanned's doc comment) appended at the end of the
+	// froms slice — --help must surface its forward exit path too.
+	if !strings.Contains(m, "Planned") {
+		t.Errorf("matrix missing 'Planned': %q", m)
+	}
 }
 
 // ===========================================================================

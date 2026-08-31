@@ -56,6 +56,9 @@ var expectedLegal = map[Kind][]transitionRow{
 		{From: FeatureAmending, To: FeatureStable},
 		{From: FeatureAmending, To: FeatureApproved},
 		{From: FeatureStable, To: FeatureDeprecated},
+		{From: FeaturePlanned, To: FeatureInReview},
+		{From: FeaturePlanned, To: FeatureApproved},
+		{From: FeaturePlanned, To: FeatureDeprecated},
 	},
 	KindPlan: {
 		{From: PlanDraft, To: PlanInReview},
@@ -108,6 +111,7 @@ var allKindStatuses = map[Kind][]Status{
 		FeatureAmending,
 		FeatureRejected,
 		FeatureDeprecated,
+		FeaturePlanned,
 	},
 	KindPlan: {
 		PlanDraft,

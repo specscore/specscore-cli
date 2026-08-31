@@ -72,6 +72,17 @@ const (
 	FeatureAmending     Status = "Amending"
 	FeatureRejected     Status = "Rejected"
 	FeatureDeprecated   Status = "Deprecated"
+
+	// FeaturePlanned is a legacy, pre-vocabulary Feature status found in the
+	// wild (e.g. datatug/datatug-cli's spec/features/cli/version/README.md)
+	// that predates this Feature status vocabulary. It is recognized ONLY as a
+	// legal FROM-state — symmetric to Draft, the other status with no legal
+	// predecessor — so an artifact stuck at Planned has a forward exit through
+	// change-status. It is deliberately NOT a legal `--to` target (no arc goes
+	// INTO Planned, mirroring the existing Draft guard) and NOT in
+	// pkg/feature/template.go's ValidStatuses (feature new must not scaffold
+	// new Features into this legacy value).
+	FeaturePlanned Status = "Planned"
 )
 
 // Plan statuses. The status models a plan's full lifecycle in three bands
@@ -282,6 +293,15 @@ var transitionMatrix = map[Kind][]transitionRow{
 		// Approved, not Stable, which would falsely claim an implementation.
 		{From: FeatureAmending, To: FeatureApproved},
 		{From: FeatureStable, To: FeatureDeprecated},
+		// FeaturePlanned is a legacy, pre-vocabulary status (see its doc
+		// comment above) with the same "no legal predecessor" shape Draft
+		// has, so it gets the exact same forward-only outgoing edge set as
+		// Draft — a forward exit without collapsing/renaming it to Draft on
+		// disk. See spec/features/cli/feature/change-status/README.md's
+		// legal-transition matrix note for the parallel Draft reasoning.
+		{From: FeaturePlanned, To: FeatureInReview},
+		{From: FeaturePlanned, To: FeatureApproved},
+		{From: FeaturePlanned, To: FeatureDeprecated},
 	},
 	// KindPlan carries ONLY the human-authored arcs: the prep band and the
 	// dispositions. The execution band (Executing/Blocked/Implemented/Failed)
