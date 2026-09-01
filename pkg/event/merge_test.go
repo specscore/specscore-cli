@@ -98,6 +98,53 @@ func TestMergeLedgers_IdenticalCanonicalDuplicateIsSkippedAndIdempotent(t *testi
 	}
 }
 
+func TestMergeLedgers_AcceptsCopiedProductionLegacyEventAndDeduplicates(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.jsonl")
+	source := filepath.Join(dir, "source.jsonl")
+	// Copied from the sole historical production envelope using the legacy
+	// top-level "event" key (Backstage .specscore/events.jsonl line 96).
+	legacy := []byte(`{"event":"sidekick-idea.captured","version":1,"uuid":"b8ef6f97-b89f-4885-873d-38059e4b5f38","timestamp":"2026-07-09T21:30:12Z","actor":{"kind":"user","id":"user"},"artifact":{"type":"idea-seed","id":"moodometer","path":"spec/ideas/seeds/moodometer.md","revision":"uncommitted"},"payload":{"slug":"moodometer","captured_during":null,"trigger":"explicit","content_hash":"b186331cc388bbc5adc2e54e1bb9b4e8f88b1b74d2b94cd61552a5464165724f"}}` + "\n")
+	canonical := []byte(`{"name":"sidekick-idea.captured","version":1,"uuid":"b8ef6f97-b89f-4885-873d-38059e4b5f38","timestamp":"2026-07-09T21:30:12Z","actor":{"kind":"user","id":"user"},"artifact":{"type":"idea-seed","id":"moodometer","path":"spec/ideas/seeds/moodometer.md","revision":"uncommitted"},"payload":{"content_hash":"b186331cc388bbc5adc2e54e1bb9b4e8f88b1b74d2b94cd61552a5464165724f","trigger":"explicit","captured_during":null,"slug":"moodometer"}}` + "\n")
+	if err := os.WriteFile(target, canonical, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := MergeLedgers(target, []string{source})
+	if err != nil || result.Skipped != 1 || result.Added != 0 {
+		t.Fatalf("legacy duplicate result = %#v, err=%v", result, err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(canonical) {
+		t.Fatalf("legacy duplicate changed target bytes: got %q want %q", got, canonical)
+	}
+}
+
+func TestDecodeLedgerEvent_RejectsMissingOrAmbiguousNameAndUnknownFields(t *testing.T) {
+	base := `"version":1,"uuid":"b8ef6f97-b89f-4885-873d-38059e4b5f38","timestamp":"2026-07-09T21:30:12Z","actor":{"kind":"user","id":"user"},"artifact":{"type":"idea-seed","id":"moodometer","path":"spec/ideas/seeds/moodometer.md","revision":"uncommitted"},"payload":{"slug":"moodometer"}`
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "missing name and event", raw: "{" + base + "}", want: "exactly one"},
+		{name: "both names", raw: "{\"name\":\"sidekick-idea.captured\",\"event\":\"sidekick-idea.captured\"," + base + "}", want: "both"},
+		{name: "unknown field", raw: "{\"event\":\"sidekick-idea.captured\",\"unexpected\":true," + base + "}", want: "unknown field"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := decodeLedgerEvent([]byte(tc.raw)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("decodeLedgerEvent error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestMergeLedgers_ConflictMalformedAndSelfLeaveTargetUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.jsonl")

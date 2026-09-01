@@ -517,6 +517,11 @@ func classifierFixtureWithMutation(
 	t.Helper()
 	repo = t.TempDir()
 	runCommand(t, repo, "git", "init", "-q")
+	// Keep the short-lived real-Git fixture from starting background
+	// maintenance that can race TempDir cleanup while the classifier runs.
+	// These are repository-local settings; do not mutate the test host's config.
+	runCommand(t, repo, "git", "config", "maintenance.auto", "false")
+	runCommand(t, repo, "git", "config", "gc.auto", "0")
 	runCommand(t, repo, "git", "config", "user.email", "ci@example.test")
 	runCommand(t, repo, "git", "config", "user.name", "CI contract test")
 	writeTestFile(t, filepath.Join(repo, "README.md"), "initial\n")
