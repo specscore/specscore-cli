@@ -102,15 +102,15 @@ jobs:
 
   release:
     needs: release-artifact-smoke-darwin-arm64
-    # Pinned to the exact strongo/cicd@v1.14.14 tag, not the moving
+    # Pinned to the exact strongo/cicd@v1.14.17 tag, not the moving
     # strongo/cicd@v1 major tag. strongo/cicd@v1 accepts the
     # require_notarized_macos input but does not contain the
     # macos_signing_preflight job behind it, so on that tag the flag is a
-    # silent no-op; strongo/cicd@v1.14.14 has both, and defines all three
+    # silent no-op; strongo/cicd@v1.14.17 has both, and defines all three
     # `with:` inputs this workflow passes (go_version,
     # allow_major_version_bump, artifact_smoke_test_homebrew_cask). The
     # sibling repos in this ecosystem (ingitdb-cli, chatwright/cli,
-    # datatug-cli) are now pinned to strongo/cicd@v1.14.14 too.
+    # datatug-cli) are pinned to compatible exact strongo/cicd releases too.
     uses: strongo/cicd/.github/workflows/release.yml@v1.14.17
     permissions:
       contents: write

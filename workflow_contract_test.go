@@ -47,7 +47,7 @@ func TestReleaseCallerEnforcesNotarizedMacOSRelease(t *testing.T) {
 	}
 	workflowText := string(workflow)
 	for _, required := range []string{
-		"uses: strongo/cicd/.github/workflows/release.yml@v1.14.14",
+		"uses: strongo/cicd/.github/workflows/release.yml@v1.14.17",
 		"release-artifact-smoke-darwin-arm64:",
 		"require_notarized_macos: true",
 		"artifact_smoke_test_homebrew_cask: true",
