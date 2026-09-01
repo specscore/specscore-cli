@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/specscore/specscore-cli/pkg/event"
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
 type fakeEventOutbox struct {
@@ -184,6 +186,170 @@ func TestEventCommand_HelpShowsEnvelopeFlags(t *testing.T) {
 	}
 	if !strings.Contains(out, "idea|feature|plan|task|lesson|idea-seed|consilium-review") {
 		t.Fatalf("event emit help does not mirror the complete artifact-type enum:\n%s", out)
+	}
+}
+
+func TestEventMergeCommand_HelpAndConfiguredTarget(t *testing.T) {
+	out, _, err := runEvent(t, "merge", "--help")
+	if err != nil || !strings.Contains(out, "--dry-run") || !strings.Contains(out, "configured JSONL") {
+		t.Fatalf("merge help = %q, err=%v", out, err)
+	}
+
+	root := t.TempDir()
+	writeSpecscoreYAML(t, root, "")
+	source := filepath.Join(root, "branch.jsonl")
+	e := event.Event{
+		Name: "idea.drafted", Version: 1, UUID: "00000000-0000-4000-8000-000000000030",
+		Timestamp: time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
+		Actor:     event.Actor{Kind: "external", ID: "test"},
+		Artifact:  event.Artifact{Type: "idea", ID: "merge", Path: "spec/ideas/merge.md", Revision: "uncommitted"},
+		Payload:   []byte(`{"merged":true}`),
+	}
+	line, _ := json.Marshal(e)
+	if err := os.WriteFile(source, append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = runEvent(t, "merge", "--project", root, source)
+	if err != nil || !strings.Contains(out, "added=1") {
+		t.Fatalf("merge output = %q, err=%v", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".specscore", "events.jsonl")); err != nil {
+		t.Fatalf("configured default target was not created: %v", err)
+	}
+}
+
+func TestEventMergeCommand_DryRunAndInputErrors(t *testing.T) {
+	root := t.TempDir()
+	writeSpecscoreYAML(t, root, "")
+	source := filepath.Join(root, "branch.jsonl")
+	e := event.Event{
+		Name: "idea.drafted", Version: 1, UUID: "00000000-0000-4000-8000-000000000031",
+		Timestamp: time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
+		Actor:     event.Actor{Kind: "external", ID: "test"},
+		Artifact:  event.Artifact{Type: "idea", ID: "merge", Path: "spec/ideas/merge.md", Revision: "uncommitted"},
+		Payload:   []byte(`{"merged":true}`),
+	}
+	line, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runEvent(t, "merge", "--project", root, "--dry-run", source)
+	if err != nil || !strings.Contains(out, "dry_run=true") || !strings.Contains(out, "added=1") {
+		t.Fatalf("dry-run output = %q, err=%v", out, err)
+	}
+
+	badSource := filepath.Join(root, "bad.jsonl")
+	if err := os.WriteFile(badSource, []byte("not-json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runEvent(t, "merge", "--project", root, badSource)
+	if err == nil || exitCodeOf(err) != exitcode.InvalidArgs {
+		t.Fatalf("malformed merge error = %v, want InvalidArgs", err)
+	}
+
+	noTarget := t.TempDir()
+	writeSpecscoreYAML(t, noTarget, "events:\n  subscribers: []\n")
+	_, _, err = runEvent(t, "merge", "--project", noTarget, source)
+	if err == nil || exitCodeOf(err) != exitcode.InvalidArgs {
+		t.Fatalf("missing merge target error = %v, want InvalidArgs", err)
+	}
+}
+
+func TestEventMergeCommand_ResolutionErrors(t *testing.T) {
+	oldAbs := filepathAbsFn
+	filepathAbsFn = func(string) (string, error) { return "", errors.New("abs boom") }
+	t.Cleanup(func() { filepathAbsFn = oldAbs })
+	if _, err := resolveEventProjectRoot("project"); err == nil || exitCodeOf(err) != exitcode.InvalidArgs {
+		t.Fatalf("project path resolution error = %v, want InvalidArgs", err)
+	}
+
+	oldWD := osGetwdFn
+	osGetwdFn = func() (string, error) { return "", errors.New("getwd boom") }
+	t.Cleanup(func() { osGetwdFn = oldWD })
+	if _, err := resolveEventProjectRoot(""); err == nil || exitCodeOf(err) != exitcode.Unexpected {
+		t.Fatalf("working directory resolution error = %v, want Unexpected", err)
+	}
+}
+
+func TestEventMergeCommand_ProjectResolutionErrorIsReturned(t *testing.T) {
+	oldAbs := filepathAbsFn
+	filepathAbsFn = func(string) (string, error) { return "", errors.New("project abs boom") }
+	t.Cleanup(func() { filepathAbsFn = oldAbs })
+	_, _, err := runEvent(t, "merge", "--project", "project", "source.jsonl")
+	if err == nil || exitCodeOf(err) != exitcode.InvalidArgs {
+		t.Fatalf("project resolution error = %v, want InvalidArgs", err)
+	}
+}
+
+func TestEventMergeCommand_RelativeSourceAndPublicationError(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+	writeSpecscoreYAML(t, root, "events:\n  subscribers:\n    - type: jsonl\n      path: ledger.jsonl\n")
+	e := event.Event{
+		Name: "idea.drafted", Version: 1, UUID: "00000000-0000-4000-8000-000000000032",
+		Timestamp: time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
+		Actor:     event.Actor{Kind: "external", ID: "test"},
+		Artifact:  event.Artifact{Type: "idea", ID: "merge", Path: "spec/ideas/merge.md", Revision: "uncommitted"},
+		Payload:   []byte(`{"merged":true}`),
+	}
+	line, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "branch.jsonl"), append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runEvent(t, "merge", "--project", root, "branch.jsonl")
+	if err != nil || !strings.Contains(out, "added=1") {
+		t.Fatalf("relative source merge output = %q, err=%v", out, err)
+	}
+
+	// A read-only target directory makes atomic publication fail after all
+	// input validation, exercising the CLI's unexpected-error mapping.
+	readonly := t.TempDir()
+	writeSpecscoreYAML(t, readonly, "events:\n  subscribers:\n    - type: jsonl\n      path: ledger.jsonl\n")
+	if err := os.WriteFile(filepath.Join(readonly, "ledger.jsonl"), line, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.UUID = "00000000-0000-4000-8000-000000000033"
+	line2, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch := filepath.Join(readonly, "branch.jsonl")
+	if err := os.WriteFile(branch, append(line2, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(readonly, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(readonly, 0o700) })
+	_, _, err = runEvent(t, "merge", "--project", readonly, branch)
+	if err == nil || exitCodeOf(err) != exitcode.Unexpected {
+		t.Fatalf("publication error = %v, want Unexpected", err)
+	}
+}
+
+func TestEventMergeCommand_SourcePathResolutionError(t *testing.T) {
+	root := t.TempDir()
+	writeSpecscoreYAML(t, root, "")
+	oldAbs := filepathAbsFn
+	filepathAbsFn = func(path string) (string, error) {
+		if path == root {
+			return root, nil
+		}
+		return "", errors.New("source abs boom")
+	}
+	t.Cleanup(func() { filepathAbsFn = oldAbs })
+	oldWD := osGetwdFn
+	osGetwdFn = func() (string, error) { return root, nil }
+	t.Cleanup(func() { osGetwdFn = oldWD })
+	_, _, err := runEvent(t, "merge", "relative-source.jsonl")
+	if err == nil || exitCodeOf(err) != exitcode.InvalidArgs {
+		t.Fatalf("source path resolution error = %v, want InvalidArgs", err)
 	}
 }
 

@@ -201,6 +201,44 @@ func TestLoadSubscribers_ReadError(t *testing.T) {
 	}
 }
 
+func TestConfiguredLedgerPath_DefaultAndAlias(t *testing.T) {
+	dir := t.TempDir()
+	writeYAML(t, dir, "project:\n  title: Test\n")
+	want := filepath.Join(dir, ".specscore", "events.jsonl")
+	got, err := ConfiguredLedgerPath(dir)
+	if err != nil || got != want {
+		t.Fatalf("ConfiguredLedgerPath = %q, %v; want %q", got, err, want)
+	}
+	got, err = EventLedgerPath(dir)
+	if err != nil || got != want {
+		t.Fatalf("EventLedgerPath = %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestConfiguredLedgerPath_RejectsMissingAndAmbiguousTargets(t *testing.T) {
+	missing := t.TempDir()
+	writeYAML(t, missing, "project:\n  title: Test\nevents:\n  subscribers: []\n")
+	if _, err := ConfiguredLedgerPath(missing); err == nil || !strings.Contains(err.Error(), "no jsonl event ledger") {
+		t.Fatalf("missing target error = %v", err)
+	}
+
+	ambiguous := t.TempDir()
+	writeYAML(t, ambiguous, `project:
+  title: Test
+events:
+  subscribers:
+    - type: jsonl
+      path: one.jsonl
+    - type: noop
+    - type: jsonl
+      path: two.jsonl
+`)
+	if _, err := ConfiguredLedgerPath(ambiguous); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous target error = %v", err)
+	}
+
+}
+
 // TestLoadSubscribers_InvalidYAML covers the YAML parse-error branch.
 func TestLoadSubscribers_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
