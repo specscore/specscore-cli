@@ -14,7 +14,7 @@ status: Stable
 
 ## Summary
 
-The shared reliable event-delivery plumbing for the `specscore` CLI. It owns the `pkg/event` envelope, subscribers, direct dispatcher, and durable per-subscriber outbox. `specscore event emit` and artifact mutations prepare or enqueue one immutable event for the complete subscriber set; `event replay` retries only unacknowledged deliveries; `event reconcile` resolves an interrupted prepared record against artifact evidence.
+The shared reliable event-delivery plumbing for the `specscore` CLI. It owns the `pkg/event` envelope, subscribers, direct dispatcher, and durable per-subscriber outbox. `specscore event emit` and artifact mutations prepare or enqueue one immutable event for the complete subscriber set; `event replay` retries only unacknowledged deliveries; `event reconcile` resolves an interrupted prepared record against artifact evidence; `event merge` unions concurrent branch JSONL ledgers into the configured file sink without rewriting existing bytes.
 
 ## Contents
 
@@ -22,6 +22,9 @@ The shared reliable event-delivery plumbing for the `specscore` CLI. It owns the
 |---|---|
 | [emit](emit/README.md) | The `specscore event emit` verb — cobra wiring, envelope flags, payload input modes, dispatch invocation, exit-code mapping. |
 | [artifact-lifecycle-outbox](artifact-lifecycle-outbox/README.md) | Apply the durable event outbox consistently to artifact lifecycle commands through one prepared-artifact-event boundary and a deterministic command matrix. |
+
+The public `specscore event merge` command is documented in
+[`docs/events.md#merging-branch-ledgers`](../../../../docs/events.md#merging-branch-ledgers).
 
 ## Problem
 

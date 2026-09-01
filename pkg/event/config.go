@@ -84,6 +84,38 @@ func defaultSubscribers(projectRoot string) []Subscriber {
 	return []Subscriber{NewJsonlWriter(defaultJsonlRelPath, projectRoot)}
 }
 
+// ConfiguredLedgerPath returns the project's configured JSONL event ledger.
+// A project may configure at most one JSONL sink for commands that merge
+// ledgers; multiple JSONL sinks are ambiguous and fail closed. Projects with
+// only non-file subscribers have no merge target.
+func ConfiguredLedgerPath(projectRoot string) (string, error) {
+	subscribers, err := LoadSubscribers(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	var path string
+	for _, subscriber := range subscribers {
+		writer, ok := subscriber.(*JsonlWriter)
+		if !ok {
+			continue
+		}
+		if path != "" {
+			return "", fmt.Errorf("multiple jsonl event ledgers are configured; merge target is ambiguous")
+		}
+		path = writer.Path()
+	}
+	if path == "" {
+		return "", fmt.Errorf("no jsonl event ledger is configured")
+	}
+	return path, nil
+}
+
+// EventLedgerPath is an alias for ConfiguredLedgerPath for callers that use
+// the event terminology directly.
+func EventLedgerPath(projectRoot string) (string, error) {
+	return ConfiguredLedgerPath(projectRoot)
+}
+
 // eventsBlock is the deserialization shape of the `events:` mapping. The
 // subscriber list is kept as a slice of raw mappings so we can validate the
 // `type:` discriminator before decoding the type-specific fields.

@@ -136,6 +136,14 @@
               "modes": []
             },
             {
+              "path": "specscore event merge",
+              "flags": [
+                "--dry-run",
+                "--project"
+              ],
+              "modes": []
+            },
+            {
               "path": "specscore event reconcile",
               "flags": [
                 "--confirm",
@@ -1113,6 +1121,16 @@
               ]
             },
             {
+              "path": "specscore event merge",
+              "flags": [
+                "--dry-run",
+                "--project"
+              ],
+              "modes": [
+                "target-preserving deterministic UUID union"
+              ]
+            },
+            {
               "path": "specscore event reconcile",
               "flags": [
                 "--confirm",
@@ -1152,6 +1170,13 @@
               "contains": [
                 "one sink never acknowledges another",
                 "event UUID"
+              ]
+            },
+            {
+              "command": "specscore event merge --help",
+              "contains": [
+                "Existing target bytes",
+                "--dry-run"
               ]
             },
             {
@@ -1208,6 +1233,11 @@
               "path": "internal/cli/event_test.go",
               "name": "TestEventEmit_ExplicitEmptySubscribersCreatesNoRecipientlessLedger",
               "kind": "integration"
+            },
+            {
+              "path": "pkg/event/merge_test.go",
+              "name": "TestMergeLedgers_ConcurrentSourcesPreserveTargetAndSortAdditions",
+              "kind": "conformance"
             }
           ],
           "limitation": null

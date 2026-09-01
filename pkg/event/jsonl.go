@@ -78,3 +78,6 @@ func (w *JsonlWriter) Deliver(_ context.Context, e Event) error {
 func (w *JsonlWriter) Name() string {
 	return "jsonl:" + w.path
 }
+
+// Path returns the fully resolved ledger path used by this writer.
+func (w *JsonlWriter) Path() string { return w.path }

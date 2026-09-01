@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -184,6 +185,35 @@ func TestEventCommand_HelpShowsEnvelopeFlags(t *testing.T) {
 	}
 	if !strings.Contains(out, "idea|feature|plan|task|lesson|idea-seed|consilium-review") {
 		t.Fatalf("event emit help does not mirror the complete artifact-type enum:\n%s", out)
+	}
+}
+
+func TestEventMergeCommand_HelpAndConfiguredTarget(t *testing.T) {
+	out, _, err := runEvent(t, "merge", "--help")
+	if err != nil || !strings.Contains(out, "--dry-run") || !strings.Contains(out, "configured JSONL") {
+		t.Fatalf("merge help = %q, err=%v", out, err)
+	}
+
+	root := t.TempDir()
+	writeSpecscoreYAML(t, root, "")
+	source := filepath.Join(root, "branch.jsonl")
+	e := event.Event{
+		Name: "idea.drafted", Version: 1, UUID: "00000000-0000-4000-8000-000000000030",
+		Timestamp: time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC),
+		Actor:     event.Actor{Kind: "external", ID: "test"},
+		Artifact:  event.Artifact{Type: "idea", ID: "merge", Path: "spec/ideas/merge.md", Revision: "uncommitted"},
+		Payload:   []byte(`{"merged":true}`),
+	}
+	line, _ := json.Marshal(e)
+	if err := os.WriteFile(source, append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = runEvent(t, "merge", "--project", root, source)
+	if err != nil || !strings.Contains(out, "added=1") {
+		t.Fatalf("merge output = %q, err=%v", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".specscore", "events.jsonl")); err != nil {
+		t.Fatalf("configured default target was not created: %v", err)
 	}
 }
 

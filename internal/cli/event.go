@@ -28,9 +28,87 @@ func eventCommand() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(eventEmitCommand())
+	cmd.AddCommand(eventMergeCommand())
 	cmd.AddCommand(eventReplayCommand())
 	cmd.AddCommand(eventReconcileCommand())
 	return cmd
+}
+
+func eventMergeCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "merge <source-ledger> [source-ledger...]",
+		Short: "Union branch JSONL ledgers into the configured event ledger",
+		Long: `Validates and unions one or more branch event ledgers into the
+project's configured JSONL event ledger. Existing target bytes and order are
+preserved; source-only events are appended in UUID order. Identical duplicate
+UUIDs are accepted, while conflicting content, malformed records, ambiguous
+paths, and failed publication abort without changing the target.
+
+Use --dry-run to validate and preview the planned append without writing.
+Relative source paths resolve from the current directory. The target is taken
+from the project's events: configuration (or the default .specscore/events.jsonl).
+
+Docs: docs/events.md#merging-branch-ledgers`,
+		Args:          cobra.MinimumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runEventMerge,
+	}
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().Bool("dry-run", false, "validate and report changes without writing")
+	return cmd
+}
+
+func runEventMerge(cmd *cobra.Command, sources []string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	projectRoot, err := resolveEventProjectRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+	target, err := event.ConfiguredLedgerPath(projectRoot)
+	if err != nil {
+		return exitcode.InvalidArgsErrorf("event ledger configuration: %v", err)
+	}
+	resolvedSources := make([]string, 0, len(sources))
+	for _, source := range sources {
+		if filepath.IsAbs(source) {
+			resolvedSources = append(resolvedSources, source)
+			continue
+		}
+		resolved, absErr := filepathAbsFn(source)
+		if absErr != nil {
+			return exitcode.InvalidArgsErrorf("resolving source ledger %q: %v", source, absErr)
+		}
+		resolvedSources = append(resolvedSources, resolved)
+	}
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	result, err := event.MergeLedgersWithOptions(target, resolvedSources, event.MergeOptions{DryRun: dryRun})
+	if err != nil {
+		if event.IsMergeInputError(err) {
+			return exitcode.InvalidArgsErrorf("merging event ledgers: %v", err)
+		}
+		return exitcode.UnexpectedErrorf("publishing merged event ledger: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "target=%s existing=%d added=%d skipped=%d dry_run=%t\n", target, result.Existing, result.Added, result.Skipped, dryRun)
+	return nil
+}
+
+func resolveEventProjectRoot(projectFlag string) (string, error) {
+	var start string
+	if projectFlag != "" {
+		abs, err := filepathAbsFn(projectFlag)
+		if err != nil {
+			return "", exitcode.InvalidArgsErrorf("resolving --project path: %v", err)
+		}
+		start = abs
+	} else {
+		var err error
+		start, err = osGetwdFn()
+		if err != nil {
+			return "", exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
+		}
+	}
+	return findRepoConfigRoot(start)
 }
 
 func eventReplayCommand() *cobra.Command {

@@ -29,6 +29,26 @@ noncanonical ledger records are rejected before a subscriber is invoked.
 Cryptographic detection of an otherwise schema-valid local ledger rewrite is a
 Planned capability, not a current guarantee.
 
+## Merging branch ledgers
+
+When several branches have produced independent JSONL ledgers, merge them with
+the target project's configured file sink:
+
+```bash
+specscore event merge /path/to/branch-a/.specscore/events.jsonl \
+  /path/to/branch-b/.specscore/events.jsonl --project /path/to/project
+```
+
+The command validates every target and source record before writing. Existing
+target lines retain their exact bytes and order; source-only events are
+appended in UUID order. A repeated UUID is accepted only when its canonical
+immutable envelope content matches. Conflicts, malformed records, duplicate
+source paths, symlinks, and a source equal to the target fail closed. Use
+`--dry-run` to validate and preview counts without writing. Publication uses a
+same-directory temporary file, file sync, atomic rename, and directory sync.
+The target is the sole configured `jsonl` subscriber; multiple JSONL sinks are
+ambiguous and rejected.
+
 ## The events: config block
 
 Subscribers live under a top-level `events:` key in `specscore.yaml`:
