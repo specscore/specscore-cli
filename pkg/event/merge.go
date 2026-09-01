@@ -13,6 +13,34 @@ import (
 	"strings"
 )
 
+type mergeTempFile interface {
+	Name() string
+	Chmod(os.FileMode) error
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type mergeDirFile interface {
+	Sync() error
+	Close() error
+}
+
+var (
+	mergeStatFn       = os.Stat
+	mergeAbsFn        = filepath.Abs
+	mergeMkdirAllFn   = os.MkdirAll
+	mergeCreateTempFn = func(dir, pattern string) (mergeTempFile, error) {
+		return os.CreateTemp(dir, pattern)
+	}
+	mergeRenameFn  = os.Rename
+	mergeOpenDirFn = func(path string) (mergeDirFile, error) {
+		return os.Open(path)
+	}
+	mergeRemoveFn       = os.Remove
+	writeLedgerAtomicFn = writeLedgerAtomic
+)
+
 // MergeResult describes an event-ledger union. Existing target bytes are
 // never rewritten; Added is the number of source-only events appended.
 type MergeResult struct {
@@ -76,7 +104,7 @@ func MergeLedgersWithOptions(target string, sources []string, options MergeOptio
 		return result, err
 	}
 	result.Target = target
-	targetInfo, targetStatErr := os.Stat(target)
+	targetInfo, targetStatErr := mergeStatFn(target)
 	if targetStatErr != nil && !errors.Is(targetStatErr, os.ErrNotExist) {
 		return result, &MergeInputError{Err: fmt.Errorf("stat target ledger %s: %w", target, targetStatErr)}
 	}
@@ -98,7 +126,7 @@ func MergeLedgersWithOptions(target string, sources []string, options MergeOptio
 			return result, mergeInputErrorf("source ledger %q is the target ledger; refusing ambiguous self-merge", source)
 		}
 		if targetInfo != nil {
-			sourceInfo, statErr := os.Stat(path)
+			sourceInfo, statErr := mergeStatFn(path)
 			if statErr == nil && os.SameFile(targetInfo, sourceInfo) {
 				return result, mergeInputErrorf("source ledger %q aliases the target ledger; refusing ambiguous self-merge", source)
 			}
@@ -170,7 +198,7 @@ func MergeLedgersWithOptions(target string, sources []string, options MergeOptio
 			output = append(output, '\n')
 		}
 	}
-	if err := writeLedgerAtomic(target, output); err != nil {
+	if err := writeLedgerAtomicFn(target, output); err != nil {
 		return MergeResult{}, err
 	}
 	return result, nil
@@ -207,9 +235,6 @@ func parseLedger(data []byte, path string) ([]canonicalLedgerRecord, error) {
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
-		}
-		if readErr != nil {
-			return nil, fmt.Errorf("read event ledger %s line %d: %w", path, lineNumber+1, readErr)
 		}
 	}
 	return records, nil
@@ -253,7 +278,7 @@ func absoluteCleanPath(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", errors.New("path must not be empty")
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := mergeAbsFn(path)
 	if err != nil {
 		return "", err
 	}
@@ -282,7 +307,7 @@ func readLedgerFile(path string, target bool) ([]byte, error) {
 	if err != nil {
 		return nil, &MergeInputError{Err: fmt.Errorf("read event ledger %s: %w", path, err)}
 	}
-	info, err := os.Stat(path)
+	info, err := mergeStatFn(path)
 	if err != nil {
 		return nil, &MergeInputError{Err: fmt.Errorf("stat event ledger %s: %w", path, err)}
 	}
@@ -294,23 +319,23 @@ func readLedgerFile(path string, target bool) ([]byte, error) {
 
 func writeLedgerAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := mergeMkdirAllFn(dir, 0o755); err != nil {
 		return fmt.Errorf("create event ledger directory %s: %w", dir, err)
 	}
 	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
+	if info, err := mergeStatFn(path); err == nil {
 		mode = info.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat event ledger %s: %w", path, err)
 	}
-	temp, err := os.CreateTemp(dir, ".events-merge-*")
+	temp, err := mergeCreateTempFn(dir, ".events-merge-*")
 	if err != nil {
 		return fmt.Errorf("create temporary event ledger: %w", err)
 	}
 	tempPath := temp.Name()
 	defer func() {
 		_ = temp.Close()
-		_ = os.Remove(tempPath)
+		_ = mergeRemoveFn(tempPath)
 	}()
 	if err := temp.Chmod(mode); err != nil {
 		return fmt.Errorf("set temporary event ledger mode: %w", err)
@@ -328,12 +353,12 @@ func writeLedgerAtomic(path string, data []byte) error {
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close temporary event ledger: %w", err)
 	}
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := mergeRenameFn(tempPath, path); err != nil {
 		return fmt.Errorf("publish event ledger %s: %w", path, err)
 	}
 	// Syncing the parent directory makes the rename durable on filesystems
 	// that require an explicit directory fence.
-	dirFile, err := os.Open(dir)
+	dirFile, err := mergeOpenDirFn(dir)
 	if err != nil {
 		return fmt.Errorf("open event ledger directory: %w", err)
 	}
