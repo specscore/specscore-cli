@@ -317,7 +317,7 @@ func (l *linter) lint() ([]Violation, error) {
 
 // reservedFeatureSubtree is the name of the per-feature subtree that holds
 // benchmark tooling and its committed fixture workspace (questions.jsonl,
-// run.sh, fixture/). Like `_tests`, it lives under a feature directory but is
+// run.sh, testdata/fixture/). Like `_tests`, it lives under a feature directory but is
 // not itself a spec artifact, so the structural rules do not apply to it and a
 // parent index need not list it (cli/studio/answers#req:benchmark-file,
 // #req:exit-gate-fixture-and-sneat).

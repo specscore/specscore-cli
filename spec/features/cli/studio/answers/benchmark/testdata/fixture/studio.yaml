@@ -7,7 +7,7 @@
 # scores 41/50 against this fixture exactly as it does against a real Sneat
 # workspace index. Indexed offline; the probe-only verified-behavior facts
 # (live/dead serves-status, per-repo ci-status) are seeded by
-# benchmark/fixture/seed.sh with sqlite3 rather than a live probe, keeping the
+# benchmark/testdata/fixture/seed.sh with sqlite3 rather than a live probe, keeping the
 # fixture floor hermetic (no network, no gh).
 name: sneat
 repos:

@@ -7,7 +7,7 @@ format: https://specscore.md/feature-specification
 > [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=explore) | [Edit](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=edit) | [Ask question](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=ask) | [Request change](https://specscore.studio/app/github.com/specscore/specscore-cli/spec/features/cli/studio/answers/benchmark?op=request-change) |
 The Phase-1 exit gate for [`cli/studio/answers`](../README.md): 50 concrete
 question instances (`questions.jsonl`), one runner (`run.sh`), and a hermetic
-fixture workspace (`fixture/`). The runner scores **answered-with-citations /
+fixture workspace (`testdata/fixture/`). The runner scores **answered-with-citations /
 50** and enforces the `## Benchmark composition` table against the file.
 
 - `questions.jsonl` — exactly 50 instances (`{id, question, template, parameter,
@@ -27,7 +27,7 @@ fixture workspace (`fixture/`). The runner scores **answered-with-citations /
   `expected-unanswerable` instance is **correctly-declined** when `ask` exits
   non-zero. The runner fails if any `expected-unanswerable` instance is answered
   (a hallucination is a harder failure than a miss).
-- `fixture/` — the hermetic CI workspace: tiny repos + registries mirroring the
+- `testdata/fixture/` — the hermetic CI workspace: tiny repos + registries mirroring the
   REAL Sneat entity ids the questions use (the sneat-ops ecosystem/domains
   registries, a miniature backstage spec tree, go-module consumers of
   sneat-go-core). `seed.sh` indexes it and seeds the probe-only

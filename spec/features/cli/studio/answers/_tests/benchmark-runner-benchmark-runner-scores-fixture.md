@@ -9,7 +9,7 @@ format: https://specscore.md/scenario-specification
 
 Scenario source: [../README.md](../README.md) → `### AC: benchmark-runner-scores-fixture`.
 
-Given the committed `benchmark/fixture/` indexed and probed with stubbed seams into a fixture store, when I run `benchmark/run.sh --db <fixture-db>`, then the runner prints an `answered-with-citations / 50` line, every `expected-unanswerable` instance is reported as correctly-declined, and the runner exits non-zero if any `expected-unanswerable` instance was answered.
+Given the committed `benchmark/testdata/fixture/` indexed and probed with stubbed seams into a fixture store, when I run `benchmark/run.sh --db <fixture-db>`, then the runner prints an `answered-with-citations / 50` line, every `expected-unanswerable` instance is reported as correctly-declined, and the runner exits non-zero if any `expected-unanswerable` instance was answered.
 
 Seam: `run.sh --fixture` indexes the committed fixture and seeds the probe-only
 verified-behavior facts with `sqlite3` (its own hermetic seed) — no network. The
@@ -62,8 +62,8 @@ esac
 #    answerable question and assert the runner exits non-zero. Build a scratch
 #    benchmark dir that reuses the committed fixture but a mutated questions file.
 scratch="$workdir/bench"
-mkdir -p "$scratch"
-cp -r "$bench/fixture" "$scratch/fixture"
+mkdir -p "$scratch/testdata"
+cp -r "$bench/testdata/fixture" "$scratch/testdata/fixture"
 cp "$bench/run.sh" "$scratch/run.sh"
 # Rewrite q42 (why-does-contactus-exist, expected-unanswerable) into a routable,
 # answerable question, keeping the expectation expected-unanswerable → the runner

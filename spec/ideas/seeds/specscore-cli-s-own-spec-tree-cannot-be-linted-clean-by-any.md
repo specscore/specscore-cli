@@ -17,7 +17,7 @@ $ go build -o /tmp/head ./cmd/specscore && /tmp/head spec lint
 0 violations found           # exit 0
 ```
 
-All 19 are the linter walking into the hermetic benchmark fixture at `spec/features/cli/studio/answers/benchmark/fixture/` and judging it as project spec content: `readme-exists` ×9, `oq-section` ×7, `index-entries` ×2, `format-field` ×1.
+All 19 are the linter walking into the hermetic benchmark fixture at `spec/features/cli/studio/answers/benchmark/testdata/fixture/` and judging it as project spec content: `readme-exists` ×9, `oq-section` ×7, `index-entries` ×2, `format-field` ×1.
 
 Release-timing gap, not a code defect. The skip predicate (`isReservedFixturePath`, `pkg/lint/linter.go:282`, matching `reservedFeatureSubtree = "benchmark"`) came in **3523a77** — the commit that added the fixture. `git merge-base --is-ancestor 3523a77 v0.19.0` → **false**. Both landed 2026-07-10; the tag caught the fixture and missed the rule.
 
