@@ -947,9 +947,9 @@ func writeFile(t *testing.T, path string, content string) {
 // path without one is not (cli/studio/answers#req:exit-gate-fixture-and-sneat).
 func TestIsReservedFixturePath(t *testing.T) {
 	reserved := []string{
-		"features/cli/studio/answers/benchmark/fixture/sneat-ops",
+		"features/cli/studio/answers/benchmark/testdata/fixture/sneat-ops",
 		"features/cli/studio/answers/benchmark/README.md",
-		"features/x/benchmark/fixture/repo/spec/features/y/README.md",
+		"features/x/benchmark/testdata/fixture/repo/spec/features/y/README.md",
 	}
 	for _, p := range reserved {
 		if !isReservedFixturePath(p) {

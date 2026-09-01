@@ -30,7 +30,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUESTIONS="$HERE/questions.jsonl"
-FIXTURE_DIR="$HERE/fixture"
+FIXTURE_DIR="$HERE/testdata/fixture"
 SPECSCORE="${SPECSCORE:-specscore}"
 
 DB=""

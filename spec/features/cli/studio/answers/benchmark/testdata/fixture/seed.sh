@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Seed the hermetic benchmark fixture store (cli/studio/answers#req:exit-gate-fixture-and-sneat).
 #
-# `studio index` over benchmark/fixture/ produces every declared/derived fact
+# `studio index` over benchmark/testdata/fixture/ produces every declared/derived fact
 # the answerable templates need. The probe-only verified-behavior facts — each
 # domain's live serves-status (including the dead investor-CTA domain's `down`)
 # and each repo's ci-status — cannot be produced hermetically (probe does

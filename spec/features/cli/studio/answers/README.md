@@ -96,7 +96,7 @@ A committed runner `benchmark/run.sh` executes all 50 instances against a fact s
 
 The Phase-1 exit gate is **≥40/50 answered with citations**, asserted two ways for honesty and CI determinism:
 
-- **CI (deterministic):** a committed fixture workspace under `benchmark/fixture/` (a small, hand-authored set of repos/registries/reports exercising every answerable template) is indexed and probed with stubbed seams, then `benchmark/run.sh --db <fixture-db>` asserts a fixed floor over the fixture-answerable subset (every `answerable` instance whose entity exists in the fixture is answered; every `expected-unanswerable` correctly declines). This runs in CI and is hermetic (no network).
+- **CI (deterministic):** a committed fixture workspace under `benchmark/testdata/fixture/` (a small, hand-authored set of repos/registries/reports exercising every answerable template) is indexed and probed with stubbed seams, then `benchmark/run.sh --db <fixture-db>` asserts a fixed floor over the fixture-answerable subset (every `answerable` instance whose entity exists in the fixture is answered; every `expected-unanswerable` correctly declines). This runs in CI and is hermetic (no network).
 - **Sneat dogfood (manual gate):** `benchmark/run.sh` against a Sneat workspace index (`~/projects/sneat-co/*`, the dogfood target) must report **≥40/50**. This is a scripted, human-runnable scenario (documented in `## Exit gate`), not a CI job — the Sneat checkout and live network are not CI-available, so the 40/50 figure is the reviewer-runnable phase gate while the fixture assertion guards regressions continuously.
 
 Both share one runner and one benchmark file — the fixture proves the machinery, the Sneat run proves the coverage.
@@ -159,7 +159,7 @@ Go packages inside specscore-cli (no new binary):
 - `internal/studio/resolve` — `Resolve(facts []fact.Fact, name string) (Result, error)` returning unique / ambiguous / unknown, case-insensitive, over `aliased-as` objects and known entity ids. Pure; consumed by both the `resolve` verb and the `ask` router.
 - `internal/studio/ask` — the template registry (each template: trigger matcher + a store-query builder + a renderer) and the router (`Route(question) (Template, param, bool)`). Templates are declarative so `--list` and the benchmark-composition check enumerate them. Pure of CLI wiring; the store query is injected.
 - `internal/cli/studio.go` — three new subcommands (`contradictions`, `resolve`, `ask`) wired into `studioCommand()`'s `AddCommand`, sharing `--workspace`/`--db` resolution (`studioFactsStorePath`) and the `store.Query`/`store.Merge` seams already present; `contradictions` reuses the `storeMergeFn` seam for its `contradicts` write-back.
-- `spec/features/cli/studio/answers/benchmark/` — `questions.jsonl` (the 50), `run.sh` (the runner), `fixture/` (the hermetic CI workspace: tiny repos + registries + a rehearse report), and `README.md` (how to run both gates).
+- `spec/features/cli/studio/answers/benchmark/` — `questions.jsonl` (the 50), `run.sh` (the runner), `testdata/fixture/` (the hermetic CI workspace: tiny repos + registries + a rehearse report), and `README.md` (how to run both gates).
 
 Data flow: `studio index` (+ `studio probe`) → fact store → `contradictions` (reads store, writes `contradicts` facts back via merge) / `resolve` (reads store) / `ask` (reads store, routes via `resolve`, renders with citations) → `benchmark/run.sh` drives all three and scores answered-with-citations against the 50.
 
@@ -176,7 +176,7 @@ Data flow: `studio index` (+ `studio probe`) → fact store → `contradictions`
 
 ## Testing Strategy
 
-Unit tests per package with fixtures, no network: the two detectors against fact-slice fixtures (status-drift's lifecycle-vs-verification and declared-vs-verified branches, declared-agreeing-with-verified not flagged, naming-conflict positive, agreement-not-flagged, behavioral-supersession-not-flagged, N-way pairing); `contradicts` fact canonicalisation + merge-idempotence; ignore-list suppression + `--show-ignored`; `resolve` unique/ambiguous/unknown/case-insensitive; the router's trigger matching, parameter capture, citation assembly, unroutable vs routed-but-empty; CLI flag/exit-code wiring for all three verbs. The benchmark's composition check (table ↔ `questions.jsonl`) is a unit test. E2e: Rehearse scenarios per testable AC under `_tests/` (scaffolded, `**Status:** pending`) driving the three verbs over a fixture store, plus a scenario running `benchmark/run.sh` against `benchmark/fixture/`. Coverage gate stays 100% (`scripts/coverage-gate.sh`).
+Unit tests per package with fixtures, no network: the two detectors against fact-slice fixtures (status-drift's lifecycle-vs-verification and declared-vs-verified branches, declared-agreeing-with-verified not flagged, naming-conflict positive, agreement-not-flagged, behavioral-supersession-not-flagged, N-way pairing); `contradicts` fact canonicalisation + merge-idempotence; ignore-list suppression + `--show-ignored`; `resolve` unique/ambiguous/unknown/case-insensitive; the router's trigger matching, parameter capture, citation assembly, unroutable vs routed-but-empty; CLI flag/exit-code wiring for all three verbs. The benchmark's composition check (table ↔ `questions.jsonl`) is a unit test. E2e: Rehearse scenarios per testable AC under `_tests/` (scaffolded, `**Status:** pending`) driving the three verbs over a fixture store, plus a scenario running `benchmark/run.sh` against `benchmark/testdata/fixture/`. Coverage gate stays 100% (`scripts/coverage-gate.sh`).
 
 ## Not Doing / Out of Scope
 
@@ -302,7 +302,7 @@ Then there are exactly 50 instances, every `template` is one of the documented t
 ### AC: benchmark-runner-scores-fixture
 
 Scenario: the runner scores the hermetic fixture and rejects hallucinations
-Given the committed `benchmark/fixture/` indexed and probed with stubbed seams into a fixture store
+Given the committed `benchmark/testdata/fixture/` indexed and probed with stubbed seams into a fixture store
 When I run `benchmark/run.sh --db <fixture-db>`
 Then the runner prints an `answered-with-citations / 50` line, every `expected-unanswerable` instance is reported as correctly-declined, and the runner exits non-zero if any `expected-unanswerable` instance was answered
 
@@ -316,7 +316,7 @@ Then the command exits 2 with a message naming the expected store path and sugge
 ## Open Questions
 
 - **Trigger-matching robustness of the router** — the exact keyword/regex patterns per template (word-order tolerance, synonym coverage) are a plan detail; the ACs pin the routing *contract* (routable → citations; unroutable → exit 1 + list; routed-but-empty → exit 3), not the specific patterns, so the plan can tune matching without changing behavior.
-- **Fixture size vs template coverage** — how many repos the hermetic `benchmark/fixture/` needs to exercise all 13 answerable templates is a plan sizing detail; `exit-gate-fixture-and-sneat` fixes the property (every fixture-answerable instance answers), not the repo count.
+- **Fixture size vs template coverage** — how many repos the hermetic `benchmark/testdata/fixture/` needs to exercise all 13 answerable templates is a plan sizing detail; `exit-gate-fixture-and-sneat` fixes the property (every fixture-answerable instance answers), not the repo count.
 
 ## Autonomous Decisions
 
