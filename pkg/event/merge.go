@@ -241,18 +241,47 @@ func parseLedger(data []byte, path string) ([]canonicalLedgerRecord, error) {
 }
 
 func decodeLedgerEvent(raw []byte) (Event, []byte, error) {
-	var e Event
+	// Decode into a presence map first: the distinction between an absent field
+	// and an empty/null field matters for the legacy alias ambiguity checks.
+	var fields map[string]json.RawMessage
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&e); err != nil {
-		return e, nil, fmt.Errorf("malformed JSON or unknown field: %w", err)
+	if err := decoder.Decode(&fields); err != nil {
+		return Event{}, nil, fmt.Errorf("malformed JSON or unknown field: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return e, nil, errors.New("trailing JSON")
+			return Event{}, nil, errors.New("trailing JSON")
 		}
-		return e, nil, fmt.Errorf("trailing JSON: %w", err)
+		return Event{}, nil, fmt.Errorf("trailing JSON: %w", err)
+	}
+	allowed := map[string]struct{}{
+		"name": {}, "event": {}, "version": {}, "uuid": {},
+		"timestamp": {}, "actor": {}, "artifact": {}, "payload": {},
+	}
+	for field := range fields {
+		if _, ok := allowed[field]; !ok {
+			return Event{}, nil, fmt.Errorf("malformed JSON or unknown field: json: unknown field %q", field)
+		}
+	}
+	_, namePresent := fields["name"]
+	_, legacyPresent := fields["event"]
+	if !namePresent && !legacyPresent {
+		return Event{}, nil, errors.New("event envelope must contain exactly one of \"name\" or legacy \"event\"")
+	}
+	if namePresent && legacyPresent {
+		return Event{}, nil, errors.New("event envelope must not contain both \"name\" and legacy \"event\"")
+	}
+
+	var e Event
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return e, nil, fmt.Errorf("malformed JSON or unknown field: %w", err)
+	}
+	if legacyPresent {
+		if err := json.Unmarshal(fields["event"], &e.Name); err != nil {
+			return e, nil, fmt.Errorf("malformed JSON or unknown field: legacy event: %w", err)
+		}
 	}
 	if err := Validate(e); err != nil {
 		return e, nil, err
