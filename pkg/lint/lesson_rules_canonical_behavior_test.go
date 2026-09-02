@@ -884,6 +884,69 @@ func TestUpsertLessonIndexRow_MigratesLegacyProjectionForFirstCanonicalLesson(t 
 	}
 }
 
+// TestLessonIndexFix_JoinsWrappedEnforcementParagraph guards against REQ
+// regression: the same truncation the feature-index Summary fix (c910c04)
+// closed also existed in the Lesson-index projection. A canonical Lesson's
+// **Control:** value is routinely hand-wrapped across multiple source lines
+// (see spec/lessons/<slug>/README.md in sneat-co/backstage); before this
+// fix, `spec lint --fix` regenerated the Enforcement cell from only the
+// field's first physical line, cutting it mid-sentence.
+func TestLessonIndexFix_JoinsWrappedEnforcementParagraph(t *testing.T) {
+	specRoot := t.TempDir()
+	lessonsDir := filepath.Join(specRoot, "lessons")
+	slug := "clean-clone-guard"
+	lessonPath := filepath.Join(lessonsDir, slug, "README.md")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(lessonPath), "occurrences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "# Lesson: Clean Clone Guard\n\n" +
+		"**Status:** Recorded\n**Date:** 2026-08-27\n**Owner:** alex\n" +
+		"**Classifications:** tooling-determinism\n" +
+		"**Legacy Provenance:** —\n**Duplicate Of:** —\n**Supersedes:** —\n**Superseded By:** —\n\n" +
+		"## Lesson\n\nx\n\n## Process Gap\n\nx\n\n## Tracking\n\n" +
+		"- **Occurrence store:** `occurrences/`\n" +
+		"- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n" +
+		"- **Occurrence schema:** `https://specscore.md/new/lesson-occurrence.schema.json`\n\n" +
+		"## Enforcement\n\n" +
+		"**Control:** the clean-clone guard resolves each candidate write to an absolute\n" +
+		"path and refuses only when that path lies inside a canonical clone and outside\n" +
+		"any linked worktree cut from it — never on command name or shell cwd.\n" +
+		"**Verification:** a regression suite.\n**Evidence:** —\n\n" +
+		"## Open Questions\n\nNone at this time.\n"
+	if err := os.WriteFile(lessonPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	index := "# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n_No lessons recorded yet._\n\n## Open Questions\n\nNone at this time.\n"
+	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := lesson.Parse(lessonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := map[string]*lesson.Lesson{slug: l}
+
+	vs, fixed := lessonIndexRules(specRoot, parsed, true)
+	if !fixed {
+		t.Fatalf("expected the index to be rewritten, violations: %+v", vs)
+	}
+
+	got, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "the clean-clone guard resolves each candidate write to an absolute " +
+		"path and refuses only when that path lies inside a canonical clone and outside " +
+		"any linked worktree cut from it — never on command name or shell cwd."
+	if !strings.Contains(string(got), want) {
+		t.Fatalf("regenerated index Enforcement cell must contain the full joined paragraph, not a mid-sentence cut:\n%s", got)
+	}
+	if strings.Contains(string(got), "to an absolute |") {
+		t.Fatalf("regenerated index Enforcement cell was truncated mid-sentence:\n%s", got)
+	}
+}
+
 func TestLessonClassificationAndMarkdownCellCompatibilityBranches(t *testing.T) {
 	classes, err := lessonClassificationsFrom([]string{"process", "quality"})
 	if err != nil || !classes["process"] || !classes["quality"] {

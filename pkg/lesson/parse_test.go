@@ -157,6 +157,101 @@ func TestParse_RecurredNegativeValueDefaultsToZero(t *testing.T) {
 	}
 }
 
+// writeCanonicalLesson writes a directory-form Lesson at
+// lessonsDir/<slug>/README.md and returns its path.
+func writeCanonicalLesson(t *testing.T, lessonsDir, slug, content string) string {
+	t.Helper()
+	dir := filepath.Join(lessonsDir, slug)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestParse_EnforcementFieldsJoinWrappedContinuationLines guards against
+// REQ regression: a hand-wrapped **Control:**/**Verification:**/**Evidence:**
+// value (soft-wrapped across multiple source lines, as this prose commonly
+// is — the same shape that motivated the feature-Summary paragraph-join fix
+// in c910c04) must be parsed as one complete value, not truncated at the
+// first physical line. Before the fix, matchBoldField only ever matched the
+// field's own line, so every continuation line was silently dropped.
+func TestParse_EnforcementFieldsJoinWrappedContinuationLines(t *testing.T) {
+	dir := t.TempDir()
+	body := "# Lesson: Clean Clone Guard\n\n" +
+		"**Status:** Recorded\n**Date:** 2026-08-27\n**Owner:** alex\n" +
+		"**Classifications:** tooling-determinism\n" +
+		"**Legacy Provenance:** —\n**Duplicate Of:** —\n**Supersedes:** —\n**Superseded By:** —\n\n" +
+		"## Lesson\n\nx\n\n## Process Gap\n\nx\n\n## Tracking\n\n" +
+		"- **Occurrence store:** `occurrences/`\n" +
+		"- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n" +
+		"- **Occurrence schema:** `https://specscore.md/new/lesson-occurrence.schema.json`\n\n" +
+		"## Enforcement\n\n" +
+		"**Control:** the clean-clone guard resolves each candidate write to an absolute\n" +
+		"path and refuses only when that path lies inside a canonical clone and outside\n" +
+		"any linked worktree cut from it — never on command name or shell cwd.\n" +
+		"**Verification:** a regression suite asserting the three observed false\n" +
+		"positives are permitted.\n" +
+		"**Evidence:** not yet implemented — this lesson is Recorded, not\n" +
+		"Enforced.\n\n" +
+		"## Open Questions\n\nNone at this time.\n"
+	l, err := Parse(writeCanonicalLesson(t, filepath.Join(dir, "lessons"), "clean-clone-guard", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantControl := "the clean-clone guard resolves each candidate write to an absolute " +
+		"path and refuses only when that path lies inside a canonical clone and outside " +
+		"any linked worktree cut from it — never on command name or shell cwd."
+	if l.Control != wantControl {
+		t.Fatalf("Control = %q, want %q (must not truncate mid-sentence)", l.Control, wantControl)
+	}
+	wantVerification := "a regression suite asserting the three observed false positives are permitted."
+	if l.Verification != wantVerification {
+		t.Fatalf("Verification = %q, want %q", l.Verification, wantVerification)
+	}
+	wantEvidence := "not yet implemented — this lesson is Recorded, not Enforced."
+	if l.Evidence != wantEvidence {
+		t.Fatalf("Evidence = %q, want %q", l.Evidence, wantEvidence)
+	}
+}
+
+// TestParse_EnforcementFieldStopsAtBlankLine asserts that a field's
+// continuation is only ever the immediately following contiguous non-blank
+// lines — a blank line still ends the value, matching the existing
+// "single paragraph" contract instead of slurping unrelated content that
+// follows later in the section (e.g. a blockquoted rule after the field
+// block).
+func TestParse_EnforcementFieldStopsAtBlankLine(t *testing.T) {
+	dir := t.TempDir()
+	body := "# Lesson: Stated Rule\n\n" +
+		"**Status:** Stated\n**Date:** 2026-08-27\n**Owner:** alex\n" +
+		"**Classifications:** tooling-determinism\n" +
+		"**Legacy Provenance:** —\n**Duplicate Of:** —\n**Supersedes:** —\n**Superseded By:** —\n\n" +
+		"## Lesson\n\nx\n\n## Process Gap\n\nx\n\n## Tracking\n\n" +
+		"- **Occurrence store:** `occurrences/`\n" +
+		"- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n" +
+		"- **Occurrence schema:** `https://specscore.md/new/lesson-occurrence.schema.json`\n\n" +
+		"## Enforcement\n\n" +
+		"**Control:** Added to CLAUDE.md, verbatim:\n\n" +
+		"> Must not be appended to Control.\n\n" +
+		"**Verification:** the rule text is present.\n" +
+		"**Evidence:** —\n\n" +
+		"## Open Questions\n\nNone at this time.\n"
+	l, err := Parse(writeCanonicalLesson(t, filepath.Join(dir, "lessons"), "stated-rule", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Added to CLAUDE.md, verbatim:"; l.Control != want {
+		t.Fatalf("Control = %q, want %q (must stop at blank line)", l.Control, want)
+	}
+	if want := "the rule text is present."; l.Verification != want {
+		t.Fatalf("Verification = %q, want %q", l.Verification, want)
+	}
+}
+
 func TestIsSingleFileLessonPath(t *testing.T) {
 	lessonsDir := filepath.Join("spec", "lessons")
 	cases := []struct {

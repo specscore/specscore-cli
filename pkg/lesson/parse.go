@@ -164,6 +164,39 @@ func matchBoldField(line string) (name, val string, ok bool) {
 	return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), true
 }
 
+// joinWrappedFieldValue extends a bold field's value (already extracted from
+// its own line as first) across any immediately following hand-wrapped
+// continuation lines, joined with a single space. The canonical Enforcement
+// fields (**Control:**, **Verification:**, **Evidence:**) routinely carry
+// prose that authors soft-wrap across multiple source lines with no blank
+// line between them — mirroring the paragraph-joining fix c910c04 applied to
+// a feature's `## Summary` section, but bounded differently here: a
+// continuation line stops at the first blank line, the next `## ` heading, or
+// the next bold field (so three back-to-back wrapped fields under one
+// `## Enforcement` heading are each read as their own complete value, not
+// merged into one). lines[start] is the field's own line; the returned int is
+// how many additional lines beyond start were consumed, for the caller to
+// advance its scan index past.
+func joinWrappedFieldValue(lines []string, start int, first string) (string, int) {
+	parts := make([]string, 0, 2)
+	if first != "" {
+		parts = append(parts, first)
+	}
+	consumed := 0
+	for i := start + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "## ") {
+			break
+		}
+		if _, _, ok := matchBoldField(trimmed); ok {
+			break
+		}
+		parts = append(parts, trimmed)
+		consumed++
+	}
+	return strings.Join(parts, " "), consumed
+}
+
 // Parse reads a candidate Lesson file. It returns a populated Lesson even
 // when the file is not actually a Lesson (HasLessonTitle == false in that
 // case) so callers can distinguish "not a Lesson" from "malformed Lesson".
@@ -194,7 +227,8 @@ func Parse(path string) (*Lesson, error) {
 		return nil, err
 	}
 
-	for i, raw := range lines {
+	for i := 0; i < len(lines); i++ {
+		raw := lines[i]
 		trimmed := strings.TrimSpace(raw)
 		if strings.HasPrefix(trimmed, "status:") && l.FrontmatterStatusLine == 0 {
 			l.FrontmatterStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "status:"))
@@ -253,11 +287,20 @@ func Parse(path string) (*Lesson, error) {
 				l.SupersededBy = val
 				l.SupersededByLine = i + 1
 			case "Control":
-				l.Control, l.ControlLine = val, i+1
+				l.ControlLine = i + 1
+				var consumed int
+				l.Control, consumed = joinWrappedFieldValue(lines, i, val)
+				i += consumed
 			case "Verification":
-				l.Verification, l.VerificationLine = val, i+1
+				l.VerificationLine = i + 1
+				var consumed int
+				l.Verification, consumed = joinWrappedFieldValue(lines, i, val)
+				i += consumed
 			case "Evidence":
-				l.Evidence, l.EvidenceLine = val, i+1
+				l.EvidenceLine = i + 1
+				var consumed int
+				l.Evidence, consumed = joinWrappedFieldValue(lines, i, val)
+				i += consumed
 			}
 		}
 	}
