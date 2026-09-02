@@ -386,6 +386,13 @@ func rewriteFeatureIndexStatuses(path string, updates map[string]string) error {
 	return rewriteFeatureIndexRows(path, values)
 }
 
+// parseFeatureIndexSummary reads the first paragraph under a feature's
+// `## Summary` heading — every contiguous non-blank line, joined with a
+// single space, up to the first blank line or the next heading. Prose is
+// routinely hand-wrapped across multiple source lines; joining the whole
+// paragraph (rather than returning only its first line) keeps the derived
+// index cell a complete sentence instead of a fragment cut wherever the
+// author happened to wrap the line.
 func parseFeatureIndexSummary(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -393,18 +400,26 @@ func parseFeatureIndexSummary(path string) (string, error) {
 	}
 	lines := strings.Split(string(data), "\n")
 	in := false
+	var paragraph []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "## Summary" {
 			in = true
 			continue
 		}
-		if in && strings.HasPrefix(trimmed, "## ") {
+		if !in {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "## ") {
 			break
 		}
-		if in && trimmed != "" {
-			return trimmed, nil
+		if trimmed == "" {
+			if len(paragraph) > 0 {
+				break
+			}
+			continue
 		}
+		paragraph = append(paragraph, trimmed)
 	}
-	return "", nil
+	return strings.Join(paragraph, " "), nil
 }

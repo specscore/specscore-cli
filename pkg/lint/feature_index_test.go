@@ -345,6 +345,56 @@ func TestFeatureIndexHelpers_HandleMissingDerivedInput(t *testing.T) {
 	}
 }
 
+// TestFeatureIndexHelpers_SummaryJoinsWrappedParagraph guards against
+// REQ regression: a hand-wrapped Summary paragraph (soft-wrapped across
+// multiple source lines, as prose commonly is) must be read as one
+// complete sentence, not truncated at the first line break. Before the
+// fix, parseFeatureIndexSummary returned only the paragraph's first
+// line verbatim, cutting derived index rows mid-sentence.
+func TestFeatureIndexHelpers_SummaryJoinsWrappedParagraph(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "README.md")
+	body := "# Feature: Consent\n\n**Status:** Draft\n\n## Summary\n\n" +
+		"Capture and store a verifiable parental-consent record — the\n" +
+		"lawful-basis requirement for processing a minor's data.\n\n" +
+		"## Open Questions\n\nNone.\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := parseFeatureIndexSummary(path)
+	if err != nil {
+		t.Fatalf("parseFeatureIndexSummary: %v", err)
+	}
+	want := "Capture and store a verifiable parental-consent record — the lawful-basis requirement for processing a minor's data."
+	if summary != want {
+		t.Fatalf("summary = %q, want %q (must not truncate mid-sentence)", summary, want)
+	}
+}
+
+// TestFeatureIndexHelpers_SummaryStopsAtBlankLineSeparatedParagraph asserts
+// that only the FIRST paragraph is joined — a blank line still ends the
+// summary, matching the existing "first paragraph" contract instead of
+// slurping the whole section.
+func TestFeatureIndexHelpers_SummaryStopsAtBlankLineSeparatedParagraph(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "README.md")
+	body := "# Feature: Consent\n\n**Status:** Draft\n\n## Summary\n\n" +
+		"First paragraph, one line.\n\n" +
+		"Second paragraph must not be appended.\n\n" +
+		"## Open Questions\n\nNone.\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := parseFeatureIndexSummary(path)
+	if err != nil {
+		t.Fatalf("parseFeatureIndexSummary: %v", err)
+	}
+	want := "First paragraph, one line."
+	if summary != want {
+		t.Fatalf("summary = %q, want %q (must stop at blank line)", summary, want)
+	}
+}
+
 func TestFeatureIndexRules_SkipsFeatureWithoutParseableTitle(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"features/README.md": featureIndexHeader + "| [Auth](auth/README.md) | Draft | Command | desc-auth |\n",
