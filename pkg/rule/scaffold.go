@@ -196,5 +196,32 @@ func ResolveRow(rulesDir, slug string) (Row, error) {
 			return row, nil
 		}
 	}
+	// A row lint just named is present but unreadable, which is a different
+	// problem from an absent rule and has a different repair. Reporting
+	// "not listed" for it sends the reader looking for a rule that is right
+	// there in the file.
+	for _, m := range report.Malformed {
+		if m.SlugHint == slug {
+			return Row{}, exitcode.InvalidStateErrorf(
+				"rule %q has a row in %s (line %d) but it does not parse: %s%s",
+				slug, IndexPath(rulesDir), m.Line, m.Reason, RepairHint(m))
+		}
+	}
 	return Row{}, exitcode.NotFoundErrorf("rule %q is not listed in %s", slug, IndexPath(rulesDir))
+}
+
+// RepairHint names the repair that actually applies to a malformed row.
+//
+// `--fix` can only escape a surplus `|` in a Statement, so telling a reader to
+// run it on a row it cannot touch sends them in a circle — which is exactly
+// what an empty identity cell used to do: every verb refused, and the refusal
+// recommended a fixer that would not help.
+func RepairHint(m MalformedRow) string {
+	if _, ok := m.Repair(); ok {
+		return "; repair with `specscore rule lint --fix`, which escapes the surplus `|`"
+	}
+	if m.SlugHint == "" {
+		return "; its identity cell names no rule, so `--fix` cannot repair it — edit that line in the index by hand"
+	}
+	return "; `--fix` cannot repair this shape — edit that line in the index by hand"
 }

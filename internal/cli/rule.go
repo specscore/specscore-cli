@@ -205,11 +205,8 @@ func runRuleNew(cmd *cobra.Command, args []string) error {
 	if err := requireSupersedableForm(slug, opts.Status, detailed); err != nil {
 		return err
 	}
-	if !force {
-		if _, err := rule.ResolveRow(rulesDir, slug); err == nil {
-			return exitcode.ConflictErrorf("rule already exists: %s is already listed in %s (pass --force to overwrite)",
-				slug, rule.IndexPath(rulesDir))
-		}
+	if err := refuseExistingRow(rulesDir, slug, force); err != nil {
+		return err
 	}
 
 	if detailed {
@@ -282,6 +279,42 @@ func ruleOptionsFromFlags(cmd *cobra.Command, slug string) (rule.Options, error)
 	return opts, nil
 }
 
+// refuseExistingRow refuses to create a rule whose slug the index already
+// carries — including one it carries as a row it cannot parse.
+//
+// A malformed row is still a rule as far as the file is concerned: something is
+// written down under that slug. Letting `rule new` replace it without --force
+// meant the one command that reaches a preserved broken row was also the one
+// that could destroy it without saying so, which undoes the guarantee the
+// preservation exists to give.
+func refuseExistingRow(rulesDir, slug string, force bool) error {
+	if force {
+		return nil
+	}
+	report, err := ruleReadIndexFn(rule.IndexPath(rulesDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return exitcode.UnexpectedErrorf("reading the rules index: %v", err)
+	}
+	for _, row := range report.Rows {
+		if row.Slug == slug {
+			return exitcode.ConflictErrorf("rule already exists: %s is already listed in %s (pass --force to overwrite)",
+				slug, rule.IndexPath(rulesDir))
+		}
+	}
+	for _, m := range report.Malformed {
+		if m.SlugHint == slug {
+			return exitcode.ConflictErrorf(
+				"rule %s already has a row in %s (line %d) that does not parse: %s%s\n"+
+					"creating it would replace that line, whose text is:\n  %s\npass --force to replace it anyway",
+				slug, rule.IndexPath(rulesDir), m.Line, m.Reason, rule.RepairHint(m), m.Text)
+		}
+	}
+	return nil
+}
+
 // preflightRuleIndex refuses a mutating verb while the index carries a
 // row-like line that does not parse and is not one of the rows this verb is
 // about to write.
@@ -312,9 +345,9 @@ func preflightRuleIndex(rulesDir string, addressed ...string) error {
 		if m.SlugHint != "" {
 			subject = "rule " + m.SlugHint
 		}
-		fmt.Fprintf(&b, "\n  line %d: %s — %s", m.Line, subject, m.Reason)
+		fmt.Fprintf(&b, "\n  line %d: %s — %s%s", m.Line, subject, m.Reason, rule.RepairHint(m))
 	}
-	b.WriteString("\nrun `specscore rule lint --fix` (it repairs an unescaped `|` in a Statement) or edit the row by hand, then retry")
+	b.WriteString("\nrepair the line(s) above, then retry")
 	return exitcode.ConflictError(b.String())
 }
 

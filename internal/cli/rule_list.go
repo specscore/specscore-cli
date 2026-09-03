@@ -59,8 +59,13 @@ Scope matching is deliberately generous for paths and strict for repositories:
                    does not bind every docs/ directory in the fleet
 
 A rule whose Scope cell does not parse is LISTED anyway, flagged scope_error,
-and reported on stderr with exit 1 — a rule that might bind must not vanish
-from the answer just because its scope is corrupt.
+and reported on stderr — a rule that might bind must not vanish from the answer
+just because its scope is corrupt.
+
+The exit code depends on the question asked. A plain listing is an inventory,
+so an unreadable scope is a flag on a row and the command exits 0. --applies-to
+and --scope are binding questions that had to EVALUATE that scope to answer, and
+a scope they could not read makes the answer unsound, so they exit 1.
 
 Output is empty (exit 0) when no rules match.`,
 		Args:          cobra.NoArgs,
@@ -185,12 +190,17 @@ func runRuleList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	if len(scopeFindings) > 0 {
-		for _, finding := range scopeFindings {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", finding)
-		}
+	for _, finding := range scopeFindings {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", finding)
+	}
+	// A filter that had to read a scope it could not parse cannot answer
+	// soundly, so it fails. A plain inventory can: the row is there, flagged.
+	// Failing the inventory too would make every stream start red on one bad
+	// row and teach people to ignore the signal that matters.
+	evaluatedScope := wantScope != "" || strings.TrimSpace(appliesTo) != ""
+	if len(scopeFindings) > 0 && evaluatedScope {
 		return exitcode.New(exitcode.Conflict, fmt.Sprintf(
-			"%d rule(s) have an unparseable Scope and were listed anyway; run `specscore rule lint` for the R-006 findings",
+			"%d rule(s) have an unparseable Scope, so this scope query cannot be answered soundly; they are listed above and `specscore rule lint` reports them as R-006",
 			len(scopeFindings)))
 	}
 	return nil
