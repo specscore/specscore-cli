@@ -34,6 +34,7 @@ func ruleSeams(t *testing.T, apply func()) {
 	resolveLesson, discoverLessons := lessonResolveLessonFileFn, lessonDiscoverFn
 	discoverFeatures, runLint := featureDiscoverFn, lintRunFn
 	mkdir, removeAll, readFile, stat, getenv := osMkdirAllCLI, osRemoveAllCLI, osReadFileCLI, osStatCLI, osGetenvCLI
+	readDir := osReadDirCLI
 	t.Cleanup(func() {
 		ruleScaffoldDetailFn, ruleParseDetailFn = scaffold, parse
 		ruleWriteFileAtomicFn, ruleUpsertIndexRowFn, ruleRemoveIndexRowFn = writeFile, upsert, remove
@@ -42,6 +43,7 @@ func ruleSeams(t *testing.T, apply func()) {
 		lessonResolveLessonFileFn, lessonDiscoverFn = resolveLesson, discoverLessons
 		featureDiscoverFn, lintRunFn = discoverFeatures, runLint
 		osMkdirAllCLI, osRemoveAllCLI, osReadFileCLI, osStatCLI, osGetenvCLI = mkdir, removeAll, readFile, stat, getenv
+		osReadDirCLI = readDir
 	})
 	apply()
 }
@@ -685,7 +687,118 @@ func TestWriteRuleResultYAMLFailure(t *testing.T) {
 	withFailingYAMLEnc(t)
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	if err := writeRuleResult(cmd, "yaml", ruleWriteResult{Slug: "x"}); err == nil {
+	if err := writeRuleResult(cmd, "yaml", ruleWriteResult{Slug: "x"}, t.TempDir()); err == nil {
 		t.Fatal("writeRuleResult must surface an encoder failure")
+	}
+}
+
+// ----- fix-round branches -----
+
+// A project with no index yet has nothing to preflight, and an index that
+// cannot be read for any other reason is surfaced rather than waved through.
+func TestPreflightRuleIndexHandlesMissingAndUnreadable(t *testing.T) {
+	if err := preflightRuleIndex(filepath.Join(t.TempDir(), "rules")); err != nil {
+		t.Fatalf("a missing index must not block a verb: %v", err)
+	}
+	ruleSeams(t, func() {
+		ruleReadIndexFn = func(string) (rule.IndexReport, error) { return rule.IndexReport{}, errRuleFault }
+	})
+	if err := preflightRuleIndex(filepath.Join(t.TempDir(), "rules")); err == nil {
+		t.Fatal("an unreadable index must surface")
+	}
+}
+
+// Promote refuses the same two writes `new` does.
+func TestRulePromoteRefusesUnresolvableSourceAndInlineSuperseded(t *testing.T) {
+	root := setupRuleProject(t)
+	writeCanonicalLesson(t, root, "kinder-fake", "Assert against the real adapter.")
+	if _, _, err := runRule(t, root, "promote", "--from-lesson", "kinder-fake", "x",
+		"--source", "decision:9999"); exitCodeOf(err) != exitcode.InvalidArgs {
+		t.Fatal("an unresolvable --source must be refused")
+	}
+	if _, _, err := runRule(t, root, "promote", "--from-lesson", "kinder-fake", "x",
+		"--inline", "--status", "Superseded"); exitCodeOf(err) != exitcode.InvalidState {
+		t.Fatal("an inline promotion at Superseded must be refused")
+	}
+}
+
+// Repointing a rule that is superseded BY the deleted one edits that half too,
+// and a failure there surfaces.
+func TestRuleDeleteRepointFailureOnSupersededBy(t *testing.T) {
+	root := setupRuleProject(t)
+	for _, slug := range []string{"old", "successor", "older-still"} {
+		if _, _, err := runRule(t, root, "new", slug, "--detailed"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := runRule(t, root, "update", "older-still", "--superseded-by", "old"); err != nil {
+		t.Fatal(err)
+	}
+	ruleSeams(t, func() {
+		ruleApplyFieldEditsFn = func(content []byte, edits []rule.FieldEdit) ([]byte, error) {
+			for _, e := range edits {
+				if e.Name == "Superseded By" {
+					return nil, errRuleFault
+				}
+			}
+			return rule.ApplyFieldEdits(content, edits)
+		}
+	})
+	if _, _, err := runRule(t, root, "delete", "old", "--supersede-with", "successor"); err == nil {
+		t.Fatal("delete should have failed")
+	}
+}
+
+// An idea recorded in the archived directory resolves as a source, and a
+// decision reference skips directories and non-markdown files.
+func TestRuleSourceResolutionEdgeCases(t *testing.T) {
+	root := setupRuleProject(t)
+	specSub := filepath.Join(root, "spec")
+	archived := filepath.Join(specSub, "ideas", "archived")
+	if err := os.MkdirAll(archived, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archived, "retired.md"), []byte("# Idea: X\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !ruleIdeaSourceExists(specSub, "retired") {
+		t.Fatal("an archived Idea must resolve")
+	}
+	decisions := filepath.Join(specSub, "decisions")
+	if err := os.MkdirAll(filepath.Join(decisions, "0012-a-directory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(decisions, "0012-notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ruleDecisionSourceExists(specSub, "0012") {
+		t.Fatal("only a .md file may resolve a decision reference")
+	}
+	if err := os.WriteFile(filepath.Join(decisions, "0012-real.md"), []byte("# Decision: X\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !ruleDecisionSourceExists(specSub, "0012") {
+		t.Fatal("a real decision must resolve")
+	}
+	// An unreadable decisions directory yields no match rather than a panic.
+	ruleSeams(t, func() {
+		osReadDirCLI = func(string) ([]os.DirEntry, error) { return nil, errRuleFault }
+	})
+	if ruleDecisionSourceExists(specSub, "0012") {
+		t.Fatal("an unreadable decisions tree must not resolve")
+	}
+}
+
+// A path outside the project keeps its absolute form rather than becoming a
+// `../..` ladder that means nothing to a consumer.
+func TestRepoRelativeFallsBackForOutsidePaths(t *testing.T) {
+	if got := repoRelative("/proj", "/elsewhere/x.md"); got != "/elsewhere/x.md" {
+		t.Fatalf("repoRelative = %q", got)
+	}
+	if got := repoRelative("/proj", ""); got != "" {
+		t.Fatalf("repoRelative(empty) = %q", got)
+	}
+	if got := repoRelative("/proj", "/proj/spec/x.md"); got != "spec/x.md" {
+		t.Fatalf("repoRelative = %q", got)
 	}
 }

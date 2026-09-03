@@ -239,7 +239,7 @@ func TestIndexMutatorsPropagateWriteFailures(t *testing.T) {
 
 	swapCreateTemp(t, func(string, string) (tempFile, error) { return nil, errInjected })
 	for name, call := range map[string]func() error{
-		"WriteIndexRows": func() error { return WriteIndexRows(IndexPath(rulesDir), []Row{row}) },
+		"WriteIndexRows": func() error { return WriteIndexRows(IndexPath(rulesDir), []Row{row}, nil) },
 		"UpsertRow":      func() error { return UpsertRow(rulesDir, row) },
 		"RemoveRow":      func() error { return RemoveRow(rulesDir, "x") },
 		"SetPromotesTo":  func() error { return SetLessonPromotesTo(lessonPath, "y") },
@@ -253,7 +253,7 @@ func TestIndexMutatorsPropagateWriteFailures(t *testing.T) {
 
 func TestIndexMutatorsPropagateReadFailures(t *testing.T) {
 	swapReadFile(t, func(string) ([]byte, error) { return nil, errInjected })
-	if err := WriteIndexRows("p", nil); !errors.Is(err, errInjected) {
+	if err := WriteIndexRows("p", nil, nil); !errors.Is(err, errInjected) {
 		t.Errorf("WriteIndexRows error = %v", err)
 	}
 	if _, err := ReadIndex("p"); !errors.Is(err, errInjected) {

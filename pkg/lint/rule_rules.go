@@ -190,12 +190,26 @@ func (c *ruleRulesChecker) fix(specRoot string) error {
 	}
 
 	rows := make([]rule.Row, 0, len(w.report.Rows))
-	seen := map[string]bool{}
+	kept := map[string]rule.Row{}
+	var order []string
 	for _, row := range w.report.Rows {
-		if seen[row.Slug] {
+		previous, exists := kept[row.Slug]
+		if exists {
+			// A duplicate is only safe to drop when it says exactly the same
+			// thing. Two rows that disagree are ambiguous — picking one would
+			// discard a rule's content on a coin flip — so both are kept and
+			// R-003 keeps reporting until a human resolves it.
+			if previous.Equals(row) {
+				continue
+			}
+			rows = append(rows, row)
 			continue
 		}
-		seen[row.Slug] = true
+		kept[row.Slug] = row
+		order = append(order, row.Slug)
+	}
+	for _, slug := range order {
+		row := kept[slug]
 		// The link cell is derivable: it states whether a document exists.
 		row.Linked = w.details[row.Slug] != nil
 		rows = append(rows, row)
@@ -204,11 +218,31 @@ func (c *ruleRulesChecker) fix(specRoot string) error {
 	// only direction in which a document may seed a row, and only because the
 	// alternative is an artifact invisible to every reader of the index.
 	for _, slug := range sortedDetailSlugs(w.details) {
-		if !seen[slug] {
+		if _, exists := kept[slug]; !exists {
 			rows = append(rows, rule.RowFromDetail(w.details[slug]))
 		}
 	}
-	if err := ruleWriteIndexRowsFn(w.indexPath, rows); err != nil {
+
+	// A row that did not parse is repaired only when the repair is
+	// unambiguous; otherwise it is carried through verbatim and left to
+	// R-003. Dropping it is never an option.
+	var preserved []rule.MalformedRow
+	for _, m := range w.report.Malformed {
+		repaired, ok := m.Repair()
+		if !ok {
+			preserved = append(preserved, m)
+			continue
+		}
+		if _, exists := kept[repaired.Slug]; exists {
+			preserved = append(preserved, m)
+			continue
+		}
+		repaired.Linked = w.details[repaired.Slug] != nil
+		kept[repaired.Slug] = repaired
+		rows = append(rows, repaired)
+	}
+
+	if err := ruleWriteIndexRowsFn(w.indexPath, rows, preserved); err != nil {
 		return err
 	}
 
@@ -280,13 +314,26 @@ func lintRuleIndexShape(w *ruleWorld) []Violation {
 		out = append(out, Violation{File: w.indexRel, Severity: "error", Rule: "R-003",
 			Message: fmt.Sprintf("rules index lacks the canonical table header %q (run `specscore spec lint --fix`)", rule.IndexHeaderRow)})
 	}
-	for _, line := range w.report.MalformedLines {
-		out = append(out, Violation{File: w.indexRel, Line: line, Severity: "error", Rule: "R-003",
-			Message: "row does not match the canonical seven-column shape, or its first cell is neither a bare slug nor [slug](slug/README.md)"})
+	for _, m := range w.report.Malformed {
+		// The message names the row, so a reader can see WHICH rule needs a
+		// hand without opening the file — and says plainly that nothing was
+		// discarded, because the obvious fear on seeing this is that something
+		// was.
+		subject := "row"
+		if m.SlugHint != "" {
+			subject = "row for " + m.SlugHint
+		}
+		repairable := ""
+		if _, ok := m.Repair(); ok {
+			repairable = " (`specscore spec lint --fix` can repair this one by escaping the surplus `|`)"
+		}
+		out = append(out, Violation{File: w.indexRel, Line: m.Line, Severity: "error", Rule: "R-003",
+			Message: fmt.Sprintf("%s does not parse: %s; it is preserved verbatim and no verb will drop it%s",
+				subject, m.Reason, repairable)})
 	}
 	for _, slug := range w.report.Duplicates {
 		out = append(out, Violation{File: w.indexRel, Severity: "error", Rule: "R-003",
-			Message: "rules index lists " + slug + " more than once (run `specscore spec lint --fix`)"})
+			Message: "rules index lists " + slug + " more than once; --fix removes a duplicate only when it is identical to the row it repeats, so differing duplicates are kept and must be resolved by hand"})
 	}
 	if !sortedBySlug(w.report.Rows) {
 		out = append(out, Violation{File: w.indexRel, Severity: "error", Rule: "R-003",
@@ -616,21 +663,46 @@ func detailFieldValues(d *rule.Detail) map[string]string {
 
 func lintRuleSupersession(w *ruleWorld) []Violation {
 	var out []Violation
+
+	// An INLINE row at Superseded has nowhere to name its successor, so the
+	// retirement leaves no forwarding address and nothing else in the family
+	// would ever notice. Report it against the row.
+	for _, row := range w.report.Rows {
+		if strings.TrimSpace(row.Status) != "Superseded" || w.details[row.Slug] != nil {
+			continue
+		}
+		out = append(out, Violation{File: w.indexRel, Line: row.Line, Severity: "error", Rule: "R-009",
+			Message: fmt.Sprintf(
+				"rule %s is Superseded but inline, so it has nowhere to record **Superseded By:**; run `specscore rule expand %s` and name the successor",
+				row.Slug, row.Slug)})
+	}
+
 	slugs := sortedDetailSlugs(w.details)
 	for _, slug := range slugs {
 		d := w.details[slug]
 		rel := mustRel(w.specRoot, d.Path)
-		for name, target := range map[string]string{"Supersedes": d.Supersedes, "Superseded By": d.SupersededBy} {
-			if !isRuleValuePresent(target) {
-				continue
+		// The two pointers are checked asymmetrically, on purpose.
+		//
+		// **Superseded By:** points FORWARD to the rule that replaced this one.
+		// It must resolve, or the retirement has no destination and a reader
+		// following it lands nowhere.
+		//
+		// **Supersedes:** points BACKWARD at what this rule replaced, and that
+		// rule may legitimately have been deleted — `rule delete
+		// --supersede-with` writes exactly this breadcrumb so the references it
+		// just warned about have a trail back. Requiring it to resolve would
+		// make the only record of a retired rule illegal to keep. A malformed
+		// slug is still reported; an absent one is history.
+		if target := strings.TrimSpace(d.SupersededBy); isRuleValuePresent(target) {
+			if _, listed := w.rows[target]; rule.ValidateSlug(target) != nil || !listed {
+				out = append(out, Violation{File: rel, Line: d.SupersededByLine, Severity: "error", Rule: "R-009",
+					Message: "**Superseded By:** does not resolve to a rule listed in the rules index"})
 			}
-			line := d.SupersedesLine
-			if name == "Superseded By" {
-				line = d.SupersededByLine
-			}
-			if _, listed := w.rows[strings.TrimSpace(target)]; rule.ValidateSlug(strings.TrimSpace(target)) != nil || !listed {
-				out = append(out, Violation{File: rel, Line: line, Severity: "error", Rule: "R-009",
-					Message: "**" + name + ":** does not resolve to a rule listed in the rules index"})
+		}
+		if target := strings.TrimSpace(d.Supersedes); isRuleValuePresent(target) {
+			if rule.ValidateSlug(target) != nil {
+				out = append(out, Violation{File: rel, Line: d.SupersedesLine, Severity: "error", Rule: "R-009",
+					Message: "**Supersedes:** is not a canonical slug"})
 			}
 		}
 		if strings.TrimSpace(d.Status) == "Superseded" && !isRuleValuePresent(d.SupersededBy) {

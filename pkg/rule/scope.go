@@ -102,14 +102,24 @@ func ParseScopes(raws []string) ([]Scope, error) {
 
 // Matches reports whether this scope covers the given path.
 //
-// `fleet` covers everything. `path:<glob>` is matched with doublestar against
-// the slash-normalized path, and additionally against every suffix of that
-// path, so a repo-relative pattern such as `path:pkg/**` still matches an
-// absolute or project-prefixed path the caller happens to hold. `product:` and
-// `repo:` match when their identifier appears as a whole path segment — the
-// only path-shaped evidence a scope of that kind can offer. Callers that know
-// the product or repository for certain should filter on `--scope` instead of
-// inferring it from a path.
+//	fleet            matches everything.
+//	path:<glob>      doublestar match against the slash-normalized path and
+//	                 against every trailing suffix of it, so a repo-relative
+//	                 pattern still matches an absolute path a caller holds.
+//	                 Deliberately generous: `path:cli/**` also matches
+//	                 `vendor/x/cli/y.go`.
+//	product:<name>   the name appears as a whole path segment.
+//	repo:<owner>/<n> `<owner>` and `<n>` appear as CONSECUTIVE whole path
+//	                 segments. A bare `<n>` never matches.
+//
+// The repo rule is the strict one on purpose. Matching a bare repository name
+// would make every rule scoped to a repo called `docs`, `api`, `web` or `cli`
+// bind every path in the fleet that happens to contain that directory — and a
+// mis-scoped rule that binds work it was never meant to bind is worse than one
+// that fails to match, because nobody goes looking for it.
+//
+// Callers that know the repository or product for certain should filter on
+// `--scope` rather than inferring it from a path.
 func (s Scope) Matches(p string) bool {
 	normalized := strings.Trim(path.Clean(filepath.ToSlash(p)), "/")
 	switch s.Kind {
@@ -121,7 +131,7 @@ func (s Scope) Matches(p string) bool {
 		return hasSegment(normalized, s.Value)
 	case ScopeRepo:
 		owner, repo, _ := strings.Cut(s.Value, "/")
-		return hasSegments(normalized, owner, repo) || hasSegment(normalized, repo)
+		return hasSegments(normalized, owner, repo)
 	}
 	return false
 }

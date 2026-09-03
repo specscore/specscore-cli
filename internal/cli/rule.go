@@ -196,6 +196,15 @@ func runRuleNew(cmd *cobra.Command, args []string) error {
 	if err := ensureRuleAncestorIndexes(root); err != nil {
 		return exitcode.UnexpectedErrorf("materializing ancestor indexes: %v", err)
 	}
+	if err := preflightRuleIndex(rulesDir, slug); err != nil {
+		return err
+	}
+	if err := requireResolvableSources(filepath.Join(root, "spec"), opts.Sources); err != nil {
+		return err
+	}
+	if err := requireSupersedableForm(slug, opts.Status, detailed); err != nil {
+		return err
+	}
 	if !force {
 		if _, err := rule.ResolveRow(rulesDir, slug); err == nil {
 			return exitcode.ConflictErrorf("rule already exists: %s is already listed in %s (pass --force to overwrite)",
@@ -215,7 +224,7 @@ func runRuleNew(cmd *cobra.Command, args []string) error {
 	return writeRuleResult(cmd, format, ruleWriteResult{
 		Slug: slug, Form: ruleFormName(detailed), Path: ruleResultPath(rulesDir, detailed, slug),
 		Status: opts.Status, Action: "created", Detailed: detailed,
-	})
+	}, root)
 }
 
 // ruleResultPath names the file a verb's caller should open: the detail
@@ -273,6 +282,58 @@ func ruleOptionsFromFlags(cmd *cobra.Command, slug string) (rule.Options, error)
 	return opts, nil
 }
 
+// preflightRuleIndex refuses a mutating verb while the index carries a
+// row-like line that does not parse and is not one of the rows this verb is
+// about to write.
+//
+// The library preserves such lines rather than dropping them, so nothing is
+// lost either way. This guard exists for the second half of the problem: a
+// caller who runs `rule new innocent` and sees exit 0 has no reason to look at
+// the index, and a broken row that nobody looks at is a rule that has quietly
+// stopped binding. Refusing puts it in front of the one person already editing
+// the file.
+func preflightRuleIndex(rulesDir string, addressed ...string) error {
+	report, err := ruleReadIndexFn(rule.IndexPath(rulesDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return exitcode.UnexpectedErrorf("reading the rules index: %v", err)
+	}
+	blocking := report.MalformedExcept(addressed...)
+	if len(blocking) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has %d row(s) that do not parse; refusing to rewrite it until they are repaired",
+		rule.IndexPath(rulesDir), len(blocking))
+	for _, m := range blocking {
+		subject := "row"
+		if m.SlugHint != "" {
+			subject = "rule " + m.SlugHint
+		}
+		fmt.Fprintf(&b, "\n  line %d: %s — %s", m.Line, subject, m.Reason)
+	}
+	b.WriteString("\nrun `specscore rule lint --fix` (it repairs an unescaped `|` in a Statement) or edit the row by hand, then retry")
+	return exitcode.ConflictError(b.String())
+}
+
+// requireSupersedableForm refuses to park an INLINE rule at Superseded.
+//
+// Supersession lives in the detail document, so an inline row at Superseded has
+// nowhere to name its successor — and `spec lint` used to call that tree clean,
+// leaving a retired rule with no forwarding address and nothing to notice it.
+// Refusing here is the cheap half of the fix; R-009 reports the trees that
+// already contain one.
+func requireSupersedableForm(slug, status string, detailed bool) error {
+	if !strings.EqualFold(strings.TrimSpace(status), "Superseded") || detailed {
+		return nil
+	}
+	return exitcode.InvalidStateErrorf(
+		"rule %q is inline, so Superseded has nowhere to record **Superseded By:**; run `specscore rule expand %s` first, then set the successor",
+		slug, slug)
+}
+
 // singleRuleSlugArg validates the shared "exactly one <slug>" positional
 // contract every rule verb carries.
 func singleRuleSlugArg(_ *cobra.Command, args []string, verb string) (string, error) {
@@ -304,12 +365,16 @@ func ensureRuleAncestorIndexes(root string) error {
 }
 
 // writeRuleResult renders a mutating verb's result in the requested format.
-func writeRuleResult(cmd *cobra.Command, format string, result ruleWriteResult) error {
+// Structured output carries a repo-relative path; text keeps the absolute one,
+// because that is what a caller pipes to an editor.
+func writeRuleResult(cmd *cobra.Command, format string, result ruleWriteResult, root string) error {
 	w := cmd.OutOrStdout()
 	switch format {
 	case "json":
+		result.Path = repoRelative(root, result.Path)
 		return newJSONEnc(w).Encode(result)
 	case "yaml":
+		result.Path = repoRelative(root, result.Path)
 		enc := newYAMLEnc(w)
 		if err := enc.Encode(result); err != nil {
 			return exitcode.UnexpectedErrorf("encoding yaml: %v", err)
@@ -370,6 +435,9 @@ func runRuleExpand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	rulesDir := rule.RulesDir(root)
+	if err := preflightRuleIndex(rulesDir, slug); err != nil {
+		return err
+	}
 	row, err := rule.ResolveRow(rulesDir, slug)
 	if err != nil {
 		return err
@@ -412,5 +480,5 @@ func runRuleExpand(cmd *cobra.Command, args []string) error {
 	return writeRuleResult(cmd, format, ruleWriteResult{
 		Slug: slug, Form: ruleFormName(true), Path: rule.DetailPath(rulesDir, slug),
 		Status: strings.TrimSpace(row.Status), Action: "expanded", Detailed: true,
-	})
+	}, root)
 }

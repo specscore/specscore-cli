@@ -80,7 +80,8 @@ func TestScopeMatches(t *testing.T) {
 		{name: "anchored glob rejects nested", scope: "path:go.mod", path: "sub/go.mod", want: true},
 
 		{name: "repo matches owner+repo pair", scope: "repo:specscore/specscore-cli", path: "/home/ai/projects/specscore/specscore-cli/pkg/x.go", want: true},
-		{name: "repo matches bare repo segment", scope: "repo:specscore/specscore-cli", path: "specscore-cli/pkg/x.go", want: true},
+		{name: "repo requires the owner too", scope: "repo:specscore/specscore-cli", path: "specscore-cli/pkg/x.go", want: false},
+		{name: "repo rejects a different owner", scope: "repo:specscore/specscore-cli", path: "otherorg/specscore-cli/pkg/x.go", want: false},
 		{name: "repo rejects unrelated path", scope: "repo:specscore/specscore-cli", path: "other/repo/pkg/x.go", want: false},
 
 		{name: "product matches whole segment", scope: "product:sneat", path: "projects/sneat/app.ts", want: true},
@@ -94,6 +95,32 @@ func TestScopeMatches(t *testing.T) {
 			}
 			if got := s.Matches(tc.path); got != tc.want {
 				t.Fatalf("Scope(%q).Matches(%q) = %v, want %v", tc.scope, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+// A repo scope must never bind on the repository name alone. These are the
+// names that make the difference between a targeted rule and one that binds
+// every directory in the fleet that happens to be called `docs`.
+func TestRepoScopeDoesNotMatchABareRepositoryName(t *testing.T) {
+	for _, name := range []string{"docs", "api", "web", "cli", "spec", "backend", "frontend", "app"} {
+		t.Run(name, func(t *testing.T) {
+			s, err := ParseScope("repo:specscore/" + name)
+			if err != nil {
+				t.Fatalf("ParseScope: %v", err)
+			}
+			for _, p := range []string{
+				name + "/x.md",
+				"otherorg/" + name + "/x.md",
+				"projects/unrelated/" + name + "/deep/x.md",
+			} {
+				if s.Matches(p) {
+					t.Errorf("repo:specscore/%s must not bind %q — only specscore/%s does", name, p, name)
+				}
+			}
+			if !s.Matches("projects/specscore/" + name + "/x.md") {
+				t.Errorf("repo:specscore/%s must bind its own repository", name)
 			}
 		})
 	}

@@ -56,6 +56,14 @@ The two forms exist because the two failure modes are opposite. Give every rule 
 
 The rules index MUST carry a `## Rules` table with exactly the header `| Rule | Status | Scope | Enforcement | Control | Sources | Statement |`. Each row's identity cell MUST be either a bare canonical slug (an inline rule) or `[<slug>](<slug>/README.md)` (a detailed rule) — no other shape, because an identity cell is the one place a guess would silently rename a rule. Rows MUST be unique by slug and sorted by slug. Free text in a cell MUST have its pipes escaped so a statement can never fabricate a column.
 
+#### REQ: unparseable-rows-are-never-dropped
+
+A row-like line the seven-column contract cannot represent MUST be preserved verbatim by every write path, and reported. No verb may reduce the rule set by writing the index — an unescaped `|` pasted into a Statement is the most ordinary authoring slip there is, and a kind that exists so operating knowledge stops evaporating cannot have a path where a benign command evaporates some.
+
+A mutating verb MUST refuse (exit `1`) while the index holds a line it cannot read, naming the line, the slug its identity cell suggests, the parse failure, and the sanctioned repair. The one exception is a line whose identity cell names the very rule the verb is writing: that line *is* that row, and the verb replaces it.
+
+`--fix` MAY repair such a line only when the repair is unambiguous — surplus cells caused by an unescaped `|` in the Statement, which is provable because the four columns between the identity cell and the Statement have closed grammars that must all validate first. Every other shape is preserved and reported, never guessed at. A duplicate row is removed only when it is byte-identical to the row it repeats; two rows that disagree are ambiguous and are both kept.
+
 #### REQ: scaffold-needs-only-a-slug
 
 `specscore rule new <slug>` with no other flag MUST record a lint-clean `Draft` inline row with `fleet` scope, `Stated` enforcement, and a TODO statement, and MUST NOT create a directory. Recording a rule under time pressure has to be one command, for the same reason it does for Lessons: a rough rule a later `rule update` sharpens beats a rule that was never written down.
@@ -80,6 +88,10 @@ A detail document MUST declare, in this exact order: `**Status:**`, `**Date:**`,
 
 ### Closed vocabularies, and a tier that must be backed
 
+#### REQ: superseded-requires-a-successor
+
+`Superseded` is a detail-document status: supersession pointers live there, so an inline row at `Superseded` has nowhere to name its successor. A verb asked to write one MUST exit `4` naming `specscore rule expand`, and lint MUST report a tree that already contains one. A retired rule with no forwarding address is indistinguishable from a live one to every reader.
+
 #### REQ: closed-vocabularies
 
 `Status` MUST be one of `Draft`, `Active`, `Superseded`. `Enforcement` MUST be one of `Stated` (an agent or human is told; nothing refuses), `Enforced` (a named control refuses), `Automated` (a named control refuses and repairs). `Enforced` and `Automated` MUST name a non-empty `Control`; `Stated` MUST NOT be required to, because the absence of a control is exactly what that tier means. Any verb that would write a control-requiring tier without a control MUST exit `2` before touching the tree.
@@ -90,7 +102,7 @@ Each `Scope` entry MUST be `fleet`, `product:<name>`, `repo:<owner>/<repository>
 
 #### REQ: source-references
 
-Each `Sources` entry MUST be `lesson:<slug>`, `decision:<NNNN|NNNN-slug>`, `idea:<slug>`, or an `http(s)` URL. Typed references MUST resolve to an existing artifact in the same spec tree; free URLs are validated syntactically only, because resolving them would make lint depend on the network.
+Each `Sources` entry MUST be `lesson:<slug>`, `decision:<NNNN|NNNN-slug>`, `idea:<slug>`, or an `http(s)` URL. Typed references MUST resolve to an existing artifact in the same spec tree, and every verb that writes one MUST refuse (exit `2`) when it does not — grammar and resolution are checked at the same moment, so a typo'd cross-link cannot land silently and leave lint to find it later. Free URLs are validated syntactically only, because resolving them would make lint depend on the network.
 
 ### Lessons promote into rules, and the pair is strict
 
@@ -114,7 +126,26 @@ A detail document's Instructions MAY reference `skill:<name>`, and a skill's `##
 
 #### REQ: applies-to-resolves-scope
 
-`rule list --applies-to <path>` MUST list only the rules whose Scope covers that path: `fleet` always matches; `path:<glob>` matches with doublestar against the path and against each of its trailing path suffixes, so a repo-relative pattern still matches an absolute path a caller happens to hold; `product:` and `repo:` match when their identifier appears as a whole path segment. `--scope`, `--status` and `--enforcement` are exact, case-insensitive filters that compose with `--applies-to` under AND semantics. An unrecognized filter value MUST exit `2` naming it, never resolve to a silently empty result.
+`rule list --applies-to <path>` MUST list only the rules whose Scope covers that path, by this table:
+
+| Scope | Matches |
+|---|---|
+| `fleet` | everything |
+| `path:<glob>` | doublestar against the path AND against every trailing suffix of it, so a repo-relative pattern still matches an absolute path a caller holds. Deliberately generous: `path:cli/**` also matches `vendor/x/cli/y.go`. |
+| `product:<name>` | `<name>` appears as a whole path segment |
+| `repo:<owner>/<name>` | `<owner>` and `<name>` appear as **consecutive** whole path segments. A bare `<name>` MUST NOT match. |
+
+The repo rule is strict on purpose. Matching a bare repository name would make every rule scoped to a repo called `docs`, `api`, `web` or `cli` bind every path in the fleet containing that directory — and a mis-scoped rule that binds work it was never meant to bind is worse than one that fails to match, because nobody goes looking for it.
+
+`--scope`, `--status` and `--enforcement` are exact, case-insensitive filters that compose with `--applies-to` under AND semantics. An unrecognized filter value MUST exit `2` naming it, never resolve to a silently empty result.
+
+#### REQ: unreadable-scope-fails-toward-binding
+
+A rule whose Scope cell does not parse MUST still be listed, flagged `scope_error`, reported on stderr, and the command MUST exit `1`. `rule list` is designed to run standalone at the start of an agent stream with no lint pass behind it, so dropping the rule would answer "nothing applies" to a question whose real answer is "one rule might, and its scope needs a human".
+
+#### REQ: structured-output-is-portable
+
+`--format json` and `--format yaml` MUST emit repo-relative paths and MUST NOT emit the em-dash sentinel: it is a storage convention of the Markdown table, not a value. A missing scalar is the empty string and a missing list is an empty array — one convention across every field, so a consumer needs no special case. `--format text` keeps absolute paths, because that output is what a caller hands to an editor.
 
 #### REQ: reads-never-mutate
 
@@ -136,7 +167,9 @@ Editing a detail document MUST rewrite only the named bold fields and leave ever
 
 #### REQ: delete-refuses-live-links
 
-`rule delete <slug>` MUST exit `4`, naming every blocker, while any Lesson promotes to the rule, any other rule supersedes or is superseded by it, any skill lists it, or any Feature cites it. `--supersede-with <slug>` MUST instead repoint every Lesson pointer and rule relation at the named successor — adding each inherited Lesson to the successor's Sources so the strict pair still holds — and only then remove the row and any directory. Skill and Feature references are prose: they MUST be reported rather than rewritten.
+`rule delete <slug>` MUST exit `4`, naming every blocker, while any Lesson promotes to the rule, any other rule supersedes or is superseded by it, any skill lists it, or any Feature cites it. `--supersede-with <slug>` MUST instead repoint every Lesson pointer and rule relation at the named successor — adding each inherited Lesson to the successor's Sources so the strict pair still holds, and recording `**Supersedes:** <old>` on the successor when it is detailed — and only then remove the row and any directory. That breadcrumb is the trail back for the prose references the verb has just warned about, so a `**Supersedes:**` target that no longer exists is history rather than a defect; `**Superseded By:**` still MUST resolve, because a forward pointer with no destination leaves a reader nowhere.
+
+Skill and Feature references are prose: they MUST be reported rather than rewritten.
 
 ### The rule family is part of `spec lint`
 
@@ -287,6 +320,44 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 **When** the user runs `specscore rule list` in a project with detailed rules
 **Then** the listing is produced from the index alone and the spec tree is byte-identical afterwards.
 
+### AC: an-unparseable-row-survives-every-verb (verifies REQ:unparseable-rows-are-never-dropped)
+
+**Given** an index carrying a hand-written row whose Statement has an unescaped `|`
+**When** the user runs `rule new`, `rule expand`, `rule update`, `rule delete` or `rule promote` against a *different* rule
+**Then** each exits `1` naming the broken row and `specscore rule lint --fix`, the index is byte-identical, and the row is still there.
+
+### AC: fix-repairs-only-the-unambiguous-row (verifies REQ:unparseable-rows-are-never-dropped)
+
+**When** the user runs `specscore rule lint --fix` on that index
+**Then** the row is repaired by escaping the surplus `|`, the statement round-trips to its original text, and lint is clean; a row whose parse failure is NOT attributable to the Statement is instead preserved verbatim and still reported.
+
+### AC: repo-scope-does-not-bind-a-bare-name (verifies REQ:applies-to-resolves-scope)
+
+**Given** a rule scoped `repo:specscore/docs`
+**When** the user runs `specscore rule list --applies-to docs/x.md` or `--applies-to otherorg/docs/x.md`
+**Then** the rule is NOT listed; `--applies-to projects/specscore/docs/x.md` does list it.
+
+### AC: unreadable-scope-is-listed-not-hidden (verifies REQ:unreadable-scope-fails-toward-binding)
+
+**Given** a rule whose Scope cell does not parse
+**When** the user runs `specscore rule list --applies-to <any path>`
+**Then** the rule appears in the output flagged `scope_error`, stderr names the bad scope text, and the command exits `1`.
+
+### AC: inline-superseded-is-refused (verifies REQ:superseded-requires-a-successor)
+
+**When** the user runs `specscore rule update <inline-slug> --status Superseded`
+**Then** the command exits `4` naming `specscore rule expand`; a tree that already holds such a row reports `R-009`.
+
+### AC: unresolvable-source-is-refused (verifies REQ:source-references)
+
+**When** the user runs `specscore rule update <slug> --add-source lesson:ghost`
+**Then** the command exits `2`, nothing is written, and the tree stays lint-clean.
+
+### AC: structured-output-is-portable (verifies REQ:structured-output-is-portable)
+
+**When** the user runs `specscore rule show <slug> --format json`
+**Then** `index_path` and `detail_path` are repo-relative, no field carries the em-dash sentinel, and an empty scalar is `""` while an empty list is `[]`.
+
 ### AC: every-verb-accepts-format-json (verifies the shared-flags behavior)
 
 **When** each of `new`, `expand`, `list`, `show`, `update`, `delete`, `promote`, `lint` is invoked with `--format json`
@@ -296,7 +367,8 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 
 - The strict pair makes a Lesson the source of at most one rule. That keeps "which rule did this Lesson become?" unambiguous, but a single Lesson that genuinely produced two independent rules currently has to pick one and cite the other from `**Why:**`. Should `**Promotes To:**` become a list once real usage shows that case?
 - A rule has no lifecycle-transition verb (`rule change-status`) — `update --status` writes the field directly, without the legal-transition matrix `lesson change-status` enforces. Should rule statuses gain a transition matrix, or is a three-value vocabulary too small to be worth one?
-- Supersession lives only in a detail document, so an inline rule must be expanded before it can be superseded. That is defensible — retiring a rule is worth a paragraph — but it means `rule update --status Superseded` on an inline rule is a two-step operation. Should the row carry supersession too?
+- Supersession lives only in a detail document, so an inline rule must be expanded before it can be superseded — `rule update --status Superseded` on an inline rule is now a refusal pointing at `rule expand`. That is defensible (retiring a rule is worth a paragraph) but it is still two steps. Should the row carry supersession too?
+- `--fix` repairs an unescaped `|` only when it falls in the Statement, because the columns before it have closed grammars that make the attribution provable. A pipe in `Control` produces the same line shape and is refused. Is a `--fix=R-003 --assume-statement` escape hatch worth having, or does that reintroduce the guessing this rule exists to prevent?
 - `--applies-to` infers `product:` and `repo:` matches from path segments, which is a heuristic. Should `rule list` gain explicit `--in-repo` / `--in-product` flags so a caller that knows its context does not have to encode it in a path?
 
 ---

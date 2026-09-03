@@ -345,7 +345,7 @@ func TestRuleIndexShapeViolations(t *testing.T) {
 	})
 	t.Run("malformed row", func(t *testing.T) {
 		root := ruleTree(t, ruleIndexWith("| x | Draft |"), nil)
-		if !hasRFamilyViolation(lintRules(t, root), "R-003", "canonical seven-column shape") {
+		if !hasRFamilyViolation(lintRules(t, root), "R-003", "does not parse") {
 			t.Fatalf("got %v", ruleViolationIDs(lintRules(t, root)))
 		}
 	})
@@ -478,8 +478,10 @@ func TestRuleDetailViolations(t *testing.T) {
 			wantID: "R-001", wantMsg: "**Sources:** must use — when absent"},
 		{name: "bad date", overrides: map[string]string{"Date": "3 Sep 2026"},
 			wantID: "R-001", wantMsg: "**Date:** must be YYYY-MM-DD"},
-		{name: "unresolvable supersedes", overrides: map[string]string{"Supersedes": "ghost"},
-			wantID: "R-009", wantMsg: "**Supersedes:** does not resolve"},
+		{name: "malformed supersedes", overrides: map[string]string{"Supersedes": "Not A Slug"},
+			wantID: "R-009", wantMsg: "**Supersedes:** is not a canonical slug"},
+		{name: "unresolvable superseded-by", overrides: map[string]string{"Superseded By": "ghost"},
+			wantID: "R-009", wantMsg: "**Superseded By:** does not resolve"},
 		{name: "superseded without successor", overrides: map[string]string{"Status": "Superseded"},
 			wantID: "R-009", wantMsg: "requires **Superseded By:**"},
 	}
@@ -692,6 +694,30 @@ func TestRuleFixNeverEditsAuthoredContent(t *testing.T) {
 }
 
 // ----- R-009: supersession -----
+
+// A Supersedes target that is gone is history, not a defect: `rule delete
+// --supersede-with` writes exactly that breadcrumb so the references it warned
+// about have a trail back, and requiring it to resolve would make the only
+// record of a retired rule illegal to keep.
+func TestSupersedesMayNameARetiredRule(t *testing.T) {
+	overrides := map[string]string{"Supersedes": "long-gone"}
+	root := ruleTree(t, ruleIndexWith(rowMatching("x", overrides)),
+		map[string]string{"x": ruleDetail(overrides)})
+	for _, v := range lintRules(t, root) {
+		if v.Rule == "R-009" {
+			t.Fatalf("a historical Supersedes was reported: %v", ruleViolationIDs(lintRules(t, root)))
+		}
+	}
+}
+
+// An inline row at Superseded has nowhere to name a successor.
+func TestInlineSupersededRowIsReported(t *testing.T) {
+	fields := withRow(func(f *ruleRowFields) { f.Status = "Superseded" })
+	root := ruleTree(t, ruleIndexWith(fields.render("x", false)), nil)
+	if !hasRFamilyViolation(lintRules(t, root), "R-009", "inline, so it has nowhere to record") {
+		t.Fatalf("got %v", ruleViolationIDs(lintRules(t, root)))
+	}
+}
 
 func TestRuleSupersessionIntegrity(t *testing.T) {
 	t.Run("inverse pointer required", func(t *testing.T) {
@@ -1103,7 +1129,7 @@ func TestRuleFixPropagatesFailures(t *testing.T) {
 		apply func()
 	}{
 		{name: "index write fails", apply: func() {
-			ruleWriteIndexRowsFn = func(string, []rule.Row) error { return errRuleInjected }
+			ruleWriteIndexRowsFn = func(string, []rule.Row, []rule.MalformedRow) error { return errRuleInjected }
 		}},
 		{name: "index re-read fails", apply: func() {
 			ruleReadIndexFn = func(string) (rule.IndexReport, error) { return rule.IndexReport{}, errRuleInjected }
@@ -1179,5 +1205,77 @@ func TestRuleDetailEmptyTitleIsReported(t *testing.T) {
 func TestDetailFieldPositionRejectsUnknownField(t *testing.T) {
 	if got := detailFieldPosition("Nonsense"); got != -1 {
 		t.Fatalf("detailFieldPosition = %d, want -1", got)
+	}
+}
+
+// A duplicate that DISAGREES is kept, because choosing between them would
+// discard a rule's content on a coin flip.
+func TestRuleFixKeepsDifferingDuplicates(t *testing.T) {
+	first := defaultRowFields().render("dup", false)
+	second := withRow(func(f *ruleRowFields) {
+		f.Status = "Active"
+		f.Statement = "A different sentence entirely."
+	}).render("dup", false)
+	root := ruleTree(t, ruleIndexWith(first, second), nil)
+
+	fixRules(t, root)
+
+	index, _ := os.ReadFile(rule.IndexPath(rule.RulesDir(root)))
+	if !strings.Contains(string(index), "A different sentence entirely.") {
+		t.Fatalf("the losing duplicate's content was discarded:\n%s", index)
+	}
+	if !hasRFamilyViolation(lintRules(t, root), "R-003", "more than once") {
+		t.Fatalf("the duplicate must keep being reported: %v", ruleViolationIDs(lintRules(t, root)))
+	}
+	// Byte-identical duplicates are safe to collapse.
+	same := ruleTree(t, ruleIndexWith(first, first), nil)
+	fixRules(t, same)
+	if got := lintRules(t, same); len(got) != 0 {
+		t.Fatalf("identical duplicates should dedupe cleanly: %v", ruleViolationIDs(got))
+	}
+}
+
+// The fixer repairs the unambiguous row, preserves the rest, and never drops
+// either.
+func TestRuleFixRepairsAndPreservesMalformedRows(t *testing.T) {
+	repairable := "| never-lose-me | Active | fleet | Enforced | CI | — | Never write a fake | it hides the contract. |"
+	unrepairable := "| broken | Pending | fleet | Stated | — | — | a | b |"
+	root := ruleTree(t, ruleIndexWith(defaultRowFields().render("alpha", false), repairable, unrepairable), nil)
+
+	// Both are reported before the fix, and the repairable one says so.
+	before := lintRules(t, root)
+	if !hasRFamilyViolation(before, "R-003", "row for never-lose-me does not parse") {
+		t.Fatalf("got %v", ruleViolationIDs(before))
+	}
+	if !hasRFamilyViolation(before, "R-003", "can repair this one") {
+		t.Fatalf("the repairable row must advertise the repair: %v", ruleViolationIDs(before))
+	}
+	if !hasRFamilyViolation(before, "R-003", "preserved verbatim") {
+		t.Fatalf("the finding must say nothing was dropped: %v", ruleViolationIDs(before))
+	}
+
+	fixRules(t, root)
+
+	index, _ := os.ReadFile(rule.IndexPath(rule.RulesDir(root)))
+	if !strings.Contains(string(index), `Never write a fake \| it hides the contract.`) {
+		t.Fatalf("the repairable row was not repaired:\n%s", index)
+	}
+	if !strings.Contains(string(index), unrepairable) {
+		t.Fatalf("the unrepairable row was dropped:\n%s", index)
+	}
+	if !strings.Contains(string(index), "| alpha |") {
+		t.Fatalf("an unrelated row was lost:\n%s", index)
+	}
+}
+
+// A repaired row whose slug already has a real row cannot replace it, so the
+// broken line is preserved and left to a human.
+func TestRuleFixPreservesARepairableRowThatWouldCollide(t *testing.T) {
+	collides := "| alpha | Active | fleet | Enforced | CI | — | Never write a fake | it hides the contract. |"
+	root := ruleTree(t, ruleIndexWith(defaultRowFields().render("alpha", false), collides), nil)
+	fixRules(t, root)
+	index, _ := os.ReadFile(rule.IndexPath(rule.RulesDir(root)))
+	if !strings.Contains(string(index), collides) {
+		t.Fatalf("a colliding repairable row must be preserved, not merged:\n%s", index)
 	}
 }

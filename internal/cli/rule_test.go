@@ -76,6 +76,19 @@ func writeCanonicalLesson(t *testing.T, root, slug, control string) string {
 	return path
 }
 
+// writeRuleDecision materializes a Decision so a rule may cite it: typed source
+// references are resolved at write time now, not merely parsed.
+func writeRuleDecision(t *testing.T, root, stem string) {
+	t.Helper()
+	dir := filepath.Join(root, "spec", "decisions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, stem+".md"), []byte("# Decision: X\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeRuleSkillFile(t *testing.T, root, name, body string) {
 	t.Helper()
 	dir := filepath.Join(root, rule.DefaultSkillsPath, name)
@@ -455,31 +468,6 @@ func TestRuleList(t *testing.T) {
 	})
 }
 
-// A malformed scope in the index must not make a filtered listing crash or
-// silently include the row.
-func TestRuleListSkipsRowsWithUnparsableScope(t *testing.T) {
-	root := setupRuleProject(t)
-	if _, _, err := runRule(t, root, "new", "x", "--statement", "s"); err != nil {
-		t.Fatal(err)
-	}
-	index := strings.Replace(readRuleIndex(t, root), "| fleet |", "| team:platform |", 1)
-	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"list", "--applies-to", "x.go"},
-		{"list", "--scope", "fleet"},
-	} {
-		out, _, err := runRule(t, root, args...)
-		if err != nil {
-			t.Fatalf("%v: %v", args, err)
-		}
-		if strings.TrimSpace(out) != "" {
-			t.Fatalf("%v listed a row whose scope does not parse: %q", args, out)
-		}
-	}
-}
-
 func TestRuleListEmptyProject(t *testing.T) {
 	root := setupRuleProject(t)
 	out, _, err := runRule(t, root, "list")
@@ -580,7 +568,15 @@ func TestRuleShow(t *testing.T) {
 	})
 
 	t.Run("reports an unresolvable source", func(t *testing.T) {
-		if _, _, err := runRule(t, root, "new", "ghosted", "--source", "lesson:ghost"); err != nil {
+		// Written straight into the index: the verbs now refuse an
+		// unresolvable source, so this is the state a hand edit produces.
+		if _, _, err := runRule(t, root, "new", "ghosted", "--statement", "s"); err != nil {
+			t.Fatal(err)
+		}
+		index := strings.Replace(readRuleIndex(t, root),
+			"| ghosted | Draft | fleet | Stated | — | — |",
+			"| ghosted | Draft | fleet | Stated | — | lesson:ghost |", 1)
+		if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		out, _, err := runRule(t, root, "show", "ghosted", "--format", "json")
@@ -684,6 +680,7 @@ func TestRuleUpdate(t *testing.T) {
 	})
 
 	t.Run("sources are incremental", func(t *testing.T) {
+		writeRuleDecision(t, root, "0001-a-decision")
 		if _, _, err := runRule(t, root, "update", "x", "--add-source", "decision:0001"); err != nil {
 			t.Fatalf("add-source: %v", err)
 		}
@@ -764,7 +761,7 @@ func TestRuleUpdate(t *testing.T) {
 			{name: "bad status", args: []string{"update", "x", "--status", "Pending"}, wantCode: exitcode.InvalidArgs},
 			{name: "bad enforcement", args: []string{"update", "x", "--enforcement", "Mandatory"}, wantCode: exitcode.InvalidArgs},
 			{name: "bad scope", args: []string{"update", "x", "--scope", "team:platform"}, wantCode: exitcode.InvalidArgs},
-			{name: "duplicate source", args: []string{"update", "x", "--add-source", "decision:0002", "--add-source", "decision:0002"}, wantCode: exitcode.InvalidArgs},
+			{name: "duplicate source", args: []string{"update", "x", "--add-source", "decision:0001", "--add-source", "decision:0001"}, wantCode: exitcode.InvalidArgs},
 			{name: "absent source removal", args: []string{"update", "x", "--remove-source", "decision:9999"}, wantCode: exitcode.InvalidArgs},
 			{name: "bad format", args: []string{"update", "x", "--status", "Draft", "--format", "toml"}, wantCode: exitcode.InvalidArgs},
 			{name: "missing rule", args: []string{"update", "ghost", "--status", "Draft"}, wantCode: exitcode.NotFound},
@@ -857,6 +854,7 @@ func TestRulePromoteInline(t *testing.T) {
 func TestRulePromoteOverridesAndTiers(t *testing.T) {
 	root := setupRuleProject(t)
 	writeCanonicalLesson(t, root, "kinder-fake", "Assert against the real adapter.")
+	writeRuleDecision(t, root, "0001-a-decision")
 	if _, _, err := runRule(t, root, "promote", "--from-lesson", "kinder-fake", "no-fakes",
 		"--statement", "Never hand-roll a fake.", "--why", "Custom reason.",
 		"--scope", "repo:specscore/specscore-cli", "--enforcement", "Enforced",
@@ -1154,7 +1152,16 @@ func TestRuleDelete(t *testing.T) {
 
 func TestRuleLintCommand(t *testing.T) {
 	root := setupRuleProject(t)
-	if _, _, err := runRule(t, root, "new", "x", "--source", "lesson:ghost"); err != nil {
+	if _, _, err := runRule(t, root, "new", "x", "--statement", "s"); err != nil {
+		t.Fatal(err)
+	}
+	// Hand-written into the row: the verbs refuse an unresolvable source now,
+	// so this is the state only a manual edit can reach — and exactly what lint
+	// exists to catch.
+	index := strings.Replace(readRuleIndex(t, root),
+		"| x | Draft | fleet | Stated | — | — |",
+		"| x | Draft | fleet | Stated | — | lesson:ghost |", 1)
+	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1187,7 +1194,8 @@ func TestRuleLintCommand(t *testing.T) {
 	})
 
 	t.Run("clean tree exits zero", func(t *testing.T) {
-		if _, _, err := runRule(t, root, "update", "x", "--remove-source", "lesson:ghost"); err != nil {
+		clean := strings.Replace(readRuleIndex(t, root), "| lesson:ghost |", "| — |", 1)
+		if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(clean), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		out, _, err := runRule(t, root, "lint")
@@ -1294,7 +1302,7 @@ func TestWriteRuleResultFormats(t *testing.T) {
 		cmd := &cobra.Command{}
 		var out bytes.Buffer
 		cmd.SetOut(&out)
-		if err := writeRuleResult(cmd, tc.format, result); err != nil {
+		if err := writeRuleResult(cmd, tc.format, result, "/"); err != nil {
 			t.Fatalf("writeRuleResult(%s): %v", tc.format, err)
 		}
 		if !strings.Contains(out.String(), tc.want) {
@@ -1306,5 +1314,357 @@ func TestWriteRuleResultFormats(t *testing.T) {
 func TestRuleFormName(t *testing.T) {
 	if ruleFormName(true) != "detailed" || ruleFormName(false) != "inline" {
 		t.Fatal("ruleFormName is wrong")
+	}
+}
+
+// ----- MF-1: no mutating verb may step on a row it cannot read -----
+
+// malformedRuleRow is the shape the review reproduced: a hand-written row whose
+// Statement carries an unescaped `|`.
+const malformedRuleRow = "| never-lose-me | Active | fleet | Enforced | CI | — | Never write a fake | it hides the contract. |"
+
+// withMalformedRow injects the broken row into a project's index.
+func withMalformedRow(t *testing.T, root string) {
+	t.Helper()
+	index := readRuleIndex(t, root)
+	marker := rule.IndexSeparatorRow + "\n"
+	if !strings.Contains(index, marker) {
+		t.Fatal("fixture index has no separator row")
+	}
+	index = strings.Replace(index, marker, marker+malformedRuleRow+"\n", 1)
+	index = strings.Replace(index, rule.IndexEmptyPlaceholder+"\n", "", 1)
+	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every mutating verb refuses while an unrelated row is unreadable, and leaves
+// the row exactly where it found it. This is the blocker from the review: a
+// benign `rule new innocent` used to delete `never-lose-me` and exit 0.
+func TestMutatingVerbsRefuseWhileAnUnrelatedRowIsMalformed(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, root string)
+		args  []string
+	}{
+		{name: "new", args: []string{"new", "innocent", "--statement", "Unrelated new rule."}},
+		{name: "expand", args: []string{"expand", "victim"}},
+		{name: "update", args: []string{"update", "victim", "--status", "Active"}},
+		{name: "delete", args: []string{"delete", "victim"}},
+		{
+			name: "promote",
+			setup: func(t *testing.T, root string) {
+				writeCanonicalLesson(t, root, "kinder-fake", "Assert against the real adapter.")
+			},
+			args: []string{"promote", "--from-lesson", "kinder-fake", "promoted"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := setupRuleProject(t)
+			if _, _, err := runRule(t, root, "new", "victim", "--statement", "A rule that exists."); err != nil {
+				t.Fatal(err)
+			}
+			if tc.setup != nil {
+				tc.setup(t, root)
+			}
+			withMalformedRow(t, root)
+			before := readRuleIndex(t, root)
+
+			_, _, err := runRule(t, root, tc.args...)
+			if got := exitCodeOf(err); got != exitcode.Conflict {
+				t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.Conflict, err)
+			}
+			if !strings.Contains(err.Error(), "never-lose-me") {
+				t.Fatalf("the refusal must name the broken row: %v", err)
+			}
+			if !strings.Contains(err.Error(), "rule lint --fix") {
+				t.Fatalf("the refusal must name the sanctioned repair: %v", err)
+			}
+			if after := readRuleIndex(t, root); after != before {
+				t.Fatalf("a refused verb must not touch the index:\n%s", after)
+			}
+			if !strings.Contains(readRuleIndex(t, root), malformedRuleRow) {
+				t.Fatal("the malformed row was dropped — a rule vanished")
+			}
+		})
+	}
+}
+
+// The one exception: the broken row IS the row this verb is writing.
+func TestMutatingVerbMayReplaceTheMalformedRowItAddresses(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "seed", "--statement", "Seed."); err != nil {
+		t.Fatal(err)
+	}
+	withMalformedRow(t, root)
+	if _, _, err := runRule(t, root, "new", "never-lose-me",
+		"--statement", "Never write a fake; it hides the contract.", "--force"); err != nil {
+		t.Fatalf("a verb addressing the broken row should proceed: %v", err)
+	}
+	got := readRuleIndex(t, root)
+	if strings.Contains(got, malformedRuleRow) {
+		t.Fatalf("the addressed row should have been replaced:\n%s", got)
+	}
+	if _, _, err := runRule(t, root, "lint"); err != nil {
+		t.Fatalf("the repaired tree is not lint-clean: %v", err)
+	}
+}
+
+// `--fix` repairs the unambiguous case and reports it; it never drops the row.
+func TestRuleLintFixRepairsAnUnescapedPipeAndNeverDrops(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "seed", "--statement", "Seed."); err != nil {
+		t.Fatal(err)
+	}
+	withMalformedRow(t, root)
+
+	out, _, err := runRule(t, root, "lint")
+	if exitCodeOf(err) != exitcode.Conflict {
+		t.Fatalf("a malformed row must fail lint, got %v", err)
+	}
+	for _, want := range []string{"R-003", "never-lose-me", "preserved verbatim", "no verb will drop it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the finding must say %q:\n%s", want, out)
+		}
+	}
+
+	if _, _, err := runRule(t, root, "lint", "--fix"); err != nil {
+		t.Fatalf("lint --fix: %v", err)
+	}
+	got := readRuleIndex(t, root)
+	if !strings.Contains(got, `Never write a fake \| it hides the contract.`) {
+		t.Fatalf("--fix did not repair the row by escaping the pipe:\n%s", got)
+	}
+	if _, _, err := runRule(t, root, "lint"); err != nil {
+		t.Fatalf("the repaired tree is not lint-clean: %v", err)
+	}
+	// And the rule still means what it meant.
+	out, _, err = runRule(t, root, "show", "never-lose-me", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc ruleShowDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Statement != "Never write a fake | it hides the contract." {
+		t.Fatalf("statement = %q", doc.Statement)
+	}
+}
+
+// A row `--fix` cannot repair unambiguously survives the fix pass untouched and
+// keeps being reported.
+func TestRuleLintFixPreservesAnUnrepairableRow(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "seed", "--statement", "Seed."); err != nil {
+		t.Fatal(err)
+	}
+	unrepairable := "| broken | Pending | fleet | Stated | — | — | a | b |"
+	index := strings.Replace(readRuleIndex(t, root), rule.IndexSeparatorRow+"\n",
+		rule.IndexSeparatorRow+"\n"+unrepairable+"\n", 1)
+	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runRule(t, root, "lint", "--fix"); exitCodeOf(err) != exitcode.Conflict {
+		t.Fatal("an unrepairable row must still fail lint after --fix")
+	}
+	if !strings.Contains(readRuleIndex(t, root), unrepairable) {
+		t.Fatalf("--fix dropped a row it could not repair:\n%s", readRuleIndex(t, root))
+	}
+}
+
+// ----- MF-3: an unreadable Scope fails toward binding -----
+
+func TestRuleListReportsAnUnparseableScopeInsteadOfHidingIt(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "corrupt", "--statement", "Might bind you."); err != nil {
+		t.Fatal(err)
+	}
+	index := strings.Replace(readRuleIndex(t, root), "| fleet |", "| team:platform |", 1)
+	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"list"},
+		{"list", "--applies-to", "internal/cli/x.go"},
+		{"list", "--scope", "fleet"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			out, errOut, err := runRule(t, root, args...)
+			if got := exitCodeOf(err); got != exitcode.Conflict {
+				t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.Conflict, err)
+			}
+			if !strings.Contains(out, "corrupt") {
+				t.Fatalf("the rule must still be listed — it might bind:\n%s", out)
+			}
+			if !strings.Contains(errOut, "team:platform") {
+				t.Fatalf("stderr must name the bad scope text:\n%s", errOut)
+			}
+		})
+	}
+
+	out, _, _ := runRule(t, root, "list", "--format", "json")
+	var entries []ruleListEntry
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, out)
+	}
+	if len(entries) != 1 || entries[0].ScopeError == "" {
+		t.Fatalf("the entry must be flagged scope_error: %+v", entries)
+	}
+}
+
+// ----- SHOULD-FIX regressions -----
+
+func TestRuleScopeFilterIsCaseInsensitive(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "x", "--statement", "s", "--scope", "fleet"); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"fleet", "Fleet", "FLEET"} {
+		out, _, err := runRule(t, root, "list", "--scope", value)
+		if err != nil {
+			t.Fatalf("--scope %s: %v", value, err)
+		}
+		if !strings.Contains(out, "x") {
+			t.Fatalf("--scope %s matched nothing, though the help promises case-insensitive", value)
+		}
+	}
+}
+
+// An inline rule has nowhere to name a successor, so parking one at Superseded
+// is refused rather than silently producing a retired rule with no forwarding
+// address.
+func TestInlineSupersededIsRefusedAndDetected(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "x", "--statement", "s"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := runRule(t, root, "update", "x", "--status", "Superseded")
+	if got := exitCodeOf(err); got != exitcode.InvalidState {
+		t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.InvalidState, err)
+	}
+	if !strings.Contains(err.Error(), "rule expand") {
+		t.Fatalf("the refusal must name the repair verb: %v", err)
+	}
+	if _, _, err := runRule(t, root, "new", "y", "--status", "Superseded"); exitCodeOf(err) != exitcode.InvalidState {
+		t.Fatal("`rule new --status Superseded` inline must be refused too")
+	}
+
+	// A tree that already contains one is reported.
+	index := strings.Replace(readRuleIndex(t, root), "| x | Draft |", "| x | Superseded |", 1)
+	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runRule(t, root, "lint")
+	if exitCodeOf(err) != exitcode.Conflict {
+		t.Fatalf("an inline Superseded row must fail lint, got %v", err)
+	}
+	if !strings.Contains(out, "R-009") || !strings.Contains(out, "rule expand") {
+		t.Fatalf("want an R-009 finding naming the repair:\n%s", out)
+	}
+}
+
+// A typed source that does not resolve is refused at write time, the way a
+// duplicate and an absent removal already are.
+func TestUnresolvableSourcesAreRefusedAtWriteTime(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "x", "--statement", "s"); err != nil {
+		t.Fatal(err)
+	}
+	cases := [][]string{
+		{"new", "y", "--source", "lesson:ghost"},
+		{"new", "z", "--source", "idea:ghost"},
+		{"new", "w", "--source", "decision:9999"},
+		{"update", "x", "--add-source", "lesson:ghost"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, _, err := runRule(t, root, args...)
+			if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.InvalidArgs, err)
+			}
+		})
+	}
+	// The tree is still clean: nothing lint-dirty was written.
+	if _, _, err := runRule(t, root, "lint"); err != nil {
+		t.Fatalf("a refused write must leave the tree clean: %v", err)
+	}
+	// A resolvable source is still accepted.
+	writeCanonicalLesson(t, root, "real-lesson", "c")
+	if _, _, err := runRule(t, root, "promote", "--from-lesson", "real-lesson", "promoted"); err != nil {
+		t.Fatalf("a resolvable source must be accepted: %v", err)
+	}
+	// And a free URL is never resolved locally.
+	if _, _, err := runRule(t, root, "update", "x", "--add-source", "https://example.com/x"); err != nil {
+		t.Fatalf("a URL source must be accepted without resolution: %v", err)
+	}
+}
+
+// The successor records what it replaced, so the prose references the verb just
+// warned about have a trail back.
+func TestDeleteSupersedeWithLeavesABreadcrumb(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "old", "--statement", "Old.", "--detailed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runRule(t, root, "new", "successor", "--statement", "New.", "--detailed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runRule(t, root, "delete", "old", "--supersede-with", "successor"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if !strings.Contains(readRuleDetail(t, root, "successor"), "**Supersedes:** old") {
+		t.Fatalf("the successor records no forwarding address:\n%s", readRuleDetail(t, root, "successor"))
+	}
+}
+
+// Structured output is machine-portable: repo-relative paths, and the em-dash
+// storage sentinel never reaches a consumer.
+func TestStructuredOutputIsPortable(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "x", "--statement", "s", "--detailed"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runRule(t, root, "show", "x", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc ruleShowDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.IndexPath != "spec/rules/README.md" || doc.DetailPath != "spec/rules/x/README.md" {
+		t.Fatalf("paths are not repo-relative: %q / %q", doc.IndexPath, doc.DetailPath)
+	}
+	if strings.Contains(out, rule.Sentinel) {
+		t.Fatalf("the em-dash sentinel leaked into structured output:\n%s", out)
+	}
+	if doc.Control != "" || doc.Supersedes != "" {
+		t.Fatalf("an empty field must be the empty string, got %q / %q", doc.Control, doc.Supersedes)
+	}
+
+	out, _, err = runRule(t, root, "new", "y", "--statement", "s", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result ruleWriteResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != "spec/rules/README.md" {
+		t.Fatalf("write result path is not repo-relative: %q", result.Path)
+	}
+
+	// Text output keeps the absolute path: that one is for a human's editor.
+	out, _, err = runRule(t, root, "new", "z", "--statement", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out), "/") {
+		t.Fatalf("text output should stay absolute, got %q", out)
 	}
 }

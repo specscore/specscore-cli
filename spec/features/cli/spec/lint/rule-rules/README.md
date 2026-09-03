@@ -51,6 +51,14 @@ A directory under `spec/rules/` that contains a `README.md` but is skipped by di
 
 `R-003` MUST report a rules index that lacks the canonical seven-column header, a row that cannot be represented by that shape (including an identity cell that is neither a bare slug nor `[slug](slug/README.md)`), a duplicated slug, rows not sorted by slug, and a row with no Statement. It MUST also report a `spec/rules/` holding detail documents but no `README.md` index, since the index is where a rule is published. Every row-scoped violation MUST carry the row's source line.
 
+A violation for an unparseable row MUST name the slug its identity cell suggests, state the parse failure, and say plainly that the row was preserved — the obvious fear on seeing this finding is that something was already lost, and the message is where that fear is answered.
+
+#### REQ: rule-r-003-never-drops-a-row
+
+The fix pass MUST NOT drop a row it could not parse. It MAY repair one only when the repair is unambiguous: surplus cells caused by an unescaped `|` in the Statement, which is provable only because `Status`, `Scope`, `Enforcement` and `Sources` have closed grammars that MUST all validate before the tail is rejoined. The same line shape produced by a pipe in `Control` MUST be refused rather than silently reinterpreted. Every other unparseable line is carried through verbatim and keeps being reported.
+
+A duplicated slug MUST be deduplicated only when the rows are byte-identical. Two rows that disagree are ambiguous — choosing one discards a rule's content on a coin flip — so both MUST be kept and reported until a human resolves it.
+
 ### R-004 — row ↔ document pairing
 
 #### REQ: rule-r-004-pairing
@@ -81,7 +89,11 @@ A directory under `spec/rules/` that contains a `README.md` but is skipped by di
 
 #### REQ: rule-r-009-supersession
 
-`R-009` MUST report a `**Supersedes:**` or `**Superseded By:**` value that does not resolve to a rule listed in the index, a `**Supersedes:**` target lacking the inverse `**Superseded By:**` pointer, a `Superseded` rule with no `**Superseded By:**`, and a supersession cycle. Supersession is a detail-document concept: an inline rule has no supersession fields to check.
+`R-009` MUST report a `**Superseded By:**` value that does not resolve to a rule listed in the index, a `**Supersedes:**` value that is not a canonical slug, a `**Supersedes:**` target that IS listed but lacks the inverse `**Superseded By:**` pointer, a `Superseded` rule with no `**Superseded By:**`, and a supersession cycle.
+
+The two pointers are checked asymmetrically on purpose. `**Superseded By:**` points forward to the rule that replaced this one and MUST resolve, or a reader following the retirement lands nowhere. `**Supersedes:**` points backward at what this rule replaced, and that rule may legitimately have been deleted — `rule delete --supersede-with` writes exactly this breadcrumb — so an absent target is history, not a defect.
+
+`R-009` MUST additionally report an index row whose `Status` is `Superseded` and which has no detail document: supersession fields live in the document, so such a row has nowhere to name its successor and would otherwise sit retired-but-unmarked forever.
 
 ### R-010 — the rule↔skill pair
 
@@ -138,6 +150,30 @@ Every `R-` id MUST appear in the lint rule registry with a non-empty description
 **Given** `spec/rules/x/README.md` with no `# Rule:` heading
 **When** `specscore spec lint` runs
 **Then** an `R-001` violation reports that the document is invisible to the index and to every other check.
+
+### AC: an-unparseable-row-is-preserved-by-the-fixer (verifies REQ:rule-r-003-never-drops-a-row)
+
+**Given** an index row whose Statement carries an unescaped `|`
+**When** `specscore spec lint --fix` runs
+**Then** the row is repaired by escaping the surplus pipe and its statement round-trips to the original text; given instead a row whose failure is not attributable to the Statement, the row is byte-identical afterwards and still reported.
+
+### AC: differing-duplicates-are-kept (verifies REQ:rule-r-003-never-drops-a-row)
+
+**Given** two rows for one slug that disagree
+**When** `specscore spec lint --fix` runs
+**Then** both rows are still present and `R-003` still reports the duplicate; two byte-identical rows are deduplicated.
+
+### AC: inline-superseded-row-is-reported (verifies REQ:rule-r-009-supersession)
+
+**Given** an index row with `Status` `Superseded` and no detail document
+**When** `specscore spec lint` runs
+**Then** an `R-009` violation names `specscore rule expand`.
+
+### AC: supersedes-may-name-a-retired-rule (verifies REQ:rule-r-009-supersession)
+
+**Given** a detail document whose `**Supersedes:**` names a rule that has been deleted
+**When** `specscore spec lint` runs
+**Then** no `R-009` violation is reported for it, while an unresolvable `**Superseded By:**` still is.
 
 ### AC: index-shape-problems-are-reported-with-lines (verifies REQ:rule-r-003-index-shape)
 

@@ -83,6 +83,7 @@ var (
 	osMkdirAllCLI  = os.MkdirAll
 	osRemoveAllCLI = os.RemoveAll
 	osReadFileCLI  = os.ReadFile
+	osReadDirCLI   = os.ReadDir
 	osStatCLI      = os.Stat
 	osGetenvCLI    = os.Getenv
 )

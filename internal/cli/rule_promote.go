@@ -118,6 +118,15 @@ func runRulePromote(cmd *cobra.Command, args []string) error {
 	if err := ensureRuleAncestorIndexes(root); err != nil {
 		return exitcode.UnexpectedErrorf("materializing ancestor indexes: %v", err)
 	}
+	if err := preflightRuleIndex(rulesDir, ruleSlug); err != nil {
+		return err
+	}
+	if err := requireResolvableSources(filepath.Join(root, "spec"), opts.Sources); err != nil {
+		return err
+	}
+	if err := requireSupersedableForm(ruleSlug, opts.Status, detailed); err != nil {
+		return err
+	}
 	if !force {
 		if _, err := rule.ResolveRow(rulesDir, ruleSlug); err == nil {
 			return exitcode.ConflictErrorf("rule already exists: %s is already listed in %s (pass --force to overwrite)",
@@ -147,8 +156,12 @@ func runRulePromote(cmd *cobra.Command, args []string) error {
 	w := cmd.OutOrStdout()
 	switch format {
 	case "json":
+		result.Path = repoRelative(root, result.Path)
+		result.LessonPath = repoRelative(root, result.LessonPath)
 		return newJSONEnc(w).Encode(result)
 	case "yaml":
+		result.Path = repoRelative(root, result.Path)
+		result.LessonPath = repoRelative(root, result.LessonPath)
 		enc := newYAMLEnc(w)
 		if err := enc.Encode(result); err != nil {
 			return exitcode.UnexpectedErrorf("encoding yaml: %v", err)

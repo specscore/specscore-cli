@@ -154,19 +154,69 @@ func IndexContent() string {
 		"---\n*This document follows the " + IndexFormatURL + "*\n"
 }
 
+// MalformedRow is a row-like line the seven-column contract cannot represent.
+//
+// Text is kept verbatim, and every writer in this package re-emits it
+// unchanged. That is the whole point: the most ordinary authoring slip there is
+// — an unescaped `|` pasted into a Statement — must never cause the rule to
+// disappear. A kind that exists so operating knowledge stops evaporating cannot
+// have a path where a benign command evaporates one.
+type MalformedRow struct {
+	// Line is the 1-based source line in the index.
+	Line int
+	// Text is the line exactly as written, including its leading pipe.
+	Text string
+	// SlugHint is the identity cell's slug when that much parsed, so a caller
+	// can tell "the row I am editing is the broken one" from "I am about to
+	// step on someone else's broken row".
+	SlugHint string
+	// Reason explains, in one clause, why the line did not parse.
+	Reason string
+}
+
 // IndexReport is everything a reader or a linter needs about the index file in
 // one pass.
 type IndexReport struct {
 	Rows []Row
 	// HeaderSeen is true when the canonical header + separator pair was found.
 	HeaderSeen bool
-	// Malformed is true for row-like content the seven-column contract cannot
-	// represent.
-	Malformed bool
-	// MalformedLines are the 1-based source lines of that content.
-	MalformedLines []int
+	// Malformed carries every row-like line the contract cannot represent,
+	// verbatim, so no writer has to guess at what it would be discarding.
+	Malformed []MalformedRow
 	// Duplicates lists slugs that appear in more than one row.
 	Duplicates []string
+}
+
+// HasMalformed reports whether the index carries unparseable row-like content.
+func (rep IndexReport) HasMalformed() bool { return len(rep.Malformed) > 0 }
+
+// MalformedLines returns the 1-based source lines of the unparseable content.
+func (rep IndexReport) MalformedLines() []int {
+	out := make([]int, 0, len(rep.Malformed))
+	for _, m := range rep.Malformed {
+		out = append(out, m.Line)
+	}
+	return out
+}
+
+// MalformedExcept returns the malformed rows that are NOT one of the named
+// slugs. A verb editing `x` may proceed over a broken row whose identity cell
+// reads `x` — it is about to replace that row — but must not touch the index
+// while some other rule's row is broken.
+func (rep IndexReport) MalformedExcept(slugs ...string) []MalformedRow {
+	addressed := make(map[string]bool, len(slugs))
+	for _, s := range slugs {
+		if s != "" {
+			addressed[s] = true
+		}
+	}
+	var out []MalformedRow
+	for _, m := range rep.Malformed {
+		if m.SlugHint == "" || !addressed[m.SlugHint] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // BySlug indexes the report's rows.
@@ -226,10 +276,11 @@ func ReadIndex(path string) (IndexReport, error) {
 		if !strings.HasPrefix(line, "|") {
 			continue
 		}
-		row, ok := parseIndexRow(line)
+		row, reason, ok := parseIndexRow(line)
 		if !ok {
-			rep.Malformed = true
-			rep.MalformedLines = append(rep.MalformedLines, lineNo)
+			rep.Malformed = append(rep.Malformed, MalformedRow{
+				Line: lineNo, Text: line, SlugHint: identityHint(line), Reason: reason,
+			})
 			continue
 		}
 		row.Line = lineNo
@@ -243,21 +294,78 @@ func ReadIndex(path string) (IndexReport, error) {
 	return rep, nil
 }
 
-// parseIndexRow parses one canonical table line.
-func parseIndexRow(line string) (Row, bool) {
+// parseIndexRow parses one canonical table line, reporting why it failed.
+func parseIndexRow(line string) (Row, string, bool) {
 	cells := splitMarkdownRow(line)
 	if len(cells) != indexColumns {
+		return Row{}, fmt.Sprintf("row has %d cells, want %d (an unescaped `|` in a free-text cell is the usual cause)",
+			len(cells), indexColumns), false
+	}
+	slug, linked, ok := parseIdentityCell(cells[0])
+	if !ok {
+		return Row{}, "first cell is neither a bare slug nor [slug](slug/README.md)", false
+	}
+	return rowFromCells(slug, linked, cells), "", true
+}
+
+func rowFromCells(slug string, linked bool, cells []string) Row {
+	return Row{
+		Slug: slug, Linked: linked,
+		Status: cells[1], Scope: cells[2], Enforcement: cells[3],
+		Control: cells[4], Sources: cells[5], Statement: cells[6],
+	}
+}
+
+// identityHint recovers the slug from a line whose identity cell parses even
+// though the row as a whole does not.
+func identityHint(line string) string {
+	cells := splitMarkdownRow(line)
+	if len(cells) == 0 {
+		return ""
+	}
+	slug, _, ok := parseIdentityCell(cells[0])
+	if !ok {
+		return ""
+	}
+	return slug
+}
+
+// Repair attempts the one repair that is unambiguous: a row with SURPLUS cells
+// because the Statement — the last column, and the only free-text one after
+// Sources — carried an unescaped `|`. The surplus cells are rejoined with their
+// pipe restored and then escaped.
+//
+// It is only safe because the four columns between the identity cell and the
+// Statement have constrained grammars. All four must validate before the tail
+// is rejoined, which is what rules out the other reading — a pipe inside
+// Control, where the same line shape would otherwise be silently reinterpreted.
+// Anything else is reported rather than guessed at.
+func (m MalformedRow) Repair() (Row, bool) {
+	cells := splitMarkdownRow(m.Text)
+	if len(cells) <= indexColumns {
 		return Row{}, false
 	}
 	slug, linked, ok := parseIdentityCell(cells[0])
 	if !ok {
 		return Row{}, false
 	}
-	return Row{
-		Slug: slug, Linked: linked,
-		Status: cells[1], Scope: cells[2], Enforcement: cells[3],
-		Control: cells[4], Sources: cells[5], Statement: cells[6],
-	}, true
+	if _, ok := ParseStatus(cells[1]); !ok {
+		return Row{}, false
+	}
+	if scopes := splitList(unescapeCell(cells[2])); len(scopes) == 0 {
+		return Row{}, false
+	} else if _, err := ParseScopes(scopes); err != nil {
+		return Row{}, false
+	}
+	if _, ok := ParseEnforcement(cells[3]); !ok {
+		return Row{}, false
+	}
+	if _, err := ParseSources(splitList(unescapeCell(cells[5]))); err != nil {
+		return Row{}, false
+	}
+	head := append([]string(nil), cells[:indexColumns]...)
+	head[indexColumns-1] = escapeCell(unescapeCell(strings.Join(cells[indexColumns-1:], " | ")))
+	return rowFromCells(slug, linked, head), true
 }
 
 // parseIdentityCell accepts either a bare slug (inline) or `[slug](slug/README.md)`
@@ -313,7 +421,13 @@ func splitMarkdownRow(line string) []string {
 // the rows handed in: the index is the source of truth, so a regeneration that
 // re-read the detail documents could overwrite an author's edit with a stale
 // mirror.
-func WriteIndexRows(path string, rows []Row) error {
+//
+// preserved holds row-like lines the contract could not parse. They are
+// re-emitted verbatim, after the sorted rows, so that no write path in this
+// package can reduce the rule set. A caller that drops them is deleting a rule
+// it never managed to read — which is exactly the failure this signature exists
+// to make impossible to write by accident.
+func WriteIndexRows(path string, rows []Row, preserved []MalformedRow) error {
 	data, err := osReadFile(path)
 	if err != nil {
 		return err
@@ -341,11 +455,17 @@ func WriteIndexRows(path string, rows []Row) error {
 	tbl.WriteString(IndexHeading + "\n\n")
 	tbl.WriteString(IndexHeaderRow + "\n")
 	tbl.WriteString(IndexSeparatorRow + "\n")
-	if len(ordered) == 0 {
+	switch {
+	case len(ordered) == 0 && len(preserved) == 0:
 		tbl.WriteString("\n" + IndexEmptyPlaceholder + "\n\n")
-	} else {
+	default:
 		for _, row := range ordered {
 			tbl.WriteString(row.Render() + "\n")
+		}
+		// Verbatim, and last, so a reader sees the rules that parse first and
+		// the ones needing a human immediately after.
+		for _, m := range preserved {
+			tbl.WriteString(m.Text + "\n")
 		}
 		tbl.WriteString("\n")
 	}
@@ -390,7 +510,9 @@ func UpsertRow(rulesDir string, row Row) error {
 	if !replaced {
 		rows = append(rows, row)
 	}
-	return WriteIndexRows(path, rows)
+	// A broken line whose identity cell names this slug IS this row; every
+	// other one is someone else's and is carried through untouched.
+	return WriteIndexRows(path, rows, report.MalformedExcept(row.Slug))
 }
 
 // RemoveRow deletes slug's row, restoring the empty placeholder when the table
@@ -411,10 +533,11 @@ func RemoveRow(rulesDir, slug string) error {
 			rows = append(rows, existing)
 		}
 	}
-	if len(rows) == len(report.Rows) {
+	preserved := report.MalformedExcept(slug)
+	if len(rows) == len(report.Rows) && len(preserved) == len(report.Malformed) {
 		return nil
 	}
-	return WriteIndexRows(path, rows)
+	return WriteIndexRows(path, rows, preserved)
 }
 
 // EnsureIndex writes the lint-clean index stub when spec/rules/README.md does

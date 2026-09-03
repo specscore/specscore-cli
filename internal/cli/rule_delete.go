@@ -73,6 +73,9 @@ func runRuleDelete(cmd *cobra.Command, args []string) error {
 	}
 	specSub := filepath.Join(root, "spec")
 	rulesDir := rule.RulesDir(root)
+	if err := preflightRuleIndex(rulesDir, slug, successor); err != nil {
+		return err
+	}
 	row, err := rule.ResolveRow(rulesDir, slug)
 	if err != nil {
 		return err
@@ -143,8 +146,10 @@ func runRuleDelete(cmd *cobra.Command, args []string) error {
 	w := cmd.OutOrStdout()
 	switch format {
 	case "json":
+		result.RemovedDetail = repoRelative(root, result.RemovedDetail)
 		return newJSONEnc(w).Encode(result)
 	case "yaml":
+		result.RemovedDetail = repoRelative(root, result.RemovedDetail)
 		enc := newYAMLEnc(w)
 		if err := enc.Encode(result); err != nil {
 			return exitcode.UnexpectedErrorf("encoding yaml: %v", err)
@@ -245,6 +250,17 @@ func repointRuleLinks(rulesDir, specSub, slug string, successorRow rule.Row, pro
 			if err := mirrorRuleRowIntoDetail(rulesDir, successor, successorRow); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	// Leave a forwarding address. The verb has just warned about prose
+	// references to the old slug that it cannot rewrite; without this the
+	// successor carries no record of what it replaced, and those references
+	// dangle with no trail back.
+	if successorRow.Detailed() {
+		if err := applyRuleDetailEdits(rule.DetailPath(rulesDir, successor),
+			[]rule.FieldEdit{{Name: "Supersedes", Value: slug}}); err != nil {
+			return nil, err
 		}
 	}
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/feature"
+	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/rule"
 	"github.com/spf13/cobra"
 )
@@ -91,10 +92,10 @@ func runRuleShow(cmd *cobra.Command, args []string) error {
 	specSub := filepath.Join(root, "spec")
 	doc := ruleShowDoc{
 		Slug: slug, Form: ruleFormName(row.Detailed()),
-		Statement: ruleCellText(row.Statement), Status: strings.TrimSpace(row.Status),
-		Scope: orEmptySlice(row.ScopeList()), Enforcement: strings.TrimSpace(row.Enforcement),
-		Control: ruleCellText(row.Control), Sources: orEmptySlice(row.SourceList()),
-		IndexPath: rule.IndexPath(rulesDir),
+		Statement: structuredValue(row.Statement), Status: structuredValue(row.Status),
+		Scope: orEmptySlice(row.ScopeList()), Enforcement: structuredValue(row.Enforcement),
+		Control: structuredValue(row.Control), Sources: orEmptySlice(row.SourceList()),
+		IndexPath: repoRelative(root, rule.IndexPath(rulesDir)),
 		Skills:    []string{},
 		// The three link sets below are always present, so a JSON consumer can
 		// index them without a nil check.
@@ -109,14 +110,14 @@ func runRuleShow(cmd *cobra.Command, args []string) error {
 		if parseErr != nil {
 			return exitcode.UnexpectedErrorf("parsing the rule detail document %s: %v", detailPath, parseErr)
 		}
-		doc.DetailPath = detailPath
-		doc.Title = detail.Title
-		doc.Date = detail.Date
-		doc.Owner = detail.Owner
-		doc.Why = detail.Why
-		doc.Exceptions = detail.Exceptions
-		doc.Supersedes = detail.Supersedes
-		doc.SupersededBy = detail.SupersededBy
+		doc.DetailPath = repoRelative(root, detailPath)
+		doc.Title = strings.TrimSpace(detail.Title)
+		doc.Date = strings.TrimSpace(detail.Date)
+		doc.Owner = strings.TrimSpace(detail.Owner)
+		doc.Why = structuredValue(detail.Why)
+		doc.Exceptions = structuredValue(detail.Exceptions)
+		doc.Supersedes = structuredValue(detail.Supersedes)
+		doc.SupersededBy = structuredValue(detail.SupersededBy)
 		doc.Skills = orEmptySlice(detail.SkillRefs)
 	}
 
@@ -185,6 +186,21 @@ func featuresCitingRule(specSub, ruleSlug string) []string {
 	return out
 }
 
+// requireResolvableSources refuses a write whose typed source references do not
+// resolve. Grammar was already validated at write time; resolution was not,
+// which let `--add-source lesson:ghost` exit 0 and hand back a tree that lint
+// immediately calls dirty. Refusing is the consistent half: a duplicate and an
+// absent source both already exit 2.
+func requireResolvableSources(specSub string, sources []string) error {
+	bad := unresolvedRuleSources(specSub, sources)
+	if len(bad) == 0 {
+		return nil
+	}
+	return exitcode.InvalidArgsErrorf(
+		"source(s) do not resolve to an artifact in this spec tree: %s; record the artifact first, or cite it from the rule's **Why:** instead",
+		strings.Join(bad, ", "))
+}
+
 // unresolvedRuleSources lists source references that do not resolve locally, so
 // `rule show` surfaces the same finding R-007 reports without running lint.
 func unresolvedRuleSources(specSub string, sources []string) []string {
@@ -195,13 +211,58 @@ func unresolvedRuleSources(specSub string, sources []string) []string {
 			out = append(out, raw)
 			continue
 		}
-		if ref.Kind == rule.SourceLesson {
+		switch ref.Kind {
+		case rule.SourceLesson:
 			if _, err := lessonResolveLessonFileFn(filepath.Join(specSub, "lessons"), ref.Value); err != nil {
+				out = append(out, raw)
+			}
+		case rule.SourceIdea:
+			if !ruleIdeaSourceExists(specSub, ref.Value) {
+				out = append(out, raw)
+			}
+		case rule.SourceDecision:
+			if !ruleDecisionSourceExists(specSub, ref.Value) {
 				out = append(out, raw)
 			}
 		}
 	}
 	return out
+}
+
+// ruleIdeaSourceExists and ruleDecisionSourceExists mirror the resolution the
+// R-007 checker performs, so the verb and the linter agree about what exists.
+func ruleIdeaSourceExists(specSub, slug string) bool {
+	ideasDir := idea.ResolveIdeasDir(specSub)
+	for _, candidate := range []string{
+		filepath.Join(ideasDir, slug+".md"),
+		filepath.Join(ideasDir, "archived", slug+".md"),
+	} {
+		if info, err := osStatCLI(candidate); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func ruleDecisionSourceExists(specSub, ref string) bool {
+	decisionsDir := filepath.Join(specSub, "decisions")
+	number, _, _ := strings.Cut(ref, "-")
+	for _, dir := range []string{decisionsDir, filepath.Join(decisionsDir, "archived")} {
+		entries, err := osReadDirCLI(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			stem := strings.TrimSuffix(e.Name(), ".md")
+			if stem == ref || strings.HasPrefix(stem, number+"-") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func writeRuleShowText(w io.Writer, doc ruleShowDoc) error {
@@ -232,3 +293,31 @@ func writeRuleShowText(w io.Writer, doc ruleShowDoc) error {
 
 // osIsNotExistCLI is the seam-aware not-exist test the read verbs share.
 func osIsNotExistCLI(err error) bool { return os.IsNotExist(err) }
+
+// repoRelative renders a path relative to the project root for structured
+// output. An absolute path makes the documented JSON contract machine-dependent
+// and un-diffable, while every other field in the document is already
+// repo-relative. Text output keeps absolute paths: that one is for a human to
+// hand to an editor.
+func repoRelative(root, path string) string {
+	if path == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// structuredValue normalizes a stored cell for machine output: the em-dash
+// sentinel is a storage convention of the Markdown table, not a value, so it
+// never reaches a consumer. A missing scalar is the empty string and a missing
+// list is an empty array — one convention, applied to every field.
+func structuredValue(v string) string {
+	trimmed := strings.TrimSpace(ruleCellText(v))
+	if trimmed == rule.Sentinel || trimmed == "-" {
+		return ""
+	}
+	return trimmed
+}

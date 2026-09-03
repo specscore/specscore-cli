@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -103,6 +104,9 @@ func runRuleUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	rulesDir := rule.RulesDir(root)
+	if err := preflightRuleIndex(rulesDir, slug); err != nil {
+		return err
+	}
 	row, err := rule.ResolveRow(rulesDir, slug)
 	if err != nil {
 		return err
@@ -115,6 +119,12 @@ func runRuleUpdate(cmd *cobra.Command, args []string) error {
 
 	updated, err := applyRuleRowEdits(cmd, row)
 	if err != nil {
+		return err
+	}
+	if err := requireSupersedableForm(slug, updated.Status, row.Detailed()); err != nil {
+		return err
+	}
+	if err := requireResolvableSources(filepath.Join(root, "spec"), updated.SourceList()); err != nil {
 		return err
 	}
 	if err := ruleUpsertIndexRowFn(rulesDir, updated); err != nil {
@@ -131,7 +141,7 @@ func runRuleUpdate(cmd *cobra.Command, args []string) error {
 		Slug: slug, Form: ruleFormName(row.Detailed()),
 		Path:   ruleResultPath(rulesDir, row.Detailed(), slug),
 		Status: strings.TrimSpace(updated.Status), Action: "updated", Detailed: row.Detailed(),
-	})
+	}, root)
 }
 
 func changedRuleFlagNames(cmd *cobra.Command, names []string) []string {

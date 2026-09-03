@@ -120,14 +120,14 @@ func TestWriteIndexRowsMatchesGolden(t *testing.T) {
 		NewRow("alpha-rule", true, "Active", "Always do the alpha thing before the beta thing.", []string{"fleet"}, "Enforced", "wb pre-commit hook", []string{"lesson:a"}),
 	}
 	path := IndexPath(RulesDir(root))
-	if err := WriteIndexRows(path, rows); err != nil {
+	if err := WriteIndexRows(path, rows, nil); err != nil {
 		t.Fatalf("WriteIndexRows: %v", err)
 	}
 	if got, want := readIndexFile(t, root), readGolden(t, "index_two_rules.golden"); got != want {
 		t.Fatalf("index does not match golden.\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 	// Regeneration is idempotent: a second pass must be byte-for-byte identical.
-	if err := WriteIndexRows(path, rows); err != nil {
+	if err := WriteIndexRows(path, rows, nil); err != nil {
 		t.Fatalf("WriteIndexRows (second pass): %v", err)
 	}
 	if got, want := readIndexFile(t, root), readGolden(t, "index_two_rules.golden"); got != want {
@@ -137,7 +137,7 @@ func TestWriteIndexRowsMatchesGolden(t *testing.T) {
 
 func TestWriteIndexRowsEmptySetRestoresPlaceholder(t *testing.T) {
 	root := setupRulesTree(t)
-	if err := WriteIndexRows(IndexPath(RulesDir(root)), nil); err != nil {
+	if err := WriteIndexRows(IndexPath(RulesDir(root)), nil, nil); err != nil {
 		t.Fatalf("WriteIndexRows: %v", err)
 	}
 	if !strings.Contains(readIndexFile(t, root), IndexEmptyPlaceholder) {
@@ -153,7 +153,7 @@ func TestWriteIndexRowsPreservesPrologueAndTrailer(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := []Row{NewRow("x", false, "Draft", "s", []string{"fleet"}, "Stated", "", nil)}
-	if err := WriteIndexRows(IndexPath(RulesDir(root)), rows); err != nil {
+	if err := WriteIndexRows(IndexPath(RulesDir(root)), rows, nil); err != nil {
 		t.Fatalf("WriteIndexRows: %v", err)
 	}
 	got := readIndexFile(t, root)
@@ -169,7 +169,7 @@ func TestWriteIndexRowsWithoutHeadingErrors(t *testing.T) {
 	if err := os.WriteFile(IndexPath(RulesDir(root)), []byte("# Rules\n\nno table\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteIndexRows(IndexPath(RulesDir(root)), nil); err == nil {
+	if err := WriteIndexRows(IndexPath(RulesDir(root)), nil, nil); err == nil {
 		t.Fatal("WriteIndexRows should refuse an index with no `## Rules` heading")
 	}
 }
@@ -347,11 +347,20 @@ func TestReadIndexReportsShapeProblems(t *testing.T) {
 				t.Fatalf("ReadIndex: %v", err)
 			}
 			if len(rep.Rows) != tc.wantRows || rep.HeaderSeen != tc.wantHeader ||
-				rep.Malformed != tc.wantMalformed || (len(rep.Duplicates) > 0) != tc.wantDuplicate {
+				rep.HasMalformed() != tc.wantMalformed || (len(rep.Duplicates) > 0) != tc.wantDuplicate {
 				t.Fatalf("rows=%d header=%v malformed=%v duplicates=%v", len(rep.Rows), rep.HeaderSeen, rep.Malformed, rep.Duplicates)
 			}
-			if tc.wantMalformed && len(rep.MalformedLines) == 0 {
-				t.Fatal("a malformed row must report its source line")
+			if tc.wantMalformed {
+				if len(rep.MalformedLines()) == 0 {
+					t.Fatal("a malformed row must report its source line")
+				}
+				for _, m := range rep.Malformed {
+					// The verbatim text is what every writer re-emits; without
+					// it the row could not survive a rewrite.
+					if strings.TrimSpace(m.Text) == "" || m.Reason == "" {
+						t.Fatalf("malformed row must carry its text and reason: %+v", m)
+					}
+				}
 			}
 			for _, row := range rep.Rows {
 				if row.Line == 0 {
@@ -435,5 +444,220 @@ func TestWriteFileAtomicPreservesMode(t *testing.T) {
 	}
 	if string(mustRead(t, path)) != "b" {
 		t.Fatal("content not published")
+	}
+}
+
+// ----- MF-1: an unparseable row is never dropped -----
+
+// malformedIndex is the exact shape the review reproduced: a hand-written row
+// whose Statement carries an unescaped `|`, which is the most ordinary
+// authoring slip there is because the CLI escapes pipes when it writes.
+const malformedStatementRow = "| never-lose-me | Active | fleet | Enforced | CI | — | Never write a fake | it hides the contract. |"
+
+func TestReadIndexKeepsMalformedRowVerbatim(t *testing.T) {
+	root := t.TempDir()
+	dir := RulesDir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "# Rules\n\n" + IndexHeading + "\n\n" + IndexHeaderRow + "\n" + IndexSeparatorRow + "\n" +
+		malformedStatementRow + "\n\n## Open Questions\n\nNone.\n"
+	if err := os.WriteFile(IndexPath(dir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := ReadIndex(IndexPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Malformed) != 1 {
+		t.Fatalf("Malformed = %+v", rep.Malformed)
+	}
+	m := rep.Malformed[0]
+	if m.Text != malformedStatementRow {
+		t.Fatalf("text not preserved verbatim:\n got %q\nwant %q", m.Text, malformedStatementRow)
+	}
+	if m.SlugHint != "never-lose-me" {
+		t.Fatalf("SlugHint = %q — a caller cannot tell whose row is broken without it", m.SlugHint)
+	}
+	if m.Reason == "" || m.Line == 0 {
+		t.Fatalf("malformed row must carry a reason and a line: %+v", m)
+	}
+}
+
+// The blocker: every write path must carry the row through.
+func TestWritersNeverDropAMalformedRow(t *testing.T) {
+	setup := func(t *testing.T) string {
+		t.Helper()
+		root := setupRulesTree(t)
+		if err := UpsertRow(RulesDir(root), NewRow("alpha", false, "Draft", "Always alpha.", []string{"fleet"}, "Stated", "", nil)); err != nil {
+			t.Fatal(err)
+		}
+		index := readIndexFile(t, root)
+		index = strings.Replace(index, IndexSeparatorRow+"\n", IndexSeparatorRow+"\n"+malformedStatementRow+"\n", 1)
+		if err := os.WriteFile(IndexPath(RulesDir(root)), []byte(index), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+
+	cases := []struct {
+		name string
+		call func(t *testing.T, root string) error
+	}{
+		{name: "UpsertRow of an unrelated rule", call: func(t *testing.T, root string) error {
+			return UpsertRow(RulesDir(root), NewRow("innocent", false, "Draft", "Unrelated.", []string{"fleet"}, "Stated", "", nil))
+		}},
+		{name: "UpsertRow replacing an existing rule", call: func(t *testing.T, root string) error {
+			return UpsertRow(RulesDir(root), NewRow("alpha", false, "Active", "Always alpha.", []string{"fleet"}, "Stated", "", nil))
+		}},
+		{name: "RemoveRow of an unrelated rule", call: func(t *testing.T, root string) error {
+			return RemoveRow(RulesDir(root), "alpha")
+		}},
+		{name: "WriteIndexRows with the report's preserved set", call: func(t *testing.T, root string) error {
+			rep, err := ReadIndex(IndexPath(RulesDir(root)))
+			if err != nil {
+				return err
+			}
+			return WriteIndexRows(IndexPath(RulesDir(root)), rep.Rows, rep.Malformed)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := setup(t)
+			if err := tc.call(t, root); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			got := readIndexFile(t, root)
+			if !strings.Contains(got, malformedStatementRow) {
+				t.Fatalf("the malformed row was dropped — a rule vanished:\n%s", got)
+			}
+		})
+	}
+}
+
+// A broken row whose identity cell names the slug being written IS that row, so
+// the write replaces it rather than duplicating it.
+func TestUpsertReplacesTheMalformedRowItAddresses(t *testing.T) {
+	root := setupRulesTree(t)
+	index := readIndexFile(t, root)
+	index = strings.Replace(index, IndexEmptyPlaceholder, malformedStatementRow, 1)
+	if err := os.WriteFile(IndexPath(RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	row := NewRow("never-lose-me", false, "Active", "Never write a fake | it hides the contract.", []string{"fleet"}, "Enforced", "CI", nil)
+	if err := UpsertRow(RulesDir(root), row); err != nil {
+		t.Fatalf("UpsertRow: %v", err)
+	}
+	got := readIndexFile(t, root)
+	if strings.Contains(got, malformedStatementRow) {
+		t.Fatalf("the addressed row should have been replaced, not preserved:\n%s", got)
+	}
+	rep, err := ReadIndex(IndexPath(RulesDir(root)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Rows) != 1 || rep.HasMalformed() {
+		t.Fatalf("index = %+v / %+v", rep.Rows, rep.Malformed)
+	}
+}
+
+func TestMalformedExcept(t *testing.T) {
+	rep := IndexReport{Malformed: []MalformedRow{
+		{Line: 1, SlugHint: "a"}, {Line: 2, SlugHint: ""}, {Line: 3, SlugHint: "b"},
+	}}
+	if got := rep.MalformedExcept("a"); len(got) != 2 {
+		t.Fatalf("MalformedExcept(a) = %+v", got)
+	}
+	// A row whose slug could not be read is never "the one being addressed":
+	// there is no evidence it is, so it always blocks.
+	if got := rep.MalformedExcept("a", "b"); len(got) != 1 || got[0].Line != 2 {
+		t.Fatalf("MalformedExcept(a,b) = %+v", got)
+	}
+	if got := rep.MalformedExcept(); len(got) != 3 {
+		t.Fatalf("MalformedExcept() = %+v", got)
+	}
+	if got := rep.MalformedLines(); len(got) != 3 || got[0] != 1 {
+		t.Fatalf("MalformedLines = %v", got)
+	}
+}
+
+func TestMalformedRowRepair(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		wantOK  bool
+		wantStm string
+	}{
+		{
+			name:    "surplus cells from an unescaped pipe in the Statement",
+			text:    malformedStatementRow,
+			wantOK:  true,
+			wantStm: `Never write a fake \| it hides the contract.`,
+		},
+		{
+			name:   "too few cells is not repairable",
+			text:   "| x | Draft |",
+			wantOK: false,
+		},
+		{
+			name:   "unreadable identity cell is not repairable",
+			text:   "| Not A Slug | Draft | fleet | Stated | — | — | a | b |",
+			wantOK: false,
+		},
+		{
+			// The other reading of the same shape: the pipe is in Control, so
+			// the cell that should hold Sources holds prose. Rejoining the tail
+			// would silently reinterpret the row, so it is refused.
+			name:   "a pipe in Control is ambiguous and refused",
+			text:   "| x | Draft | fleet | Stated | Con | trol | — | s |",
+			wantOK: false,
+		},
+		{
+			name:   "an invalid Status blocks the repair",
+			text:   "| x | Pending | fleet | Stated | — | — | a | b |",
+			wantOK: false,
+		},
+		{
+			name:   "an invalid Scope blocks the repair",
+			text:   "| x | Draft | team:platform | Stated | — | — | a | b |",
+			wantOK: false,
+		},
+		{
+			name:   "an invalid Enforcement blocks the repair",
+			text:   "| x | Draft | fleet | Mandatory | — | — | a | b |",
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := MalformedRow{Text: tc.text}.Repair()
+			if ok != tc.wantOK {
+				t.Fatalf("Repair() ok = %v, want %v (row %+v)", ok, tc.wantOK, got)
+			}
+			if ok && got.Statement != tc.wantStm {
+				t.Fatalf("Statement = %q, want %q", got.Statement, tc.wantStm)
+			}
+			if ok {
+				// A repaired row must survive a round trip as one cell.
+				rep, _, ok2 := parseIndexRow(got.Render())
+				if !ok2 || rep.Statement != tc.wantStm {
+					t.Fatalf("repaired row does not re-parse: %+v", rep)
+				}
+			}
+		})
+	}
+}
+
+func TestIdentityHintOnEmptyLine(t *testing.T) {
+	if got := identityHint("||"); got != "" {
+		t.Fatalf("identityHint = %q", got)
+	}
+}
+
+// An empty Scope cell makes the repair unsafe: the column is required, so a
+// line missing it is not merely over-split.
+func TestMalformedRowRepairRefusesAnEmptyScope(t *testing.T) {
+	if _, ok := (MalformedRow{Text: "| x | Draft | — | Stated | — | — | a | b |"}).Repair(); ok {
+		t.Fatal("a row with no Scope must not be repaired")
 	}
 }
