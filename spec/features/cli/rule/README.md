@@ -17,6 +17,8 @@ A rule has two forms and one identity. An **inline** rule is exactly one row in 
 
 The group exposes `new`, `expand`, `list`, `show`, `update`, `delete`, `promote`, and `lint`; every verb is non-interactive and accepts `--format text|yaml|json`.
 
+This Feature is the CLI's implementation contract. The authoritative Rule Doc-Kind contract lives in the meta-spec: [Rule](https://github.com/specscore/specscore/blob/main/spec/features/rule/README.md) (`https://specscore.md/rule-specification`) and [Rules Index](https://github.com/specscore/specscore/blob/main/spec/features/rules-index/README.md) (`https://specscore.md/rules-index-specification`). Where the two disagree the meta-spec wins and this Feature is the defect.
+
 Note the deliberate singular. `specscore rule` is this artifact kind; [`specscore rules`](../rules/README.md) (plural) is the unrelated read-only catalog of *lint* rules. The two are distinct commands and neither shadows the other.
 
 ## Synopsis
@@ -147,7 +149,7 @@ The repo rule is strict on purpose. Matching a bare repository name would make e
 
 #### REQ: unreadable-scope-fails-toward-binding
 
-A rule whose Scope cell does not parse MUST still be listed and MUST be flagged `scope_error` in structured output and reported on stderr. `rule list` is designed to run standalone at the start of an agent stream with no lint pass behind it, so dropping the rule would answer "nothing applies" to a question whose real answer is "one rule might, and its scope needs a human". `rule show` MUST carry the same flag.
+A rule whose Scope cell does not parse MUST still be listed and MUST be flagged `scope_error` in structured output and reported on stderr. Like every other field, `scope_error` is ALWAYS present in structured output — it is the empty string when the scope parses — so a consumer MUST key off a non-empty value, never off the key's presence. `rule list` is designed to run standalone at the start of an agent stream with no lint pass behind it, so dropping the rule would answer "nothing applies" to a question whose real answer is "one rule might, and its scope needs a human". `rule show` MUST carry the same flag.
 
 The exit code follows the question asked, not the presence of the flag:
 
@@ -220,6 +222,7 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 | [cli/lesson](../lesson/README.md) | Closest structural sibling and a cross-linked kind: a Lesson's `**Promotes To:**` and a rule's `lesson:` source are one strict relation, written together by `rule promote`. |
 | [cli/spec/lint](../spec/lint/README.md) | Hosts the `R-001`–`R-011` family documented in [cli/spec/lint/rule-rules](../spec/lint/rule-rules/README.md). |
 | [cli/rules](../rules/README.md) | Unrelated despite the near-identical name: that group lists *lint* rules, this one manages the Rule artifact kind. |
+| [Rule / Rules Index (meta-spec)](https://github.com/specscore/specscore/blob/main/spec/features/rule/README.md) | Authoritative source of the Rule Doc-Kind contract and of the two `format:` URLs every Rule artifact carries. |
 
 ## Acceptance Criteria
 
