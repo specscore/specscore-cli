@@ -28,6 +28,11 @@ type ruleShowDoc struct {
 	Control     string   `json:"control" yaml:"control"`
 	Sources     []string `json:"sources" yaml:"sources"`
 	IndexPath   string   `json:"index_path" yaml:"index_path"`
+	// ScopeError is the parse failure when this rule's Scope cell is corrupt,
+	// carried here for the same reason `rule list` carries it: a reader must
+	// not be told a scope that does not actually parse. `show` evaluates no
+	// scope, so it reports the flag and exits 0.
+	ScopeError string `json:"scope_error" yaml:"scope_error"`
 
 	// Detail-only fields, empty for an inline rule.
 	DetailPath   string   `json:"detail_path" yaml:"detail_path"`
@@ -99,6 +104,7 @@ func runRuleShow(cmd *cobra.Command, args []string) error {
 		Skills:    []string{},
 		// The three link sets below are always present, so a JSON consumer can
 		// index them without a nil check.
+		ScopeError:       ruleScopeError(row),
 		PromotingLessons: lessonsPromotingTo(specSub, slug),
 		CitingFeatures:   featuresCitingRule(specSub, slug),
 		UnresolvedLinks:  unresolvedRuleSources(specSub, row.SourceList()),
@@ -134,6 +140,14 @@ func runRuleShow(cmd *cobra.Command, args []string) error {
 		}
 		return enc.Close()
 	}
+}
+
+// ruleScopeError reports why a row's Scope cell does not parse, or "".
+func ruleScopeError(row rule.Row) string {
+	if _, err := rule.ParseScopes(row.ScopeList()); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 func orEmptySlice(values []string) []string {
@@ -271,7 +285,11 @@ func writeRuleShowText(w io.Writer, doc ruleShowDoc) error {
 	_, _ = fmt.Fprintf(bw, "Form:          %s\n", doc.Form)
 	_, _ = fmt.Fprintf(bw, "Statement:     %s\n", doc.Statement)
 	_, _ = fmt.Fprintf(bw, "Status:        %s\n", dashIfEmpty(doc.Status))
-	_, _ = fmt.Fprintf(bw, "Scope:         %s\n", dashIfEmpty(strings.Join(doc.Scope, ", ")))
+	scope := dashIfEmpty(strings.Join(doc.Scope, ", "))
+	if doc.ScopeError != "" {
+		scope += "  (does not parse: " + doc.ScopeError + ")"
+	}
+	_, _ = fmt.Fprintf(bw, "Scope:         %s\n", scope)
 	_, _ = fmt.Fprintf(bw, "Enforcement:   %s\n", dashIfEmpty(doc.Enforcement))
 	_, _ = fmt.Fprintf(bw, "Control:       %s\n", dashIfEmpty(doc.Control))
 	_, _ = fmt.Fprintf(bw, "Sources:       %s\n", dashIfEmpty(strings.Join(doc.Sources, ", ")))

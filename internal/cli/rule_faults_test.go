@@ -802,3 +802,20 @@ func TestRepoRelativeFallsBackForOutsidePaths(t *testing.T) {
 		t.Fatalf("repoRelative = %q", got)
 	}
 }
+
+// The create guard has the same two I/O outcomes the preflight does.
+func TestRefuseExistingRowHandlesMissingAndUnreadableIndex(t *testing.T) {
+	if err := refuseExistingRow(filepath.Join(t.TempDir(), "rules"), "x", false); err != nil {
+		t.Fatalf("a missing index must not block a create: %v", err)
+	}
+	ruleSeams(t, func() {
+		ruleReadIndexFn = func(string) (rule.IndexReport, error) { return rule.IndexReport{}, errRuleFault }
+	})
+	if err := refuseExistingRow(filepath.Join(t.TempDir(), "rules"), "x", false); err == nil {
+		t.Fatal("an unreadable index must surface")
+	}
+	// --force short-circuits before any read.
+	if err := refuseExistingRow(filepath.Join(t.TempDir(), "rules"), "x", true); err != nil {
+		t.Fatalf("--force must not read the index: %v", err)
+	}
+}

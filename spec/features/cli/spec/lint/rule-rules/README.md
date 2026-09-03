@@ -91,7 +91,7 @@ A duplicated slug MUST be deduplicated only when the rows are byte-identical. Tw
 
 `R-009` MUST report a `**Superseded By:**` value that does not resolve to a rule listed in the index, a `**Supersedes:**` value that is not a canonical slug, a `**Supersedes:**` target that IS listed but lacks the inverse `**Superseded By:**` pointer, a `Superseded` rule with no `**Superseded By:**`, and a supersession cycle.
 
-The two pointers are checked asymmetrically on purpose. `**Superseded By:**` points forward to the rule that replaced this one and MUST resolve, or a reader following the retirement lands nowhere. `**Supersedes:**` points backward at what this rule replaced, and that rule may legitimately have been deleted — `rule delete --supersede-with` writes exactly this breadcrumb — so an absent target is history, not a defect.
+The two pointers are checked asymmetrically on purpose, and the asymmetry MUST NOT be removed. `**Superseded By:**` points forward to the rule that replaced this one and MUST resolve, or a reader following the retirement lands nowhere. `**Supersedes:**` points backward at what this rule replaced, and that rule may legitimately have been deleted — `rule delete --supersede-with` writes exactly this breadcrumb — so an absent target is history, not a defect. Requiring both to resolve would make the only surviving record of a retired rule illegal to keep.
 
 `R-009` MUST additionally report an index row whose `Status` is `Superseded` and which has no detail document: supersession fields live in the document, so such a row has nowhere to name its successor and would otherwise sit retired-but-unmarked forever.
 

@@ -1486,15 +1486,21 @@ func TestRuleListReportsAnUnparseableScopeInsteadOfHidingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, args := range [][]string{
-		{"list"},
-		{"list", "--applies-to", "internal/cli/x.go"},
-		{"list", "--scope", "fleet"},
+	for _, tc := range []struct {
+		args     []string
+		wantCode int
+	}{
+		// A plain inventory reports the flag and exits 0; a scope query that
+		// could not evaluate the scope it needed exits 1.
+		{args: []string{"list"}, wantCode: 0},
+		{args: []string{"list", "--applies-to", "internal/cli/x.go"}, wantCode: exitcode.Conflict},
+		{args: []string{"list", "--scope", "fleet"}, wantCode: exitcode.Conflict},
 	} {
+		args := tc.args
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			out, errOut, err := runRule(t, root, args...)
-			if got := exitCodeOf(err); got != exitcode.Conflict {
-				t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.Conflict, err)
+			if got := exitCodeOf(err); got != tc.wantCode {
+				t.Fatalf("exit = %d, want %d (err=%v)", got, tc.wantCode, err)
 			}
 			if !strings.Contains(out, "corrupt") {
 				t.Fatalf("the rule must still be listed — it might bind:\n%s", out)
@@ -1666,5 +1672,210 @@ func TestStructuredOutputIsPortable(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.TrimSpace(out), "/") {
 		t.Fatalf("text output should stay absolute, got %q", out)
+	}
+}
+
+// ----- follow-up round: a broken row is present, not absent -----
+
+// emptyIdentityRow parses to no slug at all, so `--fix` can never repair it —
+// the shape that used to wedge the group by recommending a fixer that could not
+// help.
+const emptyIdentityRow = "|  | Draft | fleet | Stated | — | — | Nobody can address this row. |"
+
+func withRowText(t *testing.T, root, text string) {
+	t.Helper()
+	index := readRuleIndex(t, root)
+	marker := rule.IndexSeparatorRow + "\n"
+	index = strings.Replace(index, marker, marker+text+"\n", 1)
+	index = strings.Replace(index, rule.IndexEmptyPlaceholder+"\n", "", 1)
+	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A row lint just named must not be reported as absent by the verbs.
+func TestVerbsReportABrokenRowAsPresent(t *testing.T) {
+	for _, args := range [][]string{
+		{"show", "never-lose-me"},
+		{"update", "never-lose-me", "--status", "Active"},
+		{"delete", "never-lose-me"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			root := setupRuleProject(t)
+			if _, _, err := runRule(t, root, "new", "seed", "--statement", "Seed."); err != nil {
+				t.Fatal(err)
+			}
+			withRowText(t, root, malformedRuleRow)
+			_, _, err := runRule(t, root, args...)
+			if got := exitCodeOf(err); got != exitcode.InvalidState {
+				t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.InvalidState, err)
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "not listed") {
+				t.Fatalf("a present-but-broken row must not be reported as absent: %v", err)
+			}
+			for _, want := range []string{"does not parse", "line "} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("message must say %q: %v", want, err)
+				}
+			}
+			if !strings.Contains(msg, "rule lint --fix") {
+				t.Errorf("a repairable row must name --fix: %v", err)
+			}
+		})
+	}
+	// A genuinely absent rule still reports absence, with exit 3.
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "seed", "--statement", "Seed."); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runRule(t, root, "show", "ghost")
+	if got := exitCodeOf(err); got != exitcode.NotFound || !strings.Contains(err.Error(), "not listed") {
+		t.Fatalf("an absent rule must still be 3/not listed: %d %v", got, err)
+	}
+}
+
+// Creating over a preserved broken row is a conflict, not a silent overwrite.
+func TestRuleNewOverABrokenRowNeedsForce(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "seed", "--statement", "Seed."); err != nil {
+		t.Fatal(err)
+	}
+	withRowText(t, root, malformedRuleRow)
+	before := readRuleIndex(t, root)
+
+	_, _, err := runRule(t, root, "new", "never-lose-me", "--statement", "Replacement.")
+	if got := exitCodeOf(err); got != exitcode.Conflict {
+		t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.Conflict, err)
+	}
+	if !strings.Contains(err.Error(), "Never write a fake") {
+		t.Fatalf("the refusal must quote the line it would replace: %v", err)
+	}
+	if readRuleIndex(t, root) != before {
+		t.Fatal("a refused create must not touch the index")
+	}
+	if _, _, err := runRule(t, root, "new", "never-lose-me", "--statement", "Replacement.", "--force"); err != nil {
+		t.Fatalf("--force must replace it: %v", err)
+	}
+	if strings.Contains(readRuleIndex(t, root), malformedRuleRow) {
+		t.Fatal("--force did not replace the broken row")
+	}
+	// promote takes the same guard.
+	root2 := setupRuleProject(t)
+	writeCanonicalLesson(t, root2, "kinder-fake", "c")
+	if _, _, err := runRule(t, root2, "new", "seed", "--statement", "Seed."); err != nil {
+		t.Fatal(err)
+	}
+	withRowText(t, root2, malformedRuleRow)
+	if _, _, err := runRule(t, root2, "promote", "--from-lesson", "kinder-fake", "never-lose-me"); exitCodeOf(err) != exitcode.Conflict {
+		t.Fatal("promote over a broken row must need --force too")
+	}
+}
+
+// A row nobody can address must name the one repair that exists for it.
+func TestEmptyIdentityRowNamesItsOnlyRepair(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "seed", "--statement", "Seed."); err != nil {
+		t.Fatal(err)
+	}
+	withRowText(t, root, emptyIdentityRow)
+
+	_, _, err := runRule(t, root, "new", "innocent", "--statement", "Unrelated.")
+	if got := exitCodeOf(err); got != exitcode.Conflict {
+		t.Fatalf("exit = %d, want %d", got, exitcode.Conflict)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "edit that line in the index by hand") {
+		t.Fatalf("the message must name the only repair: %v", err)
+	}
+	if strings.Contains(msg, "rule lint --fix") {
+		t.Fatalf("--fix cannot repair this shape and must not be recommended: %v", err)
+	}
+	if !strings.Contains(msg, "line ") {
+		t.Fatalf("the message must name the line: %v", err)
+	}
+	// And the row survives a --fix pass, still reported.
+	if _, _, err := runRule(t, root, "lint", "--fix"); exitCodeOf(err) != exitcode.Conflict {
+		t.Fatal("an unrepairable row must still fail lint after --fix")
+	}
+	if !strings.Contains(readRuleIndex(t, root), "Nobody can address this row.") {
+		t.Fatal("--fix dropped a row it could not repair")
+	}
+}
+
+// ----- follow-up round: the scope_error exit code follows the question -----
+
+func TestScopeErrorExitCodeFollowsTheQuestion(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "corrupt", "--statement", "Might bind you."); err != nil {
+		t.Fatal(err)
+	}
+	index := strings.Replace(readRuleIndex(t, root), "| fleet |", "| team:platform |", 1)
+	if err := os.WriteFile(rule.IndexPath(rule.RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inventory: flagged, but exit 0 — one bad row must not redden every
+	// stream start.
+	for _, args := range [][]string{{"list"}, {"show", "corrupt"}} {
+		t.Run("inventory "+args[0], func(t *testing.T) {
+			out, errOut, err := runRule(t, root, args...)
+			if err != nil {
+				t.Fatalf("an inventory must exit 0: %v", err)
+			}
+			if !strings.Contains(out, "corrupt") {
+				t.Fatalf("the rule must still appear:\n%s", out)
+			}
+			if args[0] == "list" && !strings.Contains(errOut, "team:platform") {
+				t.Fatalf("stderr must name the bad scope: %q", errOut)
+			}
+		})
+	}
+
+	// Binding questions: the answer is unsound, so they fail.
+	for _, args := range [][]string{
+		{"list", "--applies-to", "internal/cli/x.go"},
+		{"list", "--scope", "fleet"},
+	} {
+		t.Run("binding "+args[1], func(t *testing.T) {
+			out, _, err := runRule(t, root, args...)
+			if got := exitCodeOf(err); got != exitcode.Conflict {
+				t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.Conflict, err)
+			}
+			if !strings.Contains(out, "corrupt") {
+				t.Fatalf("the rule must still be listed:\n%s", out)
+			}
+		})
+	}
+
+	// `show` carries the flag in structured output and in text.
+	out, _, err := runRule(t, root, "show", "corrupt", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc ruleShowDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.ScopeError == "" {
+		t.Fatalf("show must carry scope_error: %+v", doc)
+	}
+	text, _, err := runRule(t, root, "show", "corrupt", "--format", "text")
+	if err != nil || !strings.Contains(text, "does not parse") {
+		t.Fatalf("text output must surface the scope failure:\n%s", text)
+	}
+	// A healthy rule carries no flag.
+	if _, _, err := runRule(t, root, "new", "healthy", "--statement", "s"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = runRule(t, root, "show", "healthy", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.ScopeError != "" {
+		t.Fatalf("a healthy rule must carry no scope_error: %q", doc.ScopeError)
 	}
 }

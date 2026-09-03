@@ -127,11 +127,8 @@ func runRulePromote(cmd *cobra.Command, args []string) error {
 	if err := requireSupersedableForm(ruleSlug, opts.Status, detailed); err != nil {
 		return err
 	}
-	if !force {
-		if _, err := rule.ResolveRow(rulesDir, ruleSlug); err == nil {
-			return exitcode.ConflictErrorf("rule already exists: %s is already listed in %s (pass --force to overwrite)",
-				ruleSlug, rule.IndexPath(rulesDir))
-		}
+	if err := refuseExistingRow(rulesDir, ruleSlug, force); err != nil {
+		return err
 	}
 
 	if detailed {

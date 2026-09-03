@@ -661,3 +661,59 @@ func TestMalformedRowRepairRefusesAnEmptyScope(t *testing.T) {
 		t.Fatal("a row with no Scope must not be repaired")
 	}
 }
+
+func TestResolveRowDistinguishesBrokenFromAbsent(t *testing.T) {
+	root := setupRulesTree(t)
+	if err := UpsertRow(RulesDir(root), NewRow("alpha", false, "Draft", "s", []string{"fleet"}, "Stated", "", nil)); err != nil {
+		t.Fatal(err)
+	}
+	index := readIndexFile(t, root)
+	index = strings.Replace(index, IndexSeparatorRow+"\n", IndexSeparatorRow+"\n"+malformedStatementRow+"\n", 1)
+	if err := os.WriteFile(IndexPath(RulesDir(root)), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ResolveRow(RulesDir(root), "never-lose-me")
+	if err == nil || strings.Contains(err.Error(), "not listed") {
+		t.Fatalf("a broken row must not be reported as absent: %v", err)
+	}
+	if !strings.Contains(err.Error(), "does not parse") {
+		t.Fatalf("err = %v", err)
+	}
+	_, err = ResolveRow(RulesDir(root), "ghost")
+	if err == nil || !strings.Contains(err.Error(), "not listed") {
+		t.Fatalf("a genuinely absent rule must still say so: %v", err)
+	}
+}
+
+// The hint must name the repair that applies to the shape at hand, never one
+// that would send the reader in a circle.
+func TestRepairHint(t *testing.T) {
+	cases := []struct {
+		name string
+		row  MalformedRow
+		want string
+	}{
+		{name: "repairable", row: MalformedRow{Text: malformedStatementRow, SlugHint: "never-lose-me"}, want: "rule lint --fix"},
+		{name: "no identity cell", row: MalformedRow{Text: "|  | Draft | fleet | Stated | — | — | s |", SlugHint: ""}, want: "names no rule"},
+		{name: "unrepairable but addressable", row: MalformedRow{Text: "| x | Pending | fleet | Stated | — | — | a | b |", SlugHint: "x"}, want: "cannot repair this shape"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RepairHint(tc.row)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("RepairHint = %q, want it to mention %q", got, tc.want)
+			}
+			// Naming --fix to say it cannot help is fine; RECOMMENDING it is
+			// the circle this hint exists to break.
+			if tc.name != "repairable" {
+				if strings.Contains(got, "repair with `specscore rule lint --fix`") {
+					t.Fatalf("a row --fix cannot repair must not recommend it: %q", got)
+				}
+				if !strings.Contains(got, "by hand") {
+					t.Fatalf("the only repair must be named: %q", got)
+				}
+			}
+		})
+	}
+}

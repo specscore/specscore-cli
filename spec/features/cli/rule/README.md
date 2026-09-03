@@ -56,6 +56,12 @@ The two forms exist because the two failure modes are opposite. Give every rule 
 
 The rules index MUST carry a `## Rules` table with exactly the header `| Rule | Status | Scope | Enforcement | Control | Sources | Statement |`. Each row's identity cell MUST be either a bare canonical slug (an inline rule) or `[<slug>](<slug>/README.md)` (a detailed rule) — no other shape, because an identity cell is the one place a guess would silently rename a rule. Rows MUST be unique by slug and sorted by slug. Free text in a cell MUST have its pipes escaped so a statement can never fabricate a column.
 
+#### REQ: a-broken-row-is-present-not-absent
+
+A verb asked for a rule whose row exists but does not parse MUST NOT report it as absent. The message MUST say the row is present, name its line and the parse failure, and name the repair that actually applies to that shape — `--fix` when it can escape a surplus `|`, and editing the index by hand when it cannot, which is the only path for a row whose identity cell names no rule. Recommending a fixer that cannot touch the row sends the reader in a circle.
+
+Creating a rule over such a row MUST be refused without `--force`, and the refusal MUST quote the line it would replace. A malformed row is still a rule as far as the file is concerned; letting the one command that reaches it destroy it silently would undo the guarantee preservation exists to give.
+
 #### REQ: unparseable-rows-are-never-dropped
 
 A row-like line the seven-column contract cannot represent MUST be preserved verbatim by every write path, and reported. No verb may reduce the rule set by writing the index — an unescaped `|` pasted into a Statement is the most ordinary authoring slip there is, and a kind that exists so operating knowledge stops evaporating cannot have a path where a benign command evaporates some.
@@ -141,7 +147,14 @@ The repo rule is strict on purpose. Matching a bare repository name would make e
 
 #### REQ: unreadable-scope-fails-toward-binding
 
-A rule whose Scope cell does not parse MUST still be listed, flagged `scope_error`, reported on stderr, and the command MUST exit `1`. `rule list` is designed to run standalone at the start of an agent stream with no lint pass behind it, so dropping the rule would answer "nothing applies" to a question whose real answer is "one rule might, and its scope needs a human".
+A rule whose Scope cell does not parse MUST still be listed and MUST be flagged `scope_error` in structured output and reported on stderr. `rule list` is designed to run standalone at the start of an agent stream with no lint pass behind it, so dropping the rule would answer "nothing applies" to a question whose real answer is "one rule might, and its scope needs a human". `rule show` MUST carry the same flag.
+
+The exit code follows the question asked, not the presence of the flag:
+
+- A plain `rule list` and any `rule show` are **inventory**. They evaluate no scope, so an unreadable one is a flag on a row and the command exits `0`.
+- `rule list --applies-to` and `rule list --scope` are **binding questions**. They had to evaluate the scope to answer, and one they could not read makes the answer unsound, so they exit `1`.
+
+Failing the plain inventory too would turn one corrupt row into a red exit at the start of every agent stream, which teaches a reader to ignore the very signal that matters.
 
 #### REQ: structured-output-is-portable
 
@@ -167,7 +180,14 @@ Editing a detail document MUST rewrite only the named bold fields and leave ever
 
 #### REQ: delete-refuses-live-links
 
-`rule delete <slug>` MUST exit `4`, naming every blocker, while any Lesson promotes to the rule, any other rule supersedes or is superseded by it, any skill lists it, or any Feature cites it. `--supersede-with <slug>` MUST instead repoint every Lesson pointer and rule relation at the named successor — adding each inherited Lesson to the successor's Sources so the strict pair still holds, and recording `**Supersedes:** <old>` on the successor when it is detailed — and only then remove the row and any directory. That breadcrumb is the trail back for the prose references the verb has just warned about, so a `**Supersedes:**` target that no longer exists is history rather than a defect; `**Superseded By:**` still MUST resolve, because a forward pointer with no destination leaves a reader nowhere.
+`rule delete <slug>` MUST exit `4`, naming every blocker, while any Lesson promotes to the rule, any other rule supersedes or is superseded by it, any skill lists it, or any Feature cites it. `--supersede-with <slug>` MUST instead repoint every Lesson pointer and rule relation at the named successor — adding each inherited Lesson to the successor's Sources so the strict pair still holds, and recording `**Supersedes:** <old>` on the successor when it is detailed — and only then remove the row and any directory. #### REQ: supersession-pointers-are-asymmetric
+
+The two supersession pointers are validated differently, and the asymmetry is load-bearing:
+
+- `**Superseded By:**` points FORWARD to the rule that replaced this one. It MUST resolve to a rule listed in the index, because a retirement whose destination does not exist leaves a reader nowhere.
+- `**Supersedes:**` points BACKWARD at what this rule replaced, and that rule may legitimately have been deleted — `rule delete --supersede-with` writes exactly this breadcrumb so the prose references it just warned about have a trail back. An absent target is history, not a defect. A malformed slug is still reported.
+
+Symmetrising these would make the only surviving record of a retired rule illegal to keep, which is the opposite of what the breadcrumb is for. Do not "fix" the asymmetry.
 
 Skill and Feature references are prose: they MUST be reported rather than rewritten.
 
@@ -185,11 +205,11 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 
 | Code | Condition |
 |---|---|
-| `0` | The operation succeeded (a listing may legitimately be empty). |
-| `1` | A `rule lint` run reported at least one error-severity violation, or a `new`/`promote`/`expand` target already exists and `--force` was not passed. |
-| `2` | Invalid arguments: a missing or extra positional, an invalid slug, an unrecognized `--format`/`--status`/`--enforcement`/`--scope`/`--source`/`--skill` value, a control-requiring tier with no control, an `update` with no edit flag, a duplicate `--add-source`, or an absent `--remove-source`. |
-| `3` | The named rule is not listed in the index, or (for `promote`) the named Lesson does not exist. |
-| `4` | `delete` refused because live links remain; `promote` refused because the Lesson already promotes to a different rule; or a document-only edit was requested on an inline rule. |
+| `0` | The operation succeeded. A listing may legitimately be empty, and a plain `list`/`show` exits `0` even when a row carries `scope_error`. |
+| `1` | **Conflict.** A `rule lint` run reported at least one error-severity violation; a `new`/`promote`/`expand` target already exists (including as a row that does not parse) and `--force` was not passed; a mutating verb was asked to rewrite an index holding a row it cannot read; or `list --applies-to`/`--scope` could not evaluate a scope it needed. |
+| `2` | Invalid arguments: a missing or extra positional, an invalid slug, an unrecognized `--format`/`--status`/`--enforcement`/`--scope`/`--source`/`--skill` value, a control-requiring tier with no control, an `update` with no edit flag, a duplicate `--add-source`, an absent `--remove-source`, or a typed source that does not resolve. |
+| `3` | The named rule has no row at all, or (for `promote`) the named Lesson does not exist. A rule whose row exists but does not parse is `4`, not `3` — it is present and broken, not absent. |
+| `4` | Invalid state: `delete` refused because live links remain; `promote` refused because the Lesson already promotes to a different rule; a document-only edit or `--status Superseded` was requested on an inline rule; or the addressed rule's row exists but does not parse. |
 | `10` | An unexpected I/O or parse failure. |
 
 ## Interaction with Other Features
@@ -319,6 +339,29 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 
 **When** the user runs `specscore rule list` in a project with detailed rules
 **Then** the listing is produced from the index alone and the spec tree is byte-identical afterwards.
+
+### AC: a-broken-row-is-reported-as-present (verifies REQ:a-broken-row-is-present-not-absent)
+
+**Given** an index row for `x` that does not parse
+**When** the user runs `specscore rule show x`, `rule update x --status Active` or `rule delete x`
+**Then** each exits `4` stating that the row exists at line N with the parse failure, and names the repair that applies to that shape — never "not listed".
+
+### AC: creating-over-a-broken-row-needs-force (verifies REQ:a-broken-row-is-present-not-absent)
+
+**When** the user runs `specscore rule new x` for a slug whose only row is malformed
+**Then** the command exits `1`, quotes the line it would replace, and writes nothing; `--force` replaces it.
+
+### AC: an-empty-identity-cell-names-its-repair (verifies REQ:a-broken-row-is-present-not-absent)
+
+**Given** a row whose identity cell parses to no slug
+**When** any mutating verb runs
+**Then** the refusal names the line and says the only repair is editing the index by hand — it MUST NOT recommend `--fix`, which cannot repair that shape.
+
+### AC: scope-error-exit-follows-the-question (verifies REQ:unreadable-scope-fails-toward-binding)
+
+**Given** a rule whose Scope cell does not parse
+**When** the user runs a plain `specscore rule list` or `specscore rule show <slug>`
+**Then** the rule is listed or shown with `scope_error` set and the command exits `0`; running `rule list --applies-to <path>` or `--scope <scope>` exits `1` with the same row still present in the output.
 
 ### AC: an-unparseable-row-survives-every-verb (verifies REQ:unparseable-rows-are-never-dropped)
 
