@@ -72,12 +72,54 @@ specscore spec lint              # lint the current spec tree
 specscore feature list           # list features
 specscore feature show <slug>    # inspect a feature
 specscore task list              # show the task board
+specscore rule list --applies-to <path>   # which normative rules bind this path
 specscore rehearse run           # execute markdown acceptance scenarios
 specscore version                # full build identity
 specscore --version              # bare semver
 ```
 
 Full command reference: see [`spec/features/cli/`](spec/features/cli/).
+
+### Rules — the transferable half of agent memory
+
+A **Rule** is one normative sentence — MUST or NEVER, in plain words — with the scope it binds, the reason it exists, the sources that produced it, and the control that enforces it. Rules exist because durable operating knowledge otherwise accumulates in per-agent memory files, which do not transfer: a new session, a new machine, or a new runtime starts blind.
+
+**Two forms, one entity.** An **inline** rule is one row in `spec/rules/README.md` and nothing else — most rules are one sentence, and a directory each would be ceremony that discourages recording them at all. A **detailed** rule keeps the identical row, linked to `spec/rules/<slug>/README.md`, which carries the reason, worked compliant and violating examples, agent instructions, exceptions, and supersession. The index row is the source of truth for every field it carries; a detail document repeats those fields for readability and lint (`R-011`) requires them to agree, with `--fix` rewriting the document from the row and never the reverse.
+
+```bash
+specscore rule new never-mock-backends \
+  --statement "Never ship a mocked extension backend; ship real dalgo-backed routes or ship nothing." \
+  --scope fleet --source lesson:never-mock-extension-backends     # inline: one row
+
+specscore rule new gofmt-first --scope 'path:**/*.go' --detailed \
+  --statement "Always run gofmt on changed Go files before any build, lint or test command." \
+  --enforcement Enforced --control "wb pre-commit hook profile go-standard"
+
+specscore rule expand never-mock-backends                # give an inline rule a document
+specscore rule list --applies-to internal/cli/rule.go    # which rules bind this file?
+specscore rule show never-mock-backends --format json    # row + document + resolved links
+specscore rule update never-mock-backends --enforcement Enforced --control "wb pre-push hook"
+specscore rule delete old-rule --supersede-with new-rule
+specscore rule lint                                      # just the R-001..R-011 family
+```
+
+Only the slug is required: a bare `specscore rule new <slug>` records a lint-clean `Draft` row with a TODO statement, so writing a rule down under time pressure is one command. Every verb takes `--format text|yaml|json` and is non-interactive. `rule list` reads only the index — never a detail document — so a tool can afford to run it at the start of every agent stream and print the rules that apply.
+
+**Fields.** The row carries `Statement` (the normative sentence), `Scope` (`fleet` | `product:<name>` | `repo:<owner/repo>` | `path:<glob>`, repeatable), `Status` (`Draft` | `Active` | `Superseded`), `Enforcement` (`Stated` | `Enforced` | `Automated`), `Control` (required for the latter two — an enforced rule with no control is a stated rule wearing a stronger label), and `Sources` (`lesson:<slug>` | `decision:<id>` | `idea:<slug>` | a URL). A detail document adds `Why`, `Exceptions`, `Supersedes` / `Superseded By`, an `## Instructions` section, and `## Examples` with both `### Compliant` and `### Violation`.
+
+**Lessons promote into Rules.** A Lesson explains a process gap; a rule is the transferable sentence that comes out of it:
+
+```bash
+specscore rule promote --from-lesson kinder-fake-hides-bug no-hand-rolled-fakes
+```
+
+This records the rule with its statement pre-filled from the Lesson's `**Control:**` (detailed by default — the Lesson already carries the reason; pass `--inline` to opt out), writes `**Promotes To:** rule:no-hand-rolled-fakes` back into the Lesson, and records `lesson:kinder-fake-hides-bug` in the rule's Sources. Lint rule `R-008` then checks that pair **in both directions**, so neither half can be edited away unnoticed. One consequence is deliberate: a Lesson carries exactly one promotion pointer, so it can be the source of at most one rule (a rule may cite several Lessons). A Lesson that merely informed a rule without producing it belongs in that rule's `**Why:**`, not its Sources.
+
+**Rules pair with skills.** A skill tells an agent how to do a job; a rule tells it what it must never do while doing that job. A detail document's Instructions may name `skill:<name>`, and a skill's `## Rules` section may name `rule:<slug>`; `R-010` checks that pair in both directions too, so a skill cannot silently outlive the rule constraining it. Skills are read from `ai/skills/` by default; set `rules.skills_path` in `specscore.yaml` to move them.
+
+The `R-001`..`R-011` rules run inside `specscore spec lint` as well; `--fix` repairs the index table shape, adds a row for an orphan document, corrects a stale link cell, and rewrites a drifted document header from its row — and never touches the Why, Instructions or Examples an author wrote. Full contract: [`spec/features/cli/rule/`](spec/features/cli/rule/).
+
+> Note the singular: `specscore rule` is this artifact kind. `specscore rules` (plural) is the unrelated read-only catalog of *lint* rules.
 
 ### SpecScore Studio — multi-repo fact indexing
 

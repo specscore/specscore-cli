@@ -92,8 +92,18 @@ type Lesson struct {
 	RecurredLine  int    // 1-based line of the field; 0 when absent
 	RecurredValid bool   // true when RecurredRaw parsed cleanly as a non-negative integer
 
-	SupersededBy          string // value of `**Superseded By:**` (empty when missing)
-	SupersededByLine      int    // 1-based line of the field; 0 when absent
+	SupersededBy     string // value of `**Superseded By:**` (empty when missing)
+	SupersededByLine int    // 1-based line of the field; 0 when absent
+
+	// PromotesTo is the optional `**Promotes To:** rule:<slug>` pointer a
+	// Lesson gains once its durable rule has been promoted into a Rule
+	// artifact — the Lesson half of the strict lesson<->rule pair, mirroring
+	// the Idea's promotion pointer at its own Feature. It is optional and
+	// appended after the canonical relation block, so an existing Lesson stays
+	// lint-clean without it.
+	PromotesTo     string
+	PromotesToLine int
+
 	Control               string
 	ControlLine           int
 	Verification          string
@@ -286,6 +296,9 @@ func Parse(path string) (*Lesson, error) {
 			case "Superseded By":
 				l.SupersededBy = val
 				l.SupersededByLine = i + 1
+			case "Promotes To":
+				l.PromotesTo = val
+				l.PromotesToLine = i + 1
 			case "Control":
 				l.ControlLine = i + 1
 				var consumed int

@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 168
+Total rules: 179
 
 ## capability
 
@@ -254,6 +254,22 @@ Total rules: 168
 | property-single-file | error | Requires each property to be a single file, not a directory. |
 | property-slug-format | error | Requires property filenames to use kebab-case slugs. |
 | property-title-format | error | Requires the property H1 title to follow the canonical format. |
+
+## rule
+
+| Rule | Severity | Description |
+| --- | --- | --- |
+| R-001 | error | Requires every rule detail document to carry the ordered, non-duplicated metadata field set, non-empty required values, a YYYY-MM-DD Date, an Instructions section, and paired Compliant/Violation examples. |
+| R-002 | error | Requires a rule's index-row Status to be one of the canonical statuses (Draft, Active, Superseded). |
+| R-003 | error | Requires the rules index to carry the canonical seven-column table with unique, slug-sorted, well-formed rows each naming a Statement; --fix repairs shape, ordering and duplicates. |
+| R-004 | error | Requires a linked index row to have its detail document and a detail document to have its index row; --fix adds a missing row and corrects a row's link cell. |
+| R-005 | error | Requires a valid Enforcement tier and, for Enforced or Automated, a non-empty Control naming the mechanism that refuses. |
+| R-006 | error | Requires every Scope entry to be unique and well-formed (fleet, product:<name>, repo:<owner/repo>, or path:<glob>). |
+| R-007 | error | Requires every Sources entry to be unique, well-formed, and — for lesson:, decision: and idea: references — to resolve to an existing artifact. |
+| R-008 | error | Requires the lesson<->rule promotion pair to be reciprocal in both directions: a Lesson's **Promotes To:** and the rule's lesson: source must agree. |
+| R-009 | error | Requires rule supersession pointers to resolve, be inverse-consistent, and acyclic, and requires a Superseded rule to name its successor. |
+| R-010 | error | Requires the rule<->skill pair to be reciprocal in both directions: a rule's skill: reference and a skill's `## Rules` entry must each point back. |
+| R-011 | error | Requires a rule detail document's mirrored header fields to equal its index row, which is the source of truth; --fix rewrites the document from the row. |
 
 ## sidekick
 

@@ -1,0 +1,40 @@
+---
+format: https://specscore.md/rule-specification
+status: Draft
+---
+
+# Rule: Never Mock Backends
+
+**Status:** Draft
+**Date:** 2026-09-03
+**Owner:** unknown
+**Statement:** TODO: one normative sentence — MUST or NEVER, plain words.
+**Scope:** fleet
+**Enforcement:** Stated
+**Control:** —
+**Sources:** —
+**Why:** TODO: the reason, plus one concrete use case that shows the cost of breaking it.
+**Exceptions:** none
+**Supersedes:** —
+**Superseded By:** —
+
+## Instructions
+
+TODO: what an agent should actually do to comply, step by step.
+
+## Examples
+
+### Compliant
+
+TODO: a short worked example that satisfies this rule.
+
+### Violation
+
+TODO: the closest thing that looks fine and still breaks it.
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/rule-specification*

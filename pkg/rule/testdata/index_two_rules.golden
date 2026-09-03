@@ -1,0 +1,23 @@
+---
+format: https://specscore.md/rules-index-specification
+---
+
+# Rules
+
+Normative one-sentence rules with their scope, enforcing control, and sources. A Rule is the transferable half of what would otherwise live only in an agent's memory.
+
+Most rules are one row and nothing more. A linked rule name has a detail document alongside it carrying the reason, worked examples, and agent instructions.
+
+## Rules
+
+| Rule | Status | Scope | Enforcement | Control | Sources | Statement |
+|---|---|---|---|---|---|---|
+| [alpha-rule](alpha-rule/README.md) | Active | fleet | Enforced | wb pre-commit hook | lesson:a | Always do the alpha thing before the beta thing. |
+| beta-rule | Draft | path:**/*.go | Stated | — | — | Never do the beta thing without the alpha thing. |
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/rules-index-specification*

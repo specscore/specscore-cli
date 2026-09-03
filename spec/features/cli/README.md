@@ -44,6 +44,7 @@ Commands that grew inside the codebase without written specs accrete inconsisten
 | [publication-policy](publication-policy/README.md) | Mutate publication policy, resolve effective policy, validate branch guards, and support manifest-based publication. |
 | [release-distribution](release-distribution/README.md) | Publish release artifacts while fail-closing blocked distribution channels, including the dormant Homebrew cask. |
 | [rehearse](rehearse/README.md) | Rehearse acceptance-evidence command group. |
+| [rule](rule/README.md) | Record and query normative Rules — one MUST/NEVER sentence with its scope, enforcing control, and sources — inline as a single index row or expanded into a full document. |
 | [rules](rules/README.md) | Discover lint rules, generate the lint-rule catalog, and check it for drift. |
 | [self-update](self-update/README.md) | Detect the install method and perform verified CLI updates or redirect package-managed installs. |
 | [sidekick](sidekick/README.md) | Scaffold sidekick-seed artifacts. |
@@ -82,6 +83,14 @@ Manages Issue artifacts — reported observations of broken behavior. `issue new
 ### lesson
 
 Records and queries process-gap lessons — `spec/lessons/<slug>.md` files climbing a three-rung enforcement ladder (`Recorded` → `Stated` → `Enforced`) or retired via `Withdrawn`/`Superseded`. `lesson new` scaffolds a lint-clean skeleton with its four required sections (`Incident`, `Process gap`, `Check`, `Enforcement`); `lesson list --status=recorded` answers "what have we learned but not yet enforced?" in one command; `lesson recur` records that a gap manifested again without itself changing status. `change-status` follows the [lifecycle-transitions](lifecycle-transitions/README.md) shared contract.
+
+### rule
+
+Manages the Rule artifact kind — one normative sentence (MUST / NEVER) with the scope it binds, the enforcing control, and the sources that produced it. Rules exist because durable operating knowledge otherwise lives only in per-agent memory files, which do not transfer between sessions, machines, or runtimes.
+
+A rule has two forms and one identity: an **inline** rule is a single row in `spec/rules/README.md`, and a **detailed** rule links that same row to `spec/rules/<slug>/README.md` for the reason, worked examples, and agent instructions. The row is the source of truth; `R-011` requires a document's mirrored header to agree with it, and `--fix` repairs the document, never the row.
+
+`rule new` records an inline row from a slug alone and `--detailed` (or `rule expand`) adds the document; `rule list --applies-to <path>` answers "which rules bind what I am about to touch" from the index alone, cheaply enough to run at the start of every agent stream; `rule promote --from-lesson <slug>` turns a [Lesson](lesson/README.md)'s control into a rule and writes both halves of the strict `**Promotes To:**` / `lesson:` pair. Rules also pair with agent skills in both directions (`R-010`). Distinct from [rules](rules/README.md) (plural), which lists *lint* rules.
 
 ### proposal
 
