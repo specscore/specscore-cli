@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/specscore/specscore-cli/pkg/decision"
@@ -10,7 +11,10 @@ import (
 	"github.com/specscore/specscore-cli/pkg/ideapromote"
 	"github.com/specscore/specscore-cli/pkg/idearelocate"
 	"github.com/specscore/specscore-cli/pkg/issue"
+	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/rule"
 )
 
 // Test seams — package-level vars wrapping external functions.
@@ -55,4 +59,30 @@ var (
 	// runEntityRefs verb's resolveErr branch (URL paths short-circuit
 	// before this; only seam injection triggers the error).
 	entityResolveInheritsCLI = entity.ResolveInherits
+
+	// rule verb seams. Every `rule` verb validates its inputs before touching
+	// the tree, so the I/O and re-parse failures that follow a successful
+	// preflight cannot be reached from filesystem state alone. These wrap the
+	// pkg/rule surface (and the two os calls the verbs make directly) so those
+	// defensive branches stay testable — the same reason the ideapromote seams
+	// above exist.
+	ruleScaffoldDetailFn      = rule.ScaffoldDetail
+	ruleParseDetailFn         = rule.ParseDetail
+	ruleWriteFileAtomicFn     = rule.WriteFileAtomic
+	ruleUpsertIndexRowFn      = rule.UpsertRow
+	ruleRemoveIndexRowFn      = rule.RemoveRow
+	ruleEnsureIndexFn         = rule.EnsureIndex
+	ruleApplyFieldEditsFn     = rule.ApplyFieldEdits
+	ruleSetLessonPromotesToFn = rule.SetLessonPromotesTo
+	ruleReadIndexFn           = rule.ReadIndex
+	lessonResolveLessonFileFn = lesson.ResolveLessonFile
+	lessonDiscoverFn          = lesson.Discover
+	featureDiscoverFn         = feature.Discover
+	lintRunFn                 = lint.Lint
+
+	osMkdirAllCLI  = os.MkdirAll
+	osRemoveAllCLI = os.RemoveAll
+	osReadFileCLI  = os.ReadFile
+	osStatCLI      = os.Stat
+	osGetenvCLI    = os.Getenv
 )

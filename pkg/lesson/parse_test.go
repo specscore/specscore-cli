@@ -283,3 +283,38 @@ func TestIsSingleFileLessonPath_DirItself(t *testing.T) {
 		t.Error("expected false when filePath equals lessonsDir")
 	}
 }
+
+// A promoted Lesson carries an optional `**Promotes To:** rule:<slug>` pointer —
+// the Lesson half of the strict lesson<->rule pair. It is optional, so a Lesson
+// without it parses to the empty value rather than an error, and the parser
+// records its source line so lint can point at it.
+func TestParse_PromotesTo(t *testing.T) {
+	cases := []struct {
+		name     string
+		field    string
+		wantVal  string
+		wantLine bool
+	}{
+		{name: "absent", field: "", wantVal: "", wantLine: false},
+		{name: "present", field: "**Promotes To:** rule:no-hand-rolled-fakes\n",
+			wantVal: "rule:no-hand-rolled-fakes", wantLine: true},
+		{name: "sentinel", field: "**Promotes To:** —\n", wantVal: "—", wantLine: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body := "# Lesson: Kinder Fake\n\n**Status:** Stated\n**Superseded By:** —\n" + tc.field +
+				"\n## Incident\n\nIt broke.\n\n## Process gap\n\nNo check caught it.\n\n## Check\n\nAdd one.\n\n## Enforcement\n\nStated.\n"
+			l, err := Parse(writeLesson(t, filepath.Join(dir, "lessons"), "kinder-fake", body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if l.PromotesTo != tc.wantVal {
+				t.Fatalf("PromotesTo = %q, want %q", l.PromotesTo, tc.wantVal)
+			}
+			if (l.PromotesToLine != 0) != tc.wantLine {
+				t.Fatalf("PromotesToLine = %d, want present=%v", l.PromotesToLine, tc.wantLine)
+			}
+		})
+	}
+}

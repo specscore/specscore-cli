@@ -1945,6 +1945,262 @@
       "notes": "Destructive restore and reclaim remain explicitly out of scope pending a separate authorization and audit contract."
     },
     {
+      "id": "specscore.rule.crud",
+      "feature_refs": [
+        "spec/features/cli/rule/README.md",
+        "spec/features/cli/spec/lint/rule-rules/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore rule delete",
+              "flags": [
+                "--format",
+                "--project",
+                "--supersede-with"
+              ],
+              "modes": [
+                "link-blocked refusal",
+                "supersede-and-repoint"
+              ]
+            },
+            {
+              "path": "specscore rule expand",
+              "flags": [
+                "--compliant",
+                "--date",
+                "--exceptions",
+                "--format",
+                "--instructions",
+                "--owner",
+                "--project",
+                "--skill",
+                "--supersedes",
+                "--title",
+                "--violation",
+                "--why"
+              ],
+              "modes": [
+                "seeded from the index row"
+              ]
+            },
+            {
+              "path": "specscore rule lint",
+              "flags": [
+                "--fix",
+                "--format",
+                "--project"
+              ],
+              "modes": [
+                "read-only",
+                "index and mirror fix"
+              ]
+            },
+            {
+              "path": "specscore rule list",
+              "flags": [
+                "--applies-to",
+                "--enforcement",
+                "--format",
+                "--project",
+                "--scope",
+                "--status"
+              ],
+              "modes": [
+                "index-only read",
+                "scope resolution against a path"
+              ]
+            },
+            {
+              "path": "specscore rule new",
+              "flags": [
+                "--compliant",
+                "--control",
+                "--date",
+                "--detailed",
+                "--enforcement",
+                "--exceptions",
+                "--force",
+                "--format",
+                "--instructions",
+                "--owner",
+                "--project",
+                "--scope",
+                "--skill",
+                "--source",
+                "--statement",
+                "--status",
+                "--supersedes",
+                "--title",
+                "--violation",
+                "--why"
+              ],
+              "modes": [
+                "inline row",
+                "detailed document"
+              ]
+            },
+            {
+              "path": "specscore rule promote",
+              "flags": [
+                "--compliant",
+                "--control",
+                "--date",
+                "--enforcement",
+                "--exceptions",
+                "--force",
+                "--format",
+                "--from-lesson",
+                "--inline",
+                "--instructions",
+                "--owner",
+                "--project",
+                "--scope",
+                "--skill",
+                "--source",
+                "--statement",
+                "--status",
+                "--supersedes",
+                "--title",
+                "--violation",
+                "--why"
+              ],
+              "modes": [
+                "lesson-to-rule promotion writing both halves of the pair"
+              ]
+            },
+            {
+              "path": "specscore rule show",
+              "flags": [
+                "--format",
+                "--project"
+              ],
+              "modes": [
+                "resolved link report"
+              ]
+            },
+            {
+              "path": "specscore rule update",
+              "flags": [
+                "--add-source",
+                "--control",
+                "--enforcement",
+                "--exceptions",
+                "--format",
+                "--project",
+                "--remove-source",
+                "--scope",
+                "--statement",
+                "--status",
+                "--superseded-by",
+                "--supersedes",
+                "--title",
+                "--why"
+              ],
+              "modes": [
+                "row edit with document mirror"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore rule new --help",
+              "contains": [
+                "An Enforced or Automated rule MUST name --control",
+                "has no directory and no second file"
+              ]
+            },
+            {
+              "command": "specscore rule expand --help",
+              "contains": [
+                "seeding its mirrored header from that row",
+                "Expanding a rule that already has a document is a conflict"
+              ]
+            },
+            {
+              "command": "specscore rule promote --help",
+              "contains": [
+                "A Lesson carries exactly one promotion pointer",
+                "Promotes To:"
+              ]
+            },
+            {
+              "command": "specscore rule delete --help",
+              "contains": [
+                "The verb refuses (exit 4) while any Lesson promotes to the rule",
+                "--supersede-with"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Absent",
+          "skills": [],
+          "limitation": "No AI skill wraps the Rule verbs yet; the kind ships CLI-first and a skill package follows once the field set stops moving."
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/rule_test.go",
+              "name": "TestRuleNewIsInlineByDefault",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/rule_test.go",
+              "name": "TestRuleExpand",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/rule_test.go",
+              "name": "TestRulePromote",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/rule_test.go",
+              "name": "TestRuleDelete",
+              "kind": "e2e"
+            },
+            {
+              "path": "internal/cli/rule_test.go",
+              "name": "TestRuleUpdate",
+              "kind": "integration"
+            },
+            {
+              "path": "pkg/lint/rule_rules_test.go",
+              "name": "TestRuleDetailMirrorMustMatchItsRow",
+              "kind": "integration"
+            },
+            {
+              "path": "pkg/lint/rule_rules_test.go",
+              "name": "TestRuleLessonPairingIsStrictBothWays",
+              "kind": "integration"
+            },
+            {
+              "path": "pkg/lint/rule_rules_test.go",
+              "name": "TestRuleSkillPairingIsStrictBothWays",
+              "kind": "integration"
+            },
+            {
+              "path": "pkg/lint/rule_rules_test.go",
+              "name": "TestScaffoldedRulesAreCleanUnderFullLint",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "The Rule kind is the transferable half of agent memory: one normative sentence, scoped, sourced, and bound to a named control at the Enforced and Automated tiers. An inline rule is one index row; a detailed rule adds a document whose mirrored header the index row governs."
+    },
+    {
       "id": "specscore.spec.lint.open-questions-fix",
       "feature_refs": [
         "spec/features/cli/spec/lint/README.md"

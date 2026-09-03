@@ -26,6 +26,7 @@ status: Approved
 | [legacy-status-autofix](legacy-status-autofix/README.md) | Idempotent --fix rewrites of a closed, documented set of legacy artifact status tokens (plan, decision, idea) to their canonical replacements; unknown/free-form values stay non-autofixable errors. |
 | [ac-heading-format](ac-heading-format/README.md) | Enforces the canonical Acceptance Criteria heading shape `### AC: <id>` (one space after the colon, kebab-case id) on Feature READMEs; --fix repairs whitespace-only deviations. A pre-existing `(verifies REQ:...)` trailing annotation is grandfathered as a second accepted form. |
 | [lesson-rules](lesson-rules/README.md) | Adds lint rules L-001-L-004 and the underlying Lesson parser to specscore spec lint |
+| [rule-rules](rule-rules/README.md) | Adds lint rules `R-001`–`R-009` for the Rule artifact kind — field shape, status and enforcement vocabularies, scope grammar, source resolution, the strict lesson↔rule promotion pair, supersession integrity, and rules-index sync. |
 
 ## Synopsis
 

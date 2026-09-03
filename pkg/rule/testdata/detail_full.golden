@@ -1,0 +1,46 @@
+---
+format: https://specscore.md/rule-specification
+status: Active
+---
+
+# Rule: Format Go Before Building
+
+**Status:** Active
+**Date:** 2026-09-03
+**Owner:** alex
+**Statement:** Always run gofmt on every changed Go file before any build, lint, or test command.
+**Scope:** fleet, path:**/*.go
+**Enforcement:** Enforced
+**Control:** wb pre-commit hook profile go-standard
+**Sources:** lesson:kinder-fake-hides-bug, decision:0012
+**Why:** An unformatted file reddens CI on a cosmetic diff and hides the real failure underneath it.
+**Exceptions:** Generated files under gen/, by the owner of the generator only.
+**Supersedes:** older-gofmt-rule
+**Superseded By:** —
+
+## Instructions
+
+Run `gofmt -l .`; if it lists anything, run `gofmt -w` on those files before continuing.
+
+Applies to: skill:go-hygiene
+
+## Examples
+
+### Compliant
+
+```sh
+gofmt -w ./pkg/rule && go build ./...
+```
+
+### Violation
+
+```sh
+go build ./... # with an unformatted file still staged
+```
+
+## Open Questions
+
+None at this time.
+
+---
+*This document follows the https://specscore.md/rule-specification*

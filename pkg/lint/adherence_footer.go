@@ -9,6 +9,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/rule"
 )
 
 // docTypeTarget describes one document type subject to the adherence-footer
@@ -137,6 +138,19 @@ var docTypeTargets = []docTypeTarget{
 		url:         "https://specscore.md/lessons-index-specification",
 		severity:    "error",
 		walk:        walkLessonsIndex,
+	},
+	{
+		description:   "Rule detail README",
+		url:           rule.FormatURL,
+		severity:      "error",
+		statusBearing: true,
+		walk:          walkRuleDetailReadmes,
+	},
+	{
+		description: "rules-index README",
+		url:         rule.IndexFormatURL,
+		severity:    "error",
+		walk:        walkRulesIndex,
 	},
 }
 
@@ -312,6 +326,31 @@ func walkLessonsIndex(specRoot string, fn func(path string, content []byte)) err
 
 func walkLessonReadmes(specRoot string, fn func(path string, content []byte)) error {
 	root := filepath.Join(specRoot, "lessons")
+	return walkMatchingFiles(root, func(path string, depth int, name string) bool {
+		if name != "README.md" || depth != 2 {
+			return false
+		}
+		return path != filepath.Join(root, "README.md")
+	}, fn)
+}
+
+// walkRulesIndex invokes fn for specRoot/rules/README.md if present.
+func walkRulesIndex(specRoot string, fn func(path string, content []byte)) error {
+	path := filepath.Join(specRoot, "rules", "README.md")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	fn(path, content)
+	return nil
+}
+
+// walkRuleDetailReadmes invokes fn for every spec/rules/<slug>/README.md,
+// excluding the index at spec/rules/README.md — which, unusually, is both the
+// index and the primary artifact for every inline rule, and so carries its own
+// rules-index URL.
+func walkRuleDetailReadmes(specRoot string, fn func(path string, content []byte)) error {
+	root := filepath.Join(specRoot, "rules")
 	return walkMatchingFiles(root, func(path string, depth int, name string) bool {
 		if name != "README.md" || depth != 2 {
 			return false

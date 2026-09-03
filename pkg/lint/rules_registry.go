@@ -227,6 +227,19 @@ var builtinRules = []Rule{
 	{ID: "L-008", Family: "lesson", Severity: "error", Description: "Requires duplicate and supersession relations to resolve without conflicts or cycles."},
 	{ID: "L-009", Family: "lesson", Severity: "error", Description: "Requires every canonical Lesson occurrence child to satisfy the published append-only JSON contract."},
 
+	// Rule lint rules.
+	{ID: "R-001", Family: "rule", Severity: "error", Description: "Requires every rule detail document to carry the ordered, non-duplicated metadata field set, non-empty required values, a YYYY-MM-DD Date, an Instructions section, and paired Compliant/Violation examples."},
+	{ID: "R-002", Family: "rule", Severity: "error", Description: "Requires a rule's index-row Status to be one of the canonical statuses (Draft, Active, Superseded)."},
+	{ID: "R-003", Family: "rule", Severity: "error", Description: "Requires the rules index to carry the canonical seven-column table with unique, slug-sorted, well-formed rows each naming a Statement; --fix repairs shape, ordering and duplicates."},
+	{ID: "R-004", Family: "rule", Severity: "error", Description: "Requires a linked index row to have its detail document and a detail document to have its index row; --fix adds a missing row and corrects a row's link cell."},
+	{ID: "R-005", Family: "rule", Severity: "error", Description: "Requires a valid Enforcement tier and, for Enforced or Automated, a non-empty Control naming the mechanism that refuses."},
+	{ID: "R-006", Family: "rule", Severity: "error", Description: "Requires every Scope entry to be unique and well-formed (fleet, product:<name>, repo:<owner/repo>, or path:<glob>)."},
+	{ID: "R-007", Family: "rule", Severity: "error", Description: "Requires every Sources entry to be unique, well-formed, and — for lesson:, decision: and idea: references — to resolve to an existing artifact."},
+	{ID: "R-008", Family: "rule", Severity: "error", Description: "Requires the lesson<->rule promotion pair to be reciprocal in both directions: a Lesson's **Promotes To:** and the rule's lesson: source must agree."},
+	{ID: "R-009", Family: "rule", Severity: "error", Description: "Requires rule supersession pointers to resolve, be inverse-consistent, and acyclic, and requires a Superseded rule to name its successor."},
+	{ID: "R-010", Family: "rule", Severity: "error", Description: "Requires the rule<->skill pair to be reciprocal in both directions: a rule's skill: reference and a skill's `## Rules` entry must each point back."},
+	{ID: "R-011", Family: "rule", Severity: "error", Description: "Requires a rule detail document's mirrored header fields to equal its index row, which is the source of truth; --fix rewrites the document from the row."},
+
 	// Entity lint rules.
 	{ID: "entity-location", Family: "entity", Severity: "error", Description: "Requires entity files to live in the expected location."},
 	{ID: "entity-slug-format", Family: "entity", Severity: "error", Description: "Requires entity filenames to use kebab-case slugs."},

@@ -184,6 +184,13 @@ func newLinter(opts Options) *linter {
 		l.ruleSet[n] = lc
 	}
 
+	// Register rule-rules checker under all rule IDs (R-001..R-011).
+	rc := newRuleRulesChecker(projectRoot)
+	rc.autofix = opts.fixRequested(ruleRuleIDs...)
+	for _, n := range ruleRuleIDs {
+		l.ruleSet[n] = rc
+	}
+
 	// Register custom checkers
 	for _, c := range customCheckers {
 		l.ruleSet[c.Name()] = &customCheckerAdapter{c}
