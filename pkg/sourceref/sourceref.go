@@ -10,17 +10,22 @@ import (
 
 // Reference represents a parsed source reference found in source code.
 type Reference struct {
-	ResolvedPath    string
-	CrossRepoSuffix string
-	Type            string
+	ResolvedPath    string `json:"resolved_path"`
+	CrossRepoSuffix string `json:"cross_repo_suffix,omitempty"`
+	Type            string `json:"type,omitempty"`
 	// Fragment is the decoded address fragment, without its leading '#'. It is
 	// deliberately opaque to this package: consumers such as spec lint decide
 	// which resource-specific fragments they can resolve.
-	Fragment string
+	Fragment string `json:"fragment,omitempty"`
 	// Ref preserves a ?ref=<git-ref> pin (branch, tag, or commit) through
 	// parsing and canonicalization. Parsers do not fetch it; an explicit local
 	// resolver may require an exact checked-out revision before validating it.
-	Ref string
+	Ref string `json:"ref,omitempty"`
+
+	// typed marks references parsed as directive targets. Legacy untyped source
+	// references retain their historical Canonical spelling; typed targets use
+	// the lowercase req/ac fragment convention.
+	typed bool
 }
 
 // Canonical returns a parseable, authority-form source reference. It preserves
@@ -34,8 +39,12 @@ func (r Reference) Canonical() string {
 	if r.Ref != "" {
 		base += "?ref=" + r.Ref
 	}
-	if r.Fragment != "" {
-		base += "#" + encodeFragment(r.Fragment)
+	fragment := r.Fragment
+	if r.typed {
+		fragment = normalizeTypedFragment(fragment)
+	}
+	if fragment != "" {
+		base += "#" + encodeFragment(fragment)
 	}
 	return base
 }
