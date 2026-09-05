@@ -91,10 +91,16 @@ type Snapshot struct {
 type Document = Snapshot
 
 var (
-	reqHeadingRe    = regexp.MustCompile(`^(#{4,})\s+REQ:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$`)
-	acHeadingRe     = regexp.MustCompile(`^(###)\s+AC:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$`)
-	scenarioTitleRe = regexp.MustCompile(`^#\s+Scenario:\s*(.+?)\s*$`)
-	targetIDRe      = regexp.MustCompile(`(?i)([a-z0-9][a-z0-9_./-]*#(?:req|ac):[a-z0-9][a-z0-9-]*)`)
+	reqHeadingRe          = regexp.MustCompile(`^(#{4,})\s+REQ:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$`)
+	acHeadingRe           = regexp.MustCompile(`^(###)\s+AC:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$`)
+	scenarioTitleRe       = regexp.MustCompile(`^#\s+Scenario:\s*(.+?)\s*$`)
+	targetIDRe            = regexp.MustCompile(`(?i)([a-z0-9][a-z0-9_./-]*#(?:req|ac):[a-z0-9][a-z0-9-]*)`)
+	readTraceFile         = os.ReadFile
+	readTraceDir          = os.ReadDir
+	parseTraceStatus      = feature.ParseFeatureStatus
+	parseTraceTitle       = feature.ParseFeatureTitle
+	discoverTraceFeatures = feature.Discover
+	discoverTrace         = Discover
 )
 
 // ParseFeature parses one Feature README. Metadata and section handling are
@@ -104,15 +110,15 @@ func ParseFeature(path string) (*FeatureRecord, error) {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		path = filepath.Join(path, "README.md")
 	}
-	parsedStatus, err := feature.ParseFeatureStatus(path)
+	parsedStatus, err := parseTraceStatus(path)
 	if err != nil {
 		return nil, err
 	}
-	title, err := feature.ParseFeatureTitle(path)
+	title, err := parseTraceTitle(path)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readTraceFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +147,7 @@ func Discover(specRoot string) ([]FeatureRecord, error) {
 	if info, err := os.Stat(featuresDir); err != nil || !info.IsDir() {
 		return []FeatureRecord{}, nil
 	}
-	discovered, err := feature.Discover(featuresDir)
+	discovered, err := discoverTraceFeatures(featuresDir)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +166,7 @@ func Discover(specRoot string) ([]FeatureRecord, error) {
 // SnapshotForRoot builds the versioned provider exchange shape for one
 // repository root.
 func SnapshotForRoot(specRoot string) (*Snapshot, error) {
-	features, err := Discover(specRoot)
+	features, err := discoverTrace(specRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -169,12 +175,12 @@ func SnapshotForRoot(specRoot string) (*Snapshot, error) {
 
 // ParseScenario parses one standalone scenario file.
 func ParseScenario(path string) (*ScenarioRecord, error) {
-	data, err := os.ReadFile(path)
+	data, err := readTraceFile(path)
 	if err != nil {
 		return nil, err
 	}
 	lines := splitLines(data)
-	if len(lines) == 0 {
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
 		return nil, fmt.Errorf("empty scenario %q", path)
 	}
 	featureID := featureIDFromScenarioPath(path)
@@ -241,7 +247,7 @@ func nextHeadingEnd(lines []string, mask []bool, start, level int) int {
 
 func parseScenarios(featureDir, featureID string) ([]ScenarioRecord, error) {
 	testsDir := filepath.Join(featureDir, "_tests")
-	entries, err := os.ReadDir(testsDir)
+	entries, err := readTraceDir(testsDir)
 	if os.IsNotExist(err) {
 		return []ScenarioRecord{}, nil
 	}
