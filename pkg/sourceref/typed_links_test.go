@@ -62,3 +62,35 @@ func TestFeatureAnchorExistsAfterLeadingInlineCode(t *testing.T) {
 		}
 	}
 }
+
+// specscore:verifies https://specscore.org/github.com/specscore/specscore-cli/spec/features/cli/code/deps#ac:typed-implementation-and-test-links-checked
+func TestFeatureAnchorExistsRejectsUnsupportedAndMalformedFragments(t *testing.T) {
+	content := "#### REQ: links\n\n### AC: links-work\n"
+	tests := []struct {
+		name     string
+		fragment string
+		want     string
+	}{
+		{name: "feature", fragment: ""},
+		{name: "missing separator", fragment: "section", want: "unsupported fragment"},
+		{name: "unsupported prefix", fragment: "plan:links", want: "unsupported fragment"},
+		{name: "empty acceptance criterion", fragment: "ac:", want: "malformed acceptance criterion anchor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := featureAnchorExists(content, tt.fragment)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("feature citation: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("fragment %q error = %v, want %q", tt.fragment, err, tt.want)
+			}
+		})
+	}
+	if err := requirementAnchorExists(content, "AC:links-work"); err == nil || !strings.Contains(err.Error(), "unsupported fragment") {
+		t.Fatalf("legacy requirement validator must reject AC: %v", err)
+	}
+}

@@ -171,7 +171,7 @@ func requirementAnchorExists(content, fragment string) error {
 	if !requirementAnchorID.MatchString(id) {
 		return fmt.Errorf("malformed #REQ anchor %q", fragment)
 	}
-	return exactAnchorHeadingExists(content, "#### REQ: "+id, "requirement")
+	return exactAnchorHeadingExists(content, "#### REQ: "+id, id, "requirement")
 }
 
 func featureAnchorExists(content, fragment string) error {
@@ -185,20 +185,15 @@ func featureAnchorExists(content, fragment string) error {
 	id := fragment[colon+1:]
 	switch strings.ToLower(fragment[:colon]) {
 	case "req":
-		return exactAnchorHeadingExists(content, "#### REQ: "+id, "requirement")
+		return exactAnchorHeadingExists(content, "#### REQ: "+id, id, "requirement")
 	case "ac":
-		return exactAnchorHeadingExists(content, "### AC: "+id, "acceptance criterion")
+		return exactAnchorHeadingExists(content, "### AC: "+id, id, "acceptance criterion")
 	default:
 		return fmt.Errorf("unsupported fragment %q; only #REQ:<id> and #AC:<id> are addressable Feature anchors", fragment)
 	}
 }
 
-func exactAnchorHeadingExists(content, want, kind string) error {
-	separator := strings.LastIndex(want, ": ")
-	id := ""
-	if separator >= 0 {
-		id = want[separator+2:]
-	}
+func exactAnchorHeadingExists(content, want, id, kind string) error {
 	if !requirementAnchorID.MatchString(id) {
 		return fmt.Errorf("malformed %s anchor %q", kind, want)
 	}

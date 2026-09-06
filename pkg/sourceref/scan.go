@@ -85,9 +85,6 @@ func scanFileDetailed(filePath string) ([]*Reference, []ParseError, error) {
 			parseErrors = append(parseErrors, ParseError{Line: lineNumber, Token: token, Err: parseErr})
 			continue
 		}
-		if directive == nil || directive.Target == nil {
-			continue
-		}
 		ref := directive.Target
 		if validateErr := ValidateDirective(directive); validateErr != nil {
 			parseErrors = append(parseErrors, ParseError{Line: lineNumber, Token: directive.Canonical(), Err: validateErr})
