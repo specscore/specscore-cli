@@ -14,7 +14,7 @@ status: Stable
 
 ## Summary
 
-`specscore code deps` scans source files for `specscore:` annotations and bare SpecScore URLs in comments, then lists the SpecScore resources (features, plans, docs) those files depend on.
+`specscore code deps` scans source files for typed `specscore:implements`, `specscore:verifies`, and `specscore:references` directives, legacy untyped annotations, and bare SpecScore URLs in comments. It lists the SpecScore resources (features, plans, docs) those files depend on and can validate typed links offline.
 
 ## Synopsis
 
@@ -43,6 +43,10 @@ The command operates on the working tree under the project root. It reads files 
 #### REQ: offline-requirement-citation-check
 
 `--check` validates Feature citations only from the current project or explicit local `projects:` mirrors. A `#REQ:<id>` fragment resolves to exactly one non-fenced `#### REQ: <id>` heading; authority identity must match the mirror's `project.host`, `project.org`, and `project.repo`. Missing, renamed, duplicate, malformed, unavailable, or mismatched targets fail. No network fetch occurs. A `?ref=` pin is accepted only when the local checkout HEAD is that revision, and is read from that commit. Feature citations without fragments check resource existence; Plan and doc citations remain listed but have no REQ-anchor check.
+
+#### REQ: offline-typed-source-link-check
+
+`--check` MUST parse typed `implements`, `verifies`, and `references` directives before validating their targets. `implements` MUST target a Feature REQ. `verifies` MUST target a Feature AC or REQ. Feature `#req:<id>` and `#ac:<id>` fragments MUST resolve to exactly one non-fenced `#### REQ: <id>` or `### AC: <id>` heading in the current project or an explicit local mirror. Fragment kind matching is case-insensitive so canonical lowercase typed links and legacy uppercase links resolve identically. Invalid relation/target pairs and missing, renamed, duplicate, malformed, unavailable, or identity-mismatched anchors fail deterministically without a network request. Plan and doc citations remain listing-only.
 
 ### Sources matched
 
@@ -87,6 +91,7 @@ Standard CLI exit codes (see [parent](../../README.md#shared-exit-code-contract)
 | Feature | Interaction |
 |---|---|
 | [source-references](../../../source-references/README.md) | Defines the annotation syntax this command parses. |
+| [CodeGrapher](https://github.com/code-grapher/codegrapher) | Attaches accepted typed directives to parsed source symbols; `code deps --check` validates the same directive targets before CodeGrapher projects them. |
 
 ## Acceptance Criteria
 
@@ -123,6 +128,16 @@ A comment `// specscore: feature/column-validation` (a space between the colon a
 **When** `specscore code deps --check` runs
 
 **Then** exact headings pass; renamed/deleted, duplicate, malformed, missing-mirror, and identity-mismatched citations exit `4` with deterministic file-and-reference diagnostics, without a network request.
+
+### AC: typed-implementation-and-test-links-checked
+
+**Requirements:** cli/code/deps#req:offline-typed-source-link-check
+
+**Given** implementation code carries `specscore:implements ...#req:<id>` and an executable test carries `specscore:verifies ...#ac:<id>` using canonical lowercase fragments
+
+**When** `specscore code deps --check` scans the changed source and test scope
+
+**Then** it lists both Feature targets, accepts each exact live REQ and AC, and rejects a missing anchor or an invalid relation/target pair with a deterministic source diagnostic, without fetching or scanning unrelated repositories.
 
 ## Open Questions
 

@@ -59,6 +59,7 @@ func scanFile(filePath string) ([]*Reference, error) {
 	return refs, err
 }
 
+// specscore:implements https://specscore.org/github.com/specscore/specscore-cli/spec/features/cli/code/deps#req:offline-typed-source-link-check
 func scanFileDetailed(filePath string) ([]*Reference, []ParseError, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -79,10 +80,17 @@ func scanFileDetailed(filePath string) ([]*Reference, []ParseError, error) {
 			continue
 		}
 		token := ExtractReference(line)
-		ref, parseErr := ParseReference(token)
+		directive, parseErr := ParseDirective(line)
 		if parseErr != nil {
 			parseErrors = append(parseErrors, ParseError{Line: lineNumber, Token: token, Err: parseErr})
 			continue
+		}
+		if directive == nil || directive.Target == nil {
+			continue
+		}
+		ref := directive.Target
+		if validateErr := ValidateDirective(directive); validateErr != nil {
+			parseErrors = append(parseErrors, ParseError{Line: lineNumber, Token: directive.Canonical(), Err: validateErr})
 		}
 		if ref != nil {
 			key := ref.Canonical()

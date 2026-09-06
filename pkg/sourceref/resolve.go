@@ -48,6 +48,22 @@ func NewLocalResolver(specRoot string) *LocalResolver {
 // resource citation and is checked for existence only. Other non-empty
 // fragments are rejected rather than being silently treated as live.
 func (r *LocalResolver) ValidateRequirementCitation(ref *Reference) ([]byte, error) {
+	if ref != nil && ref.Fragment != "" && !strings.HasPrefix(ref.Fragment, "REQ:") {
+		return nil, fmt.Errorf("unsupported fragment %q; only #REQ:<id> is an addressable requirement anchor", ref.Fragment)
+	}
+	return r.validateFeatureCitation(ref, requirementAnchorExists)
+}
+
+// ValidateFeatureCitation proves a Feature, REQ, or AC citation resolves from
+// the current project or an explicitly configured local mirror. Typed source
+// directives use lowercase #req: and #ac: fragments; legacy uppercase #REQ:
+// and #AC: spellings remain accepted.
+// specscore:implements https://specscore.org/github.com/specscore/specscore-cli/spec/features/cli/code/deps#req:offline-typed-source-link-check
+func (r *LocalResolver) ValidateFeatureCitation(ref *Reference) ([]byte, error) {
+	return r.validateFeatureCitation(ref, featureAnchorExists)
+}
+
+func (r *LocalResolver) validateFeatureCitation(ref *Reference, validateAnchor func(string, string) error) ([]byte, error) {
 	if ref == nil || ref.Type != "feature" {
 		return nil, fmt.Errorf("target is not a Feature")
 	}
@@ -89,7 +105,7 @@ func (r *LocalResolver) ValidateRequirementCitation(ref *Reference) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("target Feature does not resolve: %w", err)
 	}
-	if err := requirementAnchorExists(string(data), ref.Fragment); err != nil {
+	if err := validateAnchor(string(data), ref.Fragment); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -155,7 +171,37 @@ func requirementAnchorExists(content, fragment string) error {
 	if !requirementAnchorID.MatchString(id) {
 		return fmt.Errorf("malformed #REQ anchor %q", fragment)
 	}
-	want := "#### REQ: " + id
+	return exactAnchorHeadingExists(content, "#### REQ: "+id, "requirement")
+}
+
+func featureAnchorExists(content, fragment string) error {
+	if fragment == "" {
+		return nil
+	}
+	colon := strings.IndexByte(fragment, ':')
+	if colon < 0 {
+		return fmt.Errorf("unsupported fragment %q; only #REQ:<id> and #AC:<id> are addressable Feature anchors", fragment)
+	}
+	id := fragment[colon+1:]
+	switch strings.ToLower(fragment[:colon]) {
+	case "req":
+		return exactAnchorHeadingExists(content, "#### REQ: "+id, "requirement")
+	case "ac":
+		return exactAnchorHeadingExists(content, "### AC: "+id, "acceptance criterion")
+	default:
+		return fmt.Errorf("unsupported fragment %q; only #REQ:<id> and #AC:<id> are addressable Feature anchors", fragment)
+	}
+}
+
+func exactAnchorHeadingExists(content, want, kind string) error {
+	separator := strings.LastIndex(want, ": ")
+	id := ""
+	if separator >= 0 {
+		id = want[separator+2:]
+	}
+	if !requirementAnchorID.MatchString(id) {
+		return fmt.Errorf("malformed %s anchor %q", kind, want)
+	}
 	count, inComment := 0, false
 	var fence byte
 	fenceLength := 0
@@ -193,7 +239,7 @@ func requirementAnchorExists(content, fragment string) error {
 	case 1:
 		return nil
 	default:
-		return fmt.Errorf("ambiguous requirement anchor %q: found %d exact headings", want, count)
+		return fmt.Errorf("ambiguous %s anchor %q: found %d exact headings", kind, want, count)
 	}
 }
 
@@ -204,6 +250,9 @@ func fenceMarker(line string) (byte, int) {
 	marker, length := line[0], 0
 	for length < len(line) && line[length] == marker {
 		length++
+	}
+	if length < 3 {
+		return 0, 0
 	}
 	return marker, length
 }

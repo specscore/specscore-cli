@@ -42,10 +42,11 @@ This is a read-only command that scans the working tree and does not mutate anyt
 	}
 	cmd.Flags().String("path", "**/*", "glob pattern to select files (e.g., pkg/**/*.go). Defaults to **/* (all files)")
 	cmd.Flags().String("type", "", "filter results to a specific resource type: feature, plan, or doc")
-	cmd.Flags().Bool("check", false, "validate Feature #REQ citations against local configured repositories (offline; no fetch)")
+	cmd.Flags().Bool("check", false, "validate typed relations and Feature #REQ/#AC citations against local configured repositories (offline; no fetch)")
 	return cmd
 }
 
+// specscore:implements https://specscore.org/github.com/specscore/specscore-cli/spec/features/cli/code/deps#req:offline-typed-source-link-check
 func runCodeDeps(cmd *cobra.Command, _ []string) error {
 	pathPattern, _ := cmd.Flags().GetString("path")
 	typeFilter, _ := cmd.Flags().GetString("type")
@@ -96,13 +97,13 @@ func runCodeDeps(cmd *cobra.Command, _ []string) error {
 				if typeFilter != "" && ref.Type != typeFilter {
 					continue
 				}
-				// --check presently makes an anchor-liveness claim only for Feature
+				// --check makes an anchor-liveness claim for Feature, REQ, and AC
 				// citations. Plan and doc references stay visible in the listing but
-				// have no #REQ address model to validate yet.
+				// have no address model to validate yet.
 				if ref.Type != "feature" {
 					continue
 				}
-				if _, validateErr := resolver.ValidateRequirementCitation(ref); validateErr != nil {
+				if _, validateErr := resolver.ValidateFeatureCitation(ref); validateErr != nil {
 					failures = append(failures, fmt.Sprintf("%s: %s: %v", file, ref.Canonical(), validateErr))
 				}
 			}
