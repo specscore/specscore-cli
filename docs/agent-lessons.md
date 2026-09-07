@@ -10,6 +10,8 @@ Use `specscore lesson occurrence add <slug> --summary "bounded factual statement
 
 Inspect with `occurrence list` and `occurrence info`. `lesson recur` appends one child for a canonical Lesson, leaves its README byte-identical, and refreshes only its derived index row; it retains the flat-file compatibility writer only until migration. `lesson check --not-enforced --min-recurred N` is the opt-in process gate.
 
+`lesson change-status <slug> --to=<status>` climbs the enforcement ladder (`Recorded` → `Stated` → `Enforced`, with a `Recorded` → `Enforced` skip-ahead arc) or retires the lesson (`Withdrawn`, `Superseded`, both requiring `--note`). `Stated` → `Recorded` is the single audited correction arc: it also requires `--note` and demotes a Stated lesson whose Enforcement section names no binding control back to Recorded, rather than leaving it stranded mid-ladder or retiring it outright.
+
 ## Import and deduplicate without losing history
 
 Run `specscore lesson import-legacy --source LESSONS-LEARNED.md --dry-run --format json` first. Inventory is write-free and records exact source bytes/hash, heading blocks, inline recurrence-marker blocks, duplicate numeric-ID collisions, and unmatched candidates. Its ordered entry-projection hash binds every key, parent, byte range, and block hash, so parser drift cannot hide behind unchanged counts. A marker can aggregate incidents, so never convert prose such as “at least twice” into an invented count.

@@ -109,6 +109,26 @@ func TestChangeStatus_HappyPath_StatedToEnforced(t *testing.T) {
 	}
 }
 
+func TestChangeStatus_StatedToRecorded_AuditedCorrection_WritesResolution(t *testing.T) {
+	root, path := stageLesson(t, "kinder-fake", "Stated")
+	res, err := ChangeStatus(ChangeStatusOptions{
+		SpecRoot: root, Slug: "kinder-fake", To: lifecycle.LessonRecorded,
+		Note: "Enforcement section named no binding control", PostMutation: okHook,
+	})
+	if err != nil {
+		t.Fatalf("ChangeStatus: %v", err)
+	}
+	if res.From != lifecycle.LessonStated || res.To != lifecycle.LessonRecorded {
+		t.Errorf("result = %+v", res)
+	}
+	body, _ := os.ReadFile(path)
+	for _, want := range []string{"**Status:** Recorded", "status: Recorded", "## Resolution", "Enforcement section named no binding control"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}
+
 func TestChangeStatus_Withdrawn_WritesResolution(t *testing.T) {
 	root, path := stageLesson(t, "kinder-fake", "Stated")
 	_, err := ChangeStatus(ChangeStatusOptions{
@@ -442,7 +462,7 @@ func TestResolveLessonFile_StatError(t *testing.T) {
 func TestLegalChangeStatusTargets(t *testing.T) {
 	names := LegalChangeStatusTargetNames()
 	want := map[string]bool{
-		"Stated": true, "Enforced": true, "Withdrawn": true, "Superseded": true,
+		"Recorded": true, "Stated": true, "Enforced": true, "Withdrawn": true, "Superseded": true,
 	}
 	if len(names) != len(want) {
 		t.Fatalf("targets = %v, want %d entries", names, len(want))
@@ -452,11 +472,16 @@ func TestLegalChangeStatusTargets(t *testing.T) {
 			t.Errorf("unexpected target %q", n)
 		}
 	}
-	// "Recorded" is never a target (it is only the initial state).
+	// "Recorded" is now also a target: the single audited correction from
+	// Stated. It is no longer *only* the initial state.
+	found := false
 	for _, n := range names {
 		if n == "Recorded" {
-			t.Error("Recorded must not be a legal change-status target")
+			found = true
 		}
+	}
+	if !found {
+		t.Error("Recorded must be a legal change-status target (the Stated -> Recorded audited correction)")
 	}
 	// Sorted alphabetically.
 	for i := 1; i < len(names); i++ {

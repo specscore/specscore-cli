@@ -348,8 +348,10 @@ func unwrapPathError(err error) error {
 
 // lessonChangeStatusCommand transitions a Lesson's **Status:** field via the
 // shared lifecycle state-machine contract — climbing the enforcement ladder
-// (Recorded -> Stated -> Enforced) or retiring the lesson (Withdrawn,
-// Superseded). See spec/features/cli/lesson/change-status/README.md.
+// (Recorded -> Stated -> Enforced), retiring the lesson (Withdrawn,
+// Superseded), or making the single audited correction (Stated -> Recorded)
+// for a Stated lesson whose Enforcement section names no binding control.
+// See spec/features/cli/lesson/change-status/README.md.
 func lessonChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "change-status <slug> --to=<status>",
@@ -365,9 +367,12 @@ exclusive to an explicit ` + "`specscore spec lint --fix`" + ` command.
 Both dispositions require a reason: --to=withdrawn and --to=superseded
 require --note. --to=superseded additionally requires --successor naming the
 lesson that replaces this one; it is written as a **Superseded By:**
-reference. If anything fails after the status rewrite (lint, I/O, or durability
-fence), the command exits recovery-required with its prepared event and visible
-state retained; it never restores a whole snapshot over concurrent work.
+reference. The audited correction --to=recorded (legal only from Stated)
+also requires --note documenting why the lesson is being demoted — e.g. its
+Enforcement section named no binding control. If anything fails after the
+status rewrite (lint, I/O, or durability fence), the command exits
+recovery-required with its prepared event and visible state retained; it
+never restores a whole snapshot over concurrent work.
 
 ` + lesson.LegalTransitionMatrix() + `
 Examples:
@@ -376,6 +381,7 @@ Examples:
   specscore lesson change-status kinder-fake --to=enforced
   specscore lesson change-status stale-idea --to=withdrawn --note "turned out to be a one-off, not a pattern"
   specscore lesson change-status old-lesson --to=superseded --note "generalized" --successor newer-lesson
+  specscore lesson change-status half-baked --to=recorded --note "Enforcement section named no binding control"
 `,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
@@ -384,7 +390,7 @@ Examples:
 	}
 	cmd.Flags().String("to", "", "target status (required). Legal values: "+
 		strings.Join(lesson.LegalChangeStatusTargetNames(), ", ")+" (case-insensitive).")
-	cmd.Flags().String("note", "", "markdown appended as a ## Resolution section; required for --to=withdrawn and --to=superseded")
+	cmd.Flags().String("note", "", "markdown appended as a ## Resolution section; required for --to=withdrawn, --to=superseded, and --to=recorded")
 	cmd.Flags().String("successor", "", "slug of the lesson that supersedes this one; required for --to=superseded, rejected otherwise")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	cmd.Flags().Bool("dry-run", false, "report the transition and every file that would change, writing nothing")
@@ -429,6 +435,10 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 	if to == lifecycle.LessonSuperseded && strings.TrimSpace(note) == "" {
 		return exitcode.InvalidArgsError(
 			"transition to Superseded requires a reason: pass --note describing what superseded the lesson")
+	}
+	if to == lifecycle.LessonRecorded && strings.TrimSpace(note) == "" {
+		return exitcode.InvalidArgsError(
+			"transition to Recorded requires a reason: pass --note documenting the audited correction (e.g. the Enforcement section named no binding control)")
 	}
 
 	if to == lifecycle.LessonSuperseded {
