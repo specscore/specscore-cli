@@ -95,6 +95,55 @@ func TestLessonChangeStatus_RecordedToEnforced_SkipAhead_CLI(t *testing.T) {
 	}
 }
 
+func TestLessonChangeStatus_StatedToRecorded_AuditedCorrection_CLI(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Stated")
+	stdout, stderr, err := runLesson(t, "change-status", "kinder-fake", "--to=recorded", "--note", "Enforcement section named no binding control")
+	if err != nil {
+		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
+	}
+	if want := "kinder-fake: Stated → Recorded\n"; stdout != want {
+		t.Errorf("stdout = %q; want %q", stdout, want)
+	}
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
+	for _, want := range []string{"**Status:** Recorded", "status: Recorded", "## Resolution", "Enforcement section named no binding control"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("missing %q:\n%s", want, body)
+		}
+	}
+	indexBody, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(indexBody), "Recorded") {
+		t.Errorf("index row not updated to Recorded:\n%s", indexBody)
+	}
+}
+
+func TestLessonChangeStatus_RecordedRequiresNote_CLI(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Stated")
+	_, _, err := runLesson(t, "change-status", "kinder-fake", "--to=recorded")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidArgs, err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "**Status:** Stated") {
+		t.Errorf("lesson must be unchanged after rejected transition:\n%s", body)
+	}
+}
+
+// AC: legal-transition-matrix — Enforced -> Recorded stays illegal even
+// though Stated -> Recorded is now a legal audited correction.
+func TestLessonChangeStatus_EnforcedToRecorded_StillIllegal_CLI(t *testing.T) {
+	stageLesson(t, "kinder-fake", "Enforced")
+	_, _, err := runLesson(t, "change-status", "kinder-fake", "--to=recorded", "--note", "x")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
+	}
+}
+
 func TestLessonChangeStatus_Withdrawn_CLI(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Stated")
 	_, stderr, err := runLesson(t, "change-status", "kinder-fake", "--to=withdrawn", "--note", "turned out to be a one-off")
@@ -137,6 +186,7 @@ func TestLessonChangeStatus_ArgErrors_CLI(t *testing.T) {
 		{"missing-to", []string{"change-status", "kinder-fake"}, exitcode.InvalidArgs},
 		{"unrecognized-to", []string{"change-status", "kinder-fake", "--to=banana"}, exitcode.InvalidArgs},
 		{"withdrawn-no-note", []string{"change-status", "kinder-fake", "--to=withdrawn"}, exitcode.InvalidArgs},
+		{"recorded-no-note", []string{"change-status", "kinder-fake", "--to=recorded"}, exitcode.InvalidArgs},
 		{"superseded-no-note", []string{"change-status", "kinder-fake", "--to=superseded"}, exitcode.InvalidArgs},
 		{"superseded-no-successor", []string{"change-status", "kinder-fake", "--to=superseded", "--note", "x"}, exitcode.InvalidArgs},
 		{"successor-on-non-superseded", []string{"change-status", "kinder-fake", "--to=withdrawn", "--note", "x", "--successor", "kinder-fake"}, exitcode.InvalidArgs},

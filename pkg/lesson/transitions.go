@@ -54,7 +54,8 @@ type ChangeStatusOptions struct {
 
 	// Note is the optional free-form markdown transition note, written as a
 	// `## Resolution` section. REQUIRED (enforced by the cobra adapter) for
-	// the Withdrawn and Superseded dispositions.
+	// the Withdrawn and Superseded dispositions, and for the Stated ->
+	// Recorded audited correction.
 	Note string
 
 	// Successor is the slug of the lesson that supersedes this one. REQUIRED
@@ -261,7 +262,8 @@ func LegalTransitionMatrix() string {
 
 	var sb strings.Builder
 	sb.WriteString("Legal transitions (the enforcement ladder climbs Recorded -> Stated ->\n")
-	sb.WriteString("Enforced; Withdrawn and Superseded are reachable from every rung):\n\n")
+	sb.WriteString("Enforced; Withdrawn and Superseded are reachable from every rung; Stated ->\n")
+	sb.WriteString("Recorded is the single audited correction path):\n\n")
 	sb.WriteString("  From")
 	sb.WriteString(strings.Repeat(" ", maxFrom-len("From")))
 	sb.WriteString("  To\n")
