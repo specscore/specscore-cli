@@ -29,9 +29,69 @@ func eventCommand() *cobra.Command {
 	}
 	cmd.AddCommand(eventEmitCommand())
 	cmd.AddCommand(eventMergeCommand())
+	cmd.AddCommand(eventMergeDriverCommand())
 	cmd.AddCommand(eventReplayCommand())
 	cmd.AddCommand(eventReconcileCommand())
 	return cmd
+}
+
+// eventMergeDriverCommand returns `event merge-driver` — a git custom merge
+// driver (gitattributes(5) "Defining a custom merge driver") for the JSONL
+// event ledger. It is not meant to be run by hand; git invokes it with the
+// %O %A %B placeholders substituted by `merge.specscore-events.driver`,
+// which `specscore merge-driver install` writes for you. See
+// docs/merge-drivers.md.
+func eventMergeDriverCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "merge-driver <base> <ours> <theirs>",
+		Short: "Git custom merge driver for the JSONL event ledger (see `specscore merge-driver install`)",
+		Long: `Implements the 3-argument contract a git custom merge driver command is
+invoked with (the %O %A %B placeholders of a merge.<name>.driver config
+entry — gitattributes(5)). <ours> (%A) is rewritten in place with the merged
+ledger; when this command exits 0 that rewritten file IS what git keeps as
+the merge result. <base> (%O) and <theirs> (%B) are read only.
+
+Because the event ledger is an immutable, append-only JSONL log keyed by
+event UUID, the merge is a deterministic union — the same algorithm as
+'specscore event merge': <ours> keeps its exact bytes and order, and every
+event present only in <theirs> is appended afterward in UUID order. The
+result does not depend on which side git labeled "ours" vs "theirs", nor on
+<base>, which this command accepts for the driver contract but does not need
+to read.
+
+A repeated event UUID is accepted only when its canonical content is
+byte-identical on both sides (the ordinary case: the same emission reached
+both branches, e.g. via a shared dependency or a rerun). When the same UUID
+carries DIFFERENT content on the two sides, that is not a legitimate
+concurrent append — it means one side's ledger was hand-edited or rewritten
+after the fact — so the driver refuses to guess, leaves <ours> untouched,
+and exits non-zero so git reports a normal merge conflict on the file for a
+human to resolve. Nothing is ever silently dropped or overwritten.
+
+Install once per repository with:
+
+    specscore merge-driver install
+
+Docs: docs/merge-drivers.md`,
+		Args:          cobra.ExactArgs(3),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runEventMergeDriver,
+	}
+	return cmd
+}
+
+func runEventMergeDriver(cmd *cobra.Command, args []string) error {
+	// args[0] is %O (base) — accepted for the git merge-driver contract but
+	// not read: the union merge below is computed entirely from %A and %B.
+	ours, theirs := args[1], args[2]
+	result, err := event.MergeLedgersWithOptions(ours, []string{theirs}, event.MergeOptions{})
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "specscore event merge-driver: %v\n", err)
+		return exitcode.ConflictErrorf("event ledger merge conflict: %v", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "target=%s existing=%d added=%d skipped=%d\n", ours, result.Existing, result.Added, result.Skipped)
+	return nil
 }
 
 func eventMergeCommand() *cobra.Command {

@@ -49,6 +49,16 @@ same-directory temporary file, file sync, atomic rename, and directory sync.
 The target is the sole configured `jsonl` subscriber; multiple JSONL sinks are
 ambiguous and rejected.
 
+If your project commits the event ledger to git (a deliberate departure from
+the default convention below — e.g. as a shared cross-agent audit trail),
+`specscore event merge`'s same union algorithm is also available as a git
+custom merge driver, so `git merge` resolves concurrent-append conflicts on
+`events.jsonl` automatically instead of needing a manual `specscore event
+merge` pass after the fact. Run `specscore merge-driver install` once per
+clone; see [merge-drivers.md](merge-drivers.md) for the full contract and for
+the companion driver that regenerates (rather than text-merges) the
+generated index README files under `spec/`.
+
 ## The events: config block
 
 Subscribers live under a top-level `events:` key in `specscore.yaml`:

@@ -83,3 +83,30 @@ func CurrentBranch(dir string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// TopLevel returns the absolute path of the top level of the working tree
+// containing dir (i.e. `git rev-parse --show-toplevel`). This is where
+// .gitattributes and repo-local `git config` apply from, which may differ
+// from a project root identified by a config file living in a
+// subdirectory of the repository. Returns an error when dir is not inside a
+// git working tree.
+func TopLevel(dir string) (string, error) {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ConfigSet writes a repo-local (`git config`, no --global/--system) key to
+// value for the git repository at dir. Used to install merge-driver
+// definitions (merge.<name>.name, merge.<name>.driver) that must apply only
+// to this clone, never to the operator's global git config.
+func ConfigSet(dir, key, value string) error {
+	cmd := exec.Command("git", "-C", dir, "config", "--local", key, value)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git config --local %s: %w\n%s", key, err, out)
+	}
+	return nil
+}
