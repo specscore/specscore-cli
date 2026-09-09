@@ -82,6 +82,7 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 		configCommand(),
 		consiliumCommand(),
 		eventCommand(),
+		mergeDriverCommand(),
 		publicationCommand(),
 		telemetryCommand(),
 		lifecycleRecoveryCommand(),

@@ -4,6 +4,112 @@
   "binary": "specscore",
   "capabilities": [
     {
+      "id": "specscore.cli.merge-driver",
+      "feature_refs": [
+        "spec/features/cli/README.md",
+        "spec/features/cli/event/README.md",
+        "spec/features/cli/spec/lint/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore event merge-driver",
+              "flags": [],
+              "modes": [
+                "git custom merge driver: %O %A %B",
+                "deterministic union; refuses on conflicting content under one UUID"
+              ]
+            },
+            {
+              "path": "specscore merge-driver index",
+              "flags": [],
+              "modes": [
+                "git custom merge driver: %O %A %B %P",
+                "regenerates via spec lint --fix instead of text-merging"
+              ]
+            },
+            {
+              "path": "specscore merge-driver install",
+              "flags": [
+                "--project"
+              ],
+              "modes": [
+                "idempotent .gitattributes + repo-local git config install"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore event merge-driver --help",
+              "contains": [
+                "deterministic union",
+                "silently dropped or overwritten"
+              ]
+            },
+            {
+              "command": "specscore merge-driver index --help",
+              "contains": [
+                "regenerates it in place",
+                "spec lint --fix"
+              ]
+            },
+            {
+              "command": "specscore merge-driver install --help",
+              "contains": [
+                "Idempotent",
+                ".gitattributes"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Absent",
+          "skills": [],
+          "limitation": "One-time repository setup tooling; no AI skill invokes it as part of a routine authoring workflow."
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/event_merge_driver_test.go",
+              "name": "TestEventMergeDriver_PureAppendsBothSides",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/event_merge_driver_test.go",
+              "name": "TestEventMergeDriver_ConflictingEditRefusesAndLeavesOursUntouched",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/event_merge_driver_test.go",
+              "name": "TestEventMergeDriverIntegration_ConcurrentAppendMergesCleanlyViaGit",
+              "kind": "integration"
+            },
+            {
+              "path": "internal/cli/mergedriver_test.go",
+              "name": "TestMergeDriverInstall_WritesAttributesAndConfig",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/mergedriver_test.go",
+              "name": "TestMergeDriverIndex_RegeneratesAndCopiesOverOurs",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "Deterministic resolution for two file kinds git's default text merge handles poorly: an append-only event ledger (union by UUID) and generated spec index README files (regenerated via spec lint --fix, never text-merged). See docs/merge-drivers.md."
+    },
+    {
       "id": "specscore.cli.public-command-tree",
       "feature_refs": [
         "spec/features/cli/README.md"
@@ -1131,6 +1237,14 @@
               ]
             },
             {
+              "path": "specscore event merge-driver",
+              "flags": [],
+              "modes": [
+                "git custom merge driver: %O %A %B",
+                "deterministic union; refuses on conflicting content under one UUID"
+              ]
+            },
+            {
               "path": "specscore event reconcile",
               "flags": [
                 "--confirm",
@@ -1177,6 +1291,13 @@
               "contains": [
                 "Existing target bytes",
                 "--dry-run"
+              ]
+            },
+            {
+              "command": "specscore event merge-driver --help",
+              "contains": [
+                "deterministic union",
+                "silently dropped or overwritten"
               ]
             },
             {
@@ -1238,6 +1359,16 @@
               "path": "pkg/event/merge_test.go",
               "name": "TestMergeLedgers_ConcurrentSourcesPreserveTargetAndSortAdditions",
               "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/event_merge_driver_test.go",
+              "name": "TestEventMergeDriver_ConflictingEditRefusesAndLeavesOursUntouched",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/event_merge_driver_test.go",
+              "name": "TestEventMergeDriverIntegration_ConcurrentAppendMergesCleanlyViaGit",
+              "kind": "integration"
             }
           ],
           "limitation": null

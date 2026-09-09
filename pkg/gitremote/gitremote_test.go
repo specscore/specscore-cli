@@ -1,7 +1,9 @@
 package gitremote
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -152,5 +154,87 @@ func TestParse(t *testing.T) {
 			t.Errorf("Parse(%q) = %+v, want owner=%q repo=%q host=%q",
 				tt.in, got, tt.wantOwner, tt.wantRepo, tt.wantHost)
 		}
+	}
+}
+
+// TestTopLevel initialises a real git repo in a subdirectory and asserts
+// TopLevel resolves back to the repository root from a nested path.
+func TestTopLevel(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	sub := filepath.Join(dir, "nested", "deeper")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := TopLevel(sub)
+	if err != nil {
+		t.Fatalf("TopLevel returned error: %v", err)
+	}
+	// Compare against `git rev-parse --show-toplevel` directly rather than
+	// dir itself: both sides may need OS-level symlink resolution (e.g.
+	// macOS /var -> /private/var), and shelling out the same command the
+	// production code runs is the only comparison immune to that.
+	cmd := exec.Command("git", "-C", sub, "rev-parse", "--show-toplevel")
+	want, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse --show-toplevel failed: %v", err)
+	}
+	if got != strings.TrimSpace(string(want)) {
+		t.Errorf("TopLevel(%q) = %q, want %q", sub, got, strings.TrimSpace(string(want)))
+	}
+}
+
+// TestTopLevel_NoGitRepo asserts TopLevel returns an error outside any git
+// working tree.
+func TestTopLevel_NoGitRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	if _, err := TopLevel(dir); err == nil {
+		t.Error("TopLevel in a non-git directory: expected error, got nil")
+	}
+}
+
+// TestConfigSet writes a repo-local config value and asserts it round-trips
+// through `git config --get`, and that it did NOT touch global config (a
+// merge driver installer must never leak into the operator's global git
+// config).
+func TestConfigSet(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+
+	if err := ConfigSet(dir, "merge.specscore-events.driver", "specscore event merge-driver %O %A %B"); err != nil {
+		t.Fatalf("ConfigSet returned error: %v", err)
+	}
+
+	cmd := exec.Command("git", "-C", dir, "config", "--local", "--get", "merge.specscore-events.driver")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git config --local --get failed: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+	want := "specscore event merge-driver %O %A %B"
+	if got != want {
+		t.Errorf("merge.specscore-events.driver = %q, want %q", got, want)
+	}
+}
+
+// TestConfigSet_NoGitRepo asserts ConfigSet returns an error outside any
+// git working tree rather than silently succeeding or writing elsewhere.
+func TestConfigSet_NoGitRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	if err := ConfigSet(dir, "merge.specscore-events.driver", "x"); err == nil {
+		t.Error("ConfigSet in a non-git directory: expected error, got nil")
 	}
 }
