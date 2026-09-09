@@ -111,10 +111,21 @@ jobs:
     # allow_major_version_bump, artifact_smoke_test_homebrew_cask). The
     # sibling repos in this ecosystem (ingitdb-cli, chatwright/cli,
     # datatug-cli) are pinned to compatible exact strongo/cicd releases too.
-    uses: strongo/cicd/.github/workflows/release.yml@v1.14.17
+    uses: strongo/cicd/.github/workflows/release.yml@v1.18.0
     permissions:
       contents: write
+      # Lets the require_workflow_success guard read the quality
+      # workflow's result for this commit. A reusable workflow cannot
+      # grant itself more than its caller allows, so it belongs here.
+      actions: read
     with:
+      # Refuse to tag or publish unless this repo's quality workflow
+      # passed for this exact commit. Release and that workflow are
+      # siblings started by the same push, with no cross-workflow
+      # `needs:` between them, so before this a red suite could not
+      # stop a release. datatug-cli shipped v0.13.2 that way. Names
+      # the workflow's `name:`, not its filename.
+      require_workflow_success: 'Go CI'
       # strongo/cicd's go_version input defaults to '1.26' and drives the
       # setup-go step the shared release job's `go mod tidy`/`go generate`
       # before-hooks run under — those hooks execute ahead of GoReleaser's
