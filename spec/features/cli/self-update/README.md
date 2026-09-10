@@ -91,10 +91,11 @@ assets named as this project's GoReleaser publishes them
 #### REQ: specscore-managers
 
 specscore MUST configure the three package managers that publish it, each with
-its exact upgrade command: Homebrew (`brew upgrade specscore`), Scoop
-(`scoop update specscore`), and WinGet (`winget upgrade SpecScore.CLI`). An
-install detected under any of them MUST follow the library's managed-redirect
-path and MUST NOT be overwritten.
+its exact upgrade command: Homebrew (`brew upgrade --cask specscore` —
+specscore ships as a cask, not a formula), Scoop (`scoop update specscore`),
+and WinGet (`winget upgrade SpecScore.CLI`). An install detected under any of
+them MUST follow the library's managed-redirect path and MUST NOT be
+overwritten.
 
 #### REQ: specscore-version-identity
 

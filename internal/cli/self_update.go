@@ -64,7 +64,14 @@ func selfUpdateConfig() selfupdate.Config {
 		CurrentVersion:       buildInfo.Version,
 		UndeterminedVersions: []string{"dev"},
 		Managers: []selfupdate.Manager{
-			selfupdate.Homebrew("brew upgrade specscore"),
+			// specscore ships as a Homebrew CASK in tap specscore/tap, not a
+			// formula. The pre-fix "brew upgrade specscore" told Homebrew to
+			// look for a formula of that name, which fails with "Treating
+			// specscore as a formula ... specscore/tap/specscore not
+			// installed" — reproduced against a real Homebrew install.
+			// "brew upgrade --cask specscore" is the command that actually
+			// upgrades it.
+			selfupdate.Homebrew("brew upgrade --cask specscore"),
 			selfupdate.Scoop("scoop update specscore"),
 			selfupdate.WinGet("winget upgrade SpecScore.CLI"),
 		},

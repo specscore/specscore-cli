@@ -169,7 +169,7 @@ func TestSelfUpdateConfig_Identity(t *testing.T) {
 func TestSelfUpdateConfig_Managers(t *testing.T) {
 	cfg := selfUpdateConfig()
 	want := map[string]string{
-		"Homebrew": "brew upgrade specscore",
+		"Homebrew": "brew upgrade --cask specscore",
 		"Scoop":    "scoop update specscore",
 		"WinGet":   "winget upgrade SpecScore.CLI",
 	}
