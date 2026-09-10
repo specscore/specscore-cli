@@ -211,3 +211,165 @@ func TestEventCheck_NoProjectRoot_FailsNotFound(t *testing.T) {
 	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
 	assertCheckExitCode(t, err, exitcode.NotFound)
 }
+
+// TestEventCheck_NoJSONLSinkConfigured_FailsInvalidArgs covers the
+// event.ConfiguredLedgerPath failure branch: a project that explicitly
+// configures zero subscribers has no jsonl ledger to check against,
+// matching `event merge`'s same delegated contract.
+func TestEventCheck_NoJSONLSinkConfigured_FailsInvalidArgs(t *testing.T) {
+	dir := newCheckTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "specscore.yaml"), []byte("events:\n  subscribers: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "no jsonl sink")
+
+	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
+	assertCheckExitCode(t, err, exitcode.InvalidArgs)
+}
+
+// TestGitShowAtRefFn_PathOutsideRepository_ReturnsDistinctError exercises
+// gitShowAtRefFn directly (not through runEventCheck, which never passes it
+// a path outside the repo — see the relLedgerPath guard) to cover the
+// generic-failure branch: a path git refuses for a reason other than "not
+// found at this ref" must be returned as an error, not silently treated as
+// an absent ledger.
+func TestGitShowAtRefFn_PathOutsideRepository_ReturnsDistinctError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available on PATH")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "T")
+	runGit(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
+
+	_, err := gitShowAtRefFn(dir, "HEAD", "../outside.txt")
+	if err == nil {
+		t.Fatal("gitShowAtRefFn with a path outside the repository: expected an error, got nil")
+	}
+	if strings.Contains(err.Error(), "does not exist in") || strings.Contains(err.Error(), "exists on disk, but not in") {
+		t.Fatalf("error = %v, expected the distinct 'outside repository' failure, not the not-found case this function treats as an absent ledger", err)
+	}
+}
+
+// stubGitTopLevelFn replaces the package-level gitTopLevelFn (shared with
+// `event merge-driver`/`merge-driver install`) for the duration of the
+// test, restoring it on cleanup — mirrors mergedriver_test.go's
+// stubGitSeams.
+func stubGitTopLevelFn(t *testing.T, fn func(string) (string, error)) {
+	t.Helper()
+	prev := gitTopLevelFn
+	gitTopLevelFn = fn
+	t.Cleanup(func() { gitTopLevelFn = prev })
+}
+
+// stubGitShowAtRefFn replaces the package-level gitShowAtRefFn for the
+// duration of the test, restoring it on cleanup.
+func stubGitShowAtRefFn(t *testing.T, fn func(repoRoot, ref, relPath string) ([]byte, error)) {
+	t.Helper()
+	prev := gitShowAtRefFn
+	gitShowAtRefFn = fn
+	t.Cleanup(func() { gitShowAtRefFn = prev })
+}
+
+// TestEventCheck_LedgerConfiguredOutsideGitRoot_FailsInvalidState covers the
+// misconfiguration guard on relLedgerPath: a configured ledger path that
+// does not live under the resolved git repository root cannot be expressed
+// as `git show <ref>:<relative-path>` at all, so the command must fail
+// closed (mirrors mergedriver.go's TestMergeDriverInstall_
+// CustomLedgerPathOutsideGitRootFailsClosed for the sibling command).
+func TestEventCheck_LedgerConfiguredOutsideGitRoot_FailsInvalidState(t *testing.T) {
+	dir := newCheckTestRepo(t)
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "base")
+
+	elsewhere := t.TempDir()
+	stubGitTopLevelFn(t, func(string) (string, error) { return elsewhere, nil })
+
+	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
+	assertCheckExitCode(t, err, exitcode.InvalidState)
+}
+
+// TestEventCheck_GitTopLevelFails_FailsUnexpected covers the "resolving git
+// repository root" failure branch.
+func TestEventCheck_GitTopLevelFails_FailsUnexpected(t *testing.T) {
+	dir := newCheckTestRepo(t)
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "base")
+
+	stubGitTopLevelFn(t, func(string) (string, error) { return "", errors.New("boom") })
+
+	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
+	assertCheckExitCode(t, err, exitcode.Unexpected)
+}
+
+// TestEventCheck_GitShowFails_FailsUnexpected covers the "reading event
+// ledger at <base>" failure branch when gitShowAtRefFn returns a genuine
+// (non-"absent") error.
+func TestEventCheck_GitShowFails_FailsUnexpected(t *testing.T) {
+	dir := newCheckTestRepo(t)
+	writeCheckLedger(t, dir, checkUUID1)
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "base")
+
+	stubGitShowAtRefFn(t, func(string, string, string) ([]byte, error) { return nil, errors.New("boom") })
+
+	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
+	assertCheckExitCode(t, err, exitcode.Unexpected)
+}
+
+// TestEventCheck_MalformedBaseLedger_FailsUnexpected covers the ledger-at-
+// base parse-error branch: a committed ledger that is not valid JSONL must
+// surface as an error rather than being silently treated as zero UUIDs.
+func TestEventCheck_MalformedBaseLedger_FailsUnexpected(t *testing.T) {
+	dir := newCheckTestRepo(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".specscore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".specscore", "events.jsonl"), []byte("not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "malformed base ledger")
+
+	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
+	assertCheckExitCode(t, err, exitcode.Unexpected)
+}
+
+// TestEventCheck_MalformedWorkingTreeLedger_FailsUnexpected covers the
+// working-tree parse-error branch, the mirror image of the base-ledger
+// case above.
+func TestEventCheck_MalformedWorkingTreeLedger_FailsUnexpected(t *testing.T) {
+	dir := newCheckTestRepo(t)
+	writeCheckLedger(t, dir, checkUUID1)
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "base")
+	if err := os.WriteFile(filepath.Join(dir, ".specscore", "events.jsonl"), []byte("not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
+	assertCheckExitCode(t, err, exitcode.Unexpected)
+}
+
+// TestEventCheck_WorkingTreeLedgerIsDirectory_FailsUnexpected covers the
+// os.ReadFile failure branch for a reason OTHER than the file being absent
+// (a directory sitting at the configured ledger path is an unusual but
+// possible on-disk state, e.g. a botched extraction).
+func TestEventCheck_WorkingTreeLedgerIsDirectory_FailsUnexpected(t *testing.T) {
+	dir := newCheckTestRepo(t)
+	writeCheckLedger(t, dir, checkUUID1)
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "base")
+	ledgerPath := filepath.Join(dir, ".specscore", "events.jsonl")
+	if err := os.Remove(ledgerPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(ledgerPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := runEvent(t, "check", "--project", dir, "--base", "HEAD")
+	assertCheckExitCode(t, err, exitcode.Unexpected)
+}

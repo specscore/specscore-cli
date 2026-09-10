@@ -278,13 +278,25 @@ func runEventCheck(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return exitcode.InvalidArgsErrorf("event ledger configuration: %v", err)
 	}
-	repoRoot, err := gitremote.TopLevel(projectRoot)
+	// gitTopLevelFn (defined in mergedriver.go, shared across this package's
+	// event/merge-driver commands) rather than calling gitremote.TopLevel
+	// directly, so tests can stub it the same way TestMergeDriverInstall_*
+	// does instead of requiring a real git repository for every case.
+	repoRoot, err := gitTopLevelFn(projectRoot)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("resolving git repository root from %s: %v", projectRoot, err)
 	}
-	relLedgerPath, err := filepath.Rel(repoRoot, ledgerPath)
-	if err != nil {
-		return exitcode.UnexpectedErrorf("computing event ledger path relative to repository root %s: %v", repoRoot, err)
+	// filepath.Rel on two already-absolute, already-Clean paths practically
+	// never errors on its own (see the many `rel, _ := filepath.Rel(...)`
+	// call sites elsewhere in this package) — what actually needs guarding
+	// against is the configured ledger living outside repoRoot entirely
+	// (e.g. an events.jsonl path configured as an absolute path in a
+	// different tree), which `git show <ref>:<relLedgerPath>` cannot express
+	// at all. Mirrors mergedriver.go's identical guard for the same
+	// misconfiguration.
+	relLedgerPath, relErr := filepath.Rel(repoRoot, ledgerPath)
+	if relErr != nil || relLedgerPath == ".." || strings.HasPrefix(relLedgerPath, ".."+string(filepath.Separator)) {
+		return exitcode.InvalidStateErrorf("configured event ledger %s is outside the git repository at %s", ledgerPath, repoRoot)
 	}
 
 	if err := gitVerifyCommitFn(repoRoot, base); err != nil {
