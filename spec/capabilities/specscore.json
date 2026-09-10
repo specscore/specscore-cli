@@ -1204,6 +1204,7 @@
       "id": "specscore.event.outbox",
       "feature_refs": [
         "spec/features/cli/event/README.md",
+        "spec/features/cli/event/check/README.md",
         "spec/features/cli/event/emit/README.md"
       ],
       "since": null,
@@ -1211,6 +1212,16 @@
         "runtime": {
           "status": "Full",
           "commands": [
+            {
+              "path": "specscore event check",
+              "flags": [
+                "--base",
+                "--project"
+              ],
+              "modes": [
+                "ledger-monotonicity check: working-tree UUIDs must be a superset of a base git ref's UUIDs"
+              ]
+            },
             {
               "path": "specscore event emit",
               "flags": [
@@ -1274,6 +1285,13 @@
         "help": {
           "status": "Full",
           "anchors": [
+            {
+              "command": "specscore event check --help",
+              "contains": [
+                "one per line",
+                "zero base UUIDs"
+              ]
+            },
             {
               "command": "specscore event emit --help",
               "contains": [
@@ -1371,6 +1389,21 @@
               "path": "internal/cli/event_merge_driver_test.go",
               "name": "TestEventMergeDriverIntegration_ConcurrentAppendMergesCleanlyViaGit",
               "kind": "integration"
+            },
+            {
+              "path": "internal/cli/event_check_test.go",
+              "name": "TestEventCheck_MissingBaseUUID_FailsNonZero",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/event_check_test.go",
+              "name": "TestEventCheck_LedgerAbsentAtBase_TreatedAsEmpty",
+              "kind": "integration"
+            },
+            {
+              "path": "pkg/event/check_test.go",
+              "name": "TestMissingUUIDs_ReportsEveryLostUUIDSorted",
+              "kind": "unit"
             }
           ],
           "limitation": null
