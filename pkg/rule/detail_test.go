@@ -380,6 +380,103 @@ func TestJoinWrappedFieldValueStopsAtBoundaries(t *testing.T) {
 	}
 }
 
+// TestParseDetailTriggerAndSection covers the optional **Trigger:** and
+// **Section:** header lines end to end through ParseDetail — render_test.go
+// exercises ResolveTrigger/BuildRenderEntries against hand-built Detail
+// literals, but only ParseDetail itself proves the parser recognizes the two
+// bold field names and records their source lines.
+func TestParseDetailTriggerAndSection(t *testing.T) {
+	root := t.TempDir()
+	path := writeDetail(t, root, "x", `---
+format: `+FormatURL+`
+status: Draft
+---
+
+# Rule: X
+
+**Status:** Draft
+**Date:** 2026-09-03
+**Owner:** alex
+**Statement:** Never ship a mocked backend.
+**Trigger:** about to mock an extension backend
+**Section:** Answering
+**Scope:** fleet
+**Enforcement:** Stated
+**Control:** —
+**Sources:** —
+**Why:** A mock passes review and then fails in production.
+**Exceptions:** none
+**Supersedes:** —
+**Superseded By:** —
+
+## Instructions
+
+Do the thing.
+
+## Examples
+
+### Compliant
+
+x
+
+### Violation
+
+y
+
+## Open Questions
+
+None at this time.
+`)
+	d, err := ParseDetail(path)
+	if err != nil {
+		t.Fatalf("ParseDetail: %v", err)
+	}
+	if d.Trigger != "about to mock an extension backend" || d.TriggerLine == 0 {
+		t.Fatalf("trigger = %q line = %d", d.Trigger, d.TriggerLine)
+	}
+	if d.Section != "Answering" || d.SectionLine == 0 {
+		t.Fatalf("section = %q line = %d", d.Section, d.SectionLine)
+	}
+	if d.FieldCounts["Trigger"] != 1 || d.FieldCounts["Section"] != 1 {
+		t.Fatalf("field counts = %+v", d.FieldCounts)
+	}
+	// Trigger and Section are not part of DetailFields, so they must never
+	// appear in the canonical order-check list.
+	for _, f := range d.FieldOrder {
+		if f == "Trigger" || f == "Section" {
+			t.Fatalf("FieldOrder must exclude the optional fields: %v", d.FieldOrder)
+		}
+	}
+}
+
+// TestParseDetailInstructionsFirstLine covers the fallback capture render.go
+// relies on: the first non-blank line of ## Instructions, and the case where
+// that section has no body at all before the next heading.
+func TestParseDetailInstructionsFirstLine(t *testing.T) {
+	t.Run("captures the first non-blank line", func(t *testing.T) {
+		root := t.TempDir()
+		path := writeDetail(t, root, "x", "# Rule: X\n\n**Status:** Draft\n\n## Instructions\n\nTrigger: about to do the thing\n\nMore detail.\n\n## Open Questions\n\nNone.\n")
+		d, err := ParseDetail(path)
+		if err != nil {
+			t.Fatalf("ParseDetail: %v", err)
+		}
+		if d.InstructionsFirstLine != "Trigger: about to do the thing" {
+			t.Fatalf("InstructionsFirstLine = %q", d.InstructionsFirstLine)
+		}
+	})
+	t.Run("an empty Instructions section leaves it blank", func(t *testing.T) {
+		root := t.TempDir()
+		path := writeDetail(t, root, "x", "# Rule: X\n\n**Status:** Draft\n\n## Instructions\n\n## Open Questions\n\nNone.\n")
+		d, err := ParseDetail(path)
+		if err != nil {
+			t.Fatalf("ParseDetail: %v", err)
+		}
+		if d.InstructionsFirstLine != "" {
+			t.Fatalf("InstructionsFirstLine = %q, want empty", d.InstructionsFirstLine)
+		}
+	})
+}
+
 func TestMissingSectionsAndSubsections(t *testing.T) {
 	d := &Detail{SectionLines: map[string]int{}, SubsectionLines: map[string]int{}}
 	if got := d.MissingSections(); len(got) != len(DetailSections) {

@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/lesson"
@@ -588,6 +589,24 @@ func lintRuleDetail(w *ruleWorld, d *rule.Detail) []Violation {
 			break
 		}
 		last = position
+	}
+
+	// **Trigger:** and **Section:** are optional and outside DetailFields, so
+	// their absence is never reported and their position is never checked for
+	// order — only their one shape rule: a Trigger MUST fit rule.TriggerMaxLen
+	// characters, because it is a progressive-discovery line, not a second
+	// Statement.
+	if d.FieldCounts["Trigger"] > 1 {
+		add("R-001", d.TriggerLine, "metadata field is duplicated: **Trigger:**")
+	}
+	if trigger := strings.TrimSpace(d.Trigger); trigger != "" {
+		if n := utf8.RuneCountInString(trigger); n > rule.TriggerMaxLen {
+			add("R-001", d.TriggerLine, fmt.Sprintf(
+				"**Trigger:** is %d characters, must be at most %d", n, rule.TriggerMaxLen))
+		}
+	}
+	if d.FieldCounts["Section"] > 1 {
+		add("R-001", d.SectionLine, "metadata field is duplicated: **Section:**")
 	}
 
 	values := detailFieldValues(d)

@@ -4,9 +4,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
+
+// TriggerMaxLen is the character limit **Trigger:** must stay under — a
+// progressive-discovery line, not a restatement of the rule, so it has to fit
+// on one skimmable line the way a skill's own trigger description does.
+const TriggerMaxLen = 90
 
 // Options carries everything both forms of a rule need. Only Slug is
 // mandatory: a rule recorded under time pressure with nothing but a slug is
@@ -19,6 +25,7 @@ type Options struct {
 	Date        string   // detail only; ISO-8601, defaults to today's UTC date
 	Status      string   // defaults to Draft
 	Statement   string   // defaults to a TODO prompt
+	Trigger     string   // detail only; optional, the progressive-discovery trigger line
 	Scopes      []string // defaults to ["fleet"]
 	Enforcement string   // defaults to Stated
 	Control     string   // defaults to the em-dash sentinel
@@ -75,6 +82,11 @@ func (o *Options) Normalize() error {
 		o.Statement = statementPlaceholder
 	}
 	o.Statement = collapseWhitespace(o.Statement)
+
+	o.Trigger = collapseWhitespace(o.Trigger)
+	if n := utf8.RuneCountInString(o.Trigger); n > TriggerMaxLen {
+		return fmt.Errorf("--trigger is %d characters, must be at most %d", n, TriggerMaxLen)
+	}
 
 	if len(o.Scopes) == 0 {
 		o.Scopes = []string{ScopeFleet}
@@ -151,6 +163,9 @@ func ScaffoldDetail(opts Options) ([]byte, error) {
 	fmt.Fprintf(&b, "**Date:** %s\n", o.Date)
 	fmt.Fprintf(&b, "**Owner:** %s\n", o.Owner)
 	fmt.Fprintf(&b, "**Statement:** %s\n", o.Statement)
+	if isRealValue(o.Trigger) {
+		fmt.Fprintf(&b, "**Trigger:** %s\n", o.Trigger)
+	}
 	fmt.Fprintf(&b, "**Scope:** %s\n", joinOrSentinel(o.Scopes))
 	fmt.Fprintf(&b, "**Enforcement:** %s\n", o.Enforcement)
 	fmt.Fprintf(&b, "**Control:** %s\n", sentinelOr(o.Control))

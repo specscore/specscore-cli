@@ -41,6 +41,10 @@ A directory under `spec/rules/` that contains a `README.md` but is skipped by di
 
 `R-001` MUST be registered at severity `error` and MUST report: a missing, duplicated, or out-of-order member of the ordered field set (`Status`, `Date`, `Owner`, `Statement`, `Scope`, `Enforcement`, `Control`, `Sources`, `Why`, `Exceptions`, `Supersedes`, `Superseded By`) — except `Scope` and `Sources`, which are list fields and may legitimately repeat across lines; an empty value in a field that must carry content; an empty value where the em-dash sentinel is required; a `**Date:**` that is not `YYYY-MM-DD`; a missing `## Instructions`, `## Examples` or `## Open Questions` section; a `## Examples` lacking either `### Compliant` or `### Violation`; and an empty `# Rule:` title.
 
+#### REQ: rule-r-001-trigger
+
+`**Trigger:**` and `**Section:**` are optional header lines outside the ordered field set `REQ:rule-r-001-shape` governs: their absence MUST NOT be reported, and their position relative to the twelve required fields MUST NOT be checked. `R-001` MUST report a `**Trigger:**` over `rule.TriggerMaxLen` (90) characters, naming the actual length and the limit, and MUST report either field duplicated. A `**Trigger:**` at or under the limit MUST NOT be reported.
+
 ### R-002 / R-003 — row validity and index shape
 
 #### REQ: rule-r-002-status-values
@@ -144,6 +148,12 @@ Every `R-` id MUST appear in the lint rule registry with a non-empty description
 **Given** one inline rule and one detailed rule written by `specscore rule new`
 **When** `specscore spec lint` runs
 **Then** no violation is reported against any path under `rules/` — including the shared frontmatter, status-mirror and adherence-footer rules.
+
+### AC: trigger-over-the-limit-is-reported (verifies REQ:rule-r-001-trigger)
+
+**Given** a detail document whose `**Trigger:**` is 91 characters
+**When** `specscore spec lint` runs
+**Then** an `R-001` violation names the actual length and the 90-character limit; a document with no `**Trigger:**` at all, or one at exactly 90 characters, is clean.
 
 ### AC: undiscoverable-directory-is-reported (verifies REQ:undiscoverable-directories-reported)
 
