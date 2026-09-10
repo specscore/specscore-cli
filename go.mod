@@ -9,7 +9,7 @@ require (
 	github.com/dal-go/dalgo2sqlite v0.1.3
 	github.com/dal-go/record v0.1.2
 	github.com/getsentry/sentry-go v0.48.0
-	github.com/gofrs/flock v0.13.0
+	github.com/gofrs/flock v0.13.1
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/ingitdb/dalgo2ingitdb v0.2.4
@@ -19,7 +19,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/strongo/buildinfo v0.2.0
-	github.com/strongo/selfupdate v0.2.0
+	github.com/strongo/cli-helpers v0.9.4
 	github.com/zclconf/go-cty v1.19.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/sys v0.47.0

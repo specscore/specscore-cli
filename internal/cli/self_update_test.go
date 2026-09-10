@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/strongo/selfupdate"
+	"github.com/strongo/cli-helpers/selfupdate"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
@@ -164,34 +167,264 @@ func TestSelfUpdateConfig_Identity(t *testing.T) {
 	}
 }
 
-// AC: cli/self-update#ac:managed-is-redirected — specscore MUST configure
-// exactly Homebrew, Scoop, and WinGet, each with its exact upgrade command.
+// AC: cli/self-update#ac:managed-is-upgraded-through-its-manager —
+// specscore MUST configure exactly Homebrew, Scoop, and WinGet, each with
+// its exact display upgrade command AND its exact executable argv, and each
+// MUST be opted into executable upgrade mode (CanExecuteUpgrade) so a
+// managed install is actually upgraded by running its manager, not merely
+// told what to run.
 func TestSelfUpdateConfig_Managers(t *testing.T) {
 	cfg := selfUpdateConfig()
-	want := map[string]string{
-		"Homebrew": "brew upgrade specscore",
-		"Scoop":    "scoop update specscore",
-		"WinGet":   "winget upgrade SpecScore.CLI",
+	type want struct {
+		command    string
+		executable string
+		args       []string
 	}
-	if len(cfg.Managers) != len(want) {
-		t.Fatalf("len(Managers) = %d, want %d", len(cfg.Managers), len(want))
+	wantByName := map[string]want{
+		"Homebrew": {"brew upgrade --cask specscore", "brew", []string{"upgrade", "--cask", "specscore"}},
+		"Scoop":    {"scoop update specscore", "scoop", []string{"update", "specscore"}},
+		"WinGet":   {"winget upgrade SpecScore.CLI", "winget", []string{"upgrade", "--id", "SpecScore.CLI"}},
+	}
+	if len(cfg.Managers) != len(wantByName) {
+		t.Fatalf("len(Managers) = %d, want %d", len(cfg.Managers), len(wantByName))
 	}
 	seen := map[string]bool{}
 	for _, m := range cfg.Managers {
-		wantCmd, ok := want[m.Name]
+		w, ok := wantByName[m.Name]
 		if !ok {
 			t.Errorf("unexpected manager %q", m.Name)
 			continue
 		}
-		if m.UpgradeCommand != wantCmd {
-			t.Errorf("%s.UpgradeCommand = %q, want %q", m.Name, m.UpgradeCommand, wantCmd)
-		}
 		seen[m.Name] = true
+		if m.UpgradeCommand != w.command {
+			t.Errorf("%s.UpgradeCommand = %q, want %q", m.Name, m.UpgradeCommand, w.command)
+		}
+		if !m.CanExecuteUpgrade() {
+			t.Errorf("%s.CanExecuteUpgrade() = false, want true (every manager must run its own upgrade, not just print it)", m.Name)
+		}
+		if m.UpgradeExecutable != w.executable {
+			t.Errorf("%s.UpgradeExecutable = %q, want %q", m.Name, m.UpgradeExecutable, w.executable)
+		}
+		if len(m.UpgradeArgs) != len(w.args) {
+			t.Errorf("%s.UpgradeArgs = %v, want %v", m.Name, m.UpgradeArgs, w.args)
+			continue
+		}
+		for i, a := range w.args {
+			if m.UpgradeArgs[i] != a {
+				t.Errorf("%s.UpgradeArgs[%d] = %q, want %q", m.Name, i, m.UpgradeArgs[i], a)
+			}
+		}
 	}
-	for name := range want {
+	for name := range wantByName {
 		if !seen[name] {
 			t.Errorf("manager %q not configured", name)
 		}
+	}
+}
+
+// releasePinnedHomebrewConfig returns a copy of specscore's real Config with
+// its real Homebrew Manager (UpgradeCommand/UpgradeExecutable/UpgradeArgs
+// untouched) plus one synthetic PathMarker: the running test binary's own
+// directory. That is enough for selfupdate.Classify — invoked for real via
+// Config.Update -> Config.DetectSelf -> os.Executable, never stubbed — to
+// route this call through the Managed/Homebrew branch without a real
+// Homebrew install existing anywhere on the machine running the test. srv
+// stands in for the GitHub releases endpoint so managedAvailability's
+// lookup succeeds without the real network.
+func releasePinnedHomebrewConfig(t *testing.T, srv *httptest.Server, current string) (selfupdate.Config, string) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	withVersion(t, current)
+	cfg := selfUpdateConfig()
+	cfg.ReleasesAPIURL = srv.URL
+	cfg.HTTPClient = srv.Client()
+	homebrew := cfg.Managers[0]
+	if homebrew.Name != "Homebrew" {
+		t.Fatalf("Managers[0].Name = %q, want Homebrew", homebrew.Name)
+	}
+	homebrew.PathMarkers = append([]string{strings.ToLower(filepath.Dir(exe))}, homebrew.PathMarkers...)
+	cfg.Managers = []selfupdate.Manager{homebrew}
+	return cfg, exe
+}
+
+// AC: cli/self-update#ac:managed-is-upgraded-through-its-manager — a
+// Homebrew-managed install MUST invoke the manager with exactly `brew
+// upgrade --cask specscore`, through the library's own injection seams
+// (selfupdate.Options.RunManaged / .VerifyManaged), never a real brew
+// process.
+func TestSelfUpdateConfig_HomebrewExecutesExactUpgradeCommand(t *testing.T) {
+	srv := releaseServer(t, `[{"tag_name":"v1.0.0","prerelease":false,"draft":false}]`)
+	cfg, exe := releasePinnedHomebrewConfig(t, srv, "1.0.0")
+
+	var gotExecutable string
+	var gotArgs []string
+	outcome, err := cfg.Update(context.Background(), selfupdate.Options{
+		Confirm: func(string) (bool, error) { return true, nil },
+		RunManaged: func(_ context.Context, executable string, args []string) error {
+			gotExecutable = executable
+			gotArgs = append([]string(nil), args...)
+			return nil
+		},
+		VerifyManaged: func(_ context.Context, _ selfupdate.Detection, _ string, _ []string, _ string) (selfupdate.ExecutableIdentity, error) {
+			return selfupdate.ExecutableIdentity{Path: exe, ResolvedPath: exe}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if outcome.Action != selfupdate.ActionManagerExecuted {
+		t.Fatalf("Action = %v, want ActionManagerExecuted", outcome.Action)
+	}
+	if outcome.Detection.Method != selfupdate.Managed || outcome.Detection.Manager == nil || outcome.Detection.Manager.Name != "Homebrew" {
+		t.Fatalf("Detection = %+v, want Managed/Homebrew", outcome.Detection)
+	}
+	if gotExecutable != "brew" {
+		t.Errorf("executable = %q, want brew", gotExecutable)
+	}
+	wantArgs := []string{"upgrade", "--cask", "specscore"}
+	if len(gotArgs) != len(wantArgs) {
+		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
+	}
+	for i, a := range wantArgs {
+		if gotArgs[i] != a {
+			t.Errorf("args[%d] = %q, want %q", i, gotArgs[i], a)
+		}
+	}
+	if outcome.PostSwapWarning != nil {
+		t.Errorf("PostSwapWarning = %v, want nil on a successful post-upgrade verify", outcome.PostSwapWarning)
+	}
+}
+
+// A failed post-upgrade verification is a warning on the outcome, not a
+// failed Update — the manager's own command already completed successfully,
+// so this must not be reported as an operational failure
+// (cli/self-update#req:specscore-version-identity's post-swap probe, carried
+// over unchanged from the manual-install path's same guarantee).
+func TestSelfUpdateConfig_HomebrewVerifyFailureIsWarningNotError(t *testing.T) {
+	srv := releaseServer(t, `[{"tag_name":"v1.0.0","prerelease":false,"draft":false}]`)
+	cfg, _ := releasePinnedHomebrewConfig(t, srv, "1.0.0")
+
+	verifyErr := errors.New("brew-installed specscore not found on PATH")
+	outcome, err := cfg.Update(context.Background(), selfupdate.Options{
+		Confirm:    func(string) (bool, error) { return true, nil },
+		RunManaged: func(context.Context, string, []string) error { return nil },
+		VerifyManaged: func(context.Context, selfupdate.Detection, string, []string, string) (selfupdate.ExecutableIdentity, error) {
+			return selfupdate.ExecutableIdentity{}, verifyErr
+		},
+	})
+	if err != nil {
+		t.Fatalf("a failed verify must not fail Update: %v", err)
+	}
+	if outcome.Action != selfupdate.ActionManagerExecuted {
+		t.Errorf("Action = %v, want ActionManagerExecuted (the manager command already succeeded)", outcome.Action)
+	}
+	if outcome.PostSwapWarning == nil || !errors.Is(outcome.PostSwapWarning, verifyErr) {
+		t.Errorf("PostSwapWarning = %v, want it to wrap %v", outcome.PostSwapWarning, verifyErr)
+	}
+}
+
+// When the manager's own process fails (not found, network failure inside
+// brew, non-zero exit, ...), Update MUST fail with KindManagedCommand, which
+// selfUpdateErrors.Failure maps to selfUpdateUnexpectedCode (9) — distinct
+// from both 0 and the --check pending code (10).
+func TestSelfUpdateConfig_HomebrewCommandFailureMapsToUnexpectedCode(t *testing.T) {
+	srv := releaseServer(t, `[{"tag_name":"v1.0.0","prerelease":false,"draft":false}]`)
+	cfg, _ := releasePinnedHomebrewConfig(t, srv, "1.0.0")
+
+	runErr := errors.New("brew: command not found")
+	_, err := cfg.Update(context.Background(), selfupdate.Options{
+		Confirm:    func(string) (bool, error) { return true, nil },
+		RunManaged: func(context.Context, string, []string) error { return runErr },
+		VerifyManaged: func(context.Context, selfupdate.Detection, string, []string, string) (selfupdate.ExecutableIdentity, error) {
+			t.Fatal("VerifyManaged must not run after RunManaged fails")
+			return selfupdate.ExecutableIdentity{}, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error when the manager process fails")
+	}
+	if selfupdate.KindOf(err) != selfupdate.KindManagedCommand {
+		t.Errorf("KindOf(err) = %v, want KindManagedCommand", selfupdate.KindOf(err))
+	}
+	mapped := selfUpdateErrors{}.Failure(err)
+	ec, ok := mapped.(exitCoder)
+	if !ok {
+		t.Fatalf("mapped error %T does not expose ExitCode()", mapped)
+	}
+	if ec.ExitCode() != selfUpdateUnexpectedCode {
+		t.Errorf("ExitCode() = %d, want %d (selfUpdateUnexpectedCode)", ec.ExitCode(), selfUpdateUnexpectedCode)
+	}
+}
+
+// A --version pin the executable manager path cannot honor (here: it does
+// not match the manager's own latest release) MUST be refused with
+// KindManagedVersion, mapped to exitcode.InvalidState (4) — a refusal, not
+// a lookup miss or a local write failure.
+func TestSelfUpdateConfig_HomebrewVersionPinIsRefused(t *testing.T) {
+	srv := releaseServer(t, `[{"tag_name":"v1.0.0","prerelease":false,"draft":false}]`)
+	cfg, _ := releasePinnedHomebrewConfig(t, srv, "1.0.0")
+
+	_, err := cfg.Update(context.Background(), selfupdate.Options{
+		PinnedVersion: "0.9.0",
+		Confirm:       func(string) (bool, error) { t.Fatal("must refuse before confirming"); return true, nil },
+		RunManaged: func(context.Context, string, []string) error {
+			t.Fatal("must refuse before running the manager")
+			return nil
+		},
+		VerifyManaged: func(context.Context, selfupdate.Detection, string, []string, string) (selfupdate.ExecutableIdentity, error) {
+			t.Fatal("must refuse before verifying")
+			return selfupdate.ExecutableIdentity{}, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected a refusal for a version pin the manager cannot honor")
+	}
+	if selfupdate.KindOf(err) != selfupdate.KindManagedVersion {
+		t.Errorf("KindOf(err) = %v, want KindManagedVersion", selfupdate.KindOf(err))
+	}
+	mapped := selfUpdateErrors{}.Failure(err)
+	ec, ok := mapped.(exitCoder)
+	if !ok {
+		t.Fatalf("mapped error %T does not expose ExitCode()", mapped)
+	}
+	if ec.ExitCode() != exitcode.InvalidState {
+		t.Errorf("ExitCode() = %d, want %d (InvalidState)", ec.ExitCode(), exitcode.InvalidState)
+	}
+}
+
+// AC: cli/self-update#ac:managed-is-upgraded-through-its-manager — without
+// --yes and without an interactive terminal, a managed install that can
+// execute its own upgrade MUST still refuse rather than run the manager
+// unattended. This drives the REAL selfUpdateCommand() end to end (real
+// cobracmd wiring, real cliui.Confirm), stopping before RunManaged would
+// ever be reached — proving the refusal, not just the mapping.
+func TestSelfUpdate_ManagedNonInteractiveRefusalWithoutYes(t *testing.T) {
+	srv := releaseServer(t, `[{"tag_name":"v1.0.0","prerelease":false,"draft":false}]`)
+	cfg, _ := releasePinnedHomebrewConfig(t, srv, "1.0.0")
+
+	prevConfigFunc := selfUpdateConfigFunc
+	selfUpdateConfigFunc = func() selfupdate.Config { return cfg }
+	t.Cleanup(func() { selfUpdateConfigFunc = prevConfigFunc })
+
+	prevInteractive := selfUpdateInteractiveFunc
+	selfUpdateInteractiveFunc = func() bool { return false }
+	t.Cleanup(func() { selfUpdateInteractiveFunc = prevInteractive })
+
+	cmd := selfUpdateCommand()
+	cmd.SetArgs([]string{}) // no --yes, no --check
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected a non-interactive refusal, got nil")
+	}
+	ec, ok := err.(exitCoder)
+	if !ok {
+		t.Fatalf("error %T does not expose ExitCode()", err)
+	}
+	if ec.ExitCode() != exitcode.InvalidState {
+		t.Errorf("ExitCode() = %d, want %d (InvalidState)", ec.ExitCode(), exitcode.InvalidState)
 	}
 }
 
@@ -222,6 +455,8 @@ func TestSelfUpdateErrors_FailureExitCodes(t *testing.T) {
 		{"downgrade", selfupdate.KindDowngrade, exitcode.InvalidState},
 		{"unknown_tag", selfupdate.KindUnknownTag, exitcode.NotFound},
 		{"unsupported_platform", selfupdate.KindUnsupportedPlatform, exitcode.NotFound},
+		{"managed_version", selfupdate.KindManagedVersion, exitcode.InvalidState},
+		{"managed_command", selfupdate.KindManagedCommand, selfUpdateUnexpectedCode},
 		{"unexpected", selfupdate.KindUnexpected, selfUpdateUnexpectedCode},
 	}
 	for _, c := range cases {
@@ -437,18 +672,23 @@ func TestSelfUpdate_CheckExitCodeContract(t *testing.T) {
 	})
 }
 
-// Since github.com/strongo/selfupdate v0.2.0, --check states the next step,
-// not just that an update exists (cli/self-update#req:library-provided-
-// behavior — this is inherited, not specscore's own logic). Detection runs
-// against the real test binary's own path, which this package cannot mock
-// (DetectSelf's filesystem seams are internal to the library), so this
-// asserts that ONE of the three possible next-step shapes appears rather
-// than pinning a specific install method: "was installed via" (Managed),
-// the command path itself (Manual — cobracmd spells it via cmd.CommandPath,
-// which for a standalone selfUpdateCommand() is just "self-update"), or
-// "ambiguous" (Ambiguous, the expected classification for a `go test`
-// temp binary, and what cli/self-update#req:exit-code-contract's own
-// safe-default guarantees regardless of the test runner's layout).
+// Since strongo/selfupdate v0.2.0 (now published as
+// github.com/strongo/cli-helpers/selfupdate — see the module's Import
+// migration note), --check states the next step, not just that an update
+// exists (cli/self-update#req:library-provided-behavior — this is
+// inherited, not specscore's own logic). Detection runs against the real
+// test binary's own path, which this package cannot mock (DetectSelf's
+// filesystem seams are internal to the library), so this asserts that ONE
+// of the possible next-step shapes appears rather than pinning a specific
+// install method: "To upgrade through" (Managed, executable — every
+// specscore manager now is, per cli/self-update#req:specscore-managers),
+// "was installed via" (Managed, redirect-only — kept for completeness, even
+// though specscore configures no such manager today), the command path
+// itself (Manual — cobracmd spells it via cmd.CommandPath, which for a
+// standalone selfUpdateCommand() is just "self-update"), or "ambiguous"
+// (Ambiguous, the expected classification for a `go test` temp binary, and
+// what cli/self-update#req:exit-code-contract's own safe-default guarantees
+// regardless of the test runner's layout).
 func TestSelfUpdate_CheckStatesNextStep(t *testing.T) {
 	withVersion(t, "1.0.0")
 	withFakeReleases(t, releaseServer(t, `[{"tag_name":"v1.1.0","prerelease":false,"draft":false}]`))
@@ -462,7 +702,7 @@ func TestSelfUpdate_CheckStatesNextStep(t *testing.T) {
 	}
 
 	got := out.String()
-	nextStepShapes := []string{"was installed via", "self-update", "ambiguous"}
+	nextStepShapes := []string{"To upgrade through", "was installed via", "self-update", "ambiguous"}
 	found := false
 	for _, shape := range nextStepShapes {
 		if strings.Contains(got, shape) {
