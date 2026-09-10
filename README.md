@@ -221,9 +221,9 @@ specscore self-update --yes      # skip the confirmation prompt (non-interactive
 specscore self-update --dry-run  # show what would happen (target version, download URL) without changing anything
 ```
 
-`self-update` detects how `specscore` was installed. **Package-managed installs** are never overwritten; the command reports the manager-owned next step. **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified. On macOS, a Homebrew cask install reports the manager-owned `brew upgrade --cask specscore` next step; the source-build channel above upgrades in place like any other manual install.
+`self-update` detects how `specscore` was installed. **Package-managed installs** (Homebrew, Scoop, WinGet) are never overwritten directly by specscore — instead, `self-update` runs that manager's own upgrade command for you (confirming first, unless `--yes` is given) and verifies the result; it never downloads or writes the managed binary itself. **Manual installs** (release-archive download, `go install`) are replaced in place after the downloaded asset's `checksums.txt` entry is verified. On macOS, a Homebrew cask install runs `brew upgrade --cask specscore`; the source-build channel above upgrades in place like any other manual install.
 
-The detection, download, verification, and replacement logic all live in the shared [`github.com/strongo/selfupdate`](https://github.com/strongo/selfupdate) module — specscore only supplies its own release identity (binary name, repository, managers) and exit-code contract. See [`spec/features/cli/self-update/`](spec/features/cli/self-update/) for what's specscore's own versus inherited from the library.
+The detection, download, verification, and manager-invocation logic all live in the shared [`github.com/strongo/cli-helpers/selfupdate`](https://github.com/strongo/cli-helpers) module — specscore only supplies its own release identity (binary name, repository, managers) and exit-code contract. See [`spec/features/cli/self-update/`](spec/features/cli/self-update/) for what's specscore's own versus inherited from the library.
 
 Install a specific release instead of the latest:
 
