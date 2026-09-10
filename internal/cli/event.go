@@ -3,10 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +35,7 @@ func eventCommand() *cobra.Command {
 	cmd.AddCommand(eventMergeDriverCommand())
 	cmd.AddCommand(eventReplayCommand())
 	cmd.AddCommand(eventReconcileCommand())
+	cmd.AddCommand(eventCheckCommand())
 	return cmd
 }
 
@@ -169,6 +173,150 @@ func resolveEventProjectRoot(projectFlag string) (string, error) {
 		}
 	}
 	return findRepoConfigRoot(start)
+}
+
+// eventCheckCommand returns `event check` — a ledger-monotonicity gate.
+// See spec/features/cli/event/check/README.md and the lesson
+// an-append-only-ledger-merge-must-prove-the-result-is-not-shorter-than-either-parent
+// (recorded 2026-09-09 after a bad merge silently emptied a repo's
+// .specscore/events.jsonl and CI stayed green).
+func eventCheckCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "check --base <git-ref>",
+		Short: "Fail if the working-tree event ledger is missing any event present at --base",
+		Long: `Compares the set of event UUIDs in the project's configured JSONL event
+ledger AS IT EXISTS IN THE WORKING TREE against the set present in that
+same file at <base> (read via "git show <base>:<repo-relative-ledger-path>").
+
+The event ledger is an immutable, append-only, UUID-keyed log — see
+'specscore event merge' and 'specscore event merge-driver'. This command
+proves that invariant held across whatever produced the current working
+tree (a merge, a rebase, a hand edit): every event UUID present at <base>
+must still be present now. When one or more are missing, this command
+exits non-zero and prints each missing UUID, one per line, to stderr —
+easy to grep or feed to further tooling.
+
+A <base> that does not resolve to a commit is an invalid-argument error
+(exit 2). A ledger that does not exist yet at <base> (e.g. the file was
+created after that revision) is treated as zero base UUIDs, not an error
+— there is nothing at <base> to have lost.
+
+This command only checks; it does not merge, repair, or modify anything.
+
+Docs: spec/features/cli/event/check/README.md`,
+		Args:          cobra.NoArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          runEventCheck,
+	}
+	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
+	cmd.Flags().String("base", "", "git ref to compare the working-tree ledger against (required)")
+	return cmd
+}
+
+// gitVerifyCommitFn resolves ref to a commit inside the git repository
+// rooted at repoRoot, returning a non-nil error when ref does not name a
+// valid commit-ish. It is the sole source of "--base does not resolve"
+// errors: everything downstream (gitShowAtRefFn) assumes ref is already
+// known-good, so a failure there is attributed to the ledger path instead,
+// never to the ref. A package-level var so tests can stub it.
+var gitVerifyCommitFn = func(repoRoot, ref string) error {
+	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("not a valid commit-ish")
+	}
+	return nil
+}
+
+// gitShowAtRefFn returns the bytes of the file at relPath as it existed at
+// ref (already verified by gitVerifyCommitFn), in the git repository rooted
+// at repoRoot. A missing path at that ref — the ordinary "the ledger did not
+// exist yet at base" case — is reported as (nil, nil), never an error;
+// `git show`'s own "does not exist in" / "exists on disk, but not in"
+// messages are how git spells that case, and are the only stderr text this
+// treats as non-fatal. Any other failure (a corrupt object, an unreadable
+// repository, etc.) is returned as an error. A package-level var so tests
+// can stub it.
+var gitShowAtRefFn = func(repoRoot, ref, relPath string) ([]byte, error) {
+	cmd := exec.Command("git", "-C", repoRoot, "show", ref+":"+relPath)
+	out, err := cmd.Output()
+	if err != nil {
+		stderr := ""
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			stderr = string(exitErr.Stderr)
+		}
+		if strings.Contains(stderr, "does not exist in") || strings.Contains(stderr, "exists on disk, but not in") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("git show %s:%s: %w: %s", ref, relPath, err, strings.TrimSpace(stderr))
+	}
+	return out, nil
+}
+
+func runEventCheck(cmd *cobra.Command, _ []string) error {
+	base, _ := cmd.Flags().GetString("base")
+	if strings.TrimSpace(base) == "" {
+		return exitcode.InvalidArgsError("--base is required")
+	}
+	projectFlag, _ := cmd.Flags().GetString("project")
+	projectRoot, err := resolveEventProjectRoot(projectFlag)
+	if err != nil {
+		return err
+	}
+	// Canonicalize projectRoot BEFORE deriving the ledger path from it.
+	// `git rev-parse --show-toplevel` (gitremote.TopLevel, below) always
+	// resolves symlinks; on macOS /tmp is itself a symlink to /private/tmp,
+	// so an un-resolved projectRoot (e.g. from a test using t.TempDir())
+	// makes the later filepath.Rel(repoRoot, ledgerPath) walk "outside" the
+	// repo (a run of ".." segments) even though both paths name the same
+	// file. See pkg/lint/decision_immutability.go's identical gotcha.
+	if resolved, evalErr := filepath.EvalSymlinks(projectRoot); evalErr == nil {
+		projectRoot = resolved
+	}
+	ledgerPath, err := event.ConfiguredLedgerPath(projectRoot)
+	if err != nil {
+		return exitcode.InvalidArgsErrorf("event ledger configuration: %v", err)
+	}
+	repoRoot, err := gitremote.TopLevel(projectRoot)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("resolving git repository root from %s: %v", projectRoot, err)
+	}
+	relLedgerPath, err := filepath.Rel(repoRoot, ledgerPath)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("computing event ledger path relative to repository root %s: %v", repoRoot, err)
+	}
+
+	if err := gitVerifyCommitFn(repoRoot, base); err != nil {
+		return exitcode.InvalidArgsErrorf("--base %q does not resolve to a commit in %s: %v", base, repoRoot, err)
+	}
+	baseData, err := gitShowAtRefFn(repoRoot, base, relLedgerPath)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("reading event ledger %s at %s: %v", relLedgerPath, base, err)
+	}
+	baseUUIDs, err := event.LedgerUUIDs(baseData, base+":"+relLedgerPath)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("parsing event ledger %s at %s: %v", relLedgerPath, base, err)
+	}
+
+	workingData, err := os.ReadFile(ledgerPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return exitcode.UnexpectedErrorf("reading working-tree event ledger %s: %v", ledgerPath, err)
+	}
+	workingUUIDs, err := event.LedgerUUIDs(workingData, ledgerPath)
+	if err != nil {
+		return exitcode.UnexpectedErrorf("parsing working-tree event ledger %s: %v", ledgerPath, err)
+	}
+
+	missing := event.MissingUUIDs(baseUUIDs, workingUUIDs)
+	if len(missing) == 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "ok: working-tree event ledger %s retains all %d event(s) present at %s\n", ledgerPath, len(baseUUIDs), base)
+		return nil
+	}
+	for _, id := range missing {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), id)
+	}
+	return exitcode.InvalidStateErrorf("event ledger %s is missing %d of %d event(s) present at %s (UUIDs listed above); the ledger must be append-only", ledgerPath, len(missing), len(baseUUIDs), base)
 }
 
 func eventReplayCommand() *cobra.Command {
