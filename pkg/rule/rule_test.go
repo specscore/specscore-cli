@@ -246,6 +246,7 @@ func TestScaffoldDetailRejects(t *testing.T) {
 		{name: "automated without control", opts: Options{Slug: "x", Enforcement: "Automated"}},
 		{name: "enforced with sentinel control", opts: Options{Slug: "x", Enforcement: "Enforced", Control: Sentinel}},
 		{name: "invalid skill name", opts: Options{Slug: "x", Skills: []string{"Not A Skill"}}},
+		{name: "trigger over the limit", opts: Options{Slug: "x", Trigger: strings.Repeat("a", TriggerMaxLen+1)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,6 +255,34 @@ func TestScaffoldDetailRejects(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A Trigger at or under the limit is written into the header; the field is
+// entirely absent (no line at all) when unset, because it is optional.
+func TestScaffoldDetailTrigger(t *testing.T) {
+	t.Run("present trigger is written", func(t *testing.T) {
+		got, err := ScaffoldDetail(Options{Slug: "x", Date: "2026-01-01", Trigger: "about to write v2"})
+		if err != nil {
+			t.Fatalf("ScaffoldDetail: %v", err)
+		}
+		if !strings.Contains(string(got), "**Trigger:** about to write v2\n") {
+			t.Fatalf("Trigger line missing:\n%s", got)
+		}
+	})
+	t.Run("absent trigger writes no line", func(t *testing.T) {
+		got, err := ScaffoldDetail(Options{Slug: "x", Date: "2026-01-01"})
+		if err != nil {
+			t.Fatalf("ScaffoldDetail: %v", err)
+		}
+		if strings.Contains(string(got), "**Trigger:**") {
+			t.Fatalf("an unset Trigger must write no line:\n%s", got)
+		}
+	})
+	t.Run("exactly the limit is accepted", func(t *testing.T) {
+		if _, err := ScaffoldDetail(Options{Slug: "x", Date: "2026-01-01", Trigger: strings.Repeat("a", TriggerMaxLen)}); err != nil {
+			t.Fatalf("a %d-character trigger must be accepted: %v", TriggerMaxLen, err)
+		}
+	})
 }
 
 // A Statement supplied across several lines must still write exactly one bold

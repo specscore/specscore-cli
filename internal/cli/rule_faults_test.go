@@ -31,6 +31,7 @@ func ruleSeams(t *testing.T, apply func()) {
 	writeFile, upsert, remove := ruleWriteFileAtomicFn, ruleUpsertIndexRowFn, ruleRemoveIndexRowFn
 	ensure, edits, promote := ruleEnsureIndexFn, ruleApplyFieldEditsFn, ruleSetLessonPromotesToFn
 	readIndex := ruleReadIndexFn
+	detailsBySlug := ruleDetailsBySlugFn
 	resolveLesson, discoverLessons := lessonResolveLessonFileFn, lessonDiscoverFn
 	discoverFeatures, runLint := featureDiscoverFn, lintRunFn
 	mkdir, removeAll, readFile, stat, getenv := osMkdirAllCLI, osRemoveAllCLI, osReadFileCLI, osStatCLI, osGetenvCLI
@@ -40,6 +41,7 @@ func ruleSeams(t *testing.T, apply func()) {
 		ruleWriteFileAtomicFn, ruleUpsertIndexRowFn, ruleRemoveIndexRowFn = writeFile, upsert, remove
 		ruleEnsureIndexFn, ruleApplyFieldEditsFn, ruleSetLessonPromotesToFn = ensure, edits, promote
 		ruleReadIndexFn = readIndex
+		ruleDetailsBySlugFn = detailsBySlug
 		lessonResolveLessonFileFn, lessonDiscoverFn = resolveLesson, discoverLessons
 		featureDiscoverFn, lintRunFn = discoverFeatures, runLint
 		osMkdirAllCLI, osRemoveAllCLI, osReadFileCLI, osStatCLI, osGetenvCLI = mkdir, removeAll, readFile, stat, getenv
@@ -608,6 +610,33 @@ func TestRuleListPropagatesIndexReadFailure(t *testing.T) {
 	})
 	if _, _, err := runRule(t, root, "list"); err == nil {
 		t.Fatal("list should propagate an index read failure")
+	}
+}
+
+func TestRuleRenderPropagatesIndexReadFailure(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "x"); err != nil {
+		t.Fatal(err)
+	}
+	ruleSeams(t, func() {
+		ruleReadIndexFn = func(string) (rule.IndexReport, error) { return rule.IndexReport{}, errRuleFault }
+	})
+	if _, _, err := runRule(t, root, "render"); err == nil {
+		t.Fatal("render should propagate an index read failure")
+	}
+}
+
+func TestRuleRenderPropagatesDetailReadFailure(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "x"); err != nil {
+		t.Fatal(err)
+	}
+	ruleSeams(t, func() {
+		ruleDetailsBySlugFn = func(string) (map[string]*rule.Detail, error) { return nil, errRuleFault }
+	})
+	_, _, err := runRule(t, root, "render")
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.Unexpected, err)
 	}
 }
 

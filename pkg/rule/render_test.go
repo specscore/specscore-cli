@@ -85,6 +85,20 @@ func TestBuildRenderEntriesSortsBySectionThenTrigger(t *testing.T) {
 	}
 }
 
+// TestBuildRenderEntriesBreaksTiesBySlug covers the third sort key: two rows
+// whose Section and Trigger both happen to agree must still sort
+// deterministically, by slug.
+func TestBuildRenderEntriesBreaksTiesBySlug(t *testing.T) {
+	rows := []Row{
+		NewRow("zeta", false, "Active", "Always the same thing.", []string{"fleet"}, "Stated", "", nil),
+		NewRow("alpha", false, "Active", "Always the same thing.", []string{"fleet"}, "Stated", "", nil),
+	}
+	entries := BuildRenderEntries(rows, nil)
+	if len(entries) != 2 || entries[0].Slug != "alpha" || entries[1].Slug != "zeta" {
+		t.Fatalf("entries = %#v, want alpha before zeta on a tied Section and Trigger", entries)
+	}
+}
+
 func TestRenderEntryRenderLine(t *testing.T) {
 	e := RenderEntry{Trigger: "about to write v2", Slug: "always-qualify-version-numbers"}
 	if got, want := e.RenderLine(), "- about to write v2 → rule:always-qualify-version-numbers"; got != want {

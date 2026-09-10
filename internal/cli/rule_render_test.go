@@ -128,11 +128,17 @@ func TestRuleRenderSectionGroupingAndFilter(t *testing.T) {
 		"Never ship a mocked backend, ship real routes."); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := runRule(t, root, "new", "authority-rule", "--detailed",
+		"--statement", "Never merge without a landing owner.",
+		"--trigger", "about to merge without an owner"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Section is not writable via a `rule new`/`rule promote` flag (only
 	// --trigger is), so it is added the way a hand-authored header would be.
 	addSectionField(t, root, "explicit-trigger", "Answering")
 	addSectionField(t, root, "instructions-trigger", "Answering")
+	addSectionField(t, root, "authority-rule", "Authority")
 
 	t.Run("md groups by section, other last", func(t *testing.T) {
 		out, _, err := runRule(t, root, "render", "--format", "md")
@@ -144,6 +150,10 @@ func TestRuleRenderSectionGroupingAndFilter(t *testing.T) {
 			"",
 			"- about to park an open question → rule:instructions-trigger",
 			"- about to write v2 → rule:explicit-trigger",
+			"",
+			"## Authority",
+			"",
+			"- about to merge without an owner → rule:authority-rule",
 			"",
 			"## Other",
 			"",
@@ -183,6 +193,21 @@ func TestRuleRenderRejectsUnknownFormat(t *testing.T) {
 	_, _, err := runRule(t, root, "render", "--format", "yaml")
 	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
 		t.Fatalf("exit = %d, want %d", got, exitcode.InvalidArgs)
+	}
+}
+
+func TestRuleRenderRejectsUnknownScope(t *testing.T) {
+	root := setupRuleProject(t)
+	_, _, err := runRule(t, root, "render", "--scope", "team:platform")
+	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+		t.Fatalf("exit = %d, want %d", got, exitcode.InvalidArgs)
+	}
+}
+
+func TestRuleRenderPropagatesProjectResolutionFailure(t *testing.T) {
+	_, _, err := runRule(t, t.TempDir(), "render")
+	if err == nil {
+		t.Fatal("render outside any SpecScore project must fail")
 	}
 }
 
