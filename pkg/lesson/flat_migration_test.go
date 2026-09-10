@@ -141,12 +141,8 @@ func writeFlatMigrationIndex(t *testing.T, lessonsDir, canonicalPath string) {
 	if len(occurrences) > 0 {
 		last = occurrences[len(occurrences)-1].OccurredAt.UTC().Format("2006-01-02T15:04:05Z")
 	}
-	control := strings.TrimSpace(l.Control)
-	if control == "" {
-		control = "—"
-	}
-	row := fmt.Sprintf("| [%s](%s/README.md) | %s | %s | %d | %s | %s |", l.Slug, l.Slug, l.Status, strings.Join(l.Classifications, ", "), len(occurrences), last, control)
-	index := "# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n" + row + "\n\n## Open Questions\n\nNone at this time.\n"
+	row := fmt.Sprintf("| [%s](%s/README.md) | %s | %s | %d | %s |", l.Slug, l.Slug, l.Status, strings.Join(l.Classifications, ", "), len(occurrences), last)
+	index := "# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n" + row + "\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}

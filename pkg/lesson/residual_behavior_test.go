@@ -1136,29 +1136,6 @@ func TestFlatMigrationResidualStageTransformations(t *testing.T) {
 	}
 }
 
-func TestFlatMigrationIndexRepresentsEmptyEnforcementAsDash(t *testing.T) {
-	lessons := filepath.Join(t.TempDir(), "spec", "lessons")
-	canonical := filepath.Join(lessons, "rule", "README.md")
-	if err := os.MkdirAll(filepath.Join(lessons, "rule", "occurrences"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body, err := ScaffoldCanonical(ScaffoldOptions{Slug: "rule"}, []string{"process"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body = bytes.Replace(body, []byte("**Control:** —"), []byte("**Control:**"), 1)
-	if err := os.WriteFile(canonical, body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	row := "| [rule](rule/README.md) | Recorded | process | 0 |  | — |"
-	if err := os.WriteFile(filepath.Join(lessons, "README.md"), []byte(row+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateFlatMigrationIndexRowWithFS(lessons, canonical, osLessonFS{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func writeRelationFieldForResidual(t *testing.T, lessons, slug, field, value string) {
 	t.Helper()
 	path := filepath.Join(lessons, slug, "README.md")

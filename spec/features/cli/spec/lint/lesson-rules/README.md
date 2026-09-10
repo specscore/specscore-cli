@@ -55,6 +55,10 @@ A file is recognized as a Lesson when its first H1 heading matches `# Lesson: <t
 
 `L-004` MUST report a violation naming every index row whose `Status`/`Recurred`/`Date`/`Owner` cells do not match the corresponding Lesson file. `--fix` MUST regenerate drifted rows. A missing `spec/lessons/README.md` emits neither `L-003` nor `L-004` — that gap is the generic `readme-exists` rule's job.
 
+#### REQ: rule-l-004-canonical-column-set
+
+A canonical `spec/lessons/README.md` table MUST project exactly five columns, in order: `Lesson` (linked to `<slug>/README.md`), `Status`, `Classifications`, `Occurrences`, `Last Occurred`. The column carries no `Enforcement` cell — the Lesson's own `**Control:**` text duplicates the Lesson README's own `## Enforcement` section, which `lesson info <slug>` already reads directly, so every index row no longer pays to carry a copy of it. `L-004` MUST treat a table still on the prior six-column shape (a trailing `Enforcement` cell) as drift, and `--fix` MUST rewrite it to the five-column projection in full.
+
 #### REQ: lesson-index-writer-is-locked-and-durable
 
 Every full rewrite and bounded row upsert MUST use the same project-private shared index lock and the same same-directory atomic writer: preserve mode, write the complete temp file, fsync the file, close it, rename atomically, then fsync and close the parent directory. A failure before rename MUST leave the previous index parseable and byte-identical. A file/parent fence failure after rename MUST retain the new index and report mutation uncertainty so a retry never restores a whole snapshot.
@@ -142,6 +146,12 @@ Flat and directory Lesson READMEs MUST join the generic status-bearing document 
 **Given** an index row whose `Status` cell disagrees with the Lesson file's `**Status:**`
 **When** `specscore spec lint --fix` runs
 **Then** the row is rewritten to match and a subsequent lint run reports no `L-004` violation.
+
+### AC: l004-old-six-column-index-migrated (verifies REQ:rule-l-004-canonical-column-set)
+
+**Given** a canonical `spec/lessons/README.md` still on the prior six-column shape (header and every row carry a trailing `Enforcement` cell)
+**When** `specscore spec lint --fix` runs
+**Then** the table is rewritten to the five-column projection — no `Enforcement` cell anywhere — and a subsequent lint run reports no `L-004` violation; a store already on the five-column shape is left byte-identical by a repeat `--fix`.
 
 ### AC: l010-bare-em-dash-flagged (verifies REQ:rule-l-010-control-mechanism)
 

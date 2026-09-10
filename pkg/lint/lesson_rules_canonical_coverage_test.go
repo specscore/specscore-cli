@@ -375,7 +375,7 @@ func TestLintOccurrenceChildren_MissingUnreadableNonJSONMalformedAndValid(t *tes
 	}
 }
 
-func TestExpectedLessonIndexRow_LegacyCanonicalOccurrenceAndEnforcement(t *testing.T) {
+func TestExpectedLessonIndexRow_LegacyCanonicalOccurrence(t *testing.T) {
 	legacy, err := expectedLessonIndexRow("legacy", &lesson.Lesson{Slug: "legacy", Status: " Stated ", Recurred: 3})
 	if err != nil || legacy.link != "legacy.md" || legacy.classifications != "Legacy" || legacy.occurrences != "3" || legacy.status != "Stated" {
 		t.Fatalf("legacy row=%+v err=%v", legacy, err)
@@ -393,15 +393,9 @@ func TestExpectedLessonIndexRow_LegacyCanonicalOccurrenceAndEnforcement(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
-	canonical.DuplicateOf = "canonical"
 	row, err := expectedLessonIndexRow("indexed", canonical)
-	if err != nil || row.occurrences != "1" || row.lastOccurred != "2026-08-10T12:34:56Z" || row.enforcement != "Duplicate Of: canonical" {
-		t.Fatalf("canonical duplicate row=%+v err=%v", row, err)
-	}
-	canonical.DuplicateOf, canonical.Control = "—", " deterministic control "
-	row, err = expectedLessonIndexRow("indexed", canonical)
-	if err != nil || row.enforcement != "deterministic control" {
-		t.Fatalf("canonical control row=%+v err=%v", row, err)
+	if err != nil || row.occurrences != "1" || row.lastOccurred != "2026-08-10T12:34:56Z" {
+		t.Fatalf("canonical row=%+v err=%v", row, err)
 	}
 	canonical.Path = filepath.Join(t.TempDir(), "missing", "README.md")
 	if _, err := expectedLessonIndexRow("indexed", canonical); err == nil {
@@ -433,12 +427,12 @@ not a row
 	}
 
 	body = `## Lessons
-| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |
-|---|---|---|---:|---|---|
-| no-link | Recorded | process | 0 | | — |
-| [](x/README.md) | Recorded | process | 0 | | — |
-| [label](other/README.md) | Recorded | process | 0 | | — |
-| [good](good/README.md) | Recorded | process | 0 | | — |
+| Lesson | Status | Classifications | Occurrences | Last Occurred |
+|---|---|---|---:|---|
+| no-link | Recorded | process | 0 |  |
+| [](x/README.md) | Recorded | process | 0 |  |
+| [label](other/README.md) | Recorded | process | 0 |  |
+| [good](good/README.md) | Recorded | process | 0 |  |
 `
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -485,9 +479,9 @@ func TestLessonIndexRules_ReportsDuplicateOrphanShapeAndExpectedRowFailure(t *te
 	}
 
 	canonicalIndex := `## Lessons
-| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |
-|---|---|---|---:|---|---|
-| [missing](missing/README.md) | Recorded | process | 0 | | — |
+| Lesson | Status | Classifications | Occurrences | Last Occurred |
+|---|---|---|---:|---|
+| [missing](missing/README.md) | Recorded | process | 0 |  |
 `
 	if err := os.WriteFile(filepath.Join(specRoot, "lessons", "README.md"), []byte(canonicalIndex), 0o644); err != nil {
 		t.Fatal(err)
@@ -510,7 +504,7 @@ func TestRewriteLessonIndex_PropagatesExpectedRowFailureWithoutFollowingSection(
 }
 
 func canonicalIndexBody(rows ...string) string {
-	return "## Lessons\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n" + strings.Join(rows, "\n") + "\n"
+	return "## Lessons\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n" + strings.Join(rows, "\n") + "\n"
 }
 
 func legacyIndexBody(rows ...string) string {
@@ -537,13 +531,13 @@ func TestUpsertLessonIndexRow_CanonicalAndLegacyContracts(t *testing.T) {
 	if err := UpsertLessonIndexRow(specRoot, l); err == nil {
 		t.Fatal("missing canonical table accepted")
 	}
-	if err := os.WriteFile(indexPath, []byte("## Lessons\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n\n|---|---|---|---:|---|---|\n"), 0o644); err != nil {
+	if err := os.WriteFile(indexPath, []byte("## Lessons\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n\n|---|---|---|---:|---|\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := UpsertLessonIndexRow(specRoot, l); err == nil {
 		t.Fatal("non-adjacent separator accepted")
 	}
-	if err := os.WriteFile(indexPath, []byte(canonicalIndexBody("| [other](other/README.md) | Recorded | process | 0 | | — |")), 0o644); err != nil {
+	if err := os.WriteFile(indexPath, []byte(canonicalIndexBody("| [other](other/README.md) | Recorded | process | 0 |  |")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := UpsertLessonIndexRow(specRoot, l); err != nil {
@@ -557,8 +551,8 @@ func TestUpsertLessonIndexRow_CanonicalAndLegacyContracts(t *testing.T) {
 		t.Fatalf("canonical upsert is not idempotent:\n%s", body)
 	}
 	duplicate := canonicalIndexBody(
-		"| [new-row](new-row/README.md) | Recorded | process | 0 | | — |",
-		"| [new-row](new-row/README.md) | Recorded | process | 0 | | — |",
+		"| [new-row](new-row/README.md) | Recorded | process | 0 |  |",
+		"| [new-row](new-row/README.md) | Recorded | process | 0 |  |",
 	)
 	if err := os.WriteFile(indexPath, []byte(duplicate), 0o644); err != nil {
 		t.Fatal(err)
