@@ -650,6 +650,8 @@
             {
               "path": "specscore lesson new",
               "flags": [
+                "--classification",
+                "--control",
                 "--force",
                 "--owner",
                 "--project",
@@ -1704,6 +1706,8 @@
             {
               "path": "specscore lesson new",
               "flags": [
+                "--classification",
+                "--control",
                 "--force",
                 "--owner",
                 "--project",

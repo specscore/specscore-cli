@@ -577,7 +577,7 @@ func TestLessonNewFilesystemAndDeliveryEdges(t *testing.T) {
 	_ = projectdef.WriteSpecConfig(root, lessonTestConfig())
 	configureFailingLessonEvents(t, root)
 	cmd := lessonNewCommand()
-	setLessonCommandFlags(t, cmd, map[string]string{"project": root})
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "classification": "process"})
 	requireCLISuccess(t, runLessonNewWithDeps(cmd, []string{"delivery-edge"}, defaultLessonCLIDeps()))
 	requireCLISuccess(t, ensureLessonAncestorIndexes(t.TempDir()))
 }

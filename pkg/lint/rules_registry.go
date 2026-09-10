@@ -226,6 +226,7 @@ var builtinRules = []Rule{
 	{ID: "L-007", Family: "lesson", Severity: "error", Description: "Requires Enforced Lessons to declare deterministic control, verification, and stable evidence."},
 	{ID: "L-008", Family: "lesson", Severity: "error", Description: "Requires duplicate and supersession relations to resolve without conflicts or cycles."},
 	{ID: "L-009", Family: "lesson", Severity: "error", Description: "Requires every canonical Lesson occurrence child to satisfy the published append-only JSON contract."},
+	{ID: "L-010", Family: "lesson", Severity: "error", Description: "Requires a Recorded or Stated Lesson dated after 2026-09-09 to name a Control mechanism from the configured vocabulary, or an explicit \"none-yet: <why>\"."},
 
 	// Rule lint rules.
 	{ID: "R-001", Family: "rule", Severity: "error", Description: "Requires every rule detail document to carry the ordered, non-duplicated metadata field set, non-empty required values, a YYYY-MM-DD Date, an Instructions section, and paired Compliant/Violation examples."},

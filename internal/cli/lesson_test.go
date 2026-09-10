@@ -32,6 +32,23 @@ func runLesson(t *testing.T, args ...string) (string, string, error) {
 				}
 			}
 		}
+		// `lesson new` scaffolds with no classification selected by default
+		// (L-005 then refuses the empty result). Every historical test here
+		// predates that per-lesson --classification flag and expects the
+		// single "process" term from lessonTestConfig() to land on the
+		// scaffold as before; a test exercising the deliberate
+		// no-classification-selected path passes --classification itself (or
+		// calls runLessonNewWithDeps directly, bypassing this helper).
+		hasClassification := false
+		for _, a := range args {
+			if a == "--classification" {
+				hasClassification = true
+				break
+			}
+		}
+		if !hasClassification {
+			args = append(args, "--classification", "process")
+		}
 	}
 	cmd := lessonCommand()
 	var out, errOut bytes.Buffer

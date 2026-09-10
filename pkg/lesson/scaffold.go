@@ -27,6 +27,12 @@ type ScaffoldOptions struct {
 	Title string // defaults to a title-cased slug
 	Owner string // defaults to "unknown"
 	Date  string // ISO-8601 (YYYY-MM-DD); defaults to today's UTC date
+
+	// Control is the canonical README's Enforcement **Control:** value.
+	// ScaffoldCanonical only; Scaffold's flat layout has no structured
+	// Enforcement fields. Defaults to "—" (unnamed) when empty — the
+	// pre-L-010 placeholder every caller except `lesson new` still relies on.
+	Control string
 }
 
 // titleCaseFromSlug turns "kinder-fake-hides-bug" into "Kinder Fake Hides Bug".
@@ -107,16 +113,28 @@ func ScaffoldCanonical(opts ScaffoldOptions, classifications []string) ([]byte, 
 	if date == "" {
 		date = time.Now().UTC().Format("2006-01-02")
 	}
-	if len(classifications) == 0 {
-		classifications = []string{"process"}
+	// No implicit vocabulary default: an empty/nil classifications slice
+	// scaffolds a genuinely empty **Classifications:** line. Every caller that
+	// needs a non-empty value (migrate-flat, legacy-import) already preflights
+	// that requirement itself before reaching here; `lesson new` deliberately
+	// scaffolds empty by default so L-005 forces a deliberate --classification
+	// choice instead of silently writing every configured value.
+	control := strings.TrimSpace(opts.Control)
+	if control == "" {
+		control = "—"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "---\nformat: %s\nstatus: Recorded\n---\n\n", FormatURL)
 	fmt.Fprintf(&b, "# Lesson: %s\n\n", title)
 	fmt.Fprintf(&b, "**Status:** Recorded\n**Date:** %s\n**Owner:** %s\n", date, owner)
-	fmt.Fprintf(&b, "**Classifications:** %s\n", strings.Join(classifications, ", "))
+	if len(classifications) > 0 {
+		fmt.Fprintf(&b, "**Classifications:** %s\n", strings.Join(classifications, ", "))
+	} else {
+		b.WriteString("**Classifications:**\n")
+	}
 	b.WriteString("**Legacy Provenance:** —\n**Duplicate Of:** —\n**Supersedes:** —\n**Superseded By:** —\n\n")
-	b.WriteString("## Lesson\n\n<!-- TODO: the durable rule. -->\n\n## Process Gap\n\n<!-- TODO: what should have caught this, and why it did not. -->\n\n## Tracking\n\n- **Occurrence store:** `occurrences/`\n- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n- **Occurrence schema:** `https://specscore.md/new/lesson-occurrence.schema.json`\n\n## Enforcement\n\n**Control:** —\n**Verification:** —\n**Evidence:** —\n\n## Open Questions\n\nNone at this time.\n\n")
+	b.WriteString("## Lesson\n\n<!-- TODO: the durable rule. -->\n\n## Process Gap\n\n<!-- TODO: what should have caught this, and why it did not. -->\n\n## Tracking\n\n- **Occurrence store:** `occurrences/`\n- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n- **Occurrence schema:** `https://specscore.md/new/lesson-occurrence.schema.json`\n\n")
+	fmt.Fprintf(&b, "## Enforcement\n\n**Control:** %s\n**Verification:** —\n**Evidence:** —\n\n## Open Questions\n\nNone at this time.\n\n", control)
 	fmt.Fprintf(&b, "---\n*This document follows the %s*\n", FormatURL)
 	return []byte(b.String()), nil
 }

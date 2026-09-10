@@ -1125,7 +1125,15 @@ func writeImportedLessonWithFS(target, slug, title string, mapping LegacyMapping
 	}
 	provenance := legacyProvenance(inv, e)
 	committedAt, _ := time.Parse(time.RFC3339, inv.Source.CommittedAt)
-	body, err := ScaffoldCanonical(ScaffoldOptions{Slug: slug, Title: title, Owner: "legacy-import", Date: committedAt.UTC().Format("2006-01-02")}, mapping.Classifications)
+	// A legacy import always writes status Recorded (enforced above) at the
+	// commit date of this import event, which — unlike migrate-flat's
+	// preserved original Date — is effectively "now". An imported Lesson has
+	// no reviewed enforcement mechanism yet, so name that honestly instead of
+	// the bare "—" placeholder L-010 would otherwise refuse.
+	body, err := ScaffoldCanonical(ScaffoldOptions{
+		Slug: slug, Title: title, Owner: "legacy-import", Date: committedAt.UTC().Format("2006-01-02"),
+		Control: "none-yet: legacy-imported record, mechanism not reviewed yet",
+	}, mapping.Classifications)
 	if err != nil {
 		return err
 	}

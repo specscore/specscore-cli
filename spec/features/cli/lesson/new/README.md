@@ -16,7 +16,7 @@ status: Approved
 ## Synopsis
 
 ```
-specscore lesson new <slug> [--title <text>] [--owner <id>] [--force] [--project <path>]
+specscore lesson new <slug> [--title <text>] [--owner <id>] [--classification <name>]... [--control <text>] [--force] [--project <path>]
 ```
 
 ## Problem
@@ -45,7 +45,15 @@ The command MUST refuse a sibling compatibility file at `spec/lessons/<slug>.md`
 
 #### REQ: canonical-directory-scaffold
 
-The command MUST create `spec/lessons/<slug>/README.md` and `spec/lessons/<slug>/occurrences/`. An otherwise empty occurrence store MUST contain an empty `.gitkeep` marker so a Git checkout retains the required directory; the marker is not an occurrence. The README MUST carry format/status frontmatter, Recorded lifecycle metadata, configured classifications, relation and immutable-provenance fields, concise `## Lesson` and `## Process Gap` prompts, a `## Tracking` line with the exact published occurrence-schema URL, structured Enforcement fields, `## Open Questions`, and the matching adherence footer.
+The command MUST create `spec/lessons/<slug>/README.md` and `spec/lessons/<slug>/occurrences/`. An otherwise empty occurrence store MUST contain an empty `.gitkeep` marker so a Git checkout retains the required directory; the marker is not an occurrence. The README MUST carry format/status frontmatter, Recorded lifecycle metadata, relation and immutable-provenance fields, concise `## Lesson` and `## Process Gap` prompts, a `## Tracking` line with the exact published occurrence-schema URL, structured Enforcement fields, `## Open Questions`, and the matching adherence footer.
+
+#### REQ: classification-selection-is-explicit-and-empty-by-default
+
+The scaffolded `**Classifications:**` line MUST carry only the classification names passed via repeatable `--classification <name>`, and MUST be empty when no `--classification` flag is given — the command MUST NOT default to every `lessons.classifications` vocabulary term configured in `specscore.yaml`. Each `--classification` value MUST resolve against the configured vocabulary and be unique within the invocation; an unconfigured or duplicated value MUST exit `2` before any write. An empty selection is not itself a preflight error: the resulting empty-Classifications scaffold is left to the read-only lint pass (`L-005`) to refuse, forcing a deliberate choice rather than silently writing every configured term.
+
+#### REQ: control-defaults-to-named-deferral
+
+The scaffolded Enforcement `**Control:**` line MUST default to `none-yet: just recorded, mechanism not chosen yet` when `--control` is omitted, and MUST carry the literal `--control` text verbatim when given. The bare em-dash placeholder MUST NOT be used for a freshly scaffolded Lesson: a Recorded Lesson dated after the `L-010` exemption boundary with a bare `—` Control fails lint immediately, and the honest default keeps `lesson new` a single zero-required-flags command that still produces a lint-clean result.
 
 #### REQ: bounded-index-upsert
 
@@ -66,6 +74,8 @@ Any failure proven to precede publication MUST leave the declared write set byte
 | `slug` | Yes | Canonical directory name. |
 | `--title` | No | Lesson title; defaults from the slug. |
 | `--owner` | No | Owner/author; defaults from the local user. |
+| `--classification` | No | Classification tag from `lessons.classifications`; repeatable. Omitted entirely by default — the scaffold carries no classifications until this is passed. |
+| `--control` | No | Enforcement `**Control:**` text. Defaults to `none-yet: just recorded, mechanism not chosen yet` when omitted. |
 | `--force` | No | Replace the canonical README while preserving its occurrence directory. |
 | `--project` | No | Project root; otherwise autodetected. |
 
@@ -75,7 +85,7 @@ Any failure proven to precede publication MUST leave the declared write set byte
 |---|---|
 | `0` | The canonical Lesson/index/event transaction completed, or durable subscriber failures remain independently pending and are reported as warnings. |
 | `1` | A flat sibling or unforced canonical target already exists. |
-| `2` | The slug or reviewed scaffold content is invalid. |
+| `2` | The slug, reviewed scaffold content, or a `--classification` value (duplicated or outside `lessons.classifications`) is invalid. |
 | `3` | The project root is not found. |
 | `10` | Configuration, I/O, index, focused lint, or event preparation/commit failed. |
 
@@ -99,8 +109,20 @@ Any failure proven to precede publication MUST leave the declared write set byte
 ### AC: scaffolded-lesson-is-canonical-and-lint-clean
 
 **Given** a lint-clean configured project
-**When** `lesson new verify-before-merge` runs
+**When** `lesson new verify-before-merge --classification process` runs
 **Then** the canonical README and Git-preserved empty occurrence store exist, the exact canonical index row exists, focused and whole-project read-only lint report no new error, and no sibling flat file exists.
+
+### AC: no-classification-selected-fails-self-lint
+
+**Given** a lint-clean configured project and today's date after `2026-09-09`
+**When** `lesson new no-classification-chosen` runs with no `--classification` flag
+**Then** the README is scaffolded with an empty `**Classifications:**` line, the command's own read-only lint pass reports the owned `L-005` violation, and the command exits nonzero with the Lesson and prepared event retained for explicit recovery rather than a silent empty-classification success.
+
+### AC: control-defaults-satisfy-l010
+
+**Given** a lint-clean configured project and today's date after the `L-010` exemption boundary
+**When** `lesson new dated-lesson --classification process` runs with no `--control` flag
+**Then** the scaffolded `**Control:**` reads `none-yet: just recorded, mechanism not chosen yet` and the command's own read-only lint pass reports no `L-010` violation.
 
 ### AC: unrelated-files-remain-byte-identical
 
