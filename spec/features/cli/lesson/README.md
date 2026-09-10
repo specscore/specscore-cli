@@ -99,7 +99,7 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 | [CLI](../README.md) | Inherits shared exit-code contract, `--format`/`--project` conventions, and project autodetection. |
 | [cli/plan](../plan/README.md) | Closest structural sibling: a flat single-file artifact family whose disposition vocabulary (`Withdrawn`, `Superseded`) and non-relocating `change-status` model this group reuses directly. |
 | [lifecycle-transitions](../lifecycle-transitions/README.md) | `lesson change-status` implements this shared contract for the Lesson kind. |
-| [spec lint](../spec/lint/README.md) | Hosts the `L-001`–`L-010` rule family documented in [cli/spec/lint/lesson-rules](../spec/lint/lesson-rules/README.md). |
+| [spec lint](../spec/lint/README.md) | Hosts the `L-001`–`L-011` rule family documented in [cli/spec/lint/lesson-rules](../spec/lint/lesson-rules/README.md). |
 | [cli/event](../event/README.md) | Delivers lifecycle/occurrence events through the reliable per-subscriber behavior in [events](events/README.md). |
 | [coordination](coordination/README.md) | Renders durable agent-work links and delegates explicit live actions to Synchestra without becoming a broker. |
 

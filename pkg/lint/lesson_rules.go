@@ -68,7 +68,86 @@ func defaultLessonIndexLockDeps() lessonIndexLockDeps {
 
 // lessonRuleIDs is the ordered rule-name set the lessonRulesChecker answers
 // to; linter.go registers the single checker instance under each.
-var lessonRuleIDs = []string{"L-001", "L-002", "L-003", "L-004", "L-005", "L-006", "L-007", "L-008", "L-009", "L-010"}
+var lessonRuleIDs = []string{"L-001", "L-002", "L-003", "L-004", "L-005", "L-006", "L-007", "L-008", "L-009", "L-010", "L-011"}
+
+// lessonControlMechanismThreshold is the L-010 exemption boundary: a Lesson
+// **Date:** on or before this day is grandfathered regardless of its Control
+// content. Set by the founder-approved rule
+// (spec/research/lessons-store-analysis-2026-09-09.md §5.2 rule 2 in
+// sneat-co/backstage): "Phase 3 makes `specscore spec lint` refuse a bare —
+// Control on a lesson dated after 2026-09-09."
+const lessonControlMechanismThreshold = "2026-09-09"
+
+// lessonControlMechanismVocabulary is the closed set of Control
+// mechanism-kind tokens L-010 accepts. A Control value satisfies the rule
+// when it contains one of these tokens verbatim, or the literal "none-yet:"
+// marker followed by a non-empty reason.
+var lessonControlMechanismVocabulary = []string{
+	"wb-hook", "wb-verb", "ci-lesson-check", "spec-lint", "cicd-workflow",
+	"branch-protection", "claude-md-rule", "brief-template", "repo-template",
+	"ai-reviewer", "product-test",
+}
+
+// lessonControlNamesMechanism reports whether control either names one of
+// the lessonControlMechanismVocabulary tokens or explicitly defers via
+// "none-yet: <why>" with a non-empty reason. A bare "—" or empty value names
+// nothing and fails both checks.
+func lessonControlNamesMechanism(control string) bool {
+	trimmed := strings.TrimSpace(control)
+	if trimmed == "" || trimmed == "—" {
+		return false
+	}
+	for _, token := range lessonControlMechanismVocabulary {
+		if strings.Contains(trimmed, token) {
+			return true
+		}
+	}
+	if idx := strings.Index(trimmed, "none-yet:"); idx >= 0 {
+		reason := strings.TrimSpace(trimmed[idx+len("none-yet:"):])
+		return reason != ""
+	}
+	return false
+}
+
+// lintLessonControlMechanism implements L-010: a Recorded or Stated Lesson
+// dated after lessonControlMechanismThreshold must name a Control mechanism
+// from the configured vocabulary, or explicitly say none exists yet and why.
+// Enforced Lessons are already covered by the stricter L-007 (deterministic
+// Control/Verification/Evidence); Withdrawn/Superseded Lessons are retired
+// and carry no live control obligation. Applies to every discovered Lesson
+// (canonical or compatibility-flat) — Status/Date/Control are generic fields
+// parsed regardless of layout.
+func lintLessonControlMechanism(l *lesson.Lesson, relPath string) []Violation {
+	if l.Status != "Recorded" && l.Status != "Stated" {
+		return nil
+	}
+	if l.DateLine == 0 {
+		return nil
+	}
+	date, err := time.Parse("2006-01-02", l.Date)
+	if err != nil {
+		// L-005 (canonical) already flags an unparsable Date; L-010 stays
+		// narrowly about the Control/date-threshold interaction.
+		return nil
+	}
+	threshold, _ := time.Parse("2006-01-02", lessonControlMechanismThreshold)
+	if !date.After(threshold) {
+		return nil
+	}
+	if lessonControlNamesMechanism(l.Control) {
+		return nil
+	}
+	return []Violation{{
+		File:     relPath,
+		Line:     l.ControlLine,
+		Severity: "error",
+		Rule:     "L-010",
+		Message: fmt.Sprintf(
+			"%s Lesson dated after %s must name a Control mechanism (%s) or \"none-yet: <why>\"; got %q",
+			l.Status, lessonControlMechanismThreshold, strings.Join(lessonControlMechanismVocabulary, ", "), strings.TrimSpace(l.Control),
+		),
+	}}
+}
 
 // canonicalLessonStatuses is the legal Lesson **Status:** set: the three-rung
 // enforcement ladder plus the two dispositions.
@@ -142,6 +221,7 @@ func (c *lessonRulesChecker) check(specRoot string) ([]Violation, error) {
 	for _, l := range lessons {
 		relPath, _ := filepath.Rel(specRoot, l.Path)
 		violations = append(violations, lintLesson(l, relPath)...)
+		violations = append(violations, lintLessonControlMechanism(l, relPath)...)
 		if l.Canonical {
 			violations = append(violations, lintCanonicalLessonAtProject(projectRoot, specRoot, l, relPath, allowed, configErr)...)
 			violations = append(violations, lintOccurrenceChildren(specRoot, l)...)
@@ -238,7 +318,7 @@ func lintLesson(l *lesson.Lesson, relPath string) []Violation {
 					File:     relPath,
 					Line:     l.RepositoriesLine,
 					Severity: "error",
-					Rule:     "L-010",
+					Rule:     "L-011",
 					Message: fmt.Sprintf(
 						"invalid lesson **Repositories:** entry %q (expected owner/repo)",
 						ref,

@@ -246,7 +246,7 @@ func TestL002_NoStatusLine_NoViolation(t *testing.T) {
 	}
 }
 
-// ----- L-010: **Repositories:** entry shape (optional field) -----
+// ----- L-011: **Repositories:** entry shape (optional field) -----
 
 // lessonWithRepositories inserts a **Repositories:** line into a lint-clean
 // flat Lesson body, mirroring fullLesson's shape.
@@ -261,49 +261,49 @@ func lessonWithRepositories(status, repositories string) string {
 		"---\n*This document follows the https://specscore.md/lesson-specification*\n"
 }
 
-func TestL010_NoRepositoriesLine_NoViolation(t *testing.T) {
+func TestL011_NoRepositoriesLine_NoViolation(t *testing.T) {
 	e := newLessonRulesEnv(t)
 	e.writeLesson(t, "kinder-fake", fullLesson("Recorded"))
 	v := runLessonRules(t, e)
-	if got := lessonViolation(v, "L-010"); got != nil {
-		t.Errorf("unexpected L-010 violation for an absent Repositories line (field is optional): %+v", got)
+	if got := lessonViolation(v, "L-011"); got != nil {
+		t.Errorf("unexpected L-011 violation for an absent Repositories line (field is optional): %+v", got)
 	}
 }
 
-func TestL010_ValidRepositoriesEntries_NoViolation(t *testing.T) {
+func TestL011_ValidRepositoriesEntries_NoViolation(t *testing.T) {
 	e := newLessonRulesEnv(t)
 	e.writeLesson(t, "kinder-fake", lessonWithRepositories("Recorded", "sneat-co/backstage, specscore/specscore-cli"))
 	v := runLessonRules(t, e)
-	if got := lessonViolation(v, "L-010"); got != nil {
-		t.Errorf("unexpected L-010 violation for well-shaped owner/repo entries: %+v", got)
+	if got := lessonViolation(v, "L-011"); got != nil {
+		t.Errorf("unexpected L-011 violation for well-shaped owner/repo entries: %+v", got)
 	}
 }
 
-func TestL010_MalformedRepositoriesEntry_Flagged(t *testing.T) {
+func TestL011_MalformedRepositoriesEntry_Flagged(t *testing.T) {
 	e := newLessonRulesEnv(t)
 	e.writeLesson(t, "kinder-fake", lessonWithRepositories("Recorded", "not-owner-slash-repo"))
 	v := runLessonRules(t, e)
-	got := lessonViolation(v, "L-010")
+	got := lessonViolation(v, "L-011")
 	if got == nil {
-		t.Fatal("expected an L-010 violation for a Repositories entry with no owner/repo shape")
+		t.Fatal("expected an L-011 violation for a Repositories entry with no owner/repo shape")
 	}
 	if !strings.Contains(got.Message, "not-owner-slash-repo") {
-		t.Errorf("L-010 message should name the offending entry: %q", got.Message)
+		t.Errorf("L-011 message should name the offending entry: %q", got.Message)
 	}
 }
 
-func TestL010_OneOfSeveralEntriesMalformed_FlagsOnlyThatEntry(t *testing.T) {
+func TestL011_OneOfSeveralEntriesMalformed_FlagsOnlyThatEntry(t *testing.T) {
 	e := newLessonRulesEnv(t)
 	e.writeLesson(t, "kinder-fake", lessonWithRepositories("Recorded", "sneat-co/backstage, bogus"))
 	v := runLessonRules(t, e)
 	var got []Violation
 	for _, x := range v {
-		if x.Rule == "L-010" {
+		if x.Rule == "L-011" {
 			got = append(got, x)
 		}
 	}
 	if len(got) != 1 || !strings.Contains(got[0].Message, "bogus") {
-		t.Fatalf("expected exactly one L-010 violation naming %q, got %+v", "bogus", got)
+		t.Fatalf("expected exactly one L-011 violation naming %q, got %+v", "bogus", got)
 	}
 }
 
@@ -598,5 +598,132 @@ func TestRewriteLessonIndex_ReadFileError(t *testing.T) {
 func TestReadLessonIndexRows_OpenError(t *testing.T) {
 	if _, _, _, err := readLessonIndexRows(filepath.Join(t.TempDir(), "missing.md")); err == nil {
 		t.Fatal("expected os.Open error for a nonexistent index file")
+	}
+}
+
+// --- L-010: Control mechanism required on a fresh Recorded/Stated Lesson ---
+
+// lessonWithControl returns a flat, otherwise lint-clean Lesson body carrying
+// an explicit **Control:** line inside ## Enforcement — the field L-010 reads
+// regardless of canonical/flat layout.
+func lessonWithControl(status, date, control string) string {
+	return "# Lesson: Kinder Fake\n\n" +
+		"**Status:** " + status + "\n" +
+		"**Date:** " + date + "\n" +
+		"**Owner:** alex\n" +
+		"**Recurred:** 0\n\n" +
+		"## Incident\n\nx\n\n## Process gap\n\nx\n\n## Check\n\nx\n\n## Enforcement\n\n**Control:** " + control + "\n\n" +
+		"---\n*This document follows the https://specscore.md/lesson-specification*\n"
+}
+
+func TestLintLessonControlMechanism_BareEmDashFlaggedAfterThreshold(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "fresh", lessonWithControl("Recorded", "2026-09-10", "—"))
+	v := runLessonRules(t, e)
+	got := lessonViolation(v, "L-010")
+	if got == nil {
+		t.Fatalf("expected an L-010 violation, got %+v", v)
+	}
+	if !strings.Contains(got.Message, "Recorded") || !strings.Contains(got.Message, "2026-09-09") || !strings.Contains(got.Message, "none-yet") {
+		t.Errorf("L-010 message missing expected content: %q", got.Message)
+	}
+}
+
+func TestLintLessonControlMechanism_EmptyControlFlaggedAfterThreshold(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "fresh", lessonWithControl("Stated", "2026-09-10", "   "))
+	v := runLessonRules(t, e)
+	if lessonViolation(v, "L-010") == nil {
+		t.Fatalf("expected an L-010 violation for a whitespace-only Control, got %+v", v)
+	}
+}
+
+func TestLintLessonControlMechanism_ExemptOnOrBeforeThreshold(t *testing.T) {
+	for _, date := range []string{"2026-09-09", "2026-08-01"} {
+		e := newLessonRulesEnv(t)
+		e.writeLesson(t, "old", lessonWithControl("Recorded", date, "—"))
+		v := runLessonRules(t, e)
+		if got := lessonViolation(v, "L-010"); got != nil {
+			t.Errorf("date %s: expected no L-010 violation (grandfathered), got %+v", date, got)
+		}
+	}
+}
+
+func TestLintLessonControlMechanism_ExemptForNonRecordedStatedStatus(t *testing.T) {
+	for _, status := range []string{"Enforced", "Withdrawn", "Superseded"} {
+		e := newLessonRulesEnv(t)
+		e.writeLesson(t, "x", lessonWithControl(status, "2026-09-10", "—"))
+		v := runLessonRules(t, e)
+		if got := lessonViolation(v, "L-010"); got != nil {
+			t.Errorf("status %s: expected no L-010 violation, got %+v", status, got)
+		}
+	}
+}
+
+func TestLintLessonControlMechanism_VocabularyTokenSatisfies(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "fresh", lessonWithControl("Recorded", "2026-09-10", "enforced via wb-hook on pre-commit"))
+	v := runLessonRules(t, e)
+	if got := lessonViolation(v, "L-010"); got != nil {
+		t.Errorf("expected no L-010 violation when Control names a vocabulary token, got %+v", got)
+	}
+}
+
+func TestLintLessonControlMechanism_NoneYetRequiresNonEmptyReason(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "bare-none-yet", lessonWithControl("Recorded", "2026-09-10", "none-yet:"))
+	v := runLessonRules(t, e)
+	if lessonViolation(v, "L-010") == nil {
+		t.Fatalf("expected an L-010 violation for a bare \"none-yet:\" with no reason")
+	}
+
+	e2 := newLessonRulesEnv(t)
+	e2.writeLesson(t, "reasoned-none-yet", lessonWithControl("Recorded", "2026-09-10", "none-yet: not triaged"))
+	v2 := runLessonRules(t, e2)
+	if got := lessonViolation(v2, "L-010"); got != nil {
+		t.Errorf("expected no L-010 violation for \"none-yet: <reason>\", got %+v", got)
+	}
+}
+
+func TestLintLessonControlMechanism_UnparsableOrMissingDateSkipped(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "bad-date", lessonWithControl("Recorded", "not-a-date", "—"))
+	v := runLessonRules(t, e)
+	if got := lessonViolation(v, "L-010"); got != nil {
+		t.Errorf("expected no L-010 violation for an unparsable Date, got %+v", got)
+	}
+
+	e2 := newLessonRulesEnv(t)
+	e2.writeLesson(t, "no-date", "# Lesson: No Date\n\n**Status:** Recorded\n**Owner:** alex\n**Recurred:** 0\n\n"+
+		"## Incident\n\nx\n\n## Process gap\n\nx\n\n## Check\n\nx\n\n## Enforcement\n\n**Control:** —\n\n"+
+		"---\n*This document follows the https://specscore.md/lesson-specification*\n")
+	v2 := runLessonRules(t, e2)
+	if got := lessonViolation(v2, "L-010"); got != nil {
+		t.Errorf("expected no L-010 violation when **Date:** is absent, got %+v", got)
+	}
+}
+
+func TestLessonControlNamesMechanism(t *testing.T) {
+	tests := []struct {
+		name    string
+		control string
+		want    bool
+	}{
+		{"empty", "", false},
+		{"em-dash", "—", false},
+		{"whitespace", "   ", false},
+		{"vocabulary token substring", "runs through ci-lesson-check nightly", true},
+		{"another vocabulary token", "spec-lint refuses this on commit", true},
+		{"none-yet without reason", "none-yet:", false},
+		{"none-yet with whitespace-only reason", "none-yet:    ", false},
+		{"none-yet with reason", "none-yet: not triaged yet", true},
+		{"unrelated prose", "someone should look at this eventually", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lessonControlNamesMechanism(tc.control); got != tc.want {
+				t.Errorf("lessonControlNamesMechanism(%q) = %v, want %v", tc.control, got, tc.want)
+			}
+		})
 	}
 }

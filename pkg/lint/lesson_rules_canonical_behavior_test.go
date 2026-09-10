@@ -969,7 +969,11 @@ func TestLessonRules_RepositoriesFieldRoundTripsWithoutBreakingIndexOrLint(t *te
 	if err := os.MkdirAll(filepath.Join(filepath.Dir(lessonPath), "occurrences"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: "scoped-lesson", Owner: "codex", Date: "2026-09-10"}, []string{"process"})
+	// Control must name a mechanism (or "none-yet: <why>") because Date is
+	// after the L-010 threshold (2026-09-09); this fixture is about L-011
+	// (Repositories), not L-010, so it sets a valid Control explicitly rather
+	// than relying on ScaffoldCanonical's pre-L-010 "—" default.
+	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: "scoped-lesson", Owner: "codex", Date: "2026-09-10", Control: "wb-hook: repo-scope lint"}, []string{"process"})
 	if err != nil {
 		t.Fatal(err)
 	}

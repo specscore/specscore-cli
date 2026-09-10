@@ -63,7 +63,7 @@ Every full rewrite and bounded row upsert MUST use the same project-private shar
 
 #### REQ: extended-lesson-rules
 
-The default suite MUST register error rules `L-005`–`L-010`:
+The default suite MUST register error rules `L-005`–`L-011`:
 
 | Rule | Requirement |
 |---|---|
@@ -72,15 +72,26 @@ The default suite MUST register error rules `L-005`–`L-010`:
 | L-007 | An Enforced Lesson carries a repository-relative enforcement-evidence path which resolves under project root. |
 | L-008 | Supersession/human-confirmed relations resolve, are non-self, non-duplicated, symmetric where required, and acyclic where directed. |
 | L-009 | Occurrences have unique IDs, RFC-3339 times, opaque JSON-object context, and resolvable parents. |
-| L-010 | Each entry in an optional `**Repositories:**` field is a syntactically valid `owner/repo` reference. |
+| L-010 | A Recorded or Stated Lesson dated after 2026-09-09 names a Control mechanism from the configured vocabulary, or an explicit "none-yet: <why>". |
+| L-011 | Each entry in an optional `**Repositories:**` field is a syntactically valid `owner/repo` reference. |
 
 Lint checks syntax, identity, local paths, and graph consistency only. It does not claim a remote issue is open, a test ran, or prose is semantically duplicate.
 
-### L-010 — repository reference shape
+### L-010 — Control mechanism named on a fresh Recorded/Stated Lesson
 
-#### REQ: rule-l-010-repositories-shape
+#### REQ: rule-l-010-control-mechanism
 
-`L-010` MUST report a violation, naming the offending entry, for each `**Repositories:**` entry that does not match the `owner/repo` shape (a single `/`-separated pair of non-empty segments). `L-010` MUST NOT report anything when `**Repositories:**` is absent — the field is optional on both layouts, and its absence is a different, unchecked concern (a lesson silent on repository scope, which `lesson list --repo`/`lesson check --repo` already treat as matching nothing). `L-010` applies to both flat and directory Lessons, mirroring `L-002`'s universal (not canonical-only) placement.
+`L-010` MUST be registered at severity `error` and MUST execute as part of the default rule suite. For a Lesson whose `**Status:**` is `Recorded` or `Stated` and whose `**Date:**` is strictly after `2026-09-09`, `L-010` MUST report a violation when `**Control:**` is empty, whitespace-only, or the em-dash placeholder `—`. A Lesson dated on or before `2026-09-09` is exempt (grandfathered) regardless of its Control content. A Lesson whose Status is `Enforced`, `Withdrawn`, or `Superseded` is exempt from `L-010` — `Enforced` is already covered by the stricter `L-007` (deterministic Control/Verification/Evidence plus stable evidence), and a retired Lesson carries no live control obligation. `L-010` applies to every discovered Lesson regardless of layout (canonical directory or compatibility flat) since `**Status:**`, `**Date:**`, and `**Control:**` are parsed generically.
+
+#### REQ: rule-l-010-control-vocabulary
+
+A `**Control:**` value satisfies `L-010` when it contains, as a substring, at least one token from the closed vocabulary `wb-hook`, `wb-verb`, `ci-lesson-check`, `spec-lint`, `cicd-workflow`, `branch-protection`, `claude-md-rule`, `brief-template`, `repo-template`, `ai-reviewer`, `product-test` — OR when it contains the literal string `none-yet:` followed by a non-empty, non-whitespace reason. Neither condition met MUST report a violation.
+
+### L-011 — repository reference shape
+
+#### REQ: rule-l-011-repositories-shape
+
+`L-011` MUST report a violation, naming the offending entry, for each `**Repositories:**` entry that does not match the `owner/repo` shape (a single `/`-separated pair of non-empty segments). `L-011` MUST NOT report anything when `**Repositories:**` is absent — the field is optional on both layouts, and its absence is a different, unchecked concern (a lesson silent on repository scope, which `lesson list --repo`/`lesson check --repo` already treat as matching nothing). `L-011` applies to both flat and directory Lessons, mirroring `L-002`'s universal (not canonical-only) placement.
 
 #### REQ: generic-document-registry
 
@@ -132,17 +143,35 @@ Flat and directory Lesson READMEs MUST join the generic status-bearing document 
 **When** `specscore spec lint --fix` runs
 **Then** the row is rewritten to match and a subsequent lint run reports no `L-004` violation.
 
-### AC: l010-malformed-entry-flagged (verifies REQ:rule-l-010-repositories-shape)
+### AC: l010-bare-em-dash-flagged (verifies REQ:rule-l-010-control-mechanism)
+
+**Given** a Lesson with `**Status:** Recorded`, `**Date:** 2026-09-10`, and `**Control:** —`
+**When** `specscore spec lint` runs
+**Then** an `L-010` violation is reported naming the accepted vocabulary and the `none-yet: <why>` escape hatch.
+
+### AC: l010-pre-threshold-date-exempt (verifies REQ:rule-l-010-control-mechanism)
+
+**Given** a Lesson with `**Status:** Stated`, `**Date:** 2026-09-09`, and `**Control:** —`
+**When** `specscore spec lint` runs
+**Then** no `L-010` violation is reported — the Lesson is dated on the exemption boundary, not after it.
+
+### AC: l010-none-yet-reason-satisfies (verifies REQ:rule-l-010-control-vocabulary)
+
+**Given** a Lesson with `**Status:** Recorded`, `**Date:** 2026-09-10`, and `**Control:** none-yet: not triaged`
+**When** `specscore spec lint` runs
+**Then** no `L-010` violation is reported.
+
+### AC: l011-malformed-entry-flagged (verifies REQ:rule-l-011-repositories-shape)
 
 **Given** a Lesson with `**Repositories:** not-owner-slash-repo`
 **When** `specscore spec lint` runs
-**Then** an `L-010` violation is reported naming `not-owner-slash-repo`.
+**Then** an `L-011` violation is reported naming `not-owner-slash-repo`.
 
-### AC: l010-absent-field-is-clean (verifies REQ:rule-l-010-repositories-shape)
+### AC: l011-absent-field-is-clean (verifies REQ:rule-l-011-repositories-shape)
 
 **Given** a Lesson with no `**Repositories:**` line
 **When** `specscore spec lint` runs
-**Then** no `L-010` violation is reported.
+**Then** no `L-011` violation is reported.
 
 ## Open Questions
 

@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 180
+Total rules: 181
 
 ## capability
 
@@ -215,7 +215,8 @@ Total rules: 180
 | L-007 | error | Requires Enforced Lessons to declare deterministic control, verification, and stable evidence. |
 | L-008 | error | Requires duplicate and supersession relations to resolve without conflicts or cycles. |
 | L-009 | error | Requires every canonical Lesson occurrence child to satisfy the published append-only JSON contract. |
-| L-010 | error | Requires each optional Lesson **Repositories:** entry to be a syntactically valid owner/repo reference. |
+| L-010 | error | Requires a Recorded or Stated Lesson dated after 2026-09-09 to name a Control mechanism from the configured vocabulary, or an explicit "none-yet: <why>". |
+| L-011 | error | Requires each optional Lesson **Repositories:** entry to be a syntactically valid owner/repo reference. |
 
 ## parked
 
