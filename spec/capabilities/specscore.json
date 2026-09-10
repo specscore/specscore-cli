@@ -2206,6 +2206,7 @@
                 "--status",
                 "--supersedes",
                 "--title",
+                "--trigger",
                 "--violation",
                 "--why"
               ],
@@ -2236,11 +2237,25 @@
                 "--status",
                 "--supersedes",
                 "--title",
+                "--trigger",
                 "--violation",
                 "--why"
               ],
               "modes": [
                 "lesson-to-rule promotion writing both halves of the pair"
+              ]
+            },
+            {
+              "path": "specscore rule render",
+              "flags": [
+                "--format",
+                "--project",
+                "--scope",
+                "--section"
+              ],
+              "modes": [
+                "progressive-discovery trigger index",
+                "Markdown section grouping"
               ]
             },
             {

@@ -55,6 +55,7 @@ both directions too.`,
 		ruleNewCommand(),
 		ruleExpandCommand(),
 		ruleListCommand(),
+		ruleRenderCommand(),
 		ruleShowCommand(),
 		ruleUpdateCommand(),
 		ruleDeleteCommand(),
@@ -123,6 +124,7 @@ Examples:
 func addRuleAuthoringFlags(cmd *cobra.Command) {
 	cmd.Flags().String("title", "", "rule title (defaults to the title-cased slug); detail documents only")
 	cmd.Flags().String("statement", "", "the one normative sentence (MUST / NEVER)")
+	cmd.Flags().String("trigger", "", "the situation that identifies this rule's known problem, under 90 characters; implies --detailed")
 	cmd.Flags().StringArray("scope", nil, "scope this rule binds; repeatable: fleet | product:<name> | repo:<owner/repo> | path:<glob> (default fleet)")
 	cmd.Flags().StringArray("source", nil, "artifact that produced this rule; repeatable: lesson:<slug> | decision:<id> | idea:<slug> | <url>")
 	cmd.Flags().String("enforcement", "", "enforcement tier: Stated, Enforced, or Automated (default Stated)")
@@ -142,7 +144,7 @@ func addRuleAuthoringFlags(cmd *cobra.Command) {
 
 // ruleDetailFlags are the flags that only a detail document can hold, and so
 // imply --detailed when any of them is set.
-var ruleDetailFlags = []string{"why", "exceptions", "instructions", "compliant", "violation", "supersedes", "skill"}
+var ruleDetailFlags = []string{"why", "exceptions", "instructions", "compliant", "violation", "supersedes", "skill", "trigger"}
 
 // ruleWriteResult is the structured result every mutating rule verb emits.
 type ruleWriteResult struct {
@@ -267,7 +269,7 @@ func ruleOptionsFromFlags(cmd *cobra.Command, slug string) (rule.Options, error)
 	}
 	opts := rule.Options{
 		Slug: slug, Title: get("title"), Owner: owner, Date: get("date"), Status: get("status"),
-		Statement: get("statement"), Scopes: getArr("scope"), Sources: getArr("source"),
+		Statement: get("statement"), Trigger: get("trigger"), Scopes: getArr("scope"), Sources: getArr("source"),
 		Enforcement: get("enforcement"), Control: get("control"),
 		Why: get("why"), Exceptions: get("exceptions"), Supersedes: get("supersedes"),
 		Instructions: get("instructions"), Compliant: get("compliant"), Violation: get("violation"),

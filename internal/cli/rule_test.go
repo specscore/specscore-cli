@@ -230,7 +230,7 @@ func TestRuleNewDetailed(t *testing.T) {
 // A document-only flag has nowhere to live on an inline rule, so passing one
 // implies --detailed rather than being silently dropped.
 func TestRuleNewDetailFlagsImplyDetailed(t *testing.T) {
-	for _, flag := range []string{"--why", "--exceptions", "--instructions", "--compliant", "--violation", "--supersedes"} {
+	for _, flag := range []string{"--why", "--exceptions", "--instructions", "--compliant", "--violation", "--supersedes", "--trigger"} {
 		t.Run(flag, func(t *testing.T) {
 			root := setupRuleProject(t)
 			if _, _, err := runRule(t, root, "new", "x", flag, "some-value"); err != nil {
@@ -251,6 +251,43 @@ func TestRuleNewDetailFlagsImplyDetailed(t *testing.T) {
 			t.Fatalf("skill reference not recorded:\n%s", body)
 		}
 	})
+}
+
+// TestRuleNewTriggerWritesTheHeaderLine covers item 2 of the progressive-
+// discovery brief: --trigger on `rule new` writes **Trigger:** into the
+// detail document header, and a value over the 90-character limit is
+// refused before anything is written.
+func TestRuleNewTriggerWritesTheHeaderLine(t *testing.T) {
+	root := setupRuleProject(t)
+	if _, _, err := runRule(t, root, "new", "always-qualify-version-numbers", "--detailed",
+		"--statement", "Always qualify a version number with what it belongs to.",
+		"--trigger", "about to write v2 without saying what it belongs to"); err != nil {
+		t.Fatalf("rule new --trigger: %v", err)
+	}
+	body := readRuleDetail(t, root, "always-qualify-version-numbers")
+	if !strings.Contains(body, "**Trigger:** about to write v2 without saying what it belongs to") {
+		t.Fatalf("Trigger header line not written:\n%s", body)
+	}
+	if _, _, err := runRule(t, root, "lint"); err != nil {
+		t.Fatalf("a rule with a short Trigger must stay lint-clean: %v", err)
+	}
+}
+
+func TestRuleNewTriggerOverTheLimitIsRefused(t *testing.T) {
+	root := setupRuleProject(t)
+	over90 := strings.Repeat("a", 91)
+	_, _, err := runRule(t, root, "new", "x", "--trigger", over90)
+	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+		t.Fatalf("exit = %d, want %d (err=%v)", got, exitcode.InvalidArgs, err)
+	}
+	if _, err := os.Stat(rule.DetailPath(rule.RulesDir(root), "x")); !os.IsNotExist(err) {
+		t.Fatal("a rejected --trigger must not write the document")
+	}
+	// Normalize fails before the index is even ensured, so nothing — not even
+	// the ancestor indexes — is written.
+	if _, err := os.Stat(rule.IndexPath(rule.RulesDir(root))); !os.IsNotExist(err) {
+		t.Fatal("a rejected --trigger must not write the rules index either")
+	}
 }
 
 func TestRuleNewRejects(t *testing.T) {
@@ -875,6 +912,25 @@ func TestRulePromoteOverridesAndTiers(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("promoted rule missing %q:\n%s", want, body)
 		}
+	}
+}
+
+// TestRulePromoteTriggerWritesTheHeaderLine covers item 2 of the
+// progressive-discovery brief for the promote path, mirroring
+// TestRuleNewTriggerWritesTheHeaderLine.
+func TestRulePromoteTriggerWritesTheHeaderLine(t *testing.T) {
+	root := setupRuleProject(t)
+	writeCanonicalLesson(t, root, "kinder-fake", "Assert against the real adapter.")
+	if _, _, err := runRule(t, root, "promote", "--from-lesson", "kinder-fake", "no-fakes",
+		"--trigger", "about to hand-roll a fake instead of the real adapter"); err != nil {
+		t.Fatalf("promote --trigger: %v", err)
+	}
+	body := readRuleDetail(t, root, "no-fakes")
+	if !strings.Contains(body, "**Trigger:** about to hand-roll a fake instead of the real adapter") {
+		t.Fatalf("Trigger header line not written:\n%s", body)
+	}
+	if _, _, err := runRule(t, root, "lint"); err != nil {
+		t.Fatalf("a promoted rule with a short Trigger must stay lint-clean: %v", err)
 	}
 }
 

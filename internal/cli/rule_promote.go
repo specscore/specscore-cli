@@ -215,7 +215,7 @@ func rulePromoteOptions(cmd *cobra.Command, ruleSlug string, l *lesson.Lesson) (
 
 	opts := rule.Options{
 		Slug: ruleSlug, Title: title, Owner: owner, Date: get("date"), Status: get("status"),
-		Statement: statement, Scopes: getArr("scope"), Sources: merged,
+		Statement: statement, Trigger: get("trigger"), Scopes: getArr("scope"), Sources: merged,
 		Enforcement: get("enforcement"), Control: control,
 		Why: why, Exceptions: get("exceptions"), Supersedes: get("supersedes"),
 		Instructions: get("instructions"), Compliant: get("compliant"), Violation: get("violation"),

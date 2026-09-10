@@ -34,6 +34,29 @@ type Detail struct {
 	Statement     string
 	StatementLine int
 
+	// Trigger is the optional **Trigger:** header line: the situation that
+	// identifies this rule's known problem, in one clause under 90 characters —
+	// the progressive-discovery line `rule render` prints instead of the whole
+	// Statement. It is not one of DetailFields: an existing document with no
+	// Trigger stays lint-clean, and `rule render` falls back to the
+	// `## Instructions` section's `Trigger: ` line, then to the Statement's
+	// first clause.
+	Trigger     string
+	TriggerLine int
+
+	// Section is the optional **Section:** header line `rule render --format
+	// md` groups by (an ungrouped rule renders under `## Other`). Like Trigger,
+	// it is not one of DetailFields and an existing document with no Section
+	// stays lint-clean.
+	Section     string
+	SectionLine int
+
+	// InstructionsFirstLine is the first non-blank line of the `##
+	// Instructions` body, used only as the Trigger fallback when it is written
+	// `Trigger: <text>` — the shape `sneat-co/backstage`'s rule tree already
+	// uses.
+	InstructionsFirstLine string
+
 	// ScopesRaw holds every value written on a **Scope:** line, comma-split, in
 	// source order. Both repeated lines and one comma-separated line parse the
 	// same; the CLI always writes one line.
@@ -287,6 +310,19 @@ func ParseDetail(path string) (*Detail, error) {
 			if _, seen := d.SectionLines[t]; !seen {
 				d.SectionLines[t] = i + 1
 			}
+			if t == "Instructions" && d.InstructionsFirstLine == "" {
+				for j := i + 1; j < len(lines); j++ {
+					tj := strings.TrimSpace(lines[j])
+					if tj == "" {
+						continue
+					}
+					if strings.HasPrefix(tj, "#") {
+						break
+					}
+					d.InstructionsFirstLine = tj
+					break
+				}
+			}
 			continue
 		}
 		name, value, ok := matchBoldField(trimmed)
@@ -345,6 +381,10 @@ func ParseDetail(path string) (*Detail, error) {
 			d.Supersedes, d.SupersedesLine = value, i+1
 		case "Superseded By":
 			d.SupersededBy, d.SupersededByLine = value, i+1
+		case "Trigger":
+			d.Trigger, d.TriggerLine = value, i+1
+		case "Section":
+			d.Section, d.SectionLine = value, i+1
 		}
 	}
 

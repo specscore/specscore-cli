@@ -68,7 +68,10 @@ func defaultDetailFields() map[string]string {
 }
 
 // ruleDetail renders a lint-clean detail document with the given overrides. A
-// value of "\x00omit" drops the field entirely.
+// value of "\x00omit" drops the field entirely. An optional "Trigger" override
+// inserts an optional **Trigger:** line right after **Statement:** — it is
+// not one of rule.DetailFields, so it is layered in separately here rather
+// than folded into the fields map the DetailFields loop walks.
 func ruleDetail(overrides map[string]string) string {
 	fields := defaultDetailFields()
 	for k, v := range overrides {
@@ -82,6 +85,11 @@ func ruleDetail(overrides map[string]string) string {
 			continue
 		}
 		b.WriteString("**" + name + ":** " + fields[name] + "\n")
+		if name == "Statement" {
+			if trigger, ok := overrides["Trigger"]; ok && trigger != "\x00omit" {
+				b.WriteString("**Trigger:** " + trigger + "\n")
+			}
+		}
 	}
 	b.WriteString("\n## Instructions\n\nDo the thing.\n")
 	b.WriteString("\n## Examples\n\n### Compliant\n\nx\n\n### Violation\n\ny\n")
@@ -537,6 +545,52 @@ func TestRuleDetailAllowsRepeatedListFields(t *testing.T) {
 		if strings.Contains(v.Message, "duplicated") {
 			t.Fatalf("repeated list field reported as duplicated: %v", ruleViolationIDs(lintRules(t, root)))
 		}
+	}
+}
+
+// **Trigger:** is optional, outside rule.DetailFields, and carries no
+// order or presence requirement — only a length ceiling, because it is a
+// progressive-discovery line rather than a second Statement.
+func TestRuleDetailTriggerIsOptionalAndUnordered(t *testing.T) {
+	body := ruleDetail(map[string]string{"Trigger": "about to write v2 without saying what it belongs to"})
+	root := ruleTree(t, ruleIndexWith(defaultRowFields().render("x", true)), map[string]string{"x": body})
+	for _, v := range lintRules(t, root) {
+		if v.Rule == "R-001" {
+			t.Fatalf("a present, short Trigger must not violate R-001: %v", ruleViolationIDs(lintRules(t, root)))
+		}
+	}
+}
+
+func TestRuleDetailTriggerLengthLimit(t *testing.T) {
+	exactly90 := strings.Repeat("a", 90)
+	over90 := strings.Repeat("a", 91)
+
+	t.Run("exactly the limit is clean", func(t *testing.T) {
+		body := ruleDetail(map[string]string{"Trigger": exactly90})
+		root := ruleTree(t, ruleIndexWith(defaultRowFields().render("x", true)), map[string]string{"x": body})
+		if hasRFamilyViolation(lintRules(t, root), "R-001", "Trigger") {
+			t.Fatalf("a 90-character Trigger must not violate R-001: %v", ruleViolationIDs(lintRules(t, root)))
+		}
+	})
+
+	t.Run("one over the limit is reported", func(t *testing.T) {
+		body := ruleDetail(map[string]string{"Trigger": over90})
+		root := ruleTree(t, ruleIndexWith(defaultRowFields().render("x", true)), map[string]string{"x": body})
+		got := lintRules(t, root)
+		if !hasRFamilyViolation(got, "R-001", "**Trigger:** is 91 characters, must be at most 90") {
+			t.Fatalf("want R-001 Trigger-length violation; got %v", ruleViolationIDs(got))
+		}
+	})
+}
+
+func TestRuleDetailDuplicatedTriggerIsReported(t *testing.T) {
+	body := strings.Replace(ruleDetail(map[string]string{"Trigger": "about to do the thing"}),
+		"**Trigger:** about to do the thing\n",
+		"**Trigger:** about to do the thing\n**Trigger:** a second one\n", 1)
+	root := ruleTree(t, ruleIndexWith(defaultRowFields().render("x", true)), map[string]string{"x": body})
+	got := lintRules(t, root)
+	if !hasRFamilyViolation(got, "R-001", "metadata field is duplicated: **Trigger:**") {
+		t.Fatalf("want R-001 duplicated-Trigger violation; got %v", ruleViolationIDs(got))
 	}
 }
 

@@ -75,6 +75,7 @@ var (
 	ruleApplyFieldEditsFn     = rule.ApplyFieldEdits
 	ruleSetLessonPromotesToFn = rule.SetLessonPromotesTo
 	ruleReadIndexFn           = rule.ReadIndex
+	ruleDetailsBySlugFn       = rule.DetailsBySlug
 	lessonResolveLessonFileFn = lesson.ResolveLessonFile
 	lessonDiscoverFn          = lesson.Discover
 	featureDiscoverFn         = feature.Discover

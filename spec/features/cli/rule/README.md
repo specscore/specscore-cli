@@ -15,7 +15,7 @@ status: Implementing
 
 A rule has two forms and one identity. An **inline** rule is exactly one row in `spec/rules/README.md` and nothing else. A **detailed** rule keeps the identical row, linked to `spec/rules/<slug>/README.md`, which adds the reason, worked compliant and violating examples, agent instructions, exceptions, and supersession. The index row is the source of truth for every field it carries.
 
-The group exposes `new`, `expand`, `list`, `show`, `update`, `delete`, `promote`, and `lint`; every verb is non-interactive and accepts `--format text|yaml|json`.
+The group exposes `new`, `expand`, `list`, `render`, `show`, `update`, `delete`, `promote`, and `lint`; every verb is non-interactive. Every verb but `render` accepts `--format text|yaml|json`; `render` accepts `--format text|md` instead, because it prints a listing meant to be read or pasted, not a structured document.
 
 This Feature is the CLI's implementation contract. The authoritative Rule Doc-Kind contract lives in the meta-spec: [Rule](https://github.com/specscore/specscore/blob/main/spec/features/rule/README.md) (`https://specscore.md/rule-specification`) and [Rules Index](https://github.com/specscore/specscore/blob/main/spec/features/rules-index/README.md) (`https://specscore.md/rules-index-specification`). Where the two disagree the meta-spec wins and this Feature is the defect.
 
@@ -24,7 +24,7 @@ Note the deliberate singular. `specscore rule` is this artifact kind; [`specscor
 ## Synopsis
 
 ```
-specscore rule new <slug> [--statement …] [--scope …]... [--source …]... [--status …]
+specscore rule new <slug> [--statement …] [--trigger …] [--scope …]... [--source …]... [--status …]
                           [--enforcement Stated|Enforced|Automated] [--control …]
                           [--detailed] [--title …] [--owner …] [--date …]
                           [--why …] [--exceptions …] [--instructions …]
@@ -32,12 +32,13 @@ specscore rule new <slug> [--statement …] [--scope …]... [--source …]... [
 specscore rule expand <slug> [--why …] [--instructions …] [--compliant …] [--violation …]
                              [--exceptions …] [--supersedes …] [--skill …]... [--title …] [--owner …] [--date …]
 specscore rule list [--scope …] [--status …] [--enforcement …] [--applies-to <path>]
+specscore rule render [--scope …] [--section <name>] [--format text|md]
 specscore rule show <slug>
 specscore rule update <slug> [--statement …] [--scope …]... [--status …]
                              [--enforcement … --control …] [--add-source …]... [--remove-source …]...
                              [--title …] [--why …] [--exceptions …] [--supersedes …] [--superseded-by …]
 specscore rule delete <slug> [--supersede-with <slug>]
-specscore rule promote --from-lesson <lesson-slug> <rule-slug> [--inline] [--statement …] [--scope …]...
+specscore rule promote --from-lesson <lesson-slug> <rule-slug> [--inline] [--statement …] [--trigger …] [--scope …]...
                        [--enforcement …] [--control …] [--why …] [--skill …]...
 specscore rule lint [--fix]
 ```
@@ -166,6 +167,24 @@ Failing the plain inventory too would turn one corrupt row into a red exit at th
 
 `list` and `show` MUST leave the spec tree byte-identical. `show` MUST render either form — reporting which one — and MUST additionally resolve what a reader cannot get by opening the files: the Lessons promoting to this rule, the Features citing it, the skills it binds, and any source reference that does not resolve.
 
+### Progressive discovery
+
+A rules index lists every rule's whole Statement, which does not scale the way an AI agent skills listing does: a reader — human or agent — has to read each Statement in full to tell whether it is worth opening. `rule render` inverts that: it prints the one clause that tells a reader whether to look further, the same shape a skill's own one-line trigger description does, and leaves the full rule for the reader who actually matches it.
+
+#### REQ: trigger-field
+
+A detail document MAY carry an optional `**Trigger:**` header line: the situation that identifies the rule's known problem, under 90 characters. It is NOT one of the twelve fields `REQ:detail-document-shape` requires — an existing document with no `**Trigger:**` stays lint-clean, and its absence carries no position requirement relative to the required fields. `rule new --trigger <text>` and `rule promote --trigger <text>` MUST write it, MUST imply `--detailed` (the field has nowhere else to live), and MUST refuse (exit `2`) a value over the limit before writing anything. Lint MUST report a `**Trigger:**` over the limit or duplicated, and MUST NOT report its mere presence or absence.
+
+An optional `**Trigger:**` MAY be paired with an optional `**Section:**` header line, grouping the rule under a named heading in `rule render --format md` (`REQ:render-output`). Neither field has a CLI authoring flag beyond `--trigger` itself; `**Section:**` is written by hand, the same way an existing detail document's Instructions and Examples are.
+
+#### REQ: render-output
+
+`rule render [--scope <scope>] [--section <name>] [--format text|md]` MUST print one line per `Active` or `Draft` rule as `- <trigger> → rule:<slug>`, and MUST NOT print a `Superseded` rule — a retired rule is not a live trigger for anything. `<trigger>` MUST resolve in this order: the document's own `**Trigger:**`; failing that, the first line of its `## Instructions` section when that line is written `Trigger: <text>` (the shape `sneat-co/backstage`'s rule tree already uses); failing that, the row's Statement cut at its first comma, semicolon, or colon. An inline rule — no detail document — MUST always render from its Statement.
+
+Output MUST be sorted, stably, by `**Section:**` then trigger — which is a plain trigger sort in a tree where no rendered rule carries a Section, since every entry then shares the same (empty) sort key. `--format md` MUST group entries under a `## <Section>` heading per distinct Section value, in the order encountered, with every entry carrying no Section listed last under `## Other`; `--format text` (the default) MUST print no heading. `--section <name>` MUST restrict the listing to entries whose Section equals `<name>`, applied before formatting. `--scope <scope>` MUST be the exact, case-insensitive filter `rule list --scope` applies.
+
+`rule render` MUST accept only `--format text` or `--format md` — never `yaml` or `json` — because it prints a listing meant to be read or pasted, not a structured document a script decodes.
+
 ### Mutations are bounded and reversible-by-review
 
 #### REQ: bounded-write-set
@@ -209,7 +228,7 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 |---|---|
 | `0` | The operation succeeded. A listing may legitimately be empty, and a plain `list`/`show` exits `0` even when a row carries `scope_error`. |
 | `1` | **Conflict.** A `rule lint` run reported at least one error-severity violation; a `new`/`promote`/`expand` target already exists (including as a row that does not parse) and `--force` was not passed; a mutating verb was asked to rewrite an index holding a row it cannot read; or `list --applies-to`/`--scope` could not evaluate a scope it needed. |
-| `2` | Invalid arguments: a missing or extra positional, an invalid slug, an unrecognized `--format`/`--status`/`--enforcement`/`--scope`/`--source`/`--skill` value, a control-requiring tier with no control, an `update` with no edit flag, a duplicate `--add-source`, an absent `--remove-source`, or a typed source that does not resolve. |
+| `2` | Invalid arguments: a missing or extra positional, an invalid slug, an unrecognized `--format`/`--status`/`--enforcement`/`--scope`/`--source`/`--skill` value, a control-requiring tier with no control, a `--trigger` over 90 characters, an `update` with no edit flag, a duplicate `--add-source`, an absent `--remove-source`, or a typed source that does not resolve. |
 | `3` | The named rule has no row at all, or (for `promote`) the named Lesson does not exist. A rule whose row exists but does not parse is `4`, not `3` — it is present and broken, not absent. |
 | `4` | Invalid state: `delete` refused because live links remain; `promote` refused because the Lesson already promotes to a different rule; a document-only edit or `--status Superseded` was requested on an inline rule; or the addressed rule's row exists but does not parse. |
 | `10` | An unexpected I/O or parse failure. |
@@ -409,6 +428,34 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 **When** each of `new`, `expand`, `list`, `show`, `update`, `delete`, `promote`, `lint` is invoked with `--format json`
 **Then** the command emits a JSON document on stdout and exits with its documented code.
 
+### AC: trigger-writes-the-header-line (verifies REQ:trigger-field)
+
+**When** the user runs `specscore rule new <slug> --trigger "about to write v2 without saying what it belongs to"`
+**Then** `spec/rules/<slug>/README.md` is written (`--trigger` implied `--detailed`) with `**Trigger:** about to write v2 without saying what it belongs to` in its header, and `specscore rule lint` exits `0`.
+
+### AC: trigger-over-the-limit-is-refused (verifies REQ:trigger-field)
+
+**When** the user runs `specscore rule new x --trigger "<a 91-character string>"`
+**Then** the command exits `2` naming the 90-character limit, and neither the row nor a document is written.
+
+### AC: render-resolves-the-fallback-chain (verifies REQ:render-output)
+
+**Given** one rule with an explicit `**Trigger:**`, one whose `## Instructions` begins `Trigger: <text>`, and one with neither
+**When** the user runs `specscore rule render`
+**Then** each renders as `- <trigger> → rule:<slug>` using, respectively, the explicit `**Trigger:**`, the Instructions `Trigger: ` line, and the Statement's first clause — sorted by trigger text.
+
+### AC: render-skips-superseded (verifies REQ:render-output)
+
+**Given** an `Active` rule and a `Superseded` rule
+**When** the user runs `specscore rule render`
+**Then** only the `Active` rule's line is printed.
+
+### AC: render-groups-by-section-in-md (verifies REQ:render-output)
+
+**Given** two rules carrying `**Section:** Answering` and one rule with no `**Section:**`
+**When** the user runs `specscore rule render --format md`
+**Then** the two `Answering` rules render under a `## Answering` heading, sorted by trigger, and the ungrouped rule renders last under `## Other`; `--section Answering` on its own restricts the plain-text listing to those same two lines.
+
 ## Open Questions
 
 - The strict pair makes a Lesson the source of at most one rule. That keeps "which rule did this Lesson become?" unambiguous, but a single Lesson that genuinely produced two independent rules currently has to pick one and cite the other from `**Why:**`. Should `**Promotes To:**` become a list once real usage shows that case?
@@ -416,6 +463,7 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 - Supersession lives only in a detail document, so an inline rule must be expanded before it can be superseded — `rule update --status Superseded` on an inline rule is now a refusal pointing at `rule expand`. That is defensible (retiring a rule is worth a paragraph) but it is still two steps. Should the row carry supersession too?
 - `--fix` repairs an unescaped `|` only when it falls in the Statement, because the columns before it have closed grammars that make the attribution provable. A pipe in `Control` produces the same line shape and is refused. Is a `--fix=R-003 --assume-statement` escape hatch worth having, or does that reintroduce the guessing this rule exists to prevent?
 - `--applies-to` infers `product:` and `repo:` matches from path segments, which is a heuristic. Should `rule list` gain explicit `--in-repo` / `--in-product` flags so a caller that knows its context does not have to encode it in a path?
+- `**Section:**` has no authoring flag on `new`/`promote` — only `--trigger` does — because grouping was scoped as "implement only if cheap" and adding a write path for it was not. It is written by hand today, the same as `## Instructions`/`## Examples`. Should `rule new --section <name>` exist once real usage shows rules actually get grouped?
 
 ---
 *This document follows the https://specscore.md/feature-specification*
