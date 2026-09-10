@@ -947,6 +947,88 @@ func TestLessonIndexFix_JoinsWrappedEnforcementParagraph(t *testing.T) {
 	}
 }
 
+// TestLessonRules_RepositoriesFieldRoundTripsWithoutBreakingIndexOrLint is
+// item 3's acceptance check: an optional **Repositories:** line on a
+// canonical Lesson must lint clean (L-005's closed ordered-field set does
+// not include it, so its own line position is irrelevant to that check),
+// round-trip through Parse unchanged, and leave index generation (L-003/
+// L-004) producing the same six-column projection — no new Repositories
+// column, per the deliberate choice not to add one in this change.
+func TestLessonRules_RepositoriesFieldRoundTripsWithoutBreakingIndexOrLint(t *testing.T) {
+	projectRoot := t.TempDir()
+	specRoot := filepath.Join(projectRoot, "spec")
+	lessonsDir := filepath.Join(specRoot, "lessons")
+	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := "# SpecScore Repo Config Schema: https://specscore.md/repo-config\nlessons:\n  classifications:\n    - process\n"
+	if err := os.WriteFile(filepath.Join(projectRoot, "specscore.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lessonPath := filepath.Join(lessonsDir, "scoped-lesson", "README.md")
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(lessonPath), "occurrences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Control must name a mechanism (or "none-yet: <why>") because Date is
+	// after the L-010 threshold (2026-09-09); this fixture is about L-011
+	// (Repositories), not L-010, so it sets a valid Control explicitly rather
+	// than relying on ScaffoldCanonical's pre-L-010 "—" default.
+	body, err := lesson.ScaffoldCanonical(lesson.ScaffoldOptions{Slug: "scoped-lesson", Owner: "codex", Date: "2026-09-10", Control: "wb-hook: repo-scope lint"}, []string{"process"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withRepos := strings.Replace(string(body),
+		"**Classifications:** process\n",
+		"**Classifications:** process\n**Repositories:** specscore/specscore-cli, sneat-co/backstage\n", 1)
+	if withRepos == string(body) {
+		t.Fatal("fixture setup did not find the Classifications line to inject after")
+	}
+	if err := os.WriteFile(lessonPath, []byte(withRepos), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newLessonRulesChecker()
+	violations, err := c.check(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("a canonical lesson with a valid optional Repositories line must lint clean: %#v", violations)
+	}
+
+	l, err := lesson.Parse(lessonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRepos := []string{"specscore/specscore-cli", "sneat-co/backstage"}
+	if len(l.Repositories) != len(wantRepos) {
+		t.Fatalf("Repositories did not round-trip: %#v", l.Repositories)
+	}
+	for i, want := range wantRepos {
+		if l.Repositories[i] != want {
+			t.Fatalf("Repositories[%d] = %q, want %q", i, l.Repositories[i], want)
+		}
+	}
+
+	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n## Open Questions\n\nNone at this time.\n"
+	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertLessonIndexRow(specRoot, l); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "Repositories") {
+		t.Fatalf("index must not gain a Repositories column: %s", got)
+	}
+	if !strings.Contains(string(got), "| [scoped-lesson](scoped-lesson/README.md) |") {
+		t.Fatalf("index row missing for scoped-lesson: %s", got)
+	}
+}
+
 func TestLessonClassificationAndMarkdownCellCompatibilityBranches(t *testing.T) {
 	classes, err := lessonClassificationsFrom([]string{"process", "quality"})
 	if err != nil || !classes["process"] || !classes["quality"] {

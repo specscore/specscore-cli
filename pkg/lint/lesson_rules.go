@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,7 +68,7 @@ func defaultLessonIndexLockDeps() lessonIndexLockDeps {
 
 // lessonRuleIDs is the ordered rule-name set the lessonRulesChecker answers
 // to; linter.go registers the single checker instance under each.
-var lessonRuleIDs = []string{"L-001", "L-002", "L-003", "L-004", "L-005", "L-006", "L-007", "L-008", "L-009", "L-010"}
+var lessonRuleIDs = []string{"L-001", "L-002", "L-003", "L-004", "L-005", "L-006", "L-007", "L-008", "L-009", "L-010", "L-011"}
 
 // lessonControlMechanismThreshold is the L-010 exemption boundary: a Lesson
 // **Date:** on or before this day is grandfathered regardless of its Control
@@ -157,6 +158,16 @@ var canonicalLessonStatuses = map[string]bool{
 	"Withdrawn":  true,
 	"Superseded": true,
 }
+
+// repositoryRefRe matches a syntactically plausible `owner/repo` reference: a
+// single `/`-separated pair of GitHub-legal segments (letters, digits,
+// underscore, dot, hyphen). It is deliberately permissive about what a
+// segment contains — it is not trying to validate that the repository
+// exists, only that a `**Repositories:**` entry has the two-segment shape
+// `--repo` matching depends on, catching the easy typo (a bare repo name
+// with no owner, a stray space, a third `/`-separated segment) before it
+// silently never matches any `--repo` filter.
+var repositoryRefRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 const canonicalLessonStatusList = "Recorded, Stated, Enforced, Withdrawn, Superseded"
 
@@ -298,6 +309,23 @@ func lintLesson(l *lesson.Lesson, relPath string) []Violation {
 				l.Status, canonicalLessonStatusList,
 			),
 		})
+	}
+
+	if l.RepositoriesLine != 0 {
+		for _, ref := range l.Repositories {
+			if !repositoryRefRe.MatchString(ref) {
+				v = append(v, Violation{
+					File:     relPath,
+					Line:     l.RepositoriesLine,
+					Severity: "error",
+					Rule:     "L-011",
+					Message: fmt.Sprintf(
+						"invalid lesson **Repositories:** entry %q (expected owner/repo)",
+						ref,
+					),
+				})
+			}
+		}
 	}
 
 	return v

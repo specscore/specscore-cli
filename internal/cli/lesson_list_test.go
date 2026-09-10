@@ -167,6 +167,85 @@ func TestLessonList_MinRecurredNegativeExits2(t *testing.T) {
 	}
 }
 
+// lessonBody returns a lint-clean flat Lesson body for slug/status, with an
+// optional **Repositories:** line (empty repos means omit the field
+// entirely, exercising the "no Repositories line" case).
+func lessonBody(slug, status string, repos ...string) string {
+	body := "# Lesson: " + slug + "\n\n**Status:** " + status + "\n"
+	if len(repos) > 0 {
+		body += "**Repositories:** " + strings.Join(repos, ", ") + "\n"
+	}
+	body += "\n## Incident\n\nx\n\n## Process gap\n\nx\n\n## Check\n\nx\n\n## Enforcement\n\nx\n"
+	return body
+}
+
+// TestLessonList_RepoFilterExactMatch covers the headline --repo case: a
+// lesson naming the exact owner/repo matches, a lesson naming a different
+// repo does not.
+func TestLessonList_RepoFilterExactMatch(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+	writeLessonRaw(t, lessonsDir, "scoped-check", lessonBody("Scoped Check", "Recorded", "specscore/specscore-cli"))
+	writeLessonRaw(t, lessonsDir, "other-repo-check", lessonBody("Other Repo Check", "Recorded", "sneat-co/backstage"))
+
+	stdout, _, err := runLesson(t, "list", "--repo", "specscore/specscore-cli")
+	if err != nil {
+		t.Fatalf("lesson list --repo specscore/specscore-cli: %v", err)
+	}
+	lines := nonEmptyLines(stdout)
+	if len(lines) != 1 || lines[0] != "scoped-check" {
+		t.Errorf("expected [scoped-check] only, got %v", lines)
+	}
+}
+
+// TestLessonList_RepoFilterMultiValueEntryMatches covers a lesson declaring
+// several repositories: it must match a --repo query for any one of them.
+func TestLessonList_RepoFilterMultiValueEntryMatches(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+	writeLessonRaw(t, lessonsDir, "multi-repo-check", lessonBody("Multi Repo Check", "Recorded", "sneat-co/backstage", "specscore/specscore-cli"))
+
+	stdout, _, err := runLesson(t, "list", "--repo", "sneat-co/backstage")
+	if err != nil {
+		t.Fatalf("lesson list --repo sneat-co/backstage: %v", err)
+	}
+	lines := nonEmptyLines(stdout)
+	if len(lines) != 1 || lines[0] != "multi-repo-check" {
+		t.Errorf("expected [multi-repo-check], got %v", lines)
+	}
+}
+
+// TestLessonList_RepoFilterNoRepositoriesLineMatchesNothing is the strict
+// allowlist AC: a lesson entirely silent on **Repositories:** MUST NOT match
+// any --repo query — it is not treated as "unrestricted, so include it."
+func TestLessonList_RepoFilterNoRepositoriesLineMatchesNothing(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+	writeLessonInDir(t, lessonsDir, "unscoped-check", "Recorded")
+
+	stdout, _, err := runLesson(t, "list", "--repo", "specscore/specscore-cli")
+	if err != nil {
+		t.Fatalf("lesson list --repo specscore/specscore-cli: %v", err)
+	}
+	if stdout != "" {
+		t.Errorf("expected empty stdout (lesson with no Repositories line must match nothing), got %q", stdout)
+	}
+}
+
+// TestLessonList_RepoFilterComposesWithStatus covers AND composition with
+// the status filter, mirroring --min-recurred's composition tests.
+func TestLessonList_RepoFilterComposesWithStatus(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+	writeLessonRaw(t, lessonsDir, "recorded-scoped", lessonBody("Recorded Scoped", "Recorded", "specscore/specscore-cli"))
+	writeLessonRaw(t, lessonsDir, "enforced-scoped", lessonBody("Enforced Scoped", "Enforced", "specscore/specscore-cli"))
+
+	stdout, _, err := runLesson(t, "list", "--not-enforced", "--repo", "specscore/specscore-cli")
+	if err != nil {
+		t.Fatalf("lesson list --not-enforced --repo specscore/specscore-cli: %v", err)
+	}
+	lines := nonEmptyLines(stdout)
+	if len(lines) != 1 || lines[0] != "recorded-scoped" {
+		t.Errorf("expected [recorded-scoped] only, got %v", lines)
+	}
+}
+
 func TestLessonList_EmptyMatchExitsZero(t *testing.T) {
 	lessonsDir := setupLessonsSpec(t)
 	writeLessonInDir(t, lessonsDir, "recorded-one", "Recorded")

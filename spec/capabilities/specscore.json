@@ -599,6 +599,7 @@
                 "--min-recurred",
                 "--not-enforced",
                 "--project",
+                "--repo",
                 "--status"
               ],
               "modes": []
@@ -631,6 +632,7 @@
                 "--min-recurred",
                 "--not-enforced",
                 "--project",
+                "--repo",
                 "--status"
               ],
               "modes": []
@@ -1792,6 +1794,7 @@
                 "--min-recurred",
                 "--not-enforced",
                 "--project",
+                "--repo",
                 "--status"
               ],
               "modes": [

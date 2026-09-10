@@ -33,6 +33,14 @@ at least N. Canonical counts derive from validated child occurrences; legacy
 flat counts use **Recurred:**. Thus "which lessons have recurred and are still
 not enforced?" is one command: --not-enforced --min-recurred=1.
 
+--repo <owner/repo> restricts to lessons whose **Repositories:** field lists
+that exact owner/repo, so a session working in one repository loads only that
+repository's open lessons: --not-enforced --repo <owner/repo>. It composes
+(AND) with the status and --min-recurred filters. A lesson with no
+**Repositories:** line matches NOTHING under --repo — it is a strict
+allowlist against the declared field, never a fallback to "no restriction
+stated, so include it."
+
 Output is empty (exit 0) when no lessons match.`,
 		Args: cobra.NoArgs,
 		RunE: runLessonList,
@@ -41,6 +49,7 @@ Output is empty (exit 0) when no lessons match.`,
 	cmd.Flags().String("status", "", "filter by one or more statuses, comma-separated, case-insensitive: recorded, stated, enforced, withdrawn, superseded")
 	cmd.Flags().Bool("not-enforced", false, `the headline query: shorthand for --status=recorded,stated ("what have we learned but not yet enforced?")`)
 	cmd.Flags().Int("min-recurred", 0, "restrict to lessons whose Recurred count is at least N (0 = no filter)")
+	cmd.Flags().String("repo", "", "restrict to lessons whose Repositories field lists this owner/repo (exact match); a lesson with no Repositories field matches nothing")
 	cmd.Flags().String("format", "text", "output format: text, yaml, json")
 	cmd.Flags().String("fields", "", "comma-separated metadata fields: status, recurred, date, owner")
 	return cmd
@@ -95,6 +104,20 @@ func lessonStatusSet(statuses []lifecycle.Status) map[string]bool {
 	return set
 }
 
+// lessonHasRepository reports whether l's parsed **Repositories:** field
+// contains repo, exact match (no case-folding — owner/repo casing is
+// significant on GitHub). A Lesson with no Repositories field (nil slice)
+// never matches: --repo is a strict allowlist against the declared field,
+// not a fallback that includes every lesson silent on the question.
+func lessonHasRepository(l *lesson.Lesson, repo string) bool {
+	for _, r := range l.Repositories {
+		if r == repo {
+			return true
+		}
+	}
+	return false
+}
+
 // validLessonFields lists the recognized --fields names, in canonical order.
 var validLessonFields = []string{"status", "recurred", "date", "owner"}
 
@@ -141,6 +164,7 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 	statusFlag, _ := cmd.Flags().GetString("status")
 	notEnforced, _ := cmd.Flags().GetBool("not-enforced")
 	minRecurred, _ := cmd.Flags().GetInt("min-recurred")
+	repoFlag, _ := cmd.Flags().GetString("repo")
 	format, _ := cmd.Flags().GetString("format")
 	fieldsFlag, _ := cmd.Flags().GetString("fields")
 
@@ -196,6 +220,7 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 		items, err := lesson.DiscoverOccurrences(l.Path)
 		return len(items), err
 	}
+	repoFlag = strings.TrimSpace(repoFlag)
 	matched := func(l *lesson.Lesson) (bool, int, error) {
 		recurred, err := recurrenceCount(l)
 		if err != nil {
@@ -205,6 +230,9 @@ func runLessonList(cmd *cobra.Command, _ []string) error {
 			return false, recurred, nil
 		}
 		if minRecurred > 0 && recurred < minRecurred {
+			return false, recurred, nil
+		}
+		if repoFlag != "" && !lessonHasRepository(l, repoFlag) {
 			return false, recurred, nil
 		}
 		return true, recurred, nil

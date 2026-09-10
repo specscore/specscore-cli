@@ -10,6 +10,8 @@ Use `specscore lesson occurrence add <slug> --summary "bounded factual statement
 
 Inspect with `occurrence list` and `occurrence info`. `lesson recur` appends one child for a canonical Lesson, leaves its README byte-identical, and refreshes only its derived index row; it retains the flat-file compatibility writer only until migration. `lesson check --not-enforced --min-recurred N` is the opt-in process gate.
 
+A Lesson MAY declare an optional `**Repositories:** owner/repo[, owner/repo...]` line naming the repositories its process gap concerns. A session working in one repository should load only that repository's open lessons: `specscore lesson list --not-enforced --repo <owner/repo>`. `--repo` is a strict allowlist against the declared field — a Lesson with no `**Repositories:**` line matches nothing under it, so an untriaged lesson stays invisible to a repo-scoped query until someone declares its scope, rather than silently showing up everywhere. `lesson check` accepts the same `--repo` flag for a repo-scoped CI gate.
+
 `lesson change-status <slug> --to=<status>` climbs the enforcement ladder (`Recorded` → `Stated` → `Enforced`, with a `Recorded` → `Enforced` skip-ahead arc) or retires the lesson (`Withdrawn`, `Superseded`, both requiring `--note`). `Stated` → `Recorded` is the single audited correction arc: it also requires `--note` and demotes a Stated lesson whose Enforcement section names no binding control back to Recorded, rather than leaving it stranded mid-ladder or retiring it outright.
 
 ## Import and deduplicate without losing history

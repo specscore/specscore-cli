@@ -11,12 +11,12 @@ status: Approved
 
 ## Summary
 
-`specscore lesson list` lists lesson slugs, one per line, sorted alphabetically. `--not-enforced` is the headline query — "what have we learned but not yet enforced?" — matching every lesson in `Recorded` **or** `Stated` (only `Enforced`, Tier 2, actually binds; a filter that matched only `Recorded` would silently miss every advisory-but-unenforced lesson sitting at `Stated`, which is most of them in practice). `--status` accepts one or more statuses, comma-separated and case-insensitive, and rejects an unrecognized value outright rather than silently matching nothing. `--min-recurred <N>` composes with either status filter so "which lessons have recurred and are still not enforced?" is `--not-enforced --min-recurred=1`, not eyeballing a listing. `--fields` and `--format` expose structured output (including the `recurred` count) for scripts.
+`specscore lesson list` lists lesson slugs, one per line, sorted alphabetically. `--not-enforced` is the headline query — "what have we learned but not yet enforced?" — matching every lesson in `Recorded` **or** `Stated` (only `Enforced`, Tier 2, actually binds; a filter that matched only `Recorded` would silently miss every advisory-but-unenforced lesson sitting at `Stated`, which is most of them in practice). `--status` accepts one or more statuses, comma-separated and case-insensitive, and rejects an unrecognized value outright rather than silently matching nothing. `--min-recurred <N>` composes with either status filter so "which lessons have recurred and are still not enforced?" is `--not-enforced --min-recurred=1`, not eyeballing a listing. `--repo <owner/repo>` restricts to lessons whose optional `**Repositories:**` field names that exact repository, so a session working in one repository loads only that repository's open lessons: `specscore lesson list --not-enforced --repo <owner/repo>`. It composes (AND) with the status and `--min-recurred` filters. `--fields` and `--format` expose structured output (including the `recurred` count) for scripts.
 
 ## Synopsis
 
 ```
-specscore lesson list [--not-enforced | --status <status>[,<status>...]] [--min-recurred <N>] [--fields <list>] [--format <text|yaml|json>] [--project <path>]
+specscore lesson list [--not-enforced | --status <status>[,<status>...]] [--min-recurred <N>] [--repo <owner/repo>] [--fields <list>] [--format <text|yaml|json>] [--project <path>]
 ```
 
 ## Problem
@@ -47,6 +47,12 @@ With no flags, `lesson list` MUST print every lesson's slug, one per line, sorte
 
 `--min-recurred <N>` MUST restrict output to lessons whose recurrence count is at least `N` (default `0`, meaning no filter). Canonical counts derive from validated child Occurrences; compatibility flat counts use `**Recurred:**`. It MUST compose with either status filter (AND semantics), not replace it. A negative `N` MUST exit `2`.
 
+### Repository filter
+
+#### REQ: repo-filter-is-strict-allowlist
+
+`--repo <owner/repo>` MUST restrict output to lessons whose optional `**Repositories:**` field lists that exact `owner/repo` value (case-sensitive, no normalization) — so a session working in one repository loads only that repository's open lessons: `lesson list --not-enforced --repo <owner/repo>`. A lesson with no `**Repositories:**` line MUST match NOTHING under `--repo` — it is a strict allowlist against the declared field, never a fallback that treats "the lesson is silent on scope" as "the lesson applies everywhere." It MUST compose with the status filters and `--min-recurred` (AND semantics, mirroring `--min-recurred`'s composition), not replace them.
+
 ### Recurrence surfaced in text output
 
 #### REQ: text-shows-recurrence
@@ -66,6 +72,7 @@ In the default `text` format, a lesson with derived recurrence count `N > 0` MUS
 | `--status` | No | Filter by one or more statuses, comma-separated, case-insensitive: `recorded`, `stated`, `enforced`, `withdrawn`, `superseded`. Mutually exclusive with `--not-enforced`. An unrecognized value exits `2`. |
 | `--not-enforced` | No | The headline query: shorthand for `--status=recorded,stated`. Mutually exclusive with `--status`. |
 | `--min-recurred` | No | Restrict to lessons with derived recurrence count `>= N` (default `0` = no filter). Composes with either status filter. |
+| `--repo` | No | Restrict to lessons whose `**Repositories:**` field lists this exact `owner/repo` (case-sensitive). A lesson with no `**Repositories:**` line matches nothing. Composes with the status filters and `--min-recurred`. |
 | `--fields` | No | Comma-separated: `status`, `recurred`, `date`, `owner`. Upgrades output to structured form. |
 | `--format` | No | `text` (default), `yaml`, `json`. |
 | `--project` | No | Project root (autodetected). |
@@ -130,6 +137,24 @@ In the default `text` format, a lesson with derived recurrence count `N > 0` MUS
 **Given** a `Stated` lesson `flaky-check` with `**Recurred:** 2` and a `Stated` lesson `quiet-check` with `**Recurred:** 0`
 **When** the user runs `specscore lesson list --not-enforced --min-recurred=1`
 **Then** stdout is exactly `flaky-check\n`.
+
+### AC: repo-filter-is-exact-match (verifies REQ:repo-filter-is-strict-allowlist)
+
+**Given** a lesson `scoped-check` with `**Repositories:** specscore/specscore-cli` and a lesson `other-repo-check` with `**Repositories:** sneat-co/backstage`
+**When** the user runs `specscore lesson list --repo specscore/specscore-cli`
+**Then** stdout is exactly `scoped-check\n` — `other-repo-check` does NOT appear.
+
+### AC: repo-filter-no-repositories-line-matches-nothing (verifies REQ:repo-filter-is-strict-allowlist)
+
+**Given** a lesson `unscoped-check` with no `**Repositories:**` line
+**When** the user runs `specscore lesson list --repo specscore/specscore-cli`
+**Then** stdout is empty and the command exits `0` — the lesson's silence on repository scope is NOT treated as "applies everywhere."
+
+### AC: repo-filter-composes-with-not-enforced (verifies REQ:repo-filter-is-strict-allowlist)
+
+**Given** a Recorded lesson `recorded-scoped` and an Enforced lesson `enforced-scoped`, both with `**Repositories:** specscore/specscore-cli`
+**When** the user runs `specscore lesson list --not-enforced --repo specscore/specscore-cli`
+**Then** stdout is exactly `recorded-scoped\n`.
 
 ### AC: text-shows-recurrence (verifies REQ:text-shows-recurrence)
 

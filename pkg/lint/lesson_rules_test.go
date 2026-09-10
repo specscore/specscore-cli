@@ -246,6 +246,67 @@ func TestL002_NoStatusLine_NoViolation(t *testing.T) {
 	}
 }
 
+// ----- L-011: **Repositories:** entry shape (optional field) -----
+
+// lessonWithRepositories inserts a **Repositories:** line into a lint-clean
+// flat Lesson body, mirroring fullLesson's shape.
+func lessonWithRepositories(status, repositories string) string {
+	return "# Lesson: Kinder Fake\n\n" +
+		"**Status:** " + status + "\n" +
+		"**Date:** 2026-07-25\n" +
+		"**Owner:** alex\n" +
+		"**Recurred:** 0\n" +
+		"**Repositories:** " + repositories + "\n\n" +
+		"## Incident\n\nx\n\n## Process gap\n\nx\n\n## Check\n\nx\n\n## Enforcement\n\nx\n\n" +
+		"---\n*This document follows the https://specscore.md/lesson-specification*\n"
+}
+
+func TestL011_NoRepositoriesLine_NoViolation(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "kinder-fake", fullLesson("Recorded"))
+	v := runLessonRules(t, e)
+	if got := lessonViolation(v, "L-011"); got != nil {
+		t.Errorf("unexpected L-011 violation for an absent Repositories line (field is optional): %+v", got)
+	}
+}
+
+func TestL011_ValidRepositoriesEntries_NoViolation(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "kinder-fake", lessonWithRepositories("Recorded", "sneat-co/backstage, specscore/specscore-cli"))
+	v := runLessonRules(t, e)
+	if got := lessonViolation(v, "L-011"); got != nil {
+		t.Errorf("unexpected L-011 violation for well-shaped owner/repo entries: %+v", got)
+	}
+}
+
+func TestL011_MalformedRepositoriesEntry_Flagged(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "kinder-fake", lessonWithRepositories("Recorded", "not-owner-slash-repo"))
+	v := runLessonRules(t, e)
+	got := lessonViolation(v, "L-011")
+	if got == nil {
+		t.Fatal("expected an L-011 violation for a Repositories entry with no owner/repo shape")
+	}
+	if !strings.Contains(got.Message, "not-owner-slash-repo") {
+		t.Errorf("L-011 message should name the offending entry: %q", got.Message)
+	}
+}
+
+func TestL011_OneOfSeveralEntriesMalformed_FlagsOnlyThatEntry(t *testing.T) {
+	e := newLessonRulesEnv(t)
+	e.writeLesson(t, "kinder-fake", lessonWithRepositories("Recorded", "sneat-co/backstage, bogus"))
+	v := runLessonRules(t, e)
+	var got []Violation
+	for _, x := range v {
+		if x.Rule == "L-011" {
+			got = append(got, x)
+		}
+	}
+	if len(got) != 1 || !strings.Contains(got[0].Message, "bogus") {
+		t.Fatalf("expected exactly one L-011 violation naming %q, got %+v", "bogus", got)
+	}
+}
+
 // ----- L-003 / L-004: lessons index -----
 
 func TestL003_MissingIndexRow(t *testing.T) {

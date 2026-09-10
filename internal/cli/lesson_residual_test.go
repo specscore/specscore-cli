@@ -191,18 +191,21 @@ func TestLegacyImportValidationAndOutput(t *testing.T) {
 }
 
 func TestLessonCheckResidualPredicatesAndErrors(t *testing.T) {
-	if _, err := countCheckedLessons(nil, "Recorded", true, 0); err == nil {
+	if _, err := countCheckedLessons(nil, "Recorded", true, 0, ""); err == nil {
 		t.Fatal("conflicting filters were accepted")
 	}
-	if _, err := countCheckedLessons(nil, "bogus", false, 0); err == nil {
+	if _, err := countCheckedLessons(nil, "bogus", false, 0, ""); err == nil {
 		t.Fatal("invalid status was accepted")
 	}
 	items := []*lesson.Lesson{{Status: "Enforced", Recurred: 9}, {Status: "Recorded", Recurred: 2}}
-	if n, err := countCheckedLessons(items, "Recorded", false, 2); err != nil || n != 1 {
+	if n, err := countCheckedLessons(items, "Recorded", false, 2, ""); err != nil || n != 1 {
 		t.Fatalf("filtered count = %d, %v", n, err)
 	}
-	if got := listArgsForCheck("root", "Recorded", true, 2, "json"); len(got) != 9 {
+	if got := listArgsForCheck("root", "Recorded", true, 2, "", "json"); len(got) != 9 {
 		t.Fatalf("complete list args = %#v", got)
+	}
+	if got := listArgsForCheck("root", "Recorded", true, 2, "specscore/specscore-cli", "json"); len(got) != 11 {
+		t.Fatalf("complete list args with --repo = %#v", got)
 	}
 
 	cmd := lessonCheckCommand()
@@ -221,7 +224,7 @@ func TestLessonCheckResidualPredicatesAndErrors(t *testing.T) {
 	canonical := filepath.Join(root, "spec", "lessons", "review-before-merge", "README.md")
 	occDir := filepath.Join(filepath.Dir(canonical), "occurrences")
 	requireCLISuccess(t, os.WriteFile(filepath.Join(occDir, "bad.json"), []byte("{"), 0o644))
-	if _, err := countCheckedLessons([]*lesson.Lesson{{Canonical: true, Path: canonical}}, "", false, 0); err == nil {
+	if _, err := countCheckedLessons([]*lesson.Lesson{{Canonical: true, Path: canonical}}, "", false, 0, ""); err == nil {
 		t.Fatal("malformed canonical occurrence was accepted")
 	}
 	requireCLISuccess(t, os.RemoveAll(occDir))

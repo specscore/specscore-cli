@@ -82,10 +82,20 @@ type Lesson struct {
 	ClassificationsLine  int
 	LegacyProvenance     string
 	LegacyProvenanceLine int
-	DuplicateOf          string
-	DuplicateOfLine      int
-	Supersedes           string
-	SupersedesLine       int
+
+	// Repositories is the optional, comma-separated `**Repositories:**`
+	// metadata line naming every `owner/repo` a Lesson's process gap
+	// concerns — consumed by `lesson list --repo`/`lesson check --repo` to
+	// scope a session to the lessons that name its repository. Parsed the
+	// same comma-split way Classifications is; absent when the line is
+	// missing (RepositoriesLine stays 0), which is a valid, common state —
+	// the field is optional on both layouts.
+	Repositories     []string
+	RepositoriesLine int
+	DuplicateOf      string
+	DuplicateOfLine  int
+	Supersedes       string
+	SupersedesLine   int
 
 	Recurred      int    // parsed `**Recurred:**` count; 0 when absent or unparsable
 	RecurredRaw   string // raw value as written
@@ -278,6 +288,14 @@ func Parse(path string) (*Lesson, error) {
 					value = strings.TrimSpace(value)
 					if value != "" {
 						l.Classifications = append(l.Classifications, value)
+					}
+				}
+			case "Repositories":
+				l.RepositoriesLine = i + 1
+				for _, value := range strings.Split(val, ",") {
+					value = strings.TrimSpace(value)
+					if value != "" {
+						l.Repositories = append(l.Repositories, value)
 					}
 				}
 			case "Legacy Provenance":
