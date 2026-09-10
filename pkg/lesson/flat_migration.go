@@ -538,11 +538,7 @@ func validateFlatMigrationIndexRowWithFS(lessonsDir, canonicalPath string, fs le
 	if len(occurrences) > 0 {
 		last = occurrences[len(occurrences)-1].OccurredAt.UTC().Format("2006-01-02T15:04:05Z")
 	}
-	enforcement := strings.TrimSpace(l.Control)
-	if enforcement == "" {
-		enforcement = "—"
-	}
-	want := fmt.Sprintf("| [%s](%s/README.md) | %s | %s | %d | %s | %s |", l.Slug, l.Slug, l.Status, strings.Join(l.Classifications, ", "), len(occurrences), last, enforcement)
+	want := fmt.Sprintf("| [%s](%s/README.md) | %s | %s | %d | %s |", l.Slug, l.Slug, l.Status, strings.Join(l.Classifications, ", "), len(occurrences), last)
 	indexBytes, err := fs.ReadFile(filepath.Join(lessonsDir, "README.md"))
 	if err != nil {
 		return err

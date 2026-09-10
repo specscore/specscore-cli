@@ -565,7 +565,7 @@ func TestExpectedLessonIndexRow_NilLesson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := lessonIndexRow{slug: "ghost", link: "ghost/README.md", occurrences: "0", enforcement: "—"}
+	want := lessonIndexRow{slug: "ghost", link: "ghost/README.md", occurrences: "0"}
 	if got != want {
 		t.Errorf("expectedLessonIndexRow(nil) = %+v, want %+v", got, want)
 	}

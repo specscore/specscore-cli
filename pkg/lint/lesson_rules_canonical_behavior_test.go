@@ -29,7 +29,7 @@ func TestUpsertLessonIndexRowSerializesConcurrentRowsAndLockFailures(t *testing.
 	if err := os.MkdirAll(lessonsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n## Open Questions\n\nNone at this time.\n"
+	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestLessonRulesFixLocksIndexBeforeDiscoverySoLifecycleRowSurvives(t *testin
 	if err := os.WriteFile(lessonPath, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	index := "# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n_No lessons recorded yet._\n"
+	index := "# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n\n_No lessons recorded yet._\n"
 	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestUpsertLessonIndexRow_IsBoundedIdempotentAndRejectsDuplicateOwnership(t 
 		t.Fatal(err)
 	}
 	indexPath := filepath.Join(lessonsDir, "README.md")
-	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n## Open Questions\n\nNone at this time.\n"
+	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(indexPath, []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestUpsertLessonIndexRow_IsBoundedIdempotentAndRejectsDuplicateOwnership(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(first), "| [durable-boundary](durable-boundary/README.md) | Recorded | process | 0 |  | — |") {
+	if !strings.Contains(string(first), "| [durable-boundary](durable-boundary/README.md) | Recorded | process | 0 |  |") {
 		t.Fatalf("canonical projection missing from bounded upsert:\n%s", first)
 	}
 	if err := UpsertLessonIndexRow(specRoot, l); err != nil {
@@ -302,7 +302,7 @@ func TestUpsertLessonIndexRow_IsBoundedIdempotentAndRejectsDuplicateOwnership(t 
 	if !bytes.Equal(first, second) {
 		t.Fatal("repeating the same bounded index upsert changed unrelated content")
 	}
-	duplicated := append(append([]byte(nil), second...), []byte("| [durable-boundary](durable-boundary/README.md) | Recorded | process | 0 |  | — |\n")...)
+	duplicated := append(append([]byte(nil), second...), []byte("| [durable-boundary](durable-boundary/README.md) | Recorded | process | 0 |  |\n")...)
 	if err := os.WriteFile(indexPath, duplicated, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestUpsertLessonIndexRow_IsBoundedIdempotentAndRejectsDuplicateOwnership(t 
 	}
 }
 
-// A flat Lesson already listed in the six-column table owns exactly one row,
+// A flat Lesson already listed in the five-column table owns exactly one row,
 // linked as <slug>.md. Migrating it to directory form rewrites that same row —
 // the index contract is one row per slug, not one row per link shape.
 func TestUpsertLessonIndexRow_RewritesStaleFlatRowForTheSameSlug(t *testing.T) {
@@ -336,9 +336,9 @@ func TestUpsertLessonIndexRow_RewritesStaleFlatRowForTheSameSlug(t *testing.T) {
 		t.Fatal(err)
 	}
 	indexPath := filepath.Join(lessonsDir, "README.md")
-	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n" +
-		"| [untouched](untouched.md) | Recorded | Legacy | 0 |  | — |\n" +
-		"| [migrated-boundary](migrated-boundary.md) | Recorded | Legacy | 1 |  | — |\n\n" +
+	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n" +
+		"| [untouched](untouched.md) | Recorded | Legacy | 0 |  |\n" +
+		"| [migrated-boundary](migrated-boundary.md) | Recorded | Legacy | 1 |  |\n\n" +
 		"## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(indexPath, []byte(index), 0o644); err != nil {
 		t.Fatal(err)
@@ -357,10 +357,10 @@ func TestUpsertLessonIndexRow_RewritesStaleFlatRowForTheSameSlug(t *testing.T) {
 	if got := strings.Count(string(after), "[migrated-boundary]"); got != 1 {
 		t.Fatalf("expected exactly one migrated-boundary row, got %d:\n%s", got, after)
 	}
-	if !strings.Contains(string(after), "| [migrated-boundary](migrated-boundary/README.md) | Recorded | process | 0 |  | — |") {
+	if !strings.Contains(string(after), "| [migrated-boundary](migrated-boundary/README.md) | Recorded | process | 0 |  |") {
 		t.Fatalf("canonical projection missing after flat-row rewrite:\n%s", after)
 	}
-	if !strings.Contains(string(after), "| [untouched](untouched.md) | Recorded | Legacy | 0 |  | — |") {
+	if !strings.Contains(string(after), "| [untouched](untouched.md) | Recorded | Legacy | 0 |  |") {
 		t.Fatalf("bounded upsert disturbed an unrelated flat row:\n%s", after)
 	}
 }
@@ -549,8 +549,8 @@ func TestLessonIndexParserAndRewriteRefuseAmbiguousOrMalformedTables(t *testing.
 	path := filepath.Join(root, "README.md")
 	for _, body := range []string{
 		"## Lessons\n\n| malformed |\n",
-		"## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n| not-a-link | x | x | 0 | | — |\n",
-		"## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n| [wrong](different/README.md) | x | x | 0 | | — |\n",
+		"## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n| not-a-link | x | x | 0 |\n",
+		"## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n| [wrong](different/README.md) | x | x | 0 |\n",
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -651,7 +651,7 @@ func TestLessonIndexRules_ReportsProjectionDriftOrphansAndDuplicates(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	index := "## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n| [one](one/README.md) | Wrong | process | 0 |  | — |\n| [ghost](ghost/README.md) | Recorded | process | 0 |  | — |\n| [ghost](ghost/README.md) | Recorded | process | 0 |  | — |\n"
+	index := "## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n| [one](one/README.md) | Wrong | process | 0 |  |\n| [ghost](ghost/README.md) | Recorded | process | 0 |  |\n| [ghost](ghost/README.md) | Recorded | process | 0 |  |\n"
 	if err := os.WriteFile(filepath.Join(lessons, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -729,11 +729,7 @@ func TestLessonIndexProjectionTracksOccurrenceEvidenceAndLegacyColumns(t *testin
 	if err != nil || row.occurrences != "1" || row.lastOccurred == "" {
 		t.Fatalf("canonical row must project occurrence evidence: %#v, %v", row, err)
 	}
-	l.DuplicateOf = "retained"
-	if row, err = expectedLessonIndexRow("durable", l); err != nil || row.enforcement != "Duplicate Of: retained" {
-		t.Fatalf("duplicate projection = %#v, %v", row, err)
-	}
-	if err := os.WriteFile(filepath.Join(lessons, "README.md"), []byte("## Lessons\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(lessons, "README.md"), []byte("## Lessons\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := UpsertLessonIndexRow(root, l); err == nil {
@@ -785,7 +781,7 @@ func TestLessonIndexFailuresPropagateMalformedOccurrenceInsteadOfProjectingIt(t 
 		t.Fatal("malformed immutable occurrence must prevent an index projection")
 	}
 	index := filepath.Join(lessons, "README.md")
-	if err := os.WriteFile(index, []byte("## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n"), 0o644); err != nil {
+	if err := os.WriteFile(index, []byte("## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := rewriteLessonIndex(index, []string{l.Slug}, map[string]*lesson.Lesson{l.Slug: l}); err == nil {
@@ -818,7 +814,7 @@ func TestUpsertLessonIndexRow_SkipsExistingProjectionRowsBeforeInsertion(t *test
 			t.Fatal(err)
 		}
 	}
-	index := "## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n| [existing](existing/README.md) | Recorded | process | 0 |  | — |\n"
+	index := "## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n| [existing](existing/README.md) | Recorded | process | 0 |  |\n"
 	if err := os.WriteFile(filepath.Join(lessons, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -869,7 +865,7 @@ func TestUpsertLessonIndexRow_MigratesLegacyProjectionForFirstCanonicalLesson(t 
 		t.Fatal(err)
 	}
 	text := string(got)
-	if !strings.Contains(text, "| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |") || !strings.Contains(text, "[legacy](legacy.md)") || !strings.Contains(text, "[canonical](canonical/README.md)") {
+	if !strings.Contains(text, "| Lesson | Status | Classifications | Occurrences | Last Occurred |") || !strings.Contains(text, "[legacy](legacy.md)") || !strings.Contains(text, "[canonical](canonical/README.md)") {
 		t.Fatalf("first canonical lesson must rewrite the complete flat projection:\n%s", got)
 	}
 
@@ -884,75 +880,12 @@ func TestUpsertLessonIndexRow_MigratesLegacyProjectionForFirstCanonicalLesson(t 
 	}
 }
 
-// TestLessonIndexFix_JoinsWrappedEnforcementParagraph guards against REQ
-// regression: the same truncation the feature-index Summary fix (c910c04)
-// closed also existed in the Lesson-index projection. A canonical Lesson's
-// **Control:** value is routinely hand-wrapped across multiple source lines
-// (see spec/lessons/<slug>/README.md in sneat-co/backstage); before this
-// fix, `spec lint --fix` regenerated the Enforcement cell from only the
-// field's first physical line, cutting it mid-sentence.
-func TestLessonIndexFix_JoinsWrappedEnforcementParagraph(t *testing.T) {
-	specRoot := t.TempDir()
-	lessonsDir := filepath.Join(specRoot, "lessons")
-	slug := "clean-clone-guard"
-	lessonPath := filepath.Join(lessonsDir, slug, "README.md")
-	if err := os.MkdirAll(filepath.Join(filepath.Dir(lessonPath), "occurrences"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := "# Lesson: Clean Clone Guard\n\n" +
-		"**Status:** Recorded\n**Date:** 2026-08-27\n**Owner:** alex\n" +
-		"**Classifications:** tooling-determinism\n" +
-		"**Legacy Provenance:** —\n**Duplicate Of:** —\n**Supersedes:** —\n**Superseded By:** —\n\n" +
-		"## Lesson\n\nx\n\n## Process Gap\n\nx\n\n## Tracking\n\n" +
-		"- **Occurrence store:** `occurrences/`\n" +
-		"- **Recurrence metadata:** derived from child JSON; never hand-maintained here.\n" +
-		"- **Occurrence schema:** `https://specscore.md/new/lesson-occurrence.schema.json`\n\n" +
-		"## Enforcement\n\n" +
-		"**Control:** the clean-clone guard resolves each candidate write to an absolute\n" +
-		"path and refuses only when that path lies inside a canonical clone and outside\n" +
-		"any linked worktree cut from it — never on command name or shell cwd.\n" +
-		"**Verification:** a regression suite.\n**Evidence:** —\n\n" +
-		"## Open Questions\n\nNone at this time.\n"
-	if err := os.WriteFile(lessonPath, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	index := "# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n_No lessons recorded yet._\n\n## Open Questions\n\nNone at this time.\n"
-	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	l, err := lesson.Parse(lessonPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed := map[string]*lesson.Lesson{slug: l}
-
-	vs, fixed := lessonIndexRules(specRoot, parsed, true)
-	if !fixed {
-		t.Fatalf("expected the index to be rewritten, violations: %+v", vs)
-	}
-
-	got, err := os.ReadFile(filepath.Join(lessonsDir, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "the clean-clone guard resolves each candidate write to an absolute " +
-		"path and refuses only when that path lies inside a canonical clone and outside " +
-		"any linked worktree cut from it — never on command name or shell cwd."
-	if !strings.Contains(string(got), want) {
-		t.Fatalf("regenerated index Enforcement cell must contain the full joined paragraph, not a mid-sentence cut:\n%s", got)
-	}
-	if strings.Contains(string(got), "to an absolute |") {
-		t.Fatalf("regenerated index Enforcement cell was truncated mid-sentence:\n%s", got)
-	}
-}
-
 // TestLessonRules_RepositoriesFieldRoundTripsWithoutBreakingIndexOrLint is
 // item 3's acceptance check: an optional **Repositories:** line on a
 // canonical Lesson must lint clean (L-005's closed ordered-field set does
 // not include it, so its own line position is irrelevant to that check),
 // round-trip through Parse unchanged, and leave index generation (L-003/
-// L-004) producing the same six-column projection — no new Repositories
+// L-004) producing the same five-column projection — no new Repositories
 // column, per the deliberate choice not to add one in this change.
 func TestLessonRules_RepositoriesFieldRoundTripsWithoutBreakingIndexOrLint(t *testing.T) {
 	projectRoot := t.TempDir()
@@ -1010,7 +943,7 @@ func TestLessonRules_RepositoriesFieldRoundTripsWithoutBreakingIndexOrLint(t *te
 		}
 	}
 
-	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n\n## Open Questions\n\nNone at this time.\n"
+	index := "# Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n\n## Open Questions\n\nNone at this time.\n"
 	if err := os.WriteFile(filepath.Join(lessonsDir, "README.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}

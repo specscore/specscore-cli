@@ -131,7 +131,7 @@ func TestLessonNew_EmbeddedEmitsFrontmatterSectionsAndIndex(t *testing.T) {
 
 // A repository can adopt directory-form Lessons incrementally. Creating its
 // first canonical Lesson must upgrade only the declared lessons index, keeping
-// every pre-existing flat Lesson visible in the six-column projection.
+// every pre-existing flat Lesson visible in the five-column projection.
 func TestLessonNew_UpgradesLegacyIndexForFirstCanonicalLesson(t *testing.T) {
 	root := setupSpecRoot(t)
 	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
@@ -159,8 +159,8 @@ func TestLessonNew_UpgradesLegacyIndexForFirstCanonicalLesson(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |",
-		"| [existing](existing.md) | Recorded | Legacy | 0 |  | — |",
+		"| Lesson | Status | Classifications | Occurrences | Last Occurred |",
+		"| [existing](existing.md) | Recorded | Legacy | 0 |  |",
 		"| [canonical](canonical/README.md) | Recorded |",
 	} {
 		if !strings.Contains(string(got), want) {
