@@ -318,3 +318,44 @@ func TestParse_PromotesTo(t *testing.T) {
 		})
 	}
 }
+
+// TestParse_Repositories covers the optional **Repositories:** field: absent
+// (nil slice, zero line), a single value, a comma-separated multi-value list
+// with incidental whitespace, and stray-comma empty parts skipped — mirroring
+// TestParse_Classifications-shaped coverage for the sibling field it reuses
+// the comma-split convention from.
+func TestParse_Repositories(t *testing.T) {
+	cases := []struct {
+		name     string
+		field    string // full "**Repositories:** ...\n" line, or "" to omit it
+		wantVals []string
+		wantLine bool
+	}{
+		{name: "absent", field: "", wantVals: nil, wantLine: false},
+		{name: "single", field: "**Repositories:** specscore/specscore-cli\n", wantVals: []string{"specscore/specscore-cli"}, wantLine: true},
+		{name: "multi-with-whitespace", field: "**Repositories:** sneat-co/backstage,  specscore/specscore-cli \n", wantVals: []string{"sneat-co/backstage", "specscore/specscore-cli"}, wantLine: true},
+		{name: "stray-comma-empty-parts-skipped", field: "**Repositories:** sneat-co/backstage,,\n", wantVals: []string{"sneat-co/backstage"}, wantLine: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body := "# Lesson: Kinder Fake\n\n**Status:** Stated\n" + tc.field +
+				"\n## Incident\n\nIt broke.\n\n## Process gap\n\nNo check caught it.\n\n## Check\n\nAdd one.\n\n## Enforcement\n\nStated.\n"
+			l, err := Parse(writeLesson(t, filepath.Join(dir, "lessons"), "kinder-fake", body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(l.Repositories) != len(tc.wantVals) {
+				t.Fatalf("Repositories = %#v, want %#v", l.Repositories, tc.wantVals)
+			}
+			for i, want := range tc.wantVals {
+				if l.Repositories[i] != want {
+					t.Fatalf("Repositories[%d] = %q, want %q", i, l.Repositories[i], want)
+				}
+			}
+			if (l.RepositoriesLine != 0) != tc.wantLine {
+				t.Fatalf("RepositoriesLine = %d, want present=%v", l.RepositoriesLine, tc.wantLine)
+			}
+		})
+	}
+}

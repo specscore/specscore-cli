@@ -63,7 +63,7 @@ Every full rewrite and bounded row upsert MUST use the same project-private shar
 
 #### REQ: extended-lesson-rules
 
-The default suite MUST register error rules `L-005`–`L-009`:
+The default suite MUST register error rules `L-005`–`L-010`:
 
 | Rule | Requirement |
 |---|---|
@@ -72,8 +72,15 @@ The default suite MUST register error rules `L-005`–`L-009`:
 | L-007 | An Enforced Lesson carries a repository-relative enforcement-evidence path which resolves under project root. |
 | L-008 | Supersession/human-confirmed relations resolve, are non-self, non-duplicated, symmetric where required, and acyclic where directed. |
 | L-009 | Occurrences have unique IDs, RFC-3339 times, opaque JSON-object context, and resolvable parents. |
+| L-010 | Each entry in an optional `**Repositories:**` field is a syntactically valid `owner/repo` reference. |
 
 Lint checks syntax, identity, local paths, and graph consistency only. It does not claim a remote issue is open, a test ran, or prose is semantically duplicate.
+
+### L-010 — repository reference shape
+
+#### REQ: rule-l-010-repositories-shape
+
+`L-010` MUST report a violation, naming the offending entry, for each `**Repositories:**` entry that does not match the `owner/repo` shape (a single `/`-separated pair of non-empty segments). `L-010` MUST NOT report anything when `**Repositories:**` is absent — the field is optional on both layouts, and its absence is a different, unchecked concern (a lesson silent on repository scope, which `lesson list --repo`/`lesson check --repo` already treat as matching nothing). `L-010` applies to both flat and directory Lessons, mirroring `L-002`'s universal (not canonical-only) placement.
 
 #### REQ: generic-document-registry
 
@@ -124,6 +131,18 @@ Flat and directory Lesson READMEs MUST join the generic status-bearing document 
 **Given** an index row whose `Status` cell disagrees with the Lesson file's `**Status:**`
 **When** `specscore spec lint --fix` runs
 **Then** the row is rewritten to match and a subsequent lint run reports no `L-004` violation.
+
+### AC: l010-malformed-entry-flagged (verifies REQ:rule-l-010-repositories-shape)
+
+**Given** a Lesson with `**Repositories:** not-owner-slash-repo`
+**When** `specscore spec lint` runs
+**Then** an `L-010` violation is reported naming `not-owner-slash-repo`.
+
+### AC: l010-absent-field-is-clean (verifies REQ:rule-l-010-repositories-shape)
+
+**Given** a Lesson with no `**Repositories:**` line
+**When** `specscore spec lint` runs
+**Then** no `L-010` violation is reported.
 
 ## Open Questions
 

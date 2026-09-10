@@ -68,6 +68,14 @@ The `list` and `info` subcommands MUST NOT create, edit, or transition either la
 
 `lesson list` MUST accept a `--min-recurred <N>` filter restricting output to lessons whose `**Recurred:**` count is at least `N`, composable with the status filters (`--status`, `--not-enforced`) rather than mutually exclusive with them.
 
+### Repository scope keeps a session's lesson load bounded
+
+An agent session working in one repository does not need every project's lessons loaded — only the ones that name its repository, plus the ones that are silent on scope because they haven't been triaged yet. A Lesson MAY declare an optional `**Repositories:**` metadata line naming one or more `owner/repo` values the lesson's process gap concerns; `lesson list --repo <owner/repo>` and `lesson check --repo <owner/repo>` scope a query to exactly that repository's declared lessons.
+
+#### REQ: repositories-field-is-optional-scope
+
+A Lesson body MAY declare a comma-separated `**Repositories:** owner/repo[, owner/repo...]` metadata line on either layout. The field MUST be optional: a Lesson omitting it entirely remains valid and lint-clean. `lesson list --repo <owner/repo>` and `lesson check --repo <owner/repo>` MUST restrict output to lessons whose declared `**Repositories:**` set contains that exact value (case-sensitive, no normalization). A Lesson with no `**Repositories:**` line MUST match nothing under `--repo` — the filter is a strict allowlist against the declared field, never a fallback that treats an undeclared scope as "applies everywhere."
+
 ### Durable facts versus live coordination
 
 SpecScore owns durable, reviewable artifact facts: lifecycle/occurrence history,
@@ -91,7 +99,7 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 | [CLI](../README.md) | Inherits shared exit-code contract, `--format`/`--project` conventions, and project autodetection. |
 | [cli/plan](../plan/README.md) | Closest structural sibling: a flat single-file artifact family whose disposition vocabulary (`Withdrawn`, `Superseded`) and non-relocating `change-status` model this group reuses directly. |
 | [lifecycle-transitions](../lifecycle-transitions/README.md) | `lesson change-status` implements this shared contract for the Lesson kind. |
-| [spec lint](../spec/lint/README.md) | Hosts the `L-001`–`L-009` rule family documented in [cli/spec/lint/lesson-rules](../spec/lint/lesson-rules/README.md). |
+| [spec lint](../spec/lint/README.md) | Hosts the `L-001`–`L-010` rule family documented in [cli/spec/lint/lesson-rules](../spec/lint/lesson-rules/README.md). |
 | [cli/event](../event/README.md) | Delivers lifecycle/occurrence events through the reliable per-subscriber behavior in [events](events/README.md). |
 | [coordination](coordination/README.md) | Renders durable agent-work links and delegates explicit live actions to Synchestra without becoming a broker. |
 
@@ -120,6 +128,12 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 **Given** a lesson `flaky-check` in `**Status:** Stated` with `**Recurred:** 2`, and a lesson `quiet-check` in `**Status:** Stated` with `**Recurred:** 0`
 **When** the user runs `specscore lesson list --not-enforced --min-recurred=1`
 **Then** stdout lists only `flaky-check`.
+
+### AC: repo-filter-strict-allowlist (verifies REQ:repositories-field-is-optional-scope)
+
+**Given** a lesson `scoped-check` with `**Repositories:** specscore/specscore-cli` and a lesson `unscoped-check` with no `**Repositories:**` line
+**When** the user runs `specscore lesson list --repo specscore/specscore-cli`
+**Then** stdout lists only `scoped-check` — `unscoped-check` does NOT appear despite having no repository restriction stated.
 
 ### AC: recur-against-retired-lesson-warns (verifies the recurrence-graduation-signal behavior)
 

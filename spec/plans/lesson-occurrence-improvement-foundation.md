@@ -185,6 +185,10 @@ merger: merging establishes the Definition of Done, while lifecycle
 finalization records that established fact without expanding merge authority.
 Tasks 10–11 remain Blocked until their own acceptance criteria are delivered.
 
+## Deferred AC Coverage
+
+- cli/lesson#ac:repo-filter-strict-allowlist — delivered outside this Plan's task list: the optional `**Repositories:**` field and `lesson list --repo`/`lesson check --repo` filtering (item 3 of a separate coordinated PR batch, alongside sibling PRs #193/#194) landed as a standalone change against the already-reconciled `cli/lesson` Feature, not as a new task tracked here. Fully implemented and tested; see `spec/features/cli/lesson/list/README.md` and `spec/features/cli/lesson/check/README.md` for the flag-level REQ/AC pair this AC summarizes at the parent Feature.
+
 ## Open Questions
 
 None at this time. Task 10's remaining dependency is the generic Synchestra

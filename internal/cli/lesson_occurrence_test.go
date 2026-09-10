@@ -198,3 +198,33 @@ func TestLessonCheckFailsOnlyOverBaseline(t *testing.T) {
 		t.Fatalf("baseline allowance should pass: %v", err)
 	}
 }
+
+// TestLessonCheck_RepoFilterMatchesExactly mirrors
+// TestLessonList_RepoFilterExactMatch at the `check` verb: --repo narrows
+// the counted/rendered set to lessons declaring that exact owner/repo.
+func TestLessonCheck_RepoFilterMatchesExactly(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+	writeLessonRaw(t, lessonsDir, "scoped-check", lessonBody("Scoped Check", "Recorded", "specscore/specscore-cli"))
+	writeLessonRaw(t, lessonsDir, "other-repo-check", lessonBody("Other Repo Check", "Recorded", "sneat-co/backstage"))
+
+	out, _, err := runLesson(t, "check", "--repo", "specscore/specscore-cli")
+	if !strings.Contains(out, "scoped-check") || strings.Contains(out, "other-repo-check") || exitCodeOfErr(err) != 1 {
+		t.Fatalf("out=%q exit=%d err=%v", out, exitCodeOfErr(err), err)
+	}
+	if _, _, err := runLesson(t, "check", "--repo", "specscore/specscore-cli", "--max", "1"); err != nil {
+		t.Fatalf("baseline allowance should pass: %v", err)
+	}
+}
+
+// TestLessonCheck_RepoFilterNoRepositoriesLineMatchesNothing is the check-verb
+// half of the strict-allowlist AC: a lesson silent on **Repositories:** must
+// never count toward a --repo baseline.
+func TestLessonCheck_RepoFilterNoRepositoriesLineMatchesNothing(t *testing.T) {
+	lessonsDir := setupLessonsSpec(t)
+	writeLessonInDir(t, lessonsDir, "unscoped-check", "Recorded")
+
+	out, _, err := runLesson(t, "check", "--repo", "specscore/specscore-cli")
+	if out != "" || err != nil {
+		t.Fatalf("expected empty output and exit 0 (unscoped lesson must not count), out=%q err=%v", out, err)
+	}
+}
