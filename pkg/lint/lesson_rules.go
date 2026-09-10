@@ -562,8 +562,13 @@ func mustRel(root, path string) string { rel, _ := filepath.Rel(root, path); ret
 
 // ----- L-003 / L-004: lessons-index completeness and row sync -----
 
-// lessonIndexRow is the six-column core index projection. Link is kept
+// lessonIndexRow is the five-column core index projection. Link is kept
 // separately so flat compatibility entries cannot masquerade as canonical.
+// Enforcement (the Lesson's own **Control:** text) is deliberately not
+// projected here: it duplicates the Lesson README's own `## Enforcement`
+// section, and every row paid to carry it regardless of whether an agent
+// reading the index needed it (`lesson info <slug>` reads the Lesson README
+// directly for that text).
 type lessonIndexRow struct {
 	slug            string
 	link            string
@@ -571,17 +576,16 @@ type lessonIndexRow struct {
 	classifications string
 	occurrences     string
 	lastOccurred    string
-	enforcement     string
 }
 
 func (r lessonIndexRow) equals(o lessonIndexRow) bool {
 	return r.slug == o.slug && r.link == o.link && r.status == o.status &&
 		r.classifications == o.classifications && r.occurrences == o.occurrences &&
-		r.lastOccurred == o.lastOccurred && r.enforcement == o.enforcement
+		r.lastOccurred == o.lastOccurred
 }
 
 func expectedLessonIndexRow(slug string, l *lesson.Lesson) (lessonIndexRow, error) {
-	r := lessonIndexRow{slug: slug, link: slug + "/README.md", occurrences: "0", enforcement: "—"}
+	r := lessonIndexRow{slug: slug, link: slug + "/README.md", occurrences: "0"}
 	if l == nil {
 		return r, nil
 	}
@@ -600,11 +604,6 @@ func expectedLessonIndexRow(slug string, l *lesson.Lesson) (lessonIndexRow, erro
 	r.occurrences = strconv.Itoa(len(items))
 	if len(items) > 0 {
 		r.lastOccurred = items[len(items)-1].OccurredAt.UTC().Format("2006-01-02T15:04:05Z")
-	}
-	if l.DuplicateOf != "" && l.DuplicateOf != "—" {
-		r.enforcement = "Duplicate Of: " + l.DuplicateOf
-	} else if strings.TrimSpace(l.Control) != "" {
-		r.enforcement = strings.TrimSpace(l.Control)
 	}
 	return r, nil
 }
@@ -700,14 +699,14 @@ func lessonIndexRulesWithRewrite(specRoot string, parsed map[string]*lesson.Less
 		vs = append(vs, Violation{
 			File: rel, Line: 0, Severity: "error",
 			Rule:    "L-004",
-			Message: fmt.Sprintf("lessons index does not match the canonical six-column projection (%s) (run `specscore spec lint --fix`)", strings.Join(parts, "; ")),
+			Message: fmt.Sprintf("lessons index does not match the canonical five-column projection (%s) (run `specscore spec lint --fix`)", strings.Join(parts, "; ")),
 		})
 	}
 	return vs, fixed
 }
 
 // readLessonIndexRows scans the exact ## Lessons table. malformed is true for
-// row-like content that cannot be represented by the six-column contract.
+// row-like content that cannot be represented by the five-column contract.
 func readLessonIndexRows(path string) (rows []lessonIndexRow, canonical, malformed bool, err error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -734,7 +733,7 @@ func readLessonIndexRows(path string) (rows []lessonIndexRow, canonical, malform
 		if !inLessons {
 			continue
 		}
-		if line == "| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |" {
+		if line == "| Lesson | Status | Classifications | Occurrences | Last Occurred |" {
 			headerSeen = true
 			continue
 		}
@@ -742,10 +741,7 @@ func readLessonIndexRows(path string) (rows []lessonIndexRow, canonical, malform
 			headerSeen = true
 			continue
 		}
-		if line == "|---|---|---|---:|---|---|" || line == "|---|---|---|---|---|---|" || line == "" {
-			continue
-		}
-		if legacySection && line == "|---|---|---|---|---|" {
+		if line == "|---|---|---|---:|---|" || line == "|---|---|---|---|---|" || line == "" {
 			continue
 		}
 		if !strings.HasPrefix(line, "|") {
@@ -758,10 +754,10 @@ func readLessonIndexRows(path string) (rows []lessonIndexRow, canonical, malform
 				malformed = true
 				continue
 			}
-			rows = append(rows, lessonIndexRow{slug: label, link: link, status: cells[1], classifications: "Legacy", occurrences: cells[2], enforcement: "—"})
+			rows = append(rows, lessonIndexRow{slug: label, link: link, status: cells[1], classifications: "Legacy", occurrences: cells[2]})
 			continue
 		}
-		if len(cells) != 6 {
+		if len(cells) != 5 {
 			malformed = true
 			continue
 		}
@@ -775,7 +771,7 @@ func readLessonIndexRows(path string) (rows []lessonIndexRow, canonical, malform
 			malformed = true
 			continue
 		}
-		rows = append(rows, lessonIndexRow{slug: slug, link: link, status: cells[1], classifications: cells[2], occurrences: cells[3], lastOccurred: cells[4], enforcement: cells[5]})
+		rows = append(rows, lessonIndexRow{slug: slug, link: link, status: cells[1], classifications: cells[2], occurrences: cells[3], lastOccurred: cells[4]})
 	}
 	return rows, inLessons && headerSeen && !legacySection, malformed, nil
 }
@@ -837,8 +833,8 @@ func rewriteLessonIndexUnlocked(path string, slugs []string, parsed map[string]*
 
 	var tbl strings.Builder
 	tbl.WriteString("## Lessons\n\n")
-	tbl.WriteString("| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n")
-	tbl.WriteString("|---|---|---|---:|---|---|\n")
+	tbl.WriteString("| Lesson | Status | Classifications | Occurrences | Last Occurred |\n")
+	tbl.WriteString("|---|---|---|---:|---|\n")
 
 	if len(slugs) == 0 {
 		tbl.WriteString("\n_No lessons recorded yet._\n\n")
@@ -848,7 +844,7 @@ func rewriteLessonIndexUnlocked(path string, slugs []string, parsed map[string]*
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(&tbl, "| [%s](%s) | %s | %s | %s | %s | %s |\n", row.slug, row.link, row.status, row.classifications, row.occurrences, row.lastOccurred, row.enforcement)
+			fmt.Fprintf(&tbl, "| [%s](%s) | %s | %s | %s | %s |\n", row.slug, row.link, row.status, row.classifications, row.occurrences, row.lastOccurred)
 		}
 		tbl.WriteString("\n")
 	}
@@ -929,7 +925,7 @@ func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 	// index, so migrate that one declared projection in place rather than
 	// rejecting an otherwise valid canonical scaffold or requiring a broad
 	// repository-wide --fix.  Discovering the complete Lesson set is necessary:
-	// a mixed six-column table must represent every pre-existing flat Lesson as
+	// a mixed five-column table must represent every pre-existing flat Lesson as
 	// well as the new directory-form one.
 	if strings.Contains(string(b), "| Lesson | Status | Recurred | Date | Owner |") {
 		lessons, err := lesson.Discover(filepath.Join(specRoot, "lessons"))
@@ -944,18 +940,18 @@ func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 		}
 		return rewriteLessonIndexUnlocked(path, slugs, parsed)
 	}
-	line := fmt.Sprintf("| [%s](%s) | %s | %s | %s | %s | %s |", row.slug, row.link, row.status, row.classifications, row.occurrences, row.lastOccurred, row.enforcement)
+	line := fmt.Sprintf("| [%s](%s) | %s | %s | %s | %s |", row.slug, row.link, row.status, row.classifications, row.occurrences, row.lastOccurred)
 	lines := strings.Split(string(b), "\n")
 	header := -1
 	separator := -1
 	found := -1
 	for i, raw := range lines {
 		trimmed := strings.TrimSpace(raw)
-		if trimmed == "| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |" {
+		if trimmed == "| Lesson | Status | Classifications | Occurrences | Last Occurred |" {
 			header = i
 			continue
 		}
-		if header >= 0 && separator < 0 && (trimmed == "|---|---|---|---:|---|---|" || trimmed == "|---|---|---|---|---|---|") {
+		if header >= 0 && separator < 0 && (trimmed == "|---|---|---|---:|---|" || trimmed == "|---|---|---|---|---|") {
 			separator = i
 			continue
 		}
@@ -967,7 +963,7 @@ func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 		}
 	}
 	if header < 0 || separator != header+1 {
-		return fmt.Errorf("lessons index lacks the canonical six-column table")
+		return fmt.Errorf("lessons index lacks the canonical five-column table")
 	}
 	if found >= 0 {
 		lines[found] = line

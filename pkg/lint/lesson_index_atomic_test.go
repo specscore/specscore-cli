@@ -85,7 +85,7 @@ func lessonIndexFaultOps(fail string) lessonIndexWriteOps {
 
 func TestLessonIndexAtomicWriterPreservesParseableOriginalAndSupportsDurableRetry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "README.md")
-	original := []byte("# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |\n|---|---|---|---:|---|---|\n")
+	original := []byte("# Lessons\n\n## Lessons\n\n| Lesson | Status | Classifications | Occurrences | Last Occurred |\n|---|---|---|---:|---|\n")
 	updated := append(append([]byte(nil), original...), []byte("| [rule](rule/README.md) | Recorded | process | 0 |  | — |\n")...)
 	for _, fault := range []string{"stat", "create", "file-chmod", "file-write", "short-write", "file-sync", "file-close", "rename"} {
 		t.Run(fault, func(t *testing.T) {

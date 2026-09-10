@@ -348,8 +348,8 @@ format: https://specscore.md/lessons-index-specification
 
 ## Lessons
 
-| Lesson | Status | Classifications | Occurrences | Last Occurred | Enforcement |
-|---|---|---|---:|---|---|
+| Lesson | Status | Classifications | Occurrences | Last Occurred |
+|---|---|---|---:|---|
 
 ## Open Questions
 
