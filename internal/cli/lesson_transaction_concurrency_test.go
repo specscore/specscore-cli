@@ -19,7 +19,7 @@ func TestLessonNewForceRejectsConcurrentLifecycleMutation(t *testing.T) {
 	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
 	configureNoopLessonEvents(t, root)
 	create := lessonNewCommand()
-	setLessonCommandFlags(t, create, map[string]string{"project": root, "title": "Original"})
+	setLessonCommandFlags(t, create, map[string]string{"project": root, "title": "Original", "classification": "process"})
 	requireCLISuccess(t, runLessonNewWithDeps(create, []string{"force-race"}, defaultLessonCLIDeps()))
 
 	entered := make(chan struct{})
@@ -71,7 +71,7 @@ func TestLessonRelationUpdatesBothRowsBeforeEventCommit(t *testing.T) {
 	configureNoopLessonEvents(t, root)
 	for _, slug := range []string{"retained", "canonical"} {
 		cmd := lessonNewCommand()
-		setLessonCommandFlags(t, cmd, map[string]string{"project": root})
+		setLessonCommandFlags(t, cmd, map[string]string{"project": root, "classification": "process"})
 		requireCLISuccess(t, runLessonNewWithDeps(cmd, []string{slug}, defaultLessonCLIDeps()))
 	}
 
@@ -105,7 +105,7 @@ func TestLessonNewForceRereadAndScaffoldPreflightFailures(t *testing.T) {
 	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
 	configureNoopLessonEvents(t, root)
 	create := lessonNewCommand()
-	setLessonCommandFlags(t, create, map[string]string{"project": root})
+	setLessonCommandFlags(t, create, map[string]string{"project": root, "classification": "process"})
 	requireCLISuccess(t, runLessonNewWithDeps(create, []string{"force-read"}, defaultLessonCLIDeps()))
 
 	deps := defaultLessonCLIDeps()
@@ -204,7 +204,7 @@ func TestCanonicalOccurrenceSerializesWithLifecycleAndKeepsIndexCurrent(t *testi
 	requireCLISuccess(t, projectdef.WriteSpecConfig(root, lessonTestConfig()))
 	configureNoopLessonEvents(t, root)
 	create := lessonNewCommand()
-	setLessonCommandFlags(t, create, map[string]string{"project": root})
+	setLessonCommandFlags(t, create, map[string]string{"project": root, "classification": "process"})
 	requireCLISuccess(t, runLessonNewWithDeps(create, []string{"review-before-merge"}, defaultLessonCLIDeps()))
 	started := make(chan struct{})
 	changed := make(chan error, 1)

@@ -246,7 +246,7 @@ func TestLessonNewForceCompletedArtifactRetryFinishesOriginalPreparedEvent(t *te
 	withCwd(t, root)
 	configureNoopLessonEvents(t, root)
 	cmd := lessonNewCommand()
-	setLessonCommandFlags(t, cmd, map[string]string{"title": "Recover Force", "owner": "tester"})
+	setLessonCommandFlags(t, cmd, map[string]string{"title": "Recover Force", "owner": "tester", "classification": "process"})
 	deps := defaultLessonCLIDeps()
 	deps.indexUpsert = func(string, *lesson.Lesson) error { return errors.New("injected post-publication index interruption") }
 	if err := runLessonNewWithDeps(cmd, []string{"recover-force"}, deps); err == nil || !strings.Contains(err.Error(), "prepared event") {
@@ -311,7 +311,7 @@ func TestLessonNewForceCrossIntentAndLaterPreflightFailureRetainOriginalPrepared
 		return realLock(projectRoot, slug, mutate)
 	}
 	cmd := lessonNewCommand()
-	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "title": "Original Intent", "owner": "tester", "force": "true"})
+	setLessonCommandFlags(t, cmd, map[string]string{"project": root, "title": "Original Intent", "owner": "tester", "force": "true", "classification": "process"})
 	if err := runLessonNewWithDeps(cmd, []string{"retained-force"}, deps); err == nil || !strings.Contains(err.Error(), "resumed prepared event") {
 		t.Fatalf("resumed force preflight conflict = %v", err)
 	}
@@ -409,6 +409,120 @@ func TestLessonNew_InvalidClassificationVocabularyPreflightWritesNothing(t *test
 				t.Fatal("classification preflight changed the project tree")
 			}
 		})
+	}
+}
+
+// AC: classification-selection-is-explicit-and-empty-by-default — a
+// repeatable --classification lands exactly the selected names on the
+// scaffold, in the order given.
+func TestLessonNew_ClassificationSelectionLandsOnScaffold(t *testing.T) {
+	root := setupSpecRoot(t)
+	cfg := projectdef.SpecConfig{Extras: map[string]any{
+		"lessons": map[string]any{"classifications": []string{"process", "validation"}},
+	}}
+	if err := projectdef.WriteSpecConfig(root, cfg); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, root)
+	if _, stderr, err := runLesson(t, "new", "picked", "--classification", "process", "--classification", "validation"); err != nil {
+		t.Fatalf("lesson new: %v (stderr=%s)", err, stderr)
+	}
+	s := readLesson(t, root, "picked")
+	if !strings.Contains(s, "**Classifications:** process, validation\n") {
+		t.Errorf("selected classifications not scaffolded:\n%s", s)
+	}
+}
+
+// AC: classification-selection-is-explicit-and-empty-by-default — an
+// unconfigured or duplicated --classification value exits InvalidArgs before
+// any write, mirroring migrate-flat's own selection validation.
+func TestLessonNew_InvalidClassificationSelectionWritesNothing(t *testing.T) {
+	tests := []struct {
+		name            string
+		classifications []string
+	}{
+		{"unconfigured", []string{"unknown"}},
+		{"duplicated", []string{"process", "process"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := setupSpecRoot(t)
+			if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+				t.Fatal(err)
+			}
+			before := treeDigestForCLI(t, root)
+			args := []string{"new", "must-not-write", "--project", root}
+			for _, c := range tt.classifications {
+				args = append(args, "--classification", c)
+			}
+			_, _, err := runLesson(t, args...)
+			if got := exitCodeOf(err); got != exitcode.InvalidArgs {
+				t.Fatalf("exit = %d, want InvalidArgs; err=%v", got, err)
+			}
+			if after := treeDigestForCLI(t, root); !bytes.Equal(before, after) {
+				t.Fatal("invalid --classification selection changed the project tree")
+			}
+		})
+	}
+}
+
+// AC: no-classification-selected-fails-self-lint — omitting --classification
+// scaffolds an empty **Classifications:** line (never the previous "every
+// configured value" default), and the command's own read-only lint pass then
+// refuses it via L-005 rather than silently succeeding, retaining the Lesson
+// and prepared event for explicit recovery like any other post-publication
+// lint failure (see TestLessonNew_LintFixFails).
+func TestLessonNew_NoClassificationSelectedFailsSelfLint(t *testing.T) {
+	root := setupSpecRoot(t)
+	if err := projectdef.WriteSpecConfig(root, lessonTestConfig()); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, root)
+	configureNoopLessonEvents(t, root)
+	cmd := lessonNewCommand()
+	setLessonCommandFlags(t, cmd, map[string]string{"owner": "tester"})
+	err := runLessonNewWithDeps(cmd, []string{"no-classification-chosen"}, defaultLessonCLIDeps())
+	if got := exitCodeOf(err); got != exitcode.Unexpected {
+		t.Fatalf("exit = %d, want %d (Unexpected); err=%v", got, exitcode.Unexpected, err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "L-005") {
+		t.Errorf("expected an L-005 self-lint failure, got: %v", err)
+	}
+	s := readLesson(t, root, "no-classification-chosen")
+	if !strings.Contains(s, "**Classifications:**\n") {
+		t.Errorf("expected an empty Classifications line, got:\n%s", s)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "lessons", "no-classification-chosen", "README.md")); statErr != nil {
+		t.Errorf("post-publication self-lint failure should retain the Lesson for recovery: %v", statErr)
+	}
+}
+
+// AC: control-defaults-to-named-deferral — omitting --control scaffolds the
+// honest "none-yet: <reason>" default, never the bare "—" placeholder L-010
+// would refuse for a Lesson dated today.
+func TestLessonNew_ControlDefaultsWhenOmitted(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	if _, _, err := runLesson(t, "new", "control-default"); err != nil {
+		t.Fatalf("lesson new: %v", err)
+	}
+	s := readLesson(t, root, "control-default")
+	if !strings.Contains(s, "**Control:** "+defaultLessonNewControl+"\n") {
+		t.Errorf("default Control not scaffolded:\n%s", s)
+	}
+}
+
+// AC: control-defaults-to-named-deferral — an explicit --control value lands
+// verbatim.
+func TestLessonNew_ControlExplicit(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	if _, _, err := runLesson(t, "new", "control-explicit", "--control", "wb-hook: pre-commit guard in specscore-cli"); err != nil {
+		t.Fatalf("lesson new: %v", err)
+	}
+	s := readLesson(t, root, "control-explicit")
+	if !strings.Contains(s, "**Control:** wb-hook: pre-commit guard in specscore-cli\n") {
+		t.Errorf("explicit Control not scaffolded:\n%s", s)
 	}
 }
 

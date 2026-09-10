@@ -68,9 +68,17 @@ func lessonNewCommand() *cobra.Command {
 		Long: `Creates the canonical compact Lesson at
 spec/lessons/<slug>/README.md plus a Git-preserved empty occurrences/ store
 (an empty .gitkeep marker until its first JSON occurrence). The README
-contains controlled classifications, relation/provenance fields, the durable
-Lesson and Process Gap, exact occurrence-schema Tracking line, deterministic
-Enforcement fields, Open Questions, and the adherence footer.
+contains relation/provenance fields, the durable Lesson and Process Gap,
+exact occurrence-schema Tracking line, Enforcement fields, Open Questions,
+and the adherence footer.
+
+Classifications scaffold empty by default — pass repeatable --classification
+to select from lessons.classifications; an empty result fails the command's
+own read-only lint pass (L-005) rather than silently writing every
+configured term. The Enforcement Control line defaults to a named
+"none-yet: <reason>" deferral (override with --control) so a fresh scaffold
+never carries the bare "—" placeholder L-010 refuses for a Lesson dated
+after 2026-09-09.
 
 The command preflights specscore.yaml and non-empty lessons.classifications
 before creating any path. Its bounded write set is the requested Lesson, the
@@ -84,10 +92,23 @@ Docs: docs/agent-lessons.md#create-and-record`,
 	}
 	cmd.Flags().String("title", "", "lesson title (defaults to title-cased slug)")
 	cmd.Flags().String("owner", "", "owner/author (defaults to $USER)")
+	cmd.Flags().StringSlice("classification", nil, "classification tag from lessons.classifications (repeatable); a lesson scaffolds with NONE selected until you pass this — `spec lint` (L-005) then refuses the empty result until at least one is added")
+	cmd.Flags().String("control", "", `Enforcement **Control:** text (e.g. a mechanism-kind token such as wb-hook, ci-lesson-check, spec-lint); defaults to "`+defaultLessonNewControl+`" when omitted, so a freshly scaffolded lesson satisfies L-010 without edits`)
 	cmd.Flags().Bool("force", false, "overwrite an existing lesson file at that slug")
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
 	return cmd
 }
+
+// defaultLessonNewControl is the Enforcement **Control:** value a freshly
+// scaffolded Lesson receives when --control is omitted. A brand-new Recorded
+// Lesson has, by definition, no enforcement mechanism yet; writing the
+// em-dash placeholder would immediately fail L-010 (spec/research/
+// lessons-store-analysis-2026-09-09.md §5.2 rule 2: no new Recorded lesson
+// without a named candidate mechanism, and "—" doesn't count as naming one).
+// Stating that honestly up front — rather than a bare "—" a reader can't tell
+// apart from "forgot to fill this in" — keeps the scaffold lint-clean out of
+// the box.
+const defaultLessonNewControl = "none-yet: just recorded, mechanism not chosen yet"
 
 func runLessonNew(cmd *cobra.Command, args []string) error {
 	return runLessonNewWithDeps(cmd, args, defaultLessonCLIDeps())
@@ -123,16 +144,36 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		}
 		return exitcode.InvalidStateErrorf("lesson new requires a valid specscore.yaml: %v", configErr)
 	}
-	classifications := lessonClassificationsFromConfig(cfg)
-	if len(classifications) == 0 {
+	configured := lessonClassificationsFromConfig(cfg)
+	if len(configured) == 0 {
 		return exitcode.InvalidStateError("lesson new requires non-empty lessons.classifications in specscore.yaml; configure the repository vocabulary, then retry")
 	}
-	seenClassifications := map[string]bool{}
-	for _, classification := range classifications {
-		if err := lesson.ValidateSlug(classification); err != nil || seenClassifications[classification] {
+	allowedClassifications := map[string]bool{}
+	for _, classification := range configured {
+		if err := lesson.ValidateSlug(classification); err != nil || allowedClassifications[classification] {
 			return exitcode.InvalidStateError("lesson new requires unique slug-form values in lessons.classifications; fix specscore.yaml before retrying")
 		}
-		seenClassifications[classification] = true
+		allowedClassifications[classification] = true
+	}
+	// Unlike the preflight above (which validates the repository's configured
+	// vocabulary), an empty --classification selection is not itself an
+	// error: `lesson new` scaffolds with none by default, and the read-only
+	// self-lint below (L-005) is what forces a deliberate choice rather than
+	// silently writing every configured value. See also `lesson migrate-flat
+	// --classification`, which requires a non-empty selection because that
+	// verb migrates a reviewed source, not a fresh record.
+	classifications, _ := cmd.Flags().GetStringSlice("classification")
+	seenSelected := map[string]bool{}
+	for _, classification := range classifications {
+		if !allowedClassifications[classification] || seenSelected[classification] {
+			return exitcode.InvalidArgsErrorf("--classification %q is duplicated or outside lessons.classifications", classification)
+		}
+		seenSelected[classification] = true
+	}
+	controlFlag, _ := cmd.Flags().GetString("control")
+	control := strings.TrimSpace(controlFlag)
+	if control == "" {
+		control = defaultLessonNewControl
 	}
 
 	lessonsDir := filepath.Join(root, "spec", "lessons")
@@ -158,7 +199,7 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		return exitcode.UnexpectedErrorf("preflighting %s: %v", target, statErr)
 	}
 
-	body, err := deps.scaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner}, classifications)
+	body, err := deps.scaffoldCanonical(lesson.ScaffoldOptions{Slug: slug, Title: title, Owner: owner, Control: control}, classifications)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("scaffolding Lesson: %v", err)
 	}

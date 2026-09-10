@@ -218,7 +218,7 @@ func TestDiscoverAndResolveLessonFormsRemainDeterministic(t *testing.T) {
 	}
 
 	canonical, err := ScaffoldCanonical(ScaffoldOptions{Slug: "rule", Title: "", Owner: "", Date: ""}, nil)
-	if err != nil || !bytes.Contains(canonical, []byte("# Lesson: Rule")) || !bytes.Contains(canonical, []byte("**Owner:** unknown")) || !bytes.Contains(canonical, []byte("**Classifications:** process")) {
+	if err != nil || !bytes.Contains(canonical, []byte("# Lesson: Rule")) || !bytes.Contains(canonical, []byte("**Owner:** unknown")) || !bytes.Contains(canonical, []byte("**Classifications:**\n")) || !bytes.Contains(canonical, []byte("**Control:** —")) {
 		t.Fatalf("canonical defaults=%q err=%v", canonical, err)
 	}
 	canonicalPath := filepath.Join(lessonsDir, "rule", "README.md")

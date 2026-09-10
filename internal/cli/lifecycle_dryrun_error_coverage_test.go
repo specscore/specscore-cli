@@ -136,7 +136,7 @@ func TestLessonNew_OccurrenceMarkerFailures(t *testing.T) {
 	t.Run("force marker preflight", func(t *testing.T) {
 		root := setup(t)
 		create := lessonNewCommand()
-		setLessonCommandFlags(t, create, map[string]string{"owner": "codex", "project": root})
+		setLessonCommandFlags(t, create, map[string]string{"owner": "codex", "project": root, "classification": "process"})
 		requireCLISuccess(t, runLessonNewWithDeps(create, []string{"marker-force"}, defaultLessonCLIDeps()))
 
 		keep := filepath.Join(root, "spec", "lessons", "marker-force", "occurrences", lesson.OccurrenceStoreKeepFile)
