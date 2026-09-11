@@ -1,15 +1,15 @@
 ---
 format: https://specscore.md/plan-specification
-status: draft
+status: Draft
 ---
 
 # Plan: Grade Lint Support (CLI)
 
-**Status:** draft
+**Status:** Draft
 **Features:**
   - [cli/spec/lint](../../features/cli/spec/lint/README.md)
 **Source type:** feature
-**Source:** [cli/spec/lint](../../features/cli/spec/lint/README.md)
+**Source:** none
 **Author:** alexander.trakhimenok
 **Created:** 2026-05-29
 **Effort:** S

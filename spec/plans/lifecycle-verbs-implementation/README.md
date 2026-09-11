@@ -1,17 +1,17 @@
 ---
 format: https://specscore.md/plan-specification
-status: approved
+status: Approved
 ---
 
 # Plan: Lifecycle Verbs Implementation
 
-**Status:** approved
+**Status:** Approved
 **Features:**
   - [cli/lifecycle-transitions](../../features/cli/lifecycle-transitions/README.md)
   - [cli/idea/change-status](../../features/cli/idea/change-status/README.md)
   - [cli/feature/change-status](../../features/cli/feature/change-status/README.md)
 **Source type:** feature
-**Source:** [cli/lifecycle-transitions](../../features/cli/lifecycle-transitions/README.md), [cli/idea/change-status](../../features/cli/idea/change-status/README.md), [cli/feature/change-status](../../features/cli/feature/change-status/README.md)
+**Source:** none
 **Author:** alexander.trakhimenok
 **Approver:** alexander.trakhimenok
 **Created:** 2026-05-18

@@ -1,17 +1,17 @@
 ---
 format: https://specscore.md/plan-specification
-status: approved
+status: Approved
 ---
 
 # Plan: Entity and Property CLI Support
 
-**Status:** approved
+**Status:** Approved
 **Features:**
   - [cli/entity](../../features/cli/entity/README.md)
   - [cli/property](../../features/cli/property/README.md)
   - [cli/spec/lint](../../features/cli/spec/lint/README.md)
 **Source type:** feature
-**Source:** [cli/entity](../../features/cli/entity/README.md), [cli/property](../../features/cli/property/README.md), [cli/spec/lint](../../features/cli/spec/lint/README.md)
+**Source:** none
 **Author:** alexander.trakhimenok
 **Approver:** alexander.trakhimenok
 **Created:** 2026-05-18
