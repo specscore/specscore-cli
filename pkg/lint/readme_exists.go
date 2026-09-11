@@ -34,6 +34,11 @@ func newReadmeExistsCheckerSkipPlans() checker {
 func (c *readmeExistsChecker) name() string     { return "readme-exists" }
 func (c *readmeExistsChecker) severity() string { return "error" }
 
+// routeErrorChecker implements planOwnedChecker: see linter.go's
+// registerPlanOwned, the ONE place that decides which checker to register
+// when Plan routing is configured but broken.
+func (c *readmeExistsChecker) routeErrorChecker() checker { return newReadmeExistsCheckerSkipPlans() }
+
 func (c *readmeExistsChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 

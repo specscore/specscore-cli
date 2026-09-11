@@ -197,6 +197,13 @@ func newAdherenceFooterCheckerSkipPlans(projectRoot string) checker {
 func (c *adherenceFooterChecker) name() string     { return "adherence-footer" }
 func (c *adherenceFooterChecker) severity() string { return "error" }
 
+// routeErrorChecker implements planOwnedChecker: see linter.go's
+// registerPlanOwned, the ONE place that decides which checker to register
+// when Plan routing is configured but broken.
+func (c *adherenceFooterChecker) routeErrorChecker() checker {
+	return newAdherenceFooterCheckerSkipPlans(c.projectRoot)
+}
+
 func (c *adherenceFooterChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	for _, t := range docTypeTargets {

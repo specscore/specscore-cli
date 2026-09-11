@@ -56,6 +56,13 @@ func newStatusMirrorCheckerSkipPlans(projectRoot string) checker {
 func (c *statusMirrorChecker) name() string     { return "status-mirror" }
 func (c *statusMirrorChecker) severity() string { return "error" }
 
+// routeErrorChecker implements planOwnedChecker: see linter.go's
+// registerPlanOwned, the ONE place that decides which checker to register
+// when Plan routing is configured but broken.
+func (c *statusMirrorChecker) routeErrorChecker() checker {
+	return newStatusMirrorCheckerSkipPlans(c.projectRoot)
+}
+
 // bodyStatusRe matches the canonical body status line `**Status:** <value>`.
 // The bold markers distinguish it from the lowercase frontmatter `status:`
 // mirror, which this rule must never read as the canonical value.

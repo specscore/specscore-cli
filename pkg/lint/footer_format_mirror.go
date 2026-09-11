@@ -23,18 +23,42 @@ import (
 //
 // Graced at "warning" severity during the migration rollout
 // (REQ:migration-sequencing): excluded at the default --severity=error.
-type footerFormatMirrorChecker struct{ projectRoot string }
+type footerFormatMirrorChecker struct {
+	projectRoot, plansDir string
+	// skipPlans excludes every plan-owned docTypeTarget from check()/fix()
+	// entirely, without ever reading it — see adherenceFooterChecker.skipPlans
+	// for the full rationale; this checker shares docTypeTargets and
+	// walkDocTarget with it.
+	skipPlans bool
+}
 
 func newFooterFormatMirrorChecker(projectRoot ...string) checker {
 	var root string
 	if len(projectRoot) > 0 {
 		root = projectRoot[0]
 	}
-	return &footerFormatMirrorChecker{projectRoot: root}
+	var plans string
+	if len(projectRoot) > 1 {
+		plans = projectRoot[1]
+	}
+	return &footerFormatMirrorChecker{projectRoot: root, plansDir: plans}
+}
+
+// newFooterFormatMirrorCheckerSkipPlans returns a footer-format-mirror
+// checker configured for a configured-but-broken Plan route: see skipPlans.
+func newFooterFormatMirrorCheckerSkipPlans(projectRoot string) checker {
+	return &footerFormatMirrorChecker{projectRoot: projectRoot, skipPlans: true}
 }
 
 func (c *footerFormatMirrorChecker) name() string     { return "footer-format-mirror" }
 func (c *footerFormatMirrorChecker) severity() string { return "error" }
+
+// routeErrorChecker implements planOwnedChecker: see linter.go's
+// registerPlanOwned, the ONE place that decides which checker to register
+// when Plan routing is configured but broken.
+func (c *footerFormatMirrorChecker) routeErrorChecker() checker {
+	return newFooterFormatMirrorCheckerSkipPlans(c.projectRoot)
+}
 
 // specURLRe matches a canonical SpecScore spec URL (without a trailing slash).
 var specURLRe = regexp.MustCompile(`https://specscore\.md/[a-z0-9-]+-specification`)
@@ -43,7 +67,7 @@ func (c *footerFormatMirrorChecker) check(specRoot string) ([]Violation, error) 
 	var violations []Violation
 	for _, t := range docTypeTargets {
 		target := t
-		err := target.walk(specRoot, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, c.skipPlans, func(path string, content []byte) {
 			format, footer, ok := footerFormatPair(content)
 			if !ok || formatURLMatches(footer, format) {
 				return
@@ -74,7 +98,7 @@ func (c *footerFormatMirrorChecker) fix(specRoot string) error {
 	for _, t := range docTypeTargets {
 		target := t
 		var writeErr error
-		err := target.walk(specRoot, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, c.skipPlans, func(path string, content []byte) {
 			if writeErr != nil {
 				return
 			}

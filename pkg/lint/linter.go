@@ -48,6 +48,48 @@ type fixer interface {
 	fix(specRoot string) error
 }
 
+// planOwnedChecker is implemented by every checker whose check()/fix() reads
+// or writes the Plan namespace — either the local spec/plans mirror under
+// specRoot, or an externally-routed opts.PlansDir. It is the ONE place that
+// decides "Plan-owned" (repo-config#req:plan-route-required / finding 2 of
+// the PR #199 adversarial re-review, which found that oq-section,
+// format-field and footer-format-mirror had been left out of the ad hoc
+// per-checker if/else blocks this interface replaces): routeErrorChecker
+// returns a strict no-op replacement — one that never reads or writes
+// spec/plans, physical or externally routed — for registerPlanOwned to
+// install instead when Plan routing is configured but broken.
+//
+// A NEW Plan-related checker must implement this interface and be
+// registered via registerPlanOwned (not the bare registerChecker) to be
+// protected the same way. Forgetting either half is exactly the gap the
+// guard test in plan_owned_guard_test.go closes: it runs EVERY checker this
+// linter ever registers against a broken-route fixture seeded with a stale
+// local spec/plans/README.md (missing OQ section, missing format field,
+// missing footer) and asserts the only finding is plan-route-unresolved, in
+// both read-only and --fix modes, with the file byte-identical afterward —
+// so a rule that reads spec/plans without going through this path fails the
+// guard regardless of how it got wired into newLinter.
+type planOwnedChecker interface {
+	checker
+	routeErrorChecker() checker
+}
+
+// registerPlanOwned registers a Plan-owned checker: c itself when routing is
+// fine (routeBroken false), or c.routeErrorChecker()'s strict no-op when
+// Plan routing is configured but broken. Returns whichever checker was
+// actually registered, so a caller that also needs to register the same
+// checker instance under a second rule name (oq-section's "oq-not-empty")
+// can reuse the one that was actually wired in rather than risk
+// re-registering the wrong (real vs. no-op) instance under that second name.
+func (l *linter) registerPlanOwned(c planOwnedChecker, routeBroken bool) checker {
+	var registered checker = c
+	if routeBroken {
+		registered = c.routeErrorChecker()
+	}
+	l.registerChecker(registered)
+	return registered
+}
+
 // fixTargeter is an optional interface a fixer may implement to declare the
 // `--fix=<target>` action names it answers to, when those differ from the rule
 // names it is registered under (e.g. the plan checker answers to "no-source",
@@ -64,45 +106,29 @@ func newLinter(opts Options) *linter {
 	}
 
 	// routeBroken means Plan routing is configured for this project but
-	// failed to resolve. Every Plan-owned checker below is switched to its
-	// "route error" construction, which is a strict no-op that never reads
-	// or writes the local spec/plans tree — see finding 1 /
-	// repo-config#req:plan-route-required and plan_route_error.go, whose
-	// checker is registered unconditionally below and is the only one of
-	// this group that actually emits, naming opts.PlanRouteError.
+	// failed to resolve. Every Plan-owned checker below is registered via
+	// registerPlanOwned, the ONE place that decides "Plan-owned" — see its
+	// doc comment and the planOwnedChecker interface (finding 2 of the PR
+	// #199 adversarial re-review). Each such checker is switched to its
+	// "route error" construction, a strict no-op that never reads or writes
+	// the local spec/plans tree — see finding 1 / repo-config#req:plan-route-required
+	// and plan_route_error.go, whose checker is registered unconditionally
+	// below and is the only one of this group that actually emits, naming
+	// opts.PlanRouteError.
 	routeBroken := opts.PlanRouteError != ""
 
-	if routeBroken {
-		l.registerChecker(newReadmeExistsCheckerSkipPlans())
-	} else {
-		l.registerChecker(newReadmeExistsChecker(opts.PlansDir))
-	}
-	oqChecker := newOQSectionChecker(projectRoot)
-	l.registerChecker(oqChecker)
+	l.registerPlanOwned(newReadmeExistsChecker(opts.PlansDir).(planOwnedChecker), routeBroken)
+	oqChecker := l.registerPlanOwned(newOQSectionChecker(projectRoot, opts.PlansDir).(planOwnedChecker), routeBroken)
 	l.ruleSet["oq-not-empty"] = oqChecker
 	l.registerChecker(newIndexEntriesChecker())
 	l.registerChecker(newConfigScopeChecker(projectRoot))
-	if routeBroken {
-		l.registerChecker(newPlanHierarchyCheckerRouteError())
-		l.registerChecker(newPlanROICheckerRouteError())
-		l.registerChecker(newPlanIndexCheckerRouteError())
-	} else {
-		l.registerChecker(newPlanHierarchyChecker(opts.PlansDir))
-		l.registerChecker(newPlanROIChecker(opts.PlansDir))
-		l.registerChecker(newPlanIndexChecker(opts.PlansDir))
-	}
-	if routeBroken {
-		l.registerChecker(newAdherenceFooterCheckerSkipPlans(projectRoot))
-	} else {
-		l.registerChecker(newAdherenceFooterChecker(projectRoot, opts.PlansDir))
-	}
-	l.registerChecker(newFormatFieldChecker())
-	if routeBroken {
-		l.registerChecker(newStatusMirrorCheckerSkipPlans(projectRoot))
-	} else {
-		l.registerChecker(newStatusMirrorChecker(projectRoot, opts.PlansDir))
-	}
-	l.registerChecker(newFooterFormatMirrorChecker(projectRoot))
+	l.registerPlanOwned(newPlanHierarchyChecker(opts.PlansDir).(planOwnedChecker), routeBroken)
+	l.registerPlanOwned(newPlanROIChecker(opts.PlansDir).(planOwnedChecker), routeBroken)
+	l.registerPlanOwned(newPlanIndexChecker(opts.PlansDir), routeBroken)
+	l.registerPlanOwned(newAdherenceFooterChecker(projectRoot, opts.PlansDir).(planOwnedChecker), routeBroken)
+	l.registerPlanOwned(newFormatFieldChecker(opts.PlansDir).(planOwnedChecker), routeBroken)
+	l.registerPlanOwned(newStatusMirrorChecker(projectRoot, opts.PlansDir).(planOwnedChecker), routeBroken)
+	l.registerPlanOwned(newFooterFormatMirrorChecker(projectRoot, opts.PlansDir).(planOwnedChecker), routeBroken)
 	l.registerChecker(newStudioToolbarChecker(projectRoot))
 	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion, projectRoot))
 	l.registerChecker(newImplementsReferenceChecker())

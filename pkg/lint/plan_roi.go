@@ -35,6 +35,11 @@ func newPlanROICheckerRouteError() checker {
 func (c *planROIChecker) name() string     { return "plan-roi-metadata" }
 func (c *planROIChecker) severity() string { return "warning" }
 
+// routeErrorChecker implements planOwnedChecker: see linter.go's
+// registerPlanOwned, the ONE place that decides which checker to register
+// when Plan routing is configured but broken.
+func (c *planROIChecker) routeErrorChecker() checker { return newPlanROICheckerRouteError() }
+
 var validEffort = map[string]bool{
 	"S": true, "M": true, "L": true, "XL": true,
 }

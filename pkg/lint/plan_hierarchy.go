@@ -36,6 +36,13 @@ func newPlanHierarchyCheckerRouteError() checker {
 func (c *planHierarchyChecker) name() string     { return "plan-hierarchy" }
 func (c *planHierarchyChecker) severity() string { return "error" }
 
+// routeErrorChecker implements planOwnedChecker: see linter.go's
+// registerPlanOwned, the ONE place that decides which checker to register
+// when Plan routing is configured but broken.
+func (c *planHierarchyChecker) routeErrorChecker() checker {
+	return newPlanHierarchyCheckerRouteError()
+}
+
 func (c *planHierarchyChecker) check(specRoot string) ([]Violation, error) {
 	if c.routeBroken {
 		return nil, nil

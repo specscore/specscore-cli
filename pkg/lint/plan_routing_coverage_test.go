@@ -114,6 +114,113 @@ func TestReadmeExistsCheckerSkipsSpecRootPlansWhenExternallyRouted(t *testing.T)
 	}
 }
 
+// --- oq_section.go: external plansDir walk (check and fix) ------------------
+
+func TestOQSectionCheckerPlansDirFindsViolationsAndSkipsSpecRootPlans(t *testing.T) {
+	specRoot := t.TempDir()
+	writeFile(t, filepath.Join(specRoot, "README.md"), "# Root\n\n## Open Questions\n\nNone.\n")
+	// specRoot's own "plans" tree is missing an Open Questions section
+	// entirely — if it were walked directly (the no-routing default) this
+	// would produce a violation. With plansDir set, it must be skipped.
+	writeFile(t, filepath.Join(specRoot, "plans", "README.md"), "# Plans\n\nStale local index.\n")
+
+	plansDir := t.TempDir()
+	writeFile(t, filepath.Join(plansDir, "README.md"), "# Plans\n\nRouted index, missing its section too.\n")
+	// A non-README.md file must be skipped by this walk, not mistaken for a
+	// plan index.
+	writeFile(t, filepath.Join(plansDir, "notes.md"), "# Notes\n")
+
+	c := newOQSectionChecker("", plansDir)
+	violations, err := c.check(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotRouted bool
+	for _, v := range violations {
+		if v.File == filepath.Join("plans", "README.md") {
+			gotRouted = true
+			if v.Rule != "oq-section" {
+				t.Errorf("violation rule = %q, want oq-section: %+v", v.Rule, v)
+			}
+		}
+	}
+	if !gotRouted {
+		t.Fatalf("expected a violation for the routed plansDir's README.md, got %+v", violations)
+	}
+}
+
+func TestOQSectionCheckerPlansDirWalkPermissionErrorPropagates(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks do not apply while running as root")
+	}
+	specRoot := t.TempDir()
+	writeFile(t, filepath.Join(specRoot, "README.md"), "# Root\n\n## Open Questions\n\nNone.\n")
+
+	plansDir := t.TempDir()
+	blocked := filepath.Join(plansDir, "blocked")
+	mkdir(t, blocked)
+	if err := os.Chmod(blocked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(blocked, 0o755) }()
+
+	c := newOQSectionChecker("", plansDir)
+	if _, err := c.check(specRoot); err == nil {
+		t.Fatal("expected the plansDir walk's permission error to propagate")
+	}
+}
+
+func TestOQSectionCheckerPlansDirToleratesMissingDir(t *testing.T) {
+	specRoot := t.TempDir()
+	writeFile(t, filepath.Join(specRoot, "README.md"), "# Root\n\n## Open Questions\n\nNone.\n")
+	plansDir := filepath.Join(t.TempDir(), "does-not-exist-yet")
+
+	c := newOQSectionChecker("", plansDir)
+	violations, err := c.check(specRoot)
+	if err != nil {
+		t.Fatalf("a not-yet-materialized plansDir must not error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("violations = %+v, want none", violations)
+	}
+}
+
+func TestOQSectionCheckerFixRewritesExternalPlansDirAndSkipsSpecRootPlans(t *testing.T) {
+	specRoot := t.TempDir()
+	writeFile(t, filepath.Join(specRoot, "README.md"), "# Root\n\n## Open Questions\n\nNone.\n")
+	localPlan := filepath.Join(specRoot, "plans", "README.md")
+	localBefore := "# Plans\n\n## Outstanding Questions\n\nStale local heading.\n"
+	writeFile(t, localPlan, localBefore)
+
+	plansDir := t.TempDir()
+	routedPlan := filepath.Join(plansDir, "README.md")
+	writeFile(t, routedPlan, "# Plans\n\n## Outstanding Questions\n\nRouted legacy heading.\n")
+
+	c := newOQSectionChecker("", plansDir)
+	if err := c.(fixer).fix(specRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	routedAfter, err := os.ReadFile(routedPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(routedAfter), oqLegacyHeading) {
+		t.Errorf("routed plansDir README should have its legacy heading migrated: %s", routedAfter)
+	}
+	if !strings.Contains(string(routedAfter), oqCanonicalHeading) {
+		t.Errorf("routed plansDir README should carry the canonical heading: %s", routedAfter)
+	}
+
+	localAfter, err := os.ReadFile(localPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(localAfter) != localBefore {
+		t.Errorf("specRoot's own plans tree must not be touched when externally routed: got %q, want %q", localAfter, localBefore)
+	}
+}
+
 // --- adherence_footer.go: plansDir-aware walkers ----------------------------
 
 func TestWalkPlansIndexDirRejectsSymlink(t *testing.T) {
