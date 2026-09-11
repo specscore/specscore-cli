@@ -3,6 +3,7 @@ package cli
 // Features implemented: cli/spec
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -215,11 +216,28 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// `spec lint` sweeps the whole spec tree (Features, Ideas, Plans, ...) in
 	// one pass; it is not itself one of the dedicated Plan verbs that
 	// repo-config#req:plan-route-required binds to. Resolve the Plan store
-	// best-effort: when routing IS configured, plan-specific rules validate
-	// the resolved (possibly external) namespace; when it is not, fall back to
-	// the historical same-repo default (`<spec>/plans`) so unrelated
-	// Feature/Idea/Lesson rules — and repos that have not adopted Plan
-	// routing yet — are unaffected by an absent or unresolved route.
+	// best-effort, distinguishing three failure shapes (lead assumption —
+	// the repo-config spec is silent on lint's behavior under routing):
+	//
+	//   - A route IS configured but fails to resolve
+	//     (planstore.ErrRouteUnresolved: missing checkout, wrong origin, a
+	//     nested or ambiguous mapping, a misplaced key, ...): NEVER fall
+	//     back to the local spec/plans tree — it may be exactly the stale
+	//     artifact routing was configured to route away from (the
+	//     reviewer's reproduction: a committed plans_repo, no
+	//     repo_checkouts, and a stale local spec/plans/README.md with a bad
+	//     **Source:** silently got linted, and --fix rewrote it). Under
+	//     --fix, fail closed before touching any file. Otherwise every
+	//     Plan-owned lint rule is skipped and lint.Options.PlanRouteError
+	//     drives a single loud ERROR finding in their place.
+	//   - No route configured at all (planstore.ErrNoRoute), OR any other
+	//     resolvePlanStore failure unrelated to whether a route exists (the
+	//     source isn't a git repository, its origin can't be parsed, a
+	//     config layer is malformed, ...): keep the historical same-repo
+	//     default (`<spec>/plans`) so unrelated Feature/Idea/Lesson rules —
+	//     and repos that have not adopted Plan routing yet, or that spec
+	//     lint runs against outside their real git checkout (as plenty of
+	//     this CLI's own tests do) — are unaffected.
 	//
 	// PlansDir only: leave ProjectRoot unset so lint.Options.effectiveProjectRoot
 	// derives it from specRoot (filepath.Dir(specRoot)), the same basis
@@ -231,19 +249,27 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// ProjectRoot broke filepath.Rel-based rules (e.g. studio-toolbar) that
 	// assume ProjectRoot and SpecRoot share one consistent path prefix.
 	plansDir := ""
+	planRouteErr := ""
 	if store, storeErr := resolvePlanStore(projectFlag, mode); storeErr == nil {
 		plansDir = store.PlansDir
+	} else if errors.Is(storeErr, planstore.ErrRouteUnresolved) {
+		if fix {
+			return exitcode.InvalidStateErrorf(
+				"cannot run spec lint --fix: plan routing is configured but could not be resolved, so no file was read or written: %v; set repo_checkouts.<repo> in specscore.local.yaml or ~/.specscore.yaml to point at the checkout, or correct plans_repo/plan_repos", storeErr)
+		}
+		planRouteErr = storeErr.Error()
 	}
 
 	opts := lint.Options{
-		SpecRoot:   specRoot,
-		PlansDir:   plansDir,
-		Rules:      rules,
-		Ignore:     ignore,
-		Severity:   severity,
-		Fix:        fix,
-		FixTargets: fixTargets,
-		CLIVersion: buildInfo.Version,
+		SpecRoot:       specRoot,
+		PlansDir:       plansDir,
+		PlanRouteError: planRouteErr,
+		Rules:          rules,
+		Ignore:         ignore,
+		Severity:       severity,
+		Fix:            fix,
+		FixTargets:     fixTargets,
+		CLIVersion:     buildInfo.Version,
 	}
 
 	res, err := lint.LintWithResult(opts)

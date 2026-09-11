@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -263,10 +264,34 @@ func runFeatureInfo(cmd *cobra.Command, args []string) error {
 	// explicitly exempts Feature/Idea/Lesson operations): an unresolved or absent
 	// Plan route must not fail `feature info`. Resolve the Plan store best-effort
 	// so the Plans back-reference is populated when routing IS configured, but
-	// fall back to no Plans context otherwise.
+	// fall back to no Plans context otherwise — distinguishing, same as `spec
+	// lint` (finding 1), "a route is configured but broken" from every other
+	// shape:
+	//
+	//   - A route IS configured but fails to resolve
+	//     (planstore.ErrRouteUnresolved): the Plans back-reference must NOT
+	//     be filled in from the local tree, which may be exactly the stale
+	//     artifact routing was configured to route away from.
+	//     planRouteUnavailableSentinel is a syntactically invalid path
+	//     (embedded NUL byte, rejected by the OS before any filesystem
+	//     access — see its doc comment) passed as plansDir so
+	//     feature.FindLinkedPlansDir's leading os.Stat fails closed and
+	//     info.Plans comes back empty rather than GetInfoWithPlansDir's own
+	//     ""-triggered local search. The resolution error is reported on
+	//     stderr instead.
+	//   - No route (planstore.ErrNoRoute), or any other resolvePlanStore
+	//     failure unrelated to whether a route exists (not a git
+	//     repository, malformed config layer, ...): keep the historical
+	//     same-repo default — plansDir stays "" and GetInfoWithPlansDir
+	//     searches the local spec/plans tree, unchanged from before Plan
+	//     routing existed.
 	plansDir := ""
 	if store, storeErr := resolvePlanStore(projectFlag, planstore.ReadOnly); storeErr == nil {
 		plansDir = store.PlansDir
+	} else if errors.Is(storeErr, planstore.ErrRouteUnresolved) {
+		plansDir = planRouteUnavailableSentinel
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"Plan back-references unavailable: plan routing is configured but could not be resolved: %v\n", storeErr)
 	}
 
 	info, err := feature.GetInfoWithPlansDir(featuresDir, plansDir, featureID)
