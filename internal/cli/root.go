@@ -67,7 +67,6 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 		planCommand(),
 		propertyCommand(),
 		rehearseCommand(),
-		ruleCommand(),
 		rulesCommand(),
 		rootMigrateCommand(),
 		specCommand(),
