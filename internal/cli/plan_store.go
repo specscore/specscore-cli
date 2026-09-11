@@ -10,22 +10,6 @@ import (
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
-// planRouteUnavailableSentinel is passed as a plansDir argument (in place of
-// the empty string) when Plan routing is configured for the project but
-// failed to resolve, and the caller must report Plan context as unavailable
-// rather than fall back to searching the local spec/plans tree — which may
-// be exactly the stale artifact routing was configured to route away from
-// (finding 2, `feature info`'s counterpart to spec lint's finding 1).
-//
-// It is a syntactically invalid path: an embedded NUL byte, which every
-// os.Stat-family call rejects with an error before it ever reaches the
-// filesystem (Go's os package fails converting such a string to a C string).
-// Passing it as a non-empty plansDir routes call sites like
-// feature.FindLinkedPlansDir past their own ""-means-"search locally"
-// fallback, into their "plansDir doesn't exist" branch, which already
-// returns cleanly empty rather than erroring.
-const planRouteUnavailableSentinel = "\x00"
-
 func resolvePlanStore(projectFlag string, mode planstore.AccessMode) (planstore.Resolution, error) {
 	root, err := resolveSpecRoot(projectFlag)
 	if err != nil {

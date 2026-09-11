@@ -175,12 +175,33 @@ func TestGetInfoWithPlansDir_ExternalPlansDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := GetInfoWithPlansDir(featDir, externalPlansDir, "auth")
+	info, err := GetInfoWithPlansDir(featDir, externalPlansDir, "auth", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(info.Plans) != 1 || info.Plans[0] != "implement-auth" {
 		t.Errorf("Plans = %v, want [implement-auth]", info.Plans)
+	}
+}
+
+// TestGetInfoWithPlansDir_PlansUnavailable proves the plansUnavailable=true
+// branch: Info.Plans comes back empty and neither an externally-routed
+// plansDir NOR the local same-repo spec/plans tree is ever read — even
+// though this fixture's local spec/plans DOES contain a plan that would
+// otherwise link to "auth" — because Plan routing is configured but broken
+// (finding 2 of the PR #199 adversarial re-review; the CLI passes
+// plansUnavailable=true instead of the old NUL-byte sentinel path).
+func TestGetInfoWithPlansDir_PlansUnavailable(t *testing.T) {
+	authReadme := "# Feature: Auth\n\n**Status:** Approved\n\n## Summary\n\nAuth.\n\n## Open Questions\n\nNone at this time.\n"
+	planReadme := "# Plan: Implement Auth\n\n**Features:**\n- [Auth](../../features/auth/README.md)\n\n## Tasks\n\n- Task 1\n"
+	_, featDir := setupSpecRepo(t, map[string]string{"auth": authReadme}, map[string]string{"implement-auth": planReadme})
+
+	info, err := GetInfoWithPlansDir(featDir, "", "auth", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Plans) != 0 {
+		t.Errorf("Plans = %v, want none: plansUnavailable must skip both the local search and any plansDir read", info.Plans)
 	}
 }
 

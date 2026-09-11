@@ -269,32 +269,46 @@ func runFeatureInfo(cmd *cobra.Command, args []string) error {
 	// shape:
 	//
 	//   - A route IS configured but fails to resolve
-	//     (planstore.ErrRouteUnresolved): the Plans back-reference must NOT
-	//     be filled in from the local tree, which may be exactly the stale
-	//     artifact routing was configured to route away from.
-	//     planRouteUnavailableSentinel is a syntactically invalid path
-	//     (embedded NUL byte, rejected by the OS before any filesystem
-	//     access — see its doc comment) passed as plansDir so
-	//     feature.FindLinkedPlansDir's leading os.Stat fails closed and
-	//     info.Plans comes back empty rather than GetInfoWithPlansDir's own
-	//     ""-triggered local search. The resolution error is reported on
-	//     stderr instead.
+	//     (planstore.ErrRouteUnresolved: missing checkout, wrong origin, a
+	//     nested or ambiguous mapping, a misplaced key, or a config layer
+	//     that exists but fails to read or parse): the Plans back-reference
+	//     must NOT be filled in from the local tree, which may be exactly
+	//     the stale artifact routing was configured to route away from.
+	//     plansUnavailable=true makes GetInfoWithPlansDir skip both the
+	//     external plansDir read AND the ""-triggered local search — see its
+	//     doc comment. The resolution error is reported on stderr instead.
 	//   - No route (planstore.ErrNoRoute), or any other resolvePlanStore
-	//     failure unrelated to whether a route exists (not a git
-	//     repository, malformed config layer, ...): keep the historical
-	//     same-repo default — plansDir stays "" and GetInfoWithPlansDir
-	//     searches the local spec/plans tree, unchanged from before Plan
-	//     routing existed.
+	//     failure unrelated to whether a route exists (the source isn't a
+	//     git repository, its origin can't be parsed, ...): keep the
+	//     historical same-repo default — plansDir stays "" and
+	//     GetInfoWithPlansDir searches the local spec/plans tree, unchanged
+	//     from before Plan routing existed.
 	plansDir := ""
+	plansUnavailable := false
 	if store, storeErr := resolvePlanStore(projectFlag, planstore.ReadOnly); storeErr == nil {
 		plansDir = store.PlansDir
 	} else if errors.Is(storeErr, planstore.ErrRouteUnresolved) {
-		plansDir = planRouteUnavailableSentinel
+		plansUnavailable = true
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"Plan back-references unavailable: plan routing is configured but could not be resolved: %v\n", storeErr)
+	} else {
+		// storeErr is either planstore.ErrNoRoute (nothing configured
+		// anywhere) or a pre-routing infrastructure failure unrelated to
+		// whether a route is configured (not a git repository, an
+		// unparseable origin, ...) — planstore.Resolve keeps both lenient by
+		// construction (see planstore.ErrRouteUnresolved's doc comment), so
+		// `feature info` keeps the historical same-repo default. The
+		// reassignment below is a no-op (both already hold these zero
+		// values) written out explicitly, rather than left as an implicit
+		// fallthrough with an empty branch, so a future resolvePlanStore
+		// failure shape cannot silently inherit lenient behavior by
+		// omission (finding 1 of the PR #199 adversarial re-review) — and
+		// so this branch stays a real decision point a reviewer can see,
+		// not dead code.
+		plansDir, plansUnavailable = "", false
 	}
 
-	info, err := feature.GetInfoWithPlansDir(featuresDir, plansDir, featureID)
+	info, err := feature.GetInfoWithPlansDir(featuresDir, plansDir, featureID, plansUnavailable)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getting feature info: %v", err)
 	}

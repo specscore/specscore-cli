@@ -221,23 +221,24 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	//
 	//   - A route IS configured but fails to resolve
 	//     (planstore.ErrRouteUnresolved: missing checkout, wrong origin, a
-	//     nested or ambiguous mapping, a misplaced key, ...): NEVER fall
-	//     back to the local spec/plans tree — it may be exactly the stale
-	//     artifact routing was configured to route away from (the
-	//     reviewer's reproduction: a committed plans_repo, no
-	//     repo_checkouts, and a stale local spec/plans/README.md with a bad
-	//     **Source:** silently got linted, and --fix rewrote it). Under
-	//     --fix, fail closed before touching any file. Otherwise every
-	//     Plan-owned lint rule is skipped and lint.Options.PlanRouteError
-	//     drives a single loud ERROR finding in their place.
+	//     nested or ambiguous mapping, a misplaced key, or a config layer
+	//     that exists but fails to read or parse, ...): NEVER fall back to
+	//     the local spec/plans tree — it may be exactly the stale artifact
+	//     routing was configured to route away from (the reviewer's
+	//     reproduction: a committed plans_repo, no repo_checkouts, and a
+	//     stale local spec/plans/README.md with a bad **Source:** silently
+	//     got linted, and --fix rewrote it). Under --fix, fail closed before
+	//     touching any file. Otherwise every Plan-owned lint rule is skipped
+	//     and lint.Options.PlanRouteError drives a single loud ERROR finding
+	//     in their place.
 	//   - No route configured at all (planstore.ErrNoRoute), OR any other
 	//     resolvePlanStore failure unrelated to whether a route exists (the
-	//     source isn't a git repository, its origin can't be parsed, a
-	//     config layer is malformed, ...): keep the historical same-repo
-	//     default (`<spec>/plans`) so unrelated Feature/Idea/Lesson rules —
-	//     and repos that have not adopted Plan routing yet, or that spec
-	//     lint runs against outside their real git checkout (as plenty of
-	//     this CLI's own tests do) — are unaffected.
+	//     source isn't a git repository, its origin can't be parsed, ...):
+	//     keep the historical same-repo default (`<spec>/plans`) so
+	//     unrelated Feature/Idea/Lesson rules — and repos that have not
+	//     adopted Plan routing yet, or that spec lint runs against outside
+	//     their real git checkout (as plenty of this CLI's own tests do) —
+	//     are unaffected.
 	//
 	// PlansDir only: leave ProjectRoot unset so lint.Options.effectiveProjectRoot
 	// derives it from specRoot (filepath.Dir(specRoot)), the same basis
@@ -258,6 +259,20 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 				"cannot run spec lint --fix: plan routing is configured but could not be resolved, so no file was read or written: %v; set repo_checkouts.<repo> in specscore.local.yaml or ~/.specscore.yaml to point at the checkout, or correct plans_repo/plan_repos", storeErr)
 		}
 		planRouteErr = storeErr.Error()
+	} else {
+		// storeErr is either planstore.ErrNoRoute (nothing configured
+		// anywhere) or a pre-routing infrastructure failure unrelated to
+		// whether a route is configured (not a git repository, an
+		// unparseable origin, ...) — planstore.Resolve keeps both lenient by
+		// construction (see planstore.ErrRouteUnresolved's doc comment), so
+		// lint keeps the historical same-repo default. The reassignment
+		// below is a no-op (both already hold these zero values) written
+		// out explicitly, rather than left as an implicit fallthrough with
+		// an empty branch, so a future resolvePlanStore failure shape
+		// cannot silently inherit lenient behavior by omission (finding 1
+		// of the PR #199 adversarial re-review) — and so this branch stays
+		// a real decision point a reviewer can see, not dead code.
+		plansDir, planRouteErr = "", ""
 	}
 
 	opts := lint.Options{

@@ -38,10 +38,22 @@ type SectionInfo struct {
 
 // GetInfo builds and returns the full Info for a feature.
 func GetInfo(featuresDir, featureID string) (*Info, error) {
-	return GetInfoWithPlansDir(featuresDir, "", featureID)
+	return GetInfoWithPlansDir(featuresDir, "", featureID, false)
 }
 
-func GetInfoWithPlansDir(featuresDir, plansDir, featureID string) (*Info, error) {
+// GetInfoWithPlansDir builds and returns the full Info for a feature.
+// plansUnavailable, when true, means Plan routing is configured for the
+// project but failed to resolve: the Plans back-reference must come back
+// empty without EVER reading plansDir (which is ignored in this case) or the
+// local spec/plans tree that an empty plansDir would otherwise default to —
+// either may be exactly the stale artifact routing was configured to route
+// away from (finding 2 of the PR #199 adversarial re-review). Previously
+// this was signaled by passing a syntactically-invalid sentinel path as
+// plansDir (an embedded NUL byte, relying on os.Stat rejecting it before any
+// filesystem access); an explicit bool is clearer and carries no risk of a
+// future call site logging, joining, or otherwise touching a "path" that was
+// never meant to be one.
+func GetInfoWithPlansDir(featuresDir, plansDir string, featureID string, plansUnavailable bool) (*Info, error) {
 	readmePath := ReadmePath(featuresDir, featureID)
 
 	status, err := parseFeatureStatusFn(readmePath)
@@ -65,10 +77,15 @@ func GetInfoWithPlansDir(featuresDir, plansDir, featureID string) (*Info, error)
 	}
 
 	var plans []string
-	if plansDir == "" {
+	switch {
+	case plansUnavailable:
+		// Plan routing is configured but broken: never read plansDir (which
+		// may be stale/unset) or fall back to the local search either.
+		plans = nil
+	case plansDir == "":
 		specRoot := filepath.Dir(featuresDir)
 		plans, err = findLinkedPlansFn(filepath.Dir(specRoot), featureID)
-	} else {
+	default:
 		plans, err = FindLinkedPlansDir(plansDir, featureID)
 	}
 	if err != nil {
