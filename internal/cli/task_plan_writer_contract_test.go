@@ -44,7 +44,7 @@ func TestTaskPlanBodyWriterInventoryHasNoUnclassifiedPath(t *testing.T) {
 		},
 		"pkg/plan/reconcile.go": {
 			class:   "existing-plan-reconcile-transaction",
-			anchors: []string{"func Reconcile(", "transformPlanArtifact(opts.transformArtifact, flatPath", "func reconcileBytes("},
+			anchors: []string{"func Reconcile(", "transformPlanArtifact(opts.transformArtifact, planPath", "func reconcileBytes("},
 		},
 		"pkg/lint/legacy_status_fix.go": {
 			class:   "legacy-plan-body-status-transaction",
