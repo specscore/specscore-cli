@@ -30,10 +30,25 @@ type Options struct {
 	// never reaches back into the live project through filepath derivation.
 	SpecRoot    string
 	ProjectRoot string
-	Rules       []string // enabled rules; nil = all
-	Ignore      []string // disabled rules
-	Severity    string   // minimum severity: error, warning, info
-	Fix         bool     // when true, auto-fixable violations are repaired on disk by checkers that support it
+	// PlansDir overrides SpecRoot/plans for projects whose authoritative Plans
+	// live in a separate, namespaced repository checkout.
+	PlansDir string
+	// PlanRouteError, when non-empty, means Plan routing is configured for
+	// this project but failed to resolve (missing checkout, wrong origin, a
+	// nested or ambiguous mapping, a misplaced key, ...). Every Plan-owned
+	// checker is skipped in this case — none of them may fall back to
+	// reading (or, under --fix, writing) the local spec/plans tree, which
+	// may be exactly the stale artifact routing was configured to route
+	// away from — and the plan-route-unresolved checker reports this string
+	// as the sole ERROR-severity finding in their place. Leave this empty
+	// both when no route is configured at all (the historical same-repo
+	// PlansDir="" default applies, unchanged) and when a route resolved
+	// successfully (PlansDir names the resolved namespace).
+	PlanRouteError string
+	Rules          []string // enabled rules; nil = all
+	Ignore         []string // disabled rules
+	Severity       string   // minimum severity: error, warning, info
+	Fix            bool     // when true, auto-fixable violations are repaired on disk by checkers that support it
 	// FixTargets names opt-in fixes to enable on top of the standard fix pass
 	// (only consulted when Fix is true). These are fixes that are deliberately
 	// off by default because they mask a likely authoring mistake — e.g.

@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 181
+Total rules: 182
 
 ## capability
 
@@ -240,6 +240,7 @@ Total rules: 181
 | P-009 | error | Validates optional same-repository **Prerequisite Plans:** references: canonical slugs, existence, no duplicates or self-references, and an acyclic dependency graph. |
 | P-010 | error | Validates a plan's optional **Coordination:** reference against coordination-branch-format (<owner>/<repo>@<branch>) — syntactic only, never resolves or scans the named repo/branch. |
 | plan-index-sync | error | Requires the canonical plans index table to match single-file Plan metadata; --fix regenerates drifted rows. |
+| plan-route-unresolved | error | Reports a configured-but-broken Plan route and confirms every other Plan-owned rule was skipped rather than reading or writing the wrong spec/plans tree. |
 
 ## property
 

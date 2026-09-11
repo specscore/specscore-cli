@@ -11,6 +11,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/config"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 )
 
 func configCommand() *cobra.Command {
@@ -46,6 +47,16 @@ func configGetCommand() *cobra.Command {
 	return cmd
 }
 
+// resolveLayeredConfigOrgConfigPathFn is an injectable seam over
+// planstore.OrgConfigPath for resolveLayeredConfig's error-handling branch.
+// In real operation OrgConfigPath's only error path is filepath.Abs failing
+// on a relative sourceRoot when os.Getwd is itself broken (e.g. a deleted
+// cwd) — verified empirically not reproducible even by deliberately
+// deleting the working directory mid-test on this platform, so this branch
+// has no deterministic, non-racy reproduction through the real function.
+// The seam lets it still get a deterministic test.
+var resolveLayeredConfigOrgConfigPathFn = planstore.OrgConfigPath
+
 // resolveLayeredConfig resolves the three config layers for the repo addressed
 // by the --project flag (or the cwd) plus the user's home directory.
 func resolveLayeredConfig(cmd *cobra.Command) (config.Resolved, error) {
@@ -74,7 +85,15 @@ func resolveLayeredConfig(cmd *cobra.Command) (config.Resolved, error) {
 	if err != nil {
 		return config.Resolved{}, exitcode.UnexpectedErrorf("cannot determine home directory: %v", err)
 	}
-	return config.ResolveDir(root, home)
+	// OrgConfigPath's only error path is filepath.Abs failing on a relative
+	// sourceRoot when os.Getwd is itself broken (e.g. a deleted cwd) —
+	// See resolveLayeredConfigOrgConfigPathFn's doc comment for why this
+	// error branch is TOCTOU-only through the real function.
+	orgPath, err := resolveLayeredConfigOrgConfigPathFn(root)
+	if err != nil {
+		return config.Resolved{}, exitcode.InvalidStateErrorf("resolving organization config: %v", err)
+	}
+	return config.ResolveDirWithOrg(root, home, orgPath)
 }
 
 func runConfigShow(cmd *cobra.Command, _ []string) error {

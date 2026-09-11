@@ -16,6 +16,7 @@ import (
 func setupPlansSpec(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	configureSameRepoPlans(t, root)
 	// spec/features/ presence makes FindSpecRepoRoot recognize the root.
 	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -102,6 +103,7 @@ func TestValidateFormat_Xml_Exits2(t *testing.T) {
 // directory is absent (emptiness is the list command's concern).
 func TestResolvePlansDir_AbsentDir_NoError(t *testing.T) {
 	root := t.TempDir()
+	configureSameRepoPlans(t, root)
 	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

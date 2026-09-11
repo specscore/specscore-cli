@@ -12,8 +12,18 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/spf13/cobra"
 )
+
+// planReconcileResolveFileFn is an injectable seam over plan.ResolveFile for
+// the tree-transaction branch below. In real operation planPreviewReconcileFn
+// just resolved and read this exact slug successfully with the identical,
+// unchanged PlansDir/slug inputs, so a real failure here needs a genuine
+// concurrent mutation of the Plans namespace between that call and this one
+// — not something a deterministic, non-racy test can force. The seam lets
+// that branch still get a deterministic test.
+var planReconcileResolveFileFn = plan.ResolveFile
 
 // planReconcileCommand returns the "plan reconcile" command. It is a
 // deliberately DISTINCT verb from `plan change-status`: change-status walks a
@@ -29,7 +39,7 @@ func planReconcileCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reconcile <slug> --tasks=complete --note=<text> [--evidence=<ref>[,<ref>...]]",
 		Short: "Correct a Plan's recorded status to match reality (out-of-band, not a tracked transition)",
-		Long: `Reconciles spec/plans/<slug>.md when its recorded **Status:** — and its
+		Long: `Reconciles <configured-plans-namespace>/<plan-id>/README.md when its recorded **Status:** — and its
 embedded tasks' **Status:** lines — fell behind what was actually delivered,
 because the work landed outside the tracked ` + "`change-status`" + ` flow.
 Unlike ` + "`change-status`" + `, reconcile does not walk the legal-transition
@@ -66,8 +76,7 @@ Reconcile refuses (exit 4) when: the plan has no embedded tasks; any task is
 missing an explicit **Status:** line; a task is failed/aborted and not named
 in --force-tasks; the plan is in a terminal disposition status
 (Rejected/Withdrawn/Superseded/Deprecated — reconcile does not resurrect
-those); the plan uses the directory form (spec/plans/<slug>/README.md,
-unsupported by this verb); or nothing would actually change — the plan is
+those); or nothing would actually change — the plan is
 already reconciled, so re-running is a no-op refusal rather than a silent
 success.
 
@@ -122,7 +131,7 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 			"too many positional arguments: reconcile accepts exactly one <slug>, got %d", len(args))
 	}
 	slug := args[0]
-	if err := plan.ValidateSlug(slug); err != nil {
+	if err := plan.ValidateID(slug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
 	}
 
@@ -187,7 +196,7 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 	}
 
 	projectFlag, _ := cmd.Flags().GetString("project")
-	specRoot, err := resolveSpecRoot(projectFlag)
+	store, err := resolvePlanStore(projectFlag, planstore.Write)
 	if err != nil {
 		return err
 	}
@@ -200,17 +209,18 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		if parseErr != nil {
 			return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
 		}
-		return enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, &coordinationWarning)
+		return enforceCoordinationBranch(parsedPlan, store.SourceRoot, forceCoordination, &coordinationWarning)
 	}
 	opts := plan.ReconcileOptions{
-		SpecRoot:         specRoot,
+		SpecRoot:         store.SourceRoot,
+		PlansDir:         store.PlansDir,
 		Slug:             slug,
 		Note:             note,
 		Evidence:         evidence,
 		ForceTasks:       forceTasks,
 		ReopenTasks:      reopenTasks,
 		ValidateSnapshot: validateSnapshot,
-		PostMutation:     plan.PostMutationHook(lintPostMutationHook(filepath.Join(specRoot, "spec"))),
+		PostMutation:     plan.PostMutationHook(lintPostMutationHookWithPlans(filepath.Join(store.SourceRoot, "spec"), store.PlansDir)),
 	}
 	var result plan.ReconcileResult
 	treeTransaction, _ := cmd.Flags().GetBool("tree-transaction")
@@ -218,19 +228,37 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		if _, err := planPreviewReconcileFn(opts); err != nil {
 			return err
 		}
-		writeSet := []string{
-			filepath.ToSlash(filepath.Join("plans", slug+".md")),
-			"plans/README.md",
+		// See planReconcileResolveFileFn's doc comment for why this is
+		// TOCTOU-only. Every Rel() call below, in contrast, is against a
+		// path built (here or inside planstore.Resolve) as
+		// Join(store.PlansCheckout, "spec", ...) or Join(store.PlansDir,
+		// ...) — always a descendant of its own base by construction, so
+		// filepath.Rel cannot fail for it on any platform this CLI ships
+		// for; those three errors are discarded rather than checked.
+		planPath, pathErr := planReconcileResolveFileFn(store.PlansDir, slug)
+		if pathErr != nil {
+			return pathErr
 		}
-		_, err = RunLifecycleTransaction(specRoot, writeSet, func(stagedProjectRoot string) error {
+		// The lifecycle transaction's declared write set is validated against
+		// snapshots of the "spec" subtree specifically (RunLifecycleTransaction
+		// opens "spec" as the staged child), so declarations must be relative
+		// to <PlansCheckout>/spec — NOT to PlansCheckout itself, which would
+		// leave a spurious "spec/" prefix that never matches the reported
+		// changed-file paths and makes every real write look "unexpected".
+		specCheckoutRoot := filepath.Join(store.PlansCheckout, "spec")
+		planRel, _ := filepath.Rel(specCheckoutRoot, planPath)
+		indexRel, _ := filepath.Rel(specCheckoutRoot, filepath.Join(store.PlansDir, "README.md"))
+		writeSet := []string{filepath.ToSlash(planRel), filepath.ToSlash(indexRel)}
+		relPlans, _ := filepath.Rel(store.PlansCheckout, store.PlansDir)
+		_, err = RunLifecycleTransaction(store.PlansCheckout, writeSet, func(stagedProjectRoot string) error {
 			stagedOpts := opts
-			stagedOpts.SpecRoot = stagedProjectRoot
+			stagedOpts.PlansDir = filepath.Join(stagedProjectRoot, relPlans)
 			stagedOpts.ValidateSnapshot = func(path string, before []byte) error {
 				parsedPlan, parseErr := plan.ParseBytes(path, before)
 				if parseErr != nil {
 					return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, parseErr), parseErr)
 				}
-				return enforceCoordinationBranch(parsedPlan, specRoot, forceCoordination, io.Discard)
+				return enforceCoordinationBranch(parsedPlan, store.SourceRoot, forceCoordination, io.Discard)
 			}
 			stagedOpts.PostMutation = func() error { return nil }
 			var reconcileErr error
@@ -238,10 +266,10 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 			if reconcileErr != nil {
 				return reconcileErr
 			}
-			if _, syncErr := planSyncIndexFn(filepath.Join(stagedProjectRoot, "spec", "plans")); syncErr != nil {
+			if _, syncErr := planSyncIndexFn(stagedOpts.PlansDir); syncErr != nil {
 				return exitcode.UnexpectedErrorf("syncing staged plans index: %v", syncErr)
 			}
-			return verifyLintPostMutation(filepath.Join(stagedProjectRoot, "spec"))
+			return verifyLintPostMutationWithPlans(filepath.Join(store.SourceRoot, "spec"), stagedOpts.PlansDir)
 		})
 	} else {
 		result, err = planReconcileFn(opts)

@@ -87,6 +87,10 @@ When all four sources yield no value for a field, the field MUST be omitted from
 
 A *missing* git remote (no `origin` configured) is NOT an error — inference simply skips step 3 for that field and falls through to step 4 (omit). A *present-but-unparseable* git remote (e.g., a non-Git URL or an unrecognized form) is also NOT an error — same fall-through behavior. The exit-code-`2` "unparseable git remote" condition (see Exit codes) applies only when the user explicitly relies on inference (no flag overrides) AND the remote URL is malformed in a way that prevents *any* inference, leaving the user's intent ambiguous; this is a tightening reserved for future Feature revisions if user reports show silent omission causes confusion. In MVP, missing or unparseable remotes silently fall through to omission.
 
+#### REQ: plan-routing-hint-appended
+
+After writing `specscore.yaml`, init MUST append a commented-out `plans_repo:` hint (naming that it is required before using Plan commands, and that it may point to this same repository) as trailing lines in the file. This is a hint only — it MUST NOT be an active `plans_repo:` key, since routing is not implied by `init` and omission does not mean same-repository storage (`repo-config#req:plans-repo-project-selection`). The hint applies to every init outcome (greenfield, `--force`, partial-state-resume) since every path writes a fresh `specscore.yaml`.
+
 ### Spec-tree scaffolding
 
 The `spec/` tree's mandatory subdirectories and indexes are created on every successful init.
@@ -204,6 +208,12 @@ This command takes no positional arguments. All inputs are flag-driven.
 **Given** a greenfield project root with no git remote configured
 **When** `specscore init --title "Acme Service" --host github.com --org acme --repo service` runs
 **Then** the generated `specscore.yaml` contains a `project:` block with `title: Acme Service`, `host: github.com`, `org: acme`, `repo: service`. When the same command runs in a project root WITH a git remote `git@github.com:acme/service.git` and NO flags, the same fields are populated by inference. Explicit flags override inference; absent flags AND absent inference cause the field to be omitted from the output (not emitted as empty).
+
+### AC: plan-routing-hint-present (verifies cli/init#req:plan-routing-hint-appended)
+
+**Given** a greenfield project root with no `specscore.yaml`
+**When** `specscore init` runs (no flags)
+**Then** the generated `specscore.yaml` contains a commented-out `# plans_repo: owner/repository` hint line after the active config content, no active (uncommented) `plans_repo:` key is present, and `specscore spec lint` still exits `0` (the hint is a comment, not a schema violation).
 
 ### AC: interactive-mode-prompts-and-defaults
 

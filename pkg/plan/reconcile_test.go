@@ -83,8 +83,8 @@ func TestPreviewReconcileRefusalBranches(t *testing.T) {
 		if err := os.WriteFile(path, []byte(reconcilePlanBody("Draft", "planning")), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := PreviewReconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "reason"}); err == nil {
-			t.Fatal("PreviewReconcile accepted directory-form plan")
+		if _, err := PreviewReconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "reason"}); err != nil {
+			t.Fatalf("PreviewReconcile directory-form plan: %v", err)
 		}
 	})
 
@@ -605,9 +605,15 @@ func TestReconcile_UnknownSlug_NotFound(t *testing.T) {
 	}
 }
 
-// AC: directory-form-unsupported — reconcile only supports the flat
-// single-file form; a plan that resolves to the directory form is refused.
-func TestReconcile_DirectoryForm_Refused(t *testing.T) {
+// AC: directory-form-no-tasks — reconcile DOES support the directory form
+// (resolvePlanFile resolves it same as any other Plan verb; see
+// TestPreviewReconcileRefusalBranches's "directory form" subtest for the
+// success path), but this particular directory-form plan has zero embedded
+// tasks, which reconcile refuses regardless of which form resolved it. This
+// test predates directory-form support (when it exercised a since-removed
+// restriction); it is kept, renamed, because a zero-task plan is still worth
+// covering via this shape.
+func TestReconcile_DirectoryForm_NoTasks(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "spec", "plans", "auth")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

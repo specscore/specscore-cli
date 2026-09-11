@@ -74,11 +74,11 @@ func TestDiscover_ParseError(t *testing.T) {
 	}
 }
 
-func TestDiscover_SkipsSubdirectories(t *testing.T) {
+func TestDiscover_IncludesDirectoryForm(t *testing.T) {
 	dir := t.TempDir()
 	plansDir := filepath.Join(dir, "plans")
 	writePlan(t, plansDir, "single", "# Plan: Single\n\n## Tasks\n\n### Task 1: x\n\nBody.\n")
-	// Directory-form plan: spec/plans/<slug>/README.md — out of scope.
+	// Directory-form Plan is the canonical nested-capable shape.
 	if err := os.MkdirAll(filepath.Join(plansDir, "dirform"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestDiscover_SkipsSubdirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(got) != 1 || got[0].Slug != "single" {
-		t.Fatalf("expected only [single], got %+v", got)
+	if len(got) != 2 || got[0].Slug != "dirform" || got[1].Slug != "single" {
+		t.Fatalf("expected [dirform single], got %+v", got)
 	}
 }

@@ -114,6 +114,11 @@ func TestTaskAmendResolutionAndArtifactFaultsAreWriteFree(t *testing.T) {
 		}
 	})
 	t.Run("plan-stat-error", func(t *testing.T) {
+		// amendPlanTask now resolves through plan.ResolveFile (pkg/plan/path.go),
+		// which detects the symlink at either candidate form up front and fails
+		// closed with a Conflict before any later generic stat call — the same
+		// strictly-earlier safety property documented on
+		// TestPlanNewFilesystemRaceAndForceFaults above.
 		root, path := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
@@ -122,7 +127,7 @@ func TestTaskAmendResolutionAndArtifactFaultsAreWriteFree(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, err := runTask(t, "amend", "setup", "--plan=auth", "--project="+root, "--note=x", "--actor=a", "--reason=r")
-		if exitCodeOfErr(err) != exitcode.Unexpected {
+		if exitCodeOfErr(err) != exitcode.Conflict || !strings.Contains(err.Error(), "symbolic link") {
 			t.Fatalf("err=%v", err)
 		}
 	})
@@ -317,7 +322,7 @@ func TestReadTaskNewRecoveryMarkerReadFailures(t *testing.T) {
 
 func TestPlanCallbacksRejectOversizedLockedSnapshot(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
-	path := filepath.Join(root, "spec", "plans", "auth.md")
+	path := filepath.Join(root, "spec", "plans", "auth", "README.md")
 	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), (1<<20)+1), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +332,7 @@ func TestPlanCallbacksRejectOversizedLockedSnapshot(t *testing.T) {
 	}
 
 	root = stageReconcilablePlan(t, "reconcile", "Draft", "planning")
-	path = filepath.Join(root, "spec", "plans", "reconcile.md")
+	path = filepath.Join(root, "spec", "plans", "reconcile", "README.md")
 	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), (1<<20)+1), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -337,6 +342,17 @@ func TestPlanCallbacksRejectOversizedLockedSnapshot(t *testing.T) {
 	}
 }
 
+// TestPlanNewFilesystemRaceAndForceFaults exercises filesystem races at the
+// flat-legacy Plan location. plan.ResolveFile (pkg/plan/path.go) now detects a
+// symlink or a non-regular-file collision at either candidate form (flat or
+// canonical directory) BEFORE runPlanNew reaches its own later os.Stat/os.Mkdir
+// calls, and does so unconditionally of --force (force only ever decides
+// whether an existing REGULAR plan file may be overwritten, never whether a
+// symlinked or non-regular collision is tolerated). That earlier, uniform
+// check is a strictly stronger safety property than the older per-branch
+// os.Stat-race handling these subtests originally targeted, so every case
+// here now surfaces as a Conflict from plan.ResolveFile rather than the
+// force-dependent Unexpected/Conflict split the pre-directory-form code had.
 func TestPlanNewFilesystemRaceAndForceFaults(t *testing.T) {
 	t.Run("non-force-stat-error", func(t *testing.T) {
 		root := setupSpecRoot(t)
@@ -348,7 +364,7 @@ func TestPlanNewFilesystemRaceAndForceFaults(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, err := runPlan(t, "new", "loop", "--owner=tester", "--project="+root)
-		if exitCodeOfErr(err) != exitcode.Unexpected {
+		if exitCodeOfErr(err) != exitcode.Conflict || !strings.Contains(err.Error(), "symbolic link") {
 			t.Fatalf("err=%v", err)
 		}
 	})
@@ -362,7 +378,7 @@ func TestPlanNewFilesystemRaceAndForceFaults(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, err := runPlan(t, "new", "directory", "--owner=tester", "--force", "--project="+root)
-		if exitCodeOfErr(err) != exitcode.Unexpected {
+		if exitCodeOfErr(err) != exitcode.Conflict || !strings.Contains(err.Error(), "not a regular file") {
 			t.Fatalf("err=%v", err)
 		}
 	})
@@ -385,11 +401,7 @@ func TestPlanNewFilesystemRaceAndForceFaults(t *testing.T) {
 				args = append(args, "--force")
 			}
 			_, _, err := runPlan(t, args...)
-			want := exitcode.Conflict
-			if force {
-				want = exitcode.Unexpected
-			}
-			if exitCodeOfErr(err) != want {
+			if exitCodeOfErr(err) != exitcode.Conflict || !strings.Contains(err.Error(), "symbolic link") {
 				t.Fatalf("err=%v", err)
 			}
 		})
@@ -404,7 +416,7 @@ func TestPlanNewFilesystemRaceAndForceFaults(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, err := runPlan(t, "new", "loop", "--owner=tester", "--force", "--project="+root)
-		if exitCodeOfErr(err) != exitcode.Unexpected {
+		if exitCodeOfErr(err) != exitcode.Conflict || !strings.Contains(err.Error(), "symbolic link") {
 			t.Fatalf("err=%v", err)
 		}
 	})

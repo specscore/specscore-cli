@@ -226,3 +226,25 @@ func TestConfigShow_HomeDirError(t *testing.T) {
 		t.Fatal("expected home-dir error")
 	}
 }
+
+// TestConfigShow_OrgConfigPathErrorPropagates covers resolveLayeredConfig's
+// error-handling branch around resolveLayeredConfigOrgConfigPathFn. In real
+// operation planstore.OrgConfigPath's only error path is not reproducible
+// deterministically (see the seam's doc comment in config.go), so the seam
+// is overridden directly instead.
+func TestConfigShow_OrgConfigPathErrorPropagates(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, filepath.Join(root, "specscore.yaml"), "studio:\n  theme: x\n")
+	if err := os.MkdirAll(filepath.Join(root, "spec"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := resolveLayeredConfigOrgConfigPathFn
+	t.Cleanup(func() { resolveLayeredConfigOrgConfigPathFn = orig })
+	resolveLayeredConfigOrgConfigPathFn = func(string) (string, error) {
+		return "", errors.New("injected org-config-path failure")
+	}
+	_, _, err := runConfigCmd(t, "show", "--project", root)
+	if err == nil || !strings.Contains(err.Error(), "injected org-config-path failure") {
+		t.Fatalf("err = %v", err)
+	}
+}

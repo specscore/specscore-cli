@@ -38,6 +38,22 @@ type SectionInfo struct {
 
 // GetInfo builds and returns the full Info for a feature.
 func GetInfo(featuresDir, featureID string) (*Info, error) {
+	return GetInfoWithPlansDir(featuresDir, "", featureID, false)
+}
+
+// GetInfoWithPlansDir builds and returns the full Info for a feature.
+// plansUnavailable, when true, means Plan routing is configured for the
+// project but failed to resolve: the Plans back-reference must come back
+// empty without EVER reading plansDir (which is ignored in this case) or the
+// local spec/plans tree that an empty plansDir would otherwise default to —
+// either may be exactly the stale artifact routing was configured to route
+// away from (finding 2 of the PR #199 adversarial re-review). Previously
+// this was signaled by passing a syntactically-invalid sentinel path as
+// plansDir (an embedded NUL byte, relying on os.Stat rejecting it before any
+// filesystem access); an explicit bool is clearer and carries no risk of a
+// future call site logging, joining, or otherwise touching a "path" that was
+// never meant to be one.
+func GetInfoWithPlansDir(featuresDir, plansDir string, featureID string, plansUnavailable bool) (*Info, error) {
 	readmePath := ReadmePath(featuresDir, featureID)
 
 	status, err := parseFeatureStatusFn(readmePath)
@@ -60,8 +76,18 @@ func GetInfo(featuresDir, featureID string) (*Info, error) {
 		return nil, fmt.Errorf("discovering children: %w", err)
 	}
 
-	specRoot := filepath.Dir(featuresDir) // spec/features/ -> spec/
-	plans, err := findLinkedPlansFn(filepath.Dir(specRoot), featureID)
+	var plans []string
+	switch {
+	case plansUnavailable:
+		// Plan routing is configured but broken: never read plansDir (which
+		// may be stale/unset) or fall back to the local search either.
+		plans = nil
+	case plansDir == "":
+		specRoot := filepath.Dir(featuresDir)
+		plans, err = findLinkedPlansFn(filepath.Dir(specRoot), featureID)
+	default:
+		plans, err = FindLinkedPlansDir(plansDir, featureID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("finding linked plans: %w", err)
 	}
@@ -238,7 +264,10 @@ func ParseContentsTable(readmePath string) (map[string]bool, error) {
 // FindLinkedPlans scans spec/plans/*/README.md for plans that reference
 // the given feature.
 func FindLinkedPlans(repoRoot, featureID string) ([]string, error) {
-	plansDir := filepath.Join(repoRoot, "spec", "plans")
+	return FindLinkedPlansDir(filepath.Join(repoRoot, "spec", "plans"), featureID)
+}
+
+func FindLinkedPlansDir(plansDir, featureID string) ([]string, error) {
 	if _, err := os.Stat(plansDir); err != nil {
 		return nil, nil
 	}
@@ -258,7 +287,11 @@ func FindLinkedPlans(repoRoot, featureID string) ([]string, error) {
 		if planDir == plansDir {
 			return nil
 		}
-		planName := filepath.Base(planDir)
+		// planDir is filepath.Dir(path), and path always comes from
+		// WalkDir(plansDir, ...) — always a descendant of plansDir by
+		// construction — so this Rel call cannot fail.
+		planName, _ := filepath.Rel(plansDir, planDir)
+		planName = filepath.ToSlash(planName)
 
 		if planReferencesFeature(path, featureID) {
 			plans = append(plans, planName)

@@ -1,16 +1,16 @@
 ---
 format: https://specscore.md/plan-specification
-status: draft
+status: Draft
 ---
 
 # Plan: Studio Toolbar — CLI Implementation
 
-**Status:** draft
+**Status:** Draft
 **Features:**
   - [studio-toolbar (specscore repo)](https://github.com/specscore/specscore/blob/main/spec/features/studio-toolbar/README.md)
   - [repo-config (specscore repo)](https://github.com/specscore/specscore/blob/main/spec/features/repo-config/README.md)
 **Source type:** feature
-**Source:** [studio-toolbar (specscore repo)](https://github.com/specscore/specscore/blob/main/spec/features/studio-toolbar/README.md)
+**Source:** none
 **Author:** alexander.trakhimenok
 **Created:** 2026-05-19
 **Effort:** M

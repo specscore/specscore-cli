@@ -54,11 +54,17 @@ var reconcileTodayUTC = func() string { return time.Now().UTC().Format("2006-01-
 // ReconcileOptions packages the inputs to Reconcile.
 type ReconcileOptions struct {
 	// SpecRoot is the project root that contains the `spec/` subtree (NOT the
-	// `spec/` directory itself). The Plan is resolved at
-	// SpecRoot/spec/plans/<slug>.md; the optional directory form
-	// (.../spec/plans/<slug>/README.md) is NOT supported — embedded-task
-	// reconciliation requires the single-file parser (pkg/plan.Parse).
+	// `spec/` directory itself). The Plan is resolved via resolvePlanFile at
+	// SpecRoot/spec/plans/<slug>.md (flat form) or
+	// SpecRoot/spec/plans/<slug>/README.md (directory form) — both are
+	// supported for reconcile, same as every other Plan verb; the flat form
+	// takes precedence when both exist. Embedded-task reconciliation uses the
+	// single-file parser (pkg/plan.ParseBytes) against whichever form
+	// resolves, not the shape itself.
 	SpecRoot string
+	// PlansDir is the resolved authoritative Plan namespace. Empty preserves
+	// the historical SpecRoot/spec/plans behavior for direct callers.
+	PlansDir string
 
 	// Slug is the Plan slug, e.g. "user-auth". Caller is expected to have
 	// validated it via plan.ValidateSlug.
@@ -145,6 +151,13 @@ type ReconcileResult struct {
 	Target TaskStatus
 }
 
+func reconcilePlansDir(opts ReconcileOptions) string {
+	if opts.PlansDir != "" {
+		return opts.PlansDir
+	}
+	return filepath.Join(opts.SpecRoot, "spec", "plans")
+}
+
 // PreviewReconcile runs the complete read-only reconciliation validation and
 // composition against the current Plan bytes. It is used by whole-tree
 // transactions to reject an invalid command before creating recovery state;
@@ -160,27 +173,28 @@ func PreviewReconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, exitcode.InvalidArgsError(
 			"PreviewReconcile: --note required — describe why the plan is being reconciled")
 	}
-	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
-	flatPath := filepath.Join(plansDir, opts.Slug+".md")
-	resolved, err := resolvePlanFile(plansDir, opts.Slug)
+	plansDir := reconcilePlansDir(opts)
+	// PathForID's result itself isn't needed on this path — only its
+	// validation of opts.Slug is; the actual target path comes from
+	// resolvePlanFile below (which accepts both the canonical directory form
+	// and the legacy flat form).
+	if _, pathErr := PathForID(plansDir, opts.Slug); pathErr != nil {
+		return ReconcileResult{}, exitcode.InvalidArgsErrorf("invalid plan ID %q: %v", opts.Slug, pathErr)
+	}
+	planPath, err := resolvePlanFile(plansDir, opts.Slug)
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	if resolved != flatPath {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
-			"plan %q uses the directory form (spec/plans/%s/README.md); `plan reconcile` only supports the flat single-file form",
-			opts.Slug, opts.Slug)
-	}
-	before, err := os.ReadFile(flatPath)
+	before, err := os.ReadFile(planPath)
 	if err != nil {
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("reading plan %s for reconciliation preview: %v", opts.Slug, err)
 	}
 	if opts.ValidateSnapshot != nil {
-		if err := opts.ValidateSnapshot(flatPath, before); err != nil {
+		if err := opts.ValidateSnapshot(planPath, before); err != nil {
 			return ReconcileResult{}, err
 		}
 	}
-	result, _, err := reconcileBytes(opts, flatPath, before)
+	result, _, err := reconcileBytes(opts, planPath, before)
 	return result, err
 }
 
@@ -188,9 +202,9 @@ func PreviewReconcile(opts ReconcileOptions) (ReconcileResult, error) {
 //
 // Flow:
 //
-//  1. Resolve <slug> to an existing flat-form Plan file. A missing file
-//     returns exit 3; a directory-form-only plan returns exit 4 (unsupported
-//     shape for this verb).
+//  1. Resolve <slug> to an existing Plan file via resolvePlanFile, which
+//     accepts both the flat form and the directory form. A missing file
+//     returns exit 3.
 //  2. Parse the plan and reject artifact shapes reconcile cannot handle: a
 //     terminal disposition status (Rejected/Withdrawn/Superseded/Deprecated —
 //     no resurrection via this verb), zero embedded tasks, or any task
@@ -225,27 +239,28 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("Reconcile: PostMutation hook required")
 	}
 
-	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
-	flatPath := filepath.Join(plansDir, opts.Slug+".md")
-	resolved, err := resolvePlanFile(plansDir, opts.Slug)
+	plansDir := reconcilePlansDir(opts)
+	// PathForID's result itself isn't needed on this path — only its
+	// validation of opts.Slug is; the actual target path comes from
+	// resolvePlanFile below (which accepts both the canonical directory form
+	// and the legacy flat form).
+	if _, pathErr := PathForID(plansDir, opts.Slug); pathErr != nil {
+		return ReconcileResult{}, exitcode.InvalidArgsErrorf("invalid plan ID %q: %v", opts.Slug, pathErr)
+	}
+	planPath, err := resolvePlanFile(plansDir, opts.Slug)
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	if resolved != flatPath {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
-			"plan %q uses the directory form (spec/plans/%s/README.md); `plan reconcile` only supports the flat single-file form",
-			opts.Slug, opts.Slug)
-	}
 	var result ReconcileResult
-	err = transformPlanArtifact(opts.transformArtifact, flatPath, func(before []byte) ([]byte, error) {
+	err = transformPlanArtifact(opts.transformArtifact, planPath, func(before []byte) ([]byte, error) {
 		if opts.ValidateSnapshot != nil {
-			if validateErr := opts.ValidateSnapshot(flatPath, before); validateErr != nil {
+			if validateErr := opts.ValidateSnapshot(planPath, before); validateErr != nil {
 				return nil, validateErr
 			}
 		}
 		var after []byte
 		var reconcileErr error
-		result, after, reconcileErr = reconcileBytes(opts, flatPath, before)
+		result, after, reconcileErr = reconcileBytes(opts, planPath, before)
 		return after, reconcileErr
 	})
 	if err != nil {
@@ -258,13 +273,13 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		if errors.As(err, &coded) || errors.As(err, &committed) {
 			return result, err
 		}
-		return result, exitcode.UnexpectedErrorCause(fmt.Sprintf("reconciling plan artifact transaction %s: %v", flatPath, err), err)
+		return result, exitcode.UnexpectedErrorCause(fmt.Sprintf("reconciling plan artifact transaction %s: %v", planPath, err), err)
 	}
 	// Like ChangeStatus, the artifact transaction is durable before derived
 	// lint/index work begins. The ordinary hook may acquire Plan locks itself,
-	// so it must never run while flatPath's non-reentrant fence is held.
+	// so it must never run while planPath's non-reentrant fence is held.
 	if err := opts.PostMutation(); err != nil {
-		return result, lifecycle.CommittedError(flatPath, "post-mutation callback", err)
+		return result, lifecycle.CommittedError(planPath, "post-mutation callback", err)
 	}
 	return result, nil
 }
@@ -272,16 +287,17 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 // reconcileBytes validates and transforms one exact Plan snapshot. It has no
 // filesystem side effects; status, task rows, marker, and Resolution audit are
 // composed into the one byte slice committed by TransformArtifact.
-func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (ReconcileResult, []byte, error) {
-	p, err := ParseBytes(flatPath, original)
+func reconcileBytes(opts ReconcileOptions, planPath string, original []byte) (ReconcileResult, []byte, error) {
+	p, err := ParseBytes(planPath, original)
 	if err != nil {
-		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", flatPath, err)
+		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", planPath, err)
 	}
+	p.Slug = opts.Slug
 	if err := requirePlanArtifact(p, "target"); err != nil {
 		return ReconcileResult{}, nil, err
 	}
 	if p.StatusCount == 0 {
-		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("plan %s has no **Status:** line", flatPath)
+		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("plan %s has no **Status:** line", planPath)
 	}
 	if p.StatusCount > 1 {
 		return ReconcileResult{}, nil, exitcode.InvalidArgsErrorf("plan %q must have exactly one header **Status:** field; found %d", opts.Slug, p.StatusCount)
@@ -369,7 +385,7 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	// It is an out-of-band history correction, not a prerequisite bypass: the
 	// same readiness evaluator used by dispatch entrypoints must pass before
 	// any transformed bytes are produced or written, preserving atomic refusal.
-	readiness, err := p.PrerequisiteReadiness(filepath.Join(opts.SpecRoot, "spec", "plans"))
+	readiness, err := p.PrerequisiteReadiness(reconcilePlansDir(opts))
 	if err != nil {
 		return ReconcileResult{}, nil, preserveReadinessError(opts.Slug, err)
 	}

@@ -14,7 +14,7 @@ func planListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all plan slugs, one per line",
-		Long: `Lists single-file plans in a project as slugs, one per line, sorted
+		Long: `Lists Plans in the configured source-project namespace as slash-separated IDs, one per line, sorted
 alphabetically. Use --status to filter by status (case-insensitive exact
 match). Output is empty (exit 0) when no plans match.`,
 		Args: cobra.NoArgs,

@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
@@ -258,8 +260,55 @@ func runFeatureInfo(cmd *cobra.Command, args []string) error {
 	if !feature.Exists(featuresDir, featureID) {
 		return exitcode.NotFoundErrorf("feature not found: %s", featureID)
 	}
+	// Feature operations are independent of Plan routing (repo-config#req:plan-route-required
+	// explicitly exempts Feature/Idea/Lesson operations): an unresolved or absent
+	// Plan route must not fail `feature info`. Resolve the Plan store best-effort
+	// so the Plans back-reference is populated when routing IS configured, but
+	// fall back to no Plans context otherwise — distinguishing, same as `spec
+	// lint` (finding 1), "a route is configured but broken" from every other
+	// shape:
+	//
+	//   - A route IS configured but fails to resolve
+	//     (planstore.ErrRouteUnresolved: missing checkout, wrong origin, a
+	//     nested or ambiguous mapping, a misplaced key, or a config layer
+	//     that exists but fails to read or parse): the Plans back-reference
+	//     must NOT be filled in from the local tree, which may be exactly
+	//     the stale artifact routing was configured to route away from.
+	//     plansUnavailable=true makes GetInfoWithPlansDir skip both the
+	//     external plansDir read AND the ""-triggered local search — see its
+	//     doc comment. The resolution error is reported on stderr instead.
+	//   - No route (planstore.ErrNoRoute), or any other resolvePlanStore
+	//     failure unrelated to whether a route exists (the source isn't a
+	//     git repository, its origin can't be parsed, ...): keep the
+	//     historical same-repo default — plansDir stays "" and
+	//     GetInfoWithPlansDir searches the local spec/plans tree, unchanged
+	//     from before Plan routing existed.
+	plansDir := ""
+	plansUnavailable := false
+	if store, storeErr := resolvePlanStore(projectFlag, planstore.ReadOnly); storeErr == nil {
+		plansDir = store.PlansDir
+	} else if errors.Is(storeErr, planstore.ErrRouteUnresolved) {
+		plansUnavailable = true
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"Plan back-references unavailable: plan routing is configured but could not be resolved: %v\n", storeErr)
+	} else {
+		// storeErr is either planstore.ErrNoRoute (nothing configured
+		// anywhere) or a pre-routing infrastructure failure unrelated to
+		// whether a route is configured (not a git repository, an
+		// unparseable origin, ...) — planstore.Resolve keeps both lenient by
+		// construction (see planstore.ErrRouteUnresolved's doc comment), so
+		// `feature info` keeps the historical same-repo default. The
+		// reassignment below is a no-op (both already hold these zero
+		// values) written out explicitly, rather than left as an implicit
+		// fallthrough with an empty branch, so a future resolvePlanStore
+		// failure shape cannot silently inherit lenient behavior by
+		// omission (finding 1 of the PR #199 adversarial re-review) — and
+		// so this branch stays a real decision point a reviewer can see,
+		// not dead code.
+		plansDir, plansUnavailable = "", false
+	}
 
-	info, err := feature.GetInfo(featuresDir, featureID)
+	info, err := feature.GetInfoWithPlansDir(featuresDir, plansDir, featureID, plansUnavailable)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getting feature info: %v", err)
 	}

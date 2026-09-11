@@ -72,6 +72,7 @@ var builtinRules = []Rule{
 	{ID: "plan-hierarchy", Family: "core", Severity: "error", Description: "Requires plan tasks to form a valid hierarchy."},
 	{ID: "plan-roi-metadata", Family: "core", Severity: "warning", Description: "Warns when a plan is missing ROI metadata."},
 	{ID: "plan-index-sync", Family: "plan", Severity: "error", Description: "Requires the canonical plans index table to match single-file Plan metadata; --fix regenerates drifted rows."},
+	{ID: "plan-route-unresolved", Family: "plan", Severity: "error", Description: "Reports a configured-but-broken Plan route and confirms every other Plan-owned rule was skipped rather than reading or writing the wrong spec/plans tree."},
 	{ID: "adherence-footer", Family: "core", Severity: "error", Description: "Requires the spec-adherence footer on managed documents."},
 	{ID: "studio-toolbar", Family: "core", Severity: "error", Description: "Requires the SpecStudio toolbar block on managed documents."},
 	{ID: "dogfood-version-bump", Family: "core", Severity: "warning", Description: "Warns when a workflow pins a stale specscore CLI version."},

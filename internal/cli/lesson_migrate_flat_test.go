@@ -18,9 +18,25 @@ func runGitForFlatMigration(t *testing.T, root string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return
 	}
+	// setupSpecRoot fixtures are already git-init'd with an "origin" remote
+	// (configureSameRepoPlans, for Plan-routing resolution); a caller that
+	// re-runs "remote add origin <url>" on top of one of those fixtures hits
+	// "remote origin already exists" rather than a real failure — repoint the
+	// existing remote instead of treating that specific case as fatal.
+	if len(args) >= 3 && args[0] == "remote" && args[1] == "add" && strings.Contains(string(out), "already exists") {
+		setURL := append([]string{"remote", "set-url"}, args[2:]...)
+		setCmd := exec.Command("git", setURL...)
+		setCmd.Dir = root
+		if setOut, setErr := setCmd.CombinedOutput(); setErr != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(setURL, " "), setErr, setOut)
+		}
+		return
+	}
+	t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 }
 
 func runFlatMigrationWithDeps(t *testing.T, root, slug string, deps lessonCLIDeps) (string, string, error) {

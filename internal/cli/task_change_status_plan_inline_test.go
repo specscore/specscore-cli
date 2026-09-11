@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
+	"github.com/specscore/specscore-cli/pkg/lint"
 )
 
 // Covers rewritePlanTaskStatusLine's ReadFile error branch directly (a missing
@@ -20,19 +22,100 @@ func TestRewritePlanTaskStatusLine_ReadError(t *testing.T) {
 	}
 }
 
+// sourceFeatureLineRe extracts the value of a plan body's **Source Feature:**
+// header line, so stagePlanWithTasks can materialize a real, lint-clean
+// Feature for it.
+var sourceFeatureLineRe = regexp.MustCompile(`(?m)^\*\*Source Feature:\*\* (.+)$`)
+
 // stagePlanWithTasks writes a SpecScore project with a single-file plan at
 // spec/plans/<slug>.md containing the given body, sets cwd to the root, and
-// returns the root and the plan-file path.
+// returns the root and the plan-file path. The project is git-initialized
+// and self-routes Plans to its own identity (configureSameRepoPlans) so
+// resolvePlanStore succeeds exactly as it would for a real same-repo project
+// (repo-config#req:plans-repo-project-selection: omission does not imply
+// same-repository storage, so every fixture must route explicitly).
+//
+// runTaskChangeStatusPlanInline (and the amend/provenance equivalents) now
+// run the same full post-mutation lint verification plan change-status
+// already ran (deriving the containing Plan's execution-band **Status:**
+// from the task rollup, per P-007) — so the fixture must be genuinely
+// lint-clean, not just the bare plan file: an ancestor spec/README.md, a
+// Features index, the referenced Source Feature's own README (when the body
+// declares one), and a canonical spec/plans/README.md. migrateTree backfills
+// the artifact-frontmatter-convention frontmatter the hand-written body
+// constants in this file don't carry.
 func stagePlanWithTasks(t *testing.T, slug, body string) (string, string) {
 	t.Helper()
 	root := t.TempDir()
+	configureSameRepoPlans(t, root)
 	withCwd(t, root)
 
-	_ = os.WriteFile(filepath.Join(root, "specscore.yaml"), []byte("name: test\n"), 0o644)
+	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFeature := func(featureSlug string) {
+		t.Helper()
+		featureDir := filepath.Join(root, "spec", "features", filepath.FromSlash(featureSlug))
+		if err := os.MkdirAll(featureDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		toolbar := "> [SpecScore.**Studio**](https://specscore.studio): | " +
+			"[Explore](https://specscore.studio/app/github.com/specscore/test-fixture/spec/features/" + featureSlug + "?op=explore) | " +
+			"[Edit](https://specscore.studio/app/github.com/specscore/test-fixture/spec/features/" + featureSlug + "?op=edit) | " +
+			"[Ask question](https://specscore.studio/app/github.com/specscore/test-fixture/spec/features/" + featureSlug + "?op=ask) | " +
+			"[Request change](https://specscore.studio/app/github.com/specscore/test-fixture/spec/features/" + featureSlug + "?op=request-change) |"
+		featureBody := "---\nformat: https://specscore.md/feature-specification\nstatus: Approved\n---\n\n" +
+			"# Feature: " + featureSlug + "\n\n" + toolbar + "\n**Status:** Approved\n**Source Ideas:** —\n\n" +
+			"## Summary\n\nTest fixture.\n\n## Open Questions\n\nNone at this time.\n\n" +
+			"---\n*This document follows the https://specscore.md/feature-specification*\n"
+		if err := os.WriteFile(filepath.Join(featureDir, "README.md"), []byte(featureBody), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	featuresIndexRows := ""
+	if m := sourceFeatureLineRe.FindStringSubmatch(body); m != nil {
+		featureSlug := strings.TrimSpace(m[1])
+		topLevel := strings.SplitN(featureSlug, "/", 2)[0]
+		featuresIndexRows = "| [" + topLevel + "](" + topLevel + "/README.md) | Approved |\n"
+		// A nested slug (e.g. "rts-multilayer-chess/browser-play-surface")
+		// names an umbrella Feature directory too (readme-exists requires a
+		// README.md at every level, mirroring this repo's own cli/plan
+		// nesting) — write one for every ancestor segment, not just the leaf.
+		segments := strings.Split(featureSlug, "/")
+		for i := range segments {
+			writeFeature(strings.Join(segments[:i+1], "/"))
+		}
+	}
+	featuresReadme := "# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n" + featuresIndexRows + "\n## Open Questions\n\nNone at this time.\n"
+	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte(featuresReadme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMissingIndex(root, "spec/README.md", specReadmeContent(readSpecConfigBestEffort(root))); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMissingIndex(root, "spec/plans/README.md", plansIndexContent(readSpecConfigBestEffort(root))); err != nil {
+		t.Fatal(err)
+	}
+
 	plansDir := filepath.Join(root, "spec", "plans")
-	_ = os.MkdirAll(plansDir, 0o755)
 	planPath := filepath.Join(plansDir, slug+".md")
 	_ = os.WriteFile(planPath, []byte(body), 0o644)
+	migrateTree(t, root)
+
+	// Best-effort structural backfill (the studio toolbar line, missing
+	// Features-index rows, plans-index rows, ...) — NOT gated on the result
+	// being fully lint-clean afterward, unlike stagePlan: many callers here
+	// deliberately construct an imperfect plan body (a malformed
+	// **Implemented-by:**, an unresolved **Prerequisite Plans:** entry, ...)
+	// as the exact behavior under test, and such a fixture legitimately fails
+	// full-tree lint. Those tests fail before runTaskChangeStatusPlanInline's
+	// post-mutation lint hook is ever reached; only the happy-path tests that
+	// actually get there need the mechanical backfill below.
+	for i := 0; i < 2; i++ {
+		if _, err := lintLintFn(lint.Options{SpecRoot: filepath.Join(root, "spec"), Fix: true}); err != nil {
+			t.Logf("stagePlanWithTasks lint --fix (best-effort): %v", err)
+		}
+	}
 	return root, planPath
 }
 

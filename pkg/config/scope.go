@@ -14,6 +14,7 @@ var UserScopedKeys = []string{
 	"recaps.user",
 	"journal.repo",
 	"journal.stream",
+	"repo_checkouts",
 }
 
 // CommittedScopeViolation reports a user-scoped key found in the committed
@@ -34,13 +35,26 @@ func CheckCommittedScope(repoRoot string) ([]CommittedScopeViolation, error) {
 	if m == nil {
 		return nil, nil
 	}
+	return CheckCommittedScopeMap(m), nil
+}
+
+// CheckCommittedScopeMap is CheckCommittedScope's pure core: given an
+// already-parsed committed-layer map, it returns a violation for each
+// user-scoped key present. Exported so a caller that has already read and
+// parsed the committed file for its own purposes (e.g.
+// pkg/planstore.Resolve, which needs to reject a committed repo_checkouts
+// specifically) can reuse the exact same key registry and traversal logic
+// — the two enforcement sites cannot drift — without a second, redundant
+// file read whose error path would otherwise be unreachable given the
+// caller already parsed the same file successfully once.
+func CheckCommittedScopeMap(m map[string]any) []CommittedScopeViolation {
 	var violations []CommittedScopeViolation
 	for _, key := range UserScopedKeys {
 		if hasPath(m, key) {
 			violations = append(violations, CommittedScopeViolation{Key: key})
 		}
 	}
-	return violations, nil
+	return violations
 }
 
 // hasPath reports whether the dotted key resolves to a present entry in m.

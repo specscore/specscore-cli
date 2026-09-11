@@ -10,31 +10,86 @@ import (
 	"testing"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/gitremote"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
+	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
 // gitInitWithRemoteAndBranch initialises a real git repo in dir on the named
 // branch, with one empty commit (so HEAD/branch resolve) and an "origin"
 // remote pointing at remoteURL. Skips the calling test if `git` is missing.
+// It is idempotent about the "origin" remote (some callers reuse a root
+// stagePlan already git-init'd with its own origin): a pre-existing "origin"
+// has its URL rewritten via `remote set-url` rather than failing on
+// `remote add`. When dir already carries a committed specscore.yaml (a
+// stagePlan-produced same-repo Plan fixture), that file's `plans_repo`
+// self-reference is rewritten to match the new origin's parsed identity so
+// Plan-store resolution keeps seeing consistent same-repo routing after the
+// origin changes out from under it — coordination-branch enforcement and
+// Plan routing are deliberately independent concerns, and this helper must
+// not let one starve the other.
 func gitInitWithRemoteAndBranch(t *testing.T, dir, remoteURL, branch string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available on PATH")
 	}
-	for _, args := range [][]string{
-		{"init", "-q", "-b", branch},
-		{"config", "user.email", "t@example.com"},
-		{"config", "user.name", "T"},
-		{"remote", "add", "origin", remoteURL},
-		{"commit", "--allow-empty", "-q", "-m", "initial"},
-	} {
+	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
+	run("init", "-q", "-b", branch)
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "T")
+	// `git init -b <branch>` on a repo that already has a HEAD ref (a caller
+	// reusing a stagePlan-produced root, which configureSameRepoPlans already
+	// git-init'd on "main") silently ignores --initial-branch ("warning:
+	// re-init: ignored --initial-branch") and leaves HEAD on the original
+	// branch. Force the branch name explicitly via symbolic-ref, which also
+	// works while HEAD is still unborn (no commits yet).
+	run("symbolic-ref", "HEAD", "refs/heads/"+branch)
+	remoteAdd := exec.Command("git", "remote", "add", "origin", remoteURL)
+	remoteAdd.Dir = dir
+	if out, err := remoteAdd.CombinedOutput(); err != nil {
+		if !strings.Contains(string(out), "already exists") {
+			t.Fatalf("git remote add origin %s: %v\n%s", remoteURL, err, out)
+		}
+		run("remote", "set-url", "origin", remoteURL)
+	}
+	run("commit", "--allow-empty", "-q", "-m", "initial")
+
+	configPath := filepath.Join(dir, projectdef.SpecConfigFile)
+	if _, err := os.Stat(configPath); err == nil {
+		if remote, ok := gitremote.Parse(remoteURL); ok {
+			config := projectdef.SchemaHeader + "\n\nproject:\n  host: " + remote.Host +
+				"\n  org: " + remote.Owner + "\n  repo: " + remote.Repo +
+				"\nplans_repo: " + remote.Host + "/" + remote.Owner + "/" + remote.Repo +
+				"\nlessons:\n  classifications: [process]\n"
+			if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// Resync anything derived from repository identity (the studio
+			// toolbar line, features/plans index rows) that a stagePlan-produced
+			// fixture baked in under the ORIGINAL origin before this call
+			// repointed it — best-effort, matching stagePlanWithTasks.
+			if specDir := filepath.Join(dir, "spec"); dirExists(specDir) {
+				for i := 0; i < 2; i++ {
+					if _, err := lintLintFn(lint.Options{SpecRoot: specDir, Fix: true}); err != nil {
+						t.Logf("gitInitWithRemoteAndBranch lint --fix (best-effort): %v", err)
+					}
+				}
+			}
+		}
+	}
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // gitWorktreeCanonicalAndBranch creates a REAL canonical git repo (origin
@@ -77,6 +132,20 @@ func gitWorktreeCanonicalAndBranch(t *testing.T, remoteURL, declaredBranch, work
 			t.Fatal(err)
 		}
 	}
+	// Best-effort structural backfill (features-index row sync, frontmatter,
+	// ...) before committing, mirroring stagePlanWithTasks: the tests using
+	// this fixture that reach a full status-change success now also run
+	// runTaskChangeStatusPlanInline's post-mutation lint verification. Two
+	// passes: the first lets a fixer like index-entries create a missing row,
+	// the second lets feature-index-row-sync correct that new row's content
+	// — within one Lint(Fix:true) call each registered fixer runs at most
+	// once, so a fixer that depends on another fixer's OUTPUT within the same
+	// pass (rather than pre-existing state) needs a follow-up pass to settle.
+	for i := 0; i < 2; i++ {
+		if _, err := lintLintFn(lint.Options{SpecRoot: filepath.Join(canonical, "spec"), Fix: true}); err != nil {
+			t.Logf("gitWorktreeCanonicalAndBranch lint --fix (best-effort): %v", err)
+		}
+	}
 	runGitIn(canonical, "add", "-A")
 	runGitIn(canonical, "commit", "-q", "-m", "initial")
 
@@ -115,7 +184,7 @@ Test fixture.
 
 ## Tasks
 
-### Task 4: Wire settings toggle
+### Task 1: Wire settings toggle
 
 **Id:** task-4
 **Verifies:** settings#ac:toggle
@@ -132,6 +201,24 @@ None at this time.
 *This document follows the https://specscore.md/plan-specification*
 `
 
+// chessWorktreeSettingsFeature is a fully lint-clean Feature README for the
+// "settings" Feature the sneat-co/chess worktree fixtures below reference —
+// including the studio toolbar line and adherence footer plan#req:plan-route-required
+// (via lintPostMutationHookWithPlans) now requires the whole tree to carry
+// after a successful plan-inline task status change.
+const chessWorktreeSettingsFeature = "---\nformat: https://specscore.md/feature-specification\nstatus: Approved\n---\n\n" +
+	"# Feature: Settings\n\n" +
+	"> [SpecScore.**Studio**](https://specscore.studio): | [Explore](https://specscore.studio/app/github.com/sneat-co/chess/spec/features/settings?op=explore) | [Edit](https://specscore.studio/app/github.com/sneat-co/chess/spec/features/settings?op=edit) | [Ask question](https://specscore.studio/app/github.com/sneat-co/chess/spec/features/settings?op=ask) | [Request change](https://specscore.studio/app/github.com/sneat-co/chess/spec/features/settings?op=request-change) |\n" +
+	"**Status:** Approved\n**Source Ideas:** —\n\n" +
+	"## Summary\n\nTest fixture.\n\n## Acceptance Criteria\n\n### AC: toggle\n\nTest fixture acceptance criterion.\n\n## Open Questions\n\nNone at this time.\n\n" +
+	"---\n*This document follows the https://specscore.md/feature-specification*\n"
+
+const chessWorktreeFeaturesIndex = "---\nformat: https://specscore.md/features-index-specification\n---\n\n# Features\n\n## Index\n\n| Feature | Status |\n|---------|--------|\n\n## Open Questions\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/features-index-specification*\n"
+
+const chessWorktreeSpecReadme = "# Specifications\n\nSpecScore-formatted specifications for this project.\n\n## Open Questions\n\nNone at this time.\n"
+
+const chessWorktreePlansIndex = "---\nformat: https://specscore.md/plans-index-specification\n---\n\n# Plans\n\nCanonical index of all plans in this repository.\n\n## Contents\n\n| Plan | Status | Source | Date | Owner |\n|---|---|---|---|---|\n\n## Recently Closed\n\nNone at this time.\n\n## Open Questions\n\nNone at this time.\n\n---\n*This document follows the https://specscore.md/plans-index-specification*\n"
+
 // AC (regression, 2026-07-31 coordination-gate verification report): a
 // mismatch is refused end-to-end in a REAL `git worktree` checkout (not a
 // plain repo — `.git` is a file, not a directory) with an SSH-form origin
@@ -143,8 +230,11 @@ func TestTaskChangeStatus_PlanInline_CoordinationMismatch_RealWorktree_SSHRemote
 	worktree := gitWorktreeCanonicalAndBranch(t,
 		"git@github.com:sneat-co/chess.git", "plans", "test/coord-check2",
 		map[string]string{
-			"specscore.yaml":                       "name: chess\n",
-			"spec/features/settings/README.md":     "# Feature: Settings\n",
+			"specscore.yaml":                       projectdef.SchemaHeader + "\n\nproject:\n  host: github.com\n  org: sneat-co\n  repo: chess\nplans_repo: sneat-co/chess\n",
+			"spec/README.md":                       chessWorktreeSpecReadme,
+			"spec/features/README.md":              chessWorktreeFeaturesIndex,
+			"spec/features/settings/README.md":     chessWorktreeSettingsFeature,
+			"spec/plans/README.md":                 chessWorktreePlansIndex,
 			"spec/plans/full-settings-exposure.md": realisticCoordinatedPlanBody,
 		})
 	withCwd(t, worktree)
@@ -173,8 +263,11 @@ func TestTaskChangeStatus_PlanInline_CoordinationMatched_RealWorktree_SSHRemote_
 	worktree := gitWorktreeCanonicalAndBranch(t,
 		"git@github.com:sneat-co/chess.git", "plans", "plans-clone",
 		map[string]string{
-			"specscore.yaml":                       "name: chess\n",
-			"spec/features/settings/README.md":     "# Feature: Settings\n",
+			"specscore.yaml":                       projectdef.SchemaHeader + "\n\nproject:\n  host: github.com\n  org: sneat-co\n  repo: chess\nplans_repo: sneat-co/chess\n",
+			"spec/README.md":                       chessWorktreeSpecReadme,
+			"spec/features/README.md":              chessWorktreeFeaturesIndex,
+			"spec/features/settings/README.md":     chessWorktreeSettingsFeature,
+			"spec/plans/README.md":                 chessWorktreePlansIndex,
 			"spec/plans/full-settings-exposure.md": strings.Replace(realisticCoordinatedPlanBody, "sneat-co/chess@plans", "sneat-co/chess@plans-clone", 1),
 		})
 	withCwd(t, worktree)
@@ -394,7 +487,7 @@ func TestEnforceCoordinationBranch_ForceBypassesMalformed_Warns(t *testing.T) {
 func coordinatedPlan(t *testing.T, slug, status, coordination, actualRemote, actualBranch string) string {
 	t.Helper()
 	root := stagePlan(t, slug, status)
-	path := filepath.Join(root, "spec", "plans", slug+".md")
+	path := filepath.Join(root, "spec", "plans", slug, "README.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
@@ -417,12 +510,12 @@ func TestPlanChangeStatus_CoordinationMismatch_CLI(t *testing.T) {
 		"specscore/specscore-cli@main",
 		"https://github.com/specscore/specscore-cli.git", "some-other-branch")
 
-	before, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	before, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	_, stderr, err := runPlan(t, "change-status", "auth", "--to=in review")
 	if got := exitCodeOfErr(err); got != exitcode.Conflict {
 		t.Fatalf("exit = %d, want %d (Conflict); err=%v stderr=%s", got, exitcode.Conflict, err, stderr)
 	}
-	after, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	after, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if string(before) != string(after) {
 		t.Errorf("plan file changed despite refusal:\nbefore=%s\nafter=%s", before, after)
 	}
@@ -433,7 +526,7 @@ func TestPlanChangeStatus_CoordinationMismatch_CLI(t *testing.T) {
 // unreadable before Parse opens it).
 func TestPlanChangeStatus_CoordinationParseError_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
-	path := filepath.Join(root, "spec", "plans", "auth.md")
+	path := filepath.Join(root, "spec", "plans", "auth", "README.md")
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +555,7 @@ func TestPlanChangeStatus_CoordinationMatched_CLI(t *testing.T) {
 	if want := "auth: Draft → In Review\n"; stdout != want {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** In Review") {
 		t.Errorf("status not rewritten:\n%s", body)
 	}
@@ -485,7 +578,7 @@ func TestPlanChangeStatus_CoordinationForce_CLI(t *testing.T) {
 	if want := "auth: Draft → In Review\n"; stdout != want {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** In Review") {
 		t.Errorf("status not rewritten:\n%s", body)
 	}
@@ -507,7 +600,7 @@ func TestPlanChangeStatus_NoCoordinationField_UnrestrictedEvenOutsideGit_CLI(t *
 // AC: `plan reconcile` refuses on a coordination-branch mismatch.
 func TestPlanReconcile_CoordinationMismatch_CLI(t *testing.T) {
 	root := stageReconcilablePlan(t, "auth", "Draft", eightPlanningTasks()...)
-	path := filepath.Join(root, "spec", "plans", "auth.md")
+	path := filepath.Join(root, "spec", "plans", "auth", "README.md")
 	raw, _ := os.ReadFile(path)
 	patched := strings.Replace(string(raw), "**Supersedes:** —\n", "**Supersedes:** —\n**Coordination:** specscore/specscore-cli@main\n", 1)
 	if err := os.WriteFile(path, []byte(patched), 0o644); err != nil {
@@ -526,7 +619,7 @@ func TestPlanReconcile_CoordinationMismatch_CLI(t *testing.T) {
 // unreadable before Parse opens it).
 func TestPlanReconcile_CoordinationParseError_CLI(t *testing.T) {
 	root := stageReconcilablePlan(t, "auth", "Draft", eightPlanningTasks()...)
-	path := filepath.Join(root, "spec", "plans", "auth.md")
+	path := filepath.Join(root, "spec", "plans", "auth", "README.md")
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +637,7 @@ func TestPlanReconcile_CoordinationParseError_CLI(t *testing.T) {
 // AC: --force-coordination bypasses the mismatch on `plan reconcile`.
 func TestPlanReconcile_CoordinationForce_CLI(t *testing.T) {
 	root := stageReconcilablePlan(t, "auth", "Draft", eightPlanningTasks()...)
-	path := filepath.Join(root, "spec", "plans", "auth.md")
+	path := filepath.Join(root, "spec", "plans", "auth", "README.md")
 	raw, _ := os.ReadFile(path)
 	patched := strings.Replace(string(raw), "**Supersedes:** —\n", "**Supersedes:** —\n**Coordination:** specscore/specscore-cli@main\n", 1)
 	if err := os.WriteFile(path, []byte(patched), 0o644); err != nil {

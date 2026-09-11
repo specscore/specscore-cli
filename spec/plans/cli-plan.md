@@ -35,6 +35,10 @@ Extend the `pkg/plan.Plan` struct and parser to capture the plan-level `**Status
 
 Register the `plan` parent command and wire it into the root command tree, mirroring `cli/feature`. Provide the shared `--format yaml|json|text` and `--project` flags, print group help with exit `0` when invoked with no subcommand, reject an invalid `--format` value with exit `2` naming the value, and resolve a `<slug>` argument to `spec/plans/<slug>.md` with exit `3` (naming the slug) when it does not exist.
 
+## Deferred AC Coverage
+
+- cli/plan#ac:unrouted-project-fails-with-guidance — Plan repository routing (`plans_repo`/`plan_repos`/`repo_checkouts`, `pkg/planstore`) is a later, larger cross-cutting change spanning every Plan-mutating verb, `task`, and `pkg/lint`; it is not scoped to this group-registration plan and has no dedicated implementation plan of its own in this repository (the canonical contract is specified upstream in specscore/specscore's repo-config Feature). Covered by this repository's `pkg/planstore` and `internal/cli` test suites instead.
+
 ## Open Questions
 
 - Should the recognized `--fields` set (used by `list`) live in a shared registry alongside `cli/feature`'s field names, or stay defined per-command?

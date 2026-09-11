@@ -468,11 +468,11 @@ func TestChangeStatus_ReadStatusError(t *testing.T) {
 	_, err := ChangeStatus(ChangeStatusOptions{
 		SpecRoot: root, Slug: "auth", To: lifecycle.PlanApproved, PostMutation: okHook,
 	})
-	if got := codeOf(t, err); got != exitcode.Unexpected {
-		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+	if got := codeOf(t, err); got != exitcode.Conflict {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Conflict, err)
 	}
-	if !strings.Contains(err.Error(), "reading plan status") {
-		t.Errorf("expected reading-plan-status error, got: %q", err.Error())
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("expected non-regular-plan error, got: %q", err.Error())
 	}
 }
 

@@ -10,17 +10,44 @@ import (
 // planHierarchyChecker validates hierarchical plan conventions:
 // - Roadmaps (plans with child plan subdirectories) must not have Steps sections
 // - Nesting is limited to 2 levels (roadmap -> plan)
-type planHierarchyChecker struct{}
+type planHierarchyChecker struct {
+	plansDir string
+	// routeBroken, when true, means Plan routing is configured but failed to
+	// resolve: check() must skip entirely, without ever touching the local
+	// spec/plans tree that an empty plansDir would otherwise default to
+	// (finding 1 / repo-config#req:plan-route-required).
+	routeBroken bool
+}
 
-func newPlanHierarchyChecker() checker {
-	return &planHierarchyChecker{}
+func newPlanHierarchyChecker(plansDir ...string) checker {
+	c := &planHierarchyChecker{}
+	if len(plansDir) > 0 {
+		c.plansDir = plansDir[0]
+	}
+	return c
+}
+
+// newPlanHierarchyCheckerRouteError returns a plan-hierarchy checker
+// configured for a configured-but-broken Plan route: see routeBroken.
+func newPlanHierarchyCheckerRouteError() checker {
+	return &planHierarchyChecker{routeBroken: true}
 }
 
 func (c *planHierarchyChecker) name() string     { return "plan-hierarchy" }
 func (c *planHierarchyChecker) severity() string { return "error" }
 
+// routeErrorChecker implements planOwnedChecker: see linter.go's
+// registerPlanOwned, the ONE place that decides which checker to register
+// when Plan routing is configured but broken.
+func (c *planHierarchyChecker) routeErrorChecker() checker {
+	return newPlanHierarchyCheckerRouteError()
+}
+
 func (c *planHierarchyChecker) check(specRoot string) ([]Violation, error) {
-	plansDir := filepath.Join(specRoot, "plans")
+	if c.routeBroken {
+		return nil, nil
+	}
+	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	info, err := os.Stat(plansDir)
 	if err != nil || !info.IsDir() {
 		return nil, nil
@@ -54,22 +81,6 @@ func (c *planHierarchyChecker) check(specRoot string) ([]Violation, error) {
 		}
 
 		relReadme, _ := filepath.Rel(specRoot, readmePath)
-
-		// Determine nesting depth relative to plans/
-		relToPlans, _ := filepath.Rel(plansDir, path)
-		depth := len(strings.Split(relToPlans, string(os.PathSeparator)))
-
-		// Check nesting depth: max 2 levels (roadmap -> plan)
-		if depth > 2 {
-			violations = append(violations, Violation{
-				File:     relReadme,
-				Line:     0,
-				Severity: "error",
-				Rule:     "plan-hierarchy",
-				Message:  "Plan nesting depth exceeds 2 levels; maximum is roadmap -> plan",
-			})
-			return nil
-		}
 
 		// Detect if this is a roadmap (has child plan subdirectories containing README.md)
 		isRoadmap := hasChildPlanDirs(path)

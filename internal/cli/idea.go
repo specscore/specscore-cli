@@ -304,12 +304,25 @@ func lintPostMutationHook(specSub string) idea.PostMutationHook {
 	}
 }
 
+func lintPostMutationHookWithPlans(specSub, plansDir string) idea.PostMutationHook {
+	return func() error {
+		if _, err := lintLintFn(lint.Options{SpecRoot: specSub, ProjectRoot: filepath.Dir(specSub), PlansDir: plansDir, Rules: []string{"P-007", "plan-index-sync"}, Fix: true}); err != nil {
+			return exitcode.UnexpectedErrorf("running lint --fix: %v", err)
+		}
+		return verifyLintPostMutationWithPlans(specSub, plansDir)
+	}
+}
+
 // verifyLintPostMutation performs only the read-only half of the standard
 // lifecycle lint hook. Whole-tree transactions call this after explicitly
 // updating their declared derived indexes, so no broad lint fixer can expand
 // the transaction's write set.
 func verifyLintPostMutation(specSub string) error {
-	violations, err := lintLintFn(lint.Options{SpecRoot: specSub, ProjectRoot: filepath.Dir(specSub)})
+	return verifyLintPostMutationWithPlans(specSub, "")
+}
+
+func verifyLintPostMutationWithPlans(specSub, plansDir string) error {
+	violations, err := lintLintFn(lint.Options{SpecRoot: specSub, ProjectRoot: filepath.Dir(specSub), PlansDir: plansDir})
 	if err != nil {
 		return exitcode.UnexpectedErrorf("running lint: %v", err)
 	}

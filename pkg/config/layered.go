@@ -1,9 +1,10 @@
 // Package config resolves SpecScore configuration from layered sources.
 //
-// Configuration is read from three layers, in decreasing specificity:
+// Configuration is read from four layers, in decreasing specificity:
 //
 //	specscore.local.yaml  (repo root, uncommitted)  -- most specific
 //	specscore.yaml        (repo root, committed)
+//	<owner>/.specscore.yaml (organization)
 //	~/.specscore.yaml     (user home)               -- least specific
 //
 // The most specific layer wins per key; mapping nodes are deep-merged, while
@@ -39,12 +40,18 @@ type Resolved struct {
 // Missing layer files are treated as empty layers (not errors); a malformed
 // layer file is a hard error.
 func ResolveDir(repoRoot, homeDir string) (Resolved, error) {
+	return ResolveDirWithOrg(repoRoot, homeDir, "")
+}
+
+// ResolveDirWithOrg includes an optional organization configuration path
+// between the user and committed project layers.
+func ResolveDirWithOrg(repoRoot, homeDir, orgPath string) (Resolved, error) {
 	// Least specific first so more specific layers overwrite.
-	layers := []struct{ name, path string }{
-		{"home", filepath.Join(homeDir, HomeFile)},
-		{"project", filepath.Join(repoRoot, ProjectFile)},
-		{"local", filepath.Join(repoRoot, LocalFile)},
+	layers := []struct{ name, path string }{{"home", filepath.Join(homeDir, HomeFile)}}
+	if orgPath != "" {
+		layers = append(layers, struct{ name, path string }{"org", orgPath})
 	}
+	layers = append(layers, struct{ name, path string }{"project", filepath.Join(repoRoot, ProjectFile)}, struct{ name, path string }{"local", filepath.Join(repoRoot, LocalFile)})
 
 	values := map[string]any{}
 	origin := map[string]string{}

@@ -132,10 +132,9 @@ func TestParse(t *testing.T) {
 		{"git@github.com:o/r", true, "o", "r", "github.com"},
 		{"ssh://git@github.com/specscore/specscore-cli.git", true, "specscore", "specscore-cli", "github.com"},
 		{"ssh://git@github.com/o/r", true, "o", "r", "github.com"},
-		// Non-GitHub: rejected in MVP.
-		{"https://gitlab.com/o/r.git", false, "", "", ""},
-		{"git@gitlab.com:o/r.git", false, "", "", ""},
-		{"https://bitbucket.org/o/r", false, "", "", ""},
+		{"https://gitlab.com/o/r.git", true, "o", "r", "gitlab.com"},
+		{"git@gitlab.com:o/r.git", true, "o", "r", "gitlab.com"},
+		{"https://bitbucket.org/o/r", true, "o", "r", "bitbucket.org"},
 		// Malformed.
 		{"", false, "", "", ""},
 		{"not-a-url", false, "", "", ""},

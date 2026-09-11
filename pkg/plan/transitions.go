@@ -29,7 +29,6 @@ package plan
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -62,6 +61,9 @@ type ChangeStatusOptions struct {
 	// SpecRoot/spec/plans/<slug>.md (flat) or .../spec/plans/<slug>/README.md
 	// (the optional directory form).
 	SpecRoot string
+	// PlansDir is the resolved authoritative Plan namespace. Empty preserves
+	// the historical SpecRoot/spec/plans behavior for direct package callers.
+	PlansDir string
 
 	// Slug is the Plan slug, e.g. "user-auth". Caller is expected to have
 	// validated it via plan.ValidateSlug.
@@ -131,7 +133,10 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	}
 
 	// (1) Slug resolution — flat file first, then the optional directory form.
-	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
+	plansDir := opts.PlansDir
+	if plansDir == "" {
+		plansDir = filepath.Join(opts.SpecRoot, "spec", "plans")
+	}
 	path, err := resolvePlanFile(plansDir, opts.Slug)
 	if err != nil {
 		return ChangeStatusResult{}, err
@@ -255,21 +260,7 @@ func firstRawPlanStatusLineBytes(data []byte) int {
 // precedence. A slug that resolves to neither returns exit 3 (NotFound),
 // naming the canonical flat path.
 func resolvePlanFile(plansDir, slug string) (string, error) {
-	flat := filepath.Join(plansDir, slug+".md")
-	if _, err := os.Stat(flat); err == nil {
-		return flat, nil
-	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorCause(fmt.Sprintf("stat %s: %v", flat, err), err)
-	}
-
-	dir := filepath.Join(plansDir, slug, "README.md")
-	if _, err := os.Stat(dir); err == nil {
-		return dir, nil
-	} else if !os.IsNotExist(err) {
-		return "", exitcode.UnexpectedErrorCause(fmt.Sprintf("stat %s: %v", dir, err), err)
-	}
-
-	return "", exitcode.NotFoundErrorf("plan not found at %s", flat)
+	return ResolveFile(plansDir, slug)
 }
 
 // statusNames converts a slice of Status values to plain strings, for

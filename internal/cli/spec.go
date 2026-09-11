@@ -3,6 +3,7 @@ package cli
 // Features implemented: cli/spec
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
@@ -207,15 +209,82 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	if err := lint.ValidateFixTargets(fixTargets); err != nil {
 		return exitcode.InvalidArgsError(err.Error())
 	}
+	mode := planstore.ReadOnly
+	if fix {
+		mode = planstore.Write
+	}
+	// `spec lint` sweeps the whole spec tree (Features, Ideas, Plans, ...) in
+	// one pass; it is not itself one of the dedicated Plan verbs that
+	// repo-config#req:plan-route-required binds to. Resolve the Plan store
+	// best-effort, distinguishing three failure shapes (lead assumption —
+	// the repo-config spec is silent on lint's behavior under routing):
+	//
+	//   - A route IS configured but fails to resolve
+	//     (planstore.ErrRouteUnresolved: missing checkout, wrong origin, a
+	//     nested or ambiguous mapping, a misplaced key, or a config layer
+	//     that exists but fails to read or parse, ...): NEVER fall back to
+	//     the local spec/plans tree — it may be exactly the stale artifact
+	//     routing was configured to route away from (the reviewer's
+	//     reproduction: a committed plans_repo, no repo_checkouts, and a
+	//     stale local spec/plans/README.md with a bad **Source:** silently
+	//     got linted, and --fix rewrote it). Under --fix, fail closed before
+	//     touching any file. Otherwise every Plan-owned lint rule is skipped
+	//     and lint.Options.PlanRouteError drives a single loud ERROR finding
+	//     in their place.
+	//   - No route configured at all (planstore.ErrNoRoute), OR any other
+	//     resolvePlanStore failure unrelated to whether a route exists (the
+	//     source isn't a git repository, its origin can't be parsed, ...):
+	//     keep the historical same-repo default (`<spec>/plans`) so
+	//     unrelated Feature/Idea/Lesson rules — and repos that have not
+	//     adopted Plan routing yet, or that spec lint runs against outside
+	//     their real git checkout (as plenty of this CLI's own tests do) —
+	//     are unaffected.
+	//
+	// PlansDir only: leave ProjectRoot unset so lint.Options.effectiveProjectRoot
+	// derives it from specRoot (filepath.Dir(specRoot)), the same basis
+	// resolveConfigSpecRoot used. store.SourceRoot comes from a SEPARATE
+	// resolution path (planstore.Resolve calls filepath.EvalSymlinks on the
+	// git top-level) that can disagree with specRoot's own string form on a
+	// symlinked tmp dir (e.g. macOS /var -> /private/var) even though both
+	// name the same directory — feeding that mismatched string into
+	// ProjectRoot broke filepath.Rel-based rules (e.g. studio-toolbar) that
+	// assume ProjectRoot and SpecRoot share one consistent path prefix.
+	plansDir := ""
+	planRouteErr := ""
+	if store, storeErr := resolvePlanStore(projectFlag, mode); storeErr == nil {
+		plansDir = store.PlansDir
+	} else if errors.Is(storeErr, planstore.ErrRouteUnresolved) {
+		if fix {
+			return exitcode.InvalidStateErrorf(
+				"cannot run spec lint --fix: plan routing is configured but could not be resolved, so no file was read or written: %v; set repo_checkouts.<repo> in specscore.local.yaml or ~/.specscore.yaml to point at the checkout, or correct plans_repo/plan_repos", storeErr)
+		}
+		planRouteErr = storeErr.Error()
+	} else {
+		// storeErr is either planstore.ErrNoRoute (nothing configured
+		// anywhere) or a pre-routing infrastructure failure unrelated to
+		// whether a route is configured (not a git repository, an
+		// unparseable origin, ...) — planstore.Resolve keeps both lenient by
+		// construction (see planstore.ErrRouteUnresolved's doc comment), so
+		// lint keeps the historical same-repo default. The reassignment
+		// below is a no-op (both already hold these zero values) written
+		// out explicitly, rather than left as an implicit fallthrough with
+		// an empty branch, so a future resolvePlanStore failure shape
+		// cannot silently inherit lenient behavior by omission (finding 1
+		// of the PR #199 adversarial re-review) — and so this branch stays
+		// a real decision point a reviewer can see, not dead code.
+		plansDir, planRouteErr = "", ""
+	}
 
 	opts := lint.Options{
-		SpecRoot:   specRoot,
-		Rules:      rules,
-		Ignore:     ignore,
-		Severity:   severity,
-		Fix:        fix,
-		FixTargets: fixTargets,
-		CLIVersion: buildInfo.Version,
+		SpecRoot:       specRoot,
+		PlansDir:       plansDir,
+		PlanRouteError: planRouteErr,
+		Rules:          rules,
+		Ignore:         ignore,
+		Severity:       severity,
+		Fix:            fix,
+		FixTargets:     fixTargets,
+		CLIVersion:     buildInfo.Version,
 	}
 
 	res, err := lint.LintWithResult(opts)

@@ -925,10 +925,10 @@ func TestParseFrontmatterKeys_UnmarshalError(t *testing.T) {
 
 // =============================================================================
 // studio_toolbar.go:133.43,135.3
-// resolveProjectIdentity — gitremote.Parse returns !parsed for non-GitHub host.
+// resolveProjectIdentity supports non-GitHub hosts through gitremote.Parse.
 // =============================================================================
 
-func TestResolveProjectIdentity_NonGitHubRemote(t *testing.T) {
+func TestResolveProjectIdentity_GenericRemote(t *testing.T) {
 	dir := t.TempDir()
 	if err := runGitCmd(dir, "git", "init"); err != nil {
 		t.Skip("git not available")
@@ -938,9 +938,9 @@ func TestResolveProjectIdentity_NonGitHubRemote(t *testing.T) {
 	}
 
 	cfg := projectdef.SpecConfig{}
-	_, _, _, ok := resolveProjectIdentity(cfg, dir)
-	if ok {
-		t.Error("expected ok=false for non-GitHub remote (gitremote.Parse returns !parsed)")
+	host, owner, repo, ok := resolveProjectIdentity(cfg, dir)
+	if !ok || host != "gitlab.com" || owner != "owner" || repo != "repo" {
+		t.Fatalf("identity = %s/%s/%s ok=%v", host, owner, repo, ok)
 	}
 }
 
