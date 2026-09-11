@@ -94,8 +94,16 @@ func TestOrgConfigPathNonGitFallback(t *testing.T) {
 
 func TestResolveNotAGitRepo(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := Resolve(dir, ReadOnly); err == nil {
+	_, err := Resolve(dir, ReadOnly)
+	if err == nil {
 		t.Fatal("expected error resolving a non-git directory")
+	}
+	// "not a git repository at all" happens before any config layer is even
+	// reached, so it stays lenient (same as ErrNoRoute) — this CLI's own
+	// tests routinely lint a bare tmpdir with no .git and rely on that
+	// leniency (finding 1's "pre-routing infra errors" carve-out).
+	if errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("a non-git source directory must not be classified as ErrRouteUnresolved: %v", err)
 	}
 }
 
@@ -105,8 +113,12 @@ func TestResolveSourceIdentityUnresolvable(t *testing.T) {
 	git(t, root, "config", "user.email", "test@example.com")
 	git(t, root, "config", "user.name", "Test")
 	// No "origin" remote at all.
-	if _, err := Resolve(root, ReadOnly); err == nil || !strings.Contains(err.Error(), "resolve source project identity") {
+	_, err := Resolve(root, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "resolve source project identity") {
 		t.Fatalf("err = %v", err)
+	}
+	if errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("an unresolvable source identity must not be classified as ErrRouteUnresolved: %v", err)
 	}
 }
 
@@ -115,11 +127,21 @@ func TestResolveUserHomeDirError(t *testing.T) {
 	source := filepath.Join(projects, "acme", "app")
 	initRepo(t, source, "git@github.com:acme/app.git")
 	t.Setenv("HOME", "")
-	if _, err := Resolve(source, ReadOnly); err == nil || !strings.Contains(err.Error(), "resolve user home") {
+	_, err := Resolve(source, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "resolve user home") {
 		t.Fatalf("err = %v", err)
+	}
+	if errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("an unresolvable home directory must not be classified as ErrRouteUnresolved: %v", err)
 	}
 }
 
+// TestResolveUserLayerParseError is finding 1's row 1: a malformed
+// ~/.specscore.yaml must fail exactly like a route that resolved to
+// something broken (ErrRouteUnresolved), not vanish into the no-route
+// default — the reviewer's reproduction showed a stale local spec/plans
+// artifact silently linted (and, under --fix, rewritten) when this returned
+// a plain, unclassified error instead.
 func TestResolveUserLayerParseError(t *testing.T) {
 	projects := t.TempDir()
 	source := filepath.Join(projects, "acme", "app")
@@ -127,19 +149,40 @@ func TestResolveUserLayerParseError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	write(t, filepath.Join(home, UserConfigFile), "a: [1,2\n")
-	if _, err := Resolve(source, ReadOnly); err == nil || !strings.Contains(err.Error(), "parse config") {
+	_, err := Resolve(source, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "parse config") {
 		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(home, UserConfigFile)) {
+		t.Fatalf("err should name the failing file %s: %v", filepath.Join(home, UserConfigFile), err)
+	}
+	if !errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("a malformed user layer must be classified as ErrRouteUnresolved: %v", err)
 	}
 }
 
+// TestResolveOrgLayerParseError is finding 1's row 2: a malformed
+// organization .specscore.yaml must fail closed even though the project's
+// OWN committed specscore.yaml carries a perfectly valid plans_repo — that
+// valid route must never even be reached once an earlier-read layer is
+// broken.
 func TestResolveOrgLayerParseError(t *testing.T) {
 	projects := t.TempDir()
 	source := filepath.Join(projects, "acme", "app")
 	initRepo(t, source, "git@github.com:acme/app.git")
 	t.Setenv("HOME", t.TempDir())
-	write(t, filepath.Join(projects, "acme", OrgConfigFile), "a: [1,2\n")
-	if _, err := Resolve(source, ReadOnly); err == nil || !strings.Contains(err.Error(), "parse config") {
+	write(t, filepath.Join(source, RepoConfigFile), "plans_repo: acme/app\n")
+	orgPath := filepath.Join(projects, "acme", OrgConfigFile)
+	write(t, orgPath, "a: [1,2\n")
+	_, err := Resolve(source, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "parse config") {
 		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), orgPath) {
+		t.Fatalf("err should name the failing file %s: %v", orgPath, err)
+	}
+	if !errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("a malformed org layer must be classified as ErrRouteUnresolved even though the repo layer's own plans_repo is valid: %v", err)
 	}
 }
 
@@ -149,11 +192,18 @@ func TestResolveLocalLayerParseError(t *testing.T) {
 	initRepo(t, source, "git@github.com:acme/app.git")
 	t.Setenv("HOME", t.TempDir())
 	write(t, filepath.Join(source, LocalConfigFile), "a: [1,2\n")
-	if _, err := Resolve(source, ReadOnly); err == nil || !strings.Contains(err.Error(), "parse config") {
+	_, err := Resolve(source, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "parse config") {
 		t.Fatalf("err = %v", err)
+	}
+	if !errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("a malformed local layer must be classified as ErrRouteUnresolved: %v", err)
 	}
 }
 
+// TestResolveRepoLayerUnreadableFile is finding 1's row 3 (committed layer
+// broken; here via permissions rather than a YAML syntax error, to also
+// cover readLayer's "read config" branch distinctly from "parse config").
 func TestResolveRepoLayerUnreadableFile(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("cannot simulate an unreadable file while running as root")
@@ -168,8 +218,34 @@ func TestResolveRepoLayerUnreadableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chmod(cfgPath, 0o644) }()
-	if _, err := Resolve(source, ReadOnly); err == nil || !strings.Contains(err.Error(), "read config") {
+	_, err := Resolve(source, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "read config") {
 		t.Fatalf("err = %v", err)
+	}
+	if !errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("an unreadable committed repo layer must be classified as ErrRouteUnresolved: %v", err)
+	}
+}
+
+// TestResolveRepoLayerParseError is finding 1's row 3 with a YAML syntax
+// error (rather than TestResolveRepoLayerUnreadableFile's permission
+// failure) in the project's own committed specscore.yaml.
+func TestResolveRepoLayerParseError(t *testing.T) {
+	projects := t.TempDir()
+	source := filepath.Join(projects, "acme", "app")
+	initRepo(t, source, "git@github.com:acme/app.git")
+	t.Setenv("HOME", t.TempDir())
+	cfgPath := filepath.Join(source, RepoConfigFile)
+	write(t, cfgPath, "plans_repo: [unterminated\n")
+	_, err := Resolve(source, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "parse config") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), cfgPath) {
+		t.Fatalf("err should name the failing file %s: %v", cfgPath, err)
+	}
+	if !errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("a malformed committed repo layer must be classified as ErrRouteUnresolved: %v", err)
 	}
 }
 

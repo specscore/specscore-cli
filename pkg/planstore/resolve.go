@@ -59,12 +59,30 @@ var ErrNoRoute = errors.New("no plans repository is configured")
 // missing / wrong origin / nested / ambiguous plan_repos").
 //
 // Deliberately NOT wrapped: repositoryRoots/repositoryIdentity/UserHomeDir
-// failures for the SOURCE project, and a malformed local/repo/org/user layer
-// file — these happen before routing can even be evaluated (e.g. the source
-// isn't a git repository at all) and are unrelated to whether a route is
+// failures for the SOURCE project — these happen before any config layer is
+// even reached (e.g. the source isn't a git repository at all, or its origin
+// remote can't be parsed) and are unrelated to whether a route is
 // configured, so a caller like `spec lint` must keep treating them the same
 // permissive way it always has (same as ErrNoRoute), not as "route
-// configured but broken".
+// configured but broken" — many of this CLI's own tests lint a bare tmpdir
+// with no .git at all and rely on that leniency.
+//
+// IS wrapped: a local/repo/org/user layer file that EXISTS but fails to be
+// read or parsed. Before this sentinel existed, such a failure returned a
+// plain error indistinguishable from ErrNoRoute, so a caller with a
+// legitimate no-route default (`spec lint`) silently fell back to reading —
+// and, under --fix, writing — the local spec/plans tree, exactly as if
+// nothing were configured. That is wrong whenever the broken file could
+// plausibly have configured routing: the reviewer's PR #199 adversarial
+// re-review reproduced a malformed user ~/.specscore.yaml, a malformed
+// organization .specscore.yaml (beside a repository whose OWN committed
+// specscore.yaml carried a valid plans_repo that was never even reached),
+// and a malformed committed specscore.yaml, each independently defeating
+// routing while a stale local Plan got linted — and, under --fix, rewritten
+// — as though routing were absent rather than broken (finding 1). A layer
+// file that simply does not exist (os.ErrNotExist) is NOT an error — readLayer
+// returns a nil error for that case — so the no-route default is preserved
+// for every project that has not adopted any config layer at all.
 var ErrRouteUnresolved = errors.New("plan routing is configured but could not be resolved")
 
 // routeUnresolvedError formats a message exactly like fmt.Errorf (preserving
@@ -169,19 +187,27 @@ func Resolve(sourceRoot string, mode AccessMode) (Resolution, error) {
 	if err != nil {
 		return Resolution{}, fmt.Errorf("resolve user home: %w", err)
 	}
+	// A user/org/repo/local layer file that exists but fails to read or parse
+	// is wrapped as ErrRouteUnresolved, not returned as a plain error: it
+	// could plausibly have configured routing, so it must fail exactly like
+	// a route that resolved to something broken — never silently fall back
+	// to the no-route default (finding 1 of the PR #199 adversarial
+	// re-review; see ErrRouteUnresolved's doc comment). readLayer names the
+	// failing file in its own error text, preserved unchanged by
+	// routeUnresolvedWrap.
 	user, err := readLayer(filepath.Join(home, UserConfigFile))
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, routeUnresolvedWrap(err)
 	}
 	// The organization layer is anchored beside the canonical clone, even
 	// when sourceRoot is a linked worktree nested below that clone.
 	org, err := readLayer(filepath.Join(filepath.Dir(canonicalRoot), OrgConfigFile))
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, routeUnresolvedWrap(err)
 	}
 	repo, err := readLayer(filepath.Join(root, RepoConfigFile))
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, routeUnresolvedWrap(err)
 	}
 	// Reuse the shared committed-scope gate (pkg/config.CheckCommittedScopeMap)
 	// against the map readLayer just parsed, instead of hand-rolling the same
@@ -198,7 +224,7 @@ func Resolve(sourceRoot string, mode AccessMode) (Resolution, error) {
 	}
 	local, err := readLayer(filepath.Join(root, LocalConfigFile))
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, routeUnresolvedWrap(err)
 	}
 
 	destination, routePath, err := resolveRoute(source, local, repo, org, user)
