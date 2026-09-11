@@ -109,10 +109,9 @@ func ResolveFile(plansDir, id string) (string, error) {
 		// unlike the canonical branch above (where an intermediate directory
 		// segment CAN be a symlink pointing outside plansDir), there is no
 		// intermediate path component here for an attacker or a stale
-		// symlink to hide an escape behind. This call can only fail if
-		// plansDir or flat is mutated concurrently between the Lstat above
-		// and here, which a deterministic, non-racy test cannot force.
-		if err := validateResolvedPlanPath(plansDir, flat); err != nil {
+		// symlink to hide an escape behind. See validateResolvedPlanPathFn's
+		// doc comment for why this is TOCTOU-only.
+		if err := validateResolvedPlanPathFn(plansDir, flat); err != nil {
 			return "", err
 		}
 		return flat, nil
@@ -136,6 +135,14 @@ func regularFileExists(path string) (bool, error) {
 	}
 	return true, nil
 }
+
+// validateResolvedPlanPathFn is an injectable seam over
+// validateResolvedPlanPath for call sites where a failure can only occur via
+// a genuine concurrent mutation of plansDir/path between an earlier
+// existence check and this call — not something a deterministic,
+// non-racy test can force by construction. The seam lets those branches
+// still get a deterministic test.
+var validateResolvedPlanPathFn = validateResolvedPlanPath
 
 func validateResolvedPlanPath(plansDir, path string) error {
 	root, err := filepath.EvalSymlinks(plansDir)

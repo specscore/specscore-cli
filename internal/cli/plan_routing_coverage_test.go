@@ -30,6 +30,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
@@ -38,6 +39,27 @@ import (
 func TestAppendPlanRoutingHintOpenFileError(t *testing.T) {
 	if err := appendPlanRoutingHint(filepath.Join(t.TempDir(), "does-not-exist.yaml")); err == nil {
 		t.Fatal("expected an error opening a nonexistent file for append")
+	}
+}
+
+// TestRunInit_AppendPlanRoutingHintFailurePropagates covers runInit's
+// error-handling branch around appendPlanRoutingHintFn. In real operation
+// that call can only fail via a genuine TOCTOU race (configPath's
+// permissions or existence changing between WriteSpecConfig's write and
+// this reopen), so the seam is overridden directly instead.
+func TestRunInit_AppendPlanRoutingHintFailurePropagates(t *testing.T) {
+	root := t.TempDir()
+	withCwd(t, root)
+
+	orig := appendPlanRoutingHintFn
+	t.Cleanup(func() { appendPlanRoutingHintFn = orig })
+	appendPlanRoutingHintFn = func(string) error {
+		return errors.New("injected append failure")
+	}
+
+	_, _, err := runInitCmd(t, nil, "--project", root)
+	if err == nil || !strings.Contains(err.Error(), "injected append failure") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -254,6 +276,112 @@ func TestPlanNew_NonForcePublishPermissionDenied(t *testing.T) {
 	defer func() { _ = os.Chmod(slugDir, 0o755) }()
 	_, _, err := runPlan(t, "new", "blocked2", "--project", root, "--owner", "tester")
 	if err == nil || !strings.Contains(err.Error(), "publishing") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// withFailingPlanNewStat overrides planNewStatFn to fail with a non-nil,
+// non-IsNotExist error for any path whose slash-form ends in suffix (a
+// relative path fragment), for the duration of the test. Matching by
+// suffix rather than exact equality avoids assuming target's exact form —
+// store.PlansDir may resolve through a symlink (e.g. macOS's
+// /var/folders -> /private/var/folders) to something other than the
+// literal root the test constructed.
+func withFailingPlanNewStat(t *testing.T, suffix string) {
+	t.Helper()
+	orig := planNewStatFn
+	t.Cleanup(func() { planNewStatFn = orig })
+	planNewStatFn = func(path string) (os.FileInfo, error) {
+		if strings.HasSuffix(filepath.ToSlash(path), suffix) {
+			return nil, errors.New("injected stat failure")
+		}
+		return orig(path)
+	}
+}
+
+// TestPlanNew_NonForceStatFindsRacedConflict covers the sibling
+// statErr==nil branch of the same planNewStatFn call: plan.ResolveFile just
+// established target does not exist, so in real operation this can only
+// see it exist now via a genuine concurrent creation — not something a
+// deterministic, single-threaded test can force without actually racing a
+// second process.
+func TestPlanNew_NonForceStatFindsRacedConflict(t *testing.T) {
+	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
+	orig := planNewStatFn
+	t.Cleanup(func() { planNewStatFn = orig })
+	planNewStatFn = func(path string) (os.FileInfo, error) {
+		if strings.HasSuffix(filepath.ToSlash(path), "spec/plans/blocked5/README.md") {
+			return nil, nil
+		}
+		return orig(path)
+	}
+	_, _, err := runPlan(t, "new", "blocked5", "--project", root, "--owner", "tester")
+	if err == nil || !strings.Contains(err.Error(), "plan already exists") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPlanNew_NonForceStatNonNotExistErrorPropagates(t *testing.T) {
+	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
+	withFailingPlanNewStat(t, "spec/plans/blocked3/README.md")
+	_, _, err := runPlan(t, "new", "blocked3", "--project", root, "--owner", "tester")
+	if err == nil || !strings.Contains(err.Error(), "checking") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPlanNew_ForceStatNonNotExistErrorPropagates(t *testing.T) {
+	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
+	withFailingPlanNewStat(t, "spec/plans/blocked4/README.md")
+	_, _, err := runPlan(t, "new", "blocked4", "--project", root, "--owner", "tester", "--force")
+	if err == nil || !strings.Contains(err.Error(), "checking") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPlanNew_NonForcePublishFileExclusiveErrExistPropagates(t *testing.T) {
+	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
+	orig := planNewPublishFileExclusiveFn
+	t.Cleanup(func() { planNewPublishFileExclusiveFn = orig })
+	planNewPublishFileExclusiveFn = func(string, []byte, os.FileMode) error {
+		return os.ErrExist
+	}
+	_, _, err := runPlan(t, "new", "raced", "--project", root, "--owner", "tester")
+	if err == nil || !strings.Contains(err.Error(), "plan already exists") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPlanChangeStatus_ValidateSnapshotReparseErrorPropagates(t *testing.T) {
+	root := stagePlan(t, "auth", "Draft")
+	configureSameRepoPlans(t, root)
+	orig := planChangeStatusParseBytesFn
+	t.Cleanup(func() { planChangeStatusParseBytesFn = orig })
+	planChangeStatusParseBytesFn = func(string, []byte) (*plan.Plan, error) {
+		return nil, errors.New("injected re-parse failure")
+	}
+	_, _, err := runPlan(t, "change-status", "auth", "--to=in review")
+	if err == nil || !strings.Contains(err.Error(), "injected re-parse failure") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// --- plan_reconcile.go: tree-transaction ResolveFile ------------------------
+
+func TestPlanReconcile_TreeTransactionResolveFileFailurePropagates(t *testing.T) {
+	root := stageReconcilablePlan(t, "auth", "Draft", "planning", "planning")
+	orig := planReconcileResolveFileFn
+	t.Cleanup(func() { planReconcileResolveFileFn = orig })
+	planReconcileResolveFileFn = func(string, string) (string, error) {
+		return "", errors.New("injected resolve failure")
+	}
+	_, _, err := runPlan(t, "reconcile", "auth", "--tasks=complete",
+		"--note", "delivered outside the tracked flow", "--tree-transaction", "--project", root)
+	if err == nil || !strings.Contains(err.Error(), "injected resolve failure") {
 		t.Fatalf("err = %v", err)
 	}
 }

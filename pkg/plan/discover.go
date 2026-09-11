@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// discoverWalkDirFn is an injectable seam over filepath.WalkDir. Its only
+// production purpose in Discover is testing the walkErr-on-plansDir-itself
+// TOCTOU-tolerance branch deterministically: in real operation that branch
+// only fires if a concurrent process removes plansDir in the (usually
+// microseconds-wide) window between Discover's os.Stat check and WalkDir's
+// own first Lstat — not something a non-racy test can trigger on demand.
+var discoverWalkDirFn = filepath.WalkDir
+
 // Discover recursively walks canonical directory-form Plans and also reads
 // legacy flat Plans directly under plansDir. IDs are relative slash paths.
 func Discover(plansDir string) ([]*Plan, error) {
@@ -21,7 +29,7 @@ func Discover(plansDir string) ([]*Plan, error) {
 	}
 	var plans []*Plan
 	paths := map[string]string{}
-	err := filepath.WalkDir(plansDir, func(path string, entry os.DirEntry, walkErr error) error {
+	err := discoverWalkDirFn(plansDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// TOCTOU tolerance: plansDir passed the os.Stat check above, but
 			// WalkDir does its own Lstat(plansDir) as its very first step: if
@@ -55,9 +63,10 @@ func Discover(plansDir string) ([]*Plan, error) {
 		// visited but not recursed into), so every "path" reached by a
 		// legitimate, single walk is a plain-directory descendant of
 		// plansDir and this call cannot fail for it — only a concurrent
-		// mutation of plansDir mid-walk could trigger this, which a
-		// deterministic, non-racy test has no way to force on demand.
-		if err := validateResolvedPlanPath(plansDir, path); err != nil {
+		// mutation of plansDir mid-walk could trigger this. See
+		// validateResolvedPlanPathFn's doc comment for why this is
+		// TOCTOU-only; the seam lets it still get a deterministic test.
+		if err := validateResolvedPlanPathFn(plansDir, path); err != nil {
 			return err
 		}
 		if prior := paths[id]; prior != "" && prior != path {

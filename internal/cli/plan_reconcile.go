@@ -16,6 +16,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// planReconcileResolveFileFn is an injectable seam over plan.ResolveFile for
+// the tree-transaction branch below. In real operation planPreviewReconcileFn
+// just resolved and read this exact slug successfully with the identical,
+// unchanged PlansDir/slug inputs, so a real failure here needs a genuine
+// concurrent mutation of the Plans namespace between that call and this one
+// — not something a deterministic, non-racy test can force. The seam lets
+// that branch still get a deterministic test.
+var planReconcileResolveFileFn = plan.ResolveFile
+
 // planReconcileCommand returns the "plan reconcile" command. It is a
 // deliberately DISTINCT verb from `plan change-status`: change-status walks a
 // plan through the human-authored legal-transition matrix one arc at a time;
@@ -219,16 +228,14 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		if _, err := planPreviewReconcileFn(opts); err != nil {
 			return err
 		}
-		// planPreviewReconcileFn just resolved and read this exact slug
-		// successfully, so plan.ResolveFile re-resolving it here can only
-		// fail on a genuine concurrent mutation. Likewise, every Rel() call
-		// below is against a path built (here or inside planstore.Resolve)
-		// as Join(store.PlansCheckout, "spec", ...) or Join(store.PlansDir,
-		// ...) — always a descendant of its own base by construction — so
-		// none of these pathErr checks can fire from any static input; only
-		// a real concurrent-mutation race could reach them, which is not
-		// something a deterministic test should try to force.
-		planPath, pathErr := plan.ResolveFile(store.PlansDir, slug)
+		// See planReconcileResolveFileFn's doc comment for why this is
+		// TOCTOU-only. Every Rel() call below, in contrast, is against a
+		// path built (here or inside planstore.Resolve) as
+		// Join(store.PlansCheckout, "spec", ...) or Join(store.PlansDir,
+		// ...) — always a descendant of its own base by construction, so
+		// filepath.Rel cannot fail for it on any platform this CLI ships
+		// for; those three errors are discarded rather than checked.
+		planPath, pathErr := planReconcileResolveFileFn(store.PlansDir, slug)
 		if pathErr != nil {
 			return pathErr
 		}
@@ -239,19 +246,10 @@ func runPlanReconcile(cmd *cobra.Command, args []string) error {
 		// leave a spurious "spec/" prefix that never matches the reported
 		// changed-file paths and makes every real write look "unexpected".
 		specCheckoutRoot := filepath.Join(store.PlansCheckout, "spec")
-		planRel, pathErr := filepath.Rel(specCheckoutRoot, planPath)
-		if pathErr != nil {
-			return pathErr
-		}
-		indexRel, pathErr := filepath.Rel(specCheckoutRoot, filepath.Join(store.PlansDir, "README.md"))
-		if pathErr != nil {
-			return pathErr
-		}
+		planRel, _ := filepath.Rel(specCheckoutRoot, planPath)
+		indexRel, _ := filepath.Rel(specCheckoutRoot, filepath.Join(store.PlansDir, "README.md"))
 		writeSet := []string{filepath.ToSlash(planRel), filepath.ToSlash(indexRel)}
-		relPlans, pathErr := filepath.Rel(store.PlansCheckout, store.PlansDir)
-		if pathErr != nil {
-			return pathErr
-		}
+		relPlans, _ := filepath.Rel(store.PlansCheckout, store.PlansDir)
 		_, err = RunLifecycleTransaction(store.PlansCheckout, writeSet, func(stagedProjectRoot string) error {
 			stagedOpts := opts
 			stagedOpts.PlansDir = filepath.Join(stagedProjectRoot, relPlans)

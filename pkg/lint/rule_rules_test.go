@@ -594,6 +594,21 @@ func TestRuleDetailDuplicatedTriggerIsReported(t *testing.T) {
 	}
 }
 
+// TestRuleDetailDuplicatedSectionIsReported covers the FieldCounts["Section"]
+// > 1 branch: **Section:**, like **Trigger:**, sits outside rule.DetailFields
+// (so its absence is never reported and its position is never order-checked)
+// but a duplicate is still a shape error.
+func TestRuleDetailDuplicatedSectionIsReported(t *testing.T) {
+	body := strings.Replace(ruleDetail(nil),
+		"**Statement:** Never ship a mocked extension backend.\n",
+		"**Statement:** Never ship a mocked extension backend.\n**Section:** Answering\n**Section:** Authority\n", 1)
+	root := ruleTree(t, ruleIndexWith(defaultRowFields().render("x", true)), map[string]string{"x": body})
+	got := lintRules(t, root)
+	if !hasRFamilyViolation(got, "R-001", "metadata field is duplicated: **Section:**") {
+		t.Fatalf("want R-001 duplicated-Section violation; got %v", ruleViolationIDs(got))
+	}
+}
+
 // A detail document with no row has nothing to mirror against, so R-011 must
 // stay quiet and leave the finding to R-004.
 func TestRuleDetailWithoutRowSkipsTheMirrorCheck(t *testing.T) {

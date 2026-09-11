@@ -43,17 +43,20 @@ type Resolution struct {
 	CheckoutConfigPath string
 }
 
+// absFn is filepath.Abs behind an injectable seam so tests can force its
+// os.Getwd-dependent failure deterministically, without relying on
+// platform-specific (and non-portable) tricks like deleting the working
+// directory out from under the process.
+var absFn = filepath.Abs
+
 // OrgConfigPath returns the organization layer associated with a source
 // checkout, anchored beside its canonical clone for linked worktrees.
 func OrgConfigPath(sourceRoot string) (string, error) {
 	_, canonical, err := repositoryRoots(sourceRoot)
 	if err != nil {
 		// filepath.Abs only touches the filesystem (via os.Getwd) when
-		// sourceRoot is relative, and only fails if that fails — which was
-		// not reproducible even by deliberately deleting the working
-		// directory mid-test on this platform. Not a deterministic,
-		// non-racy branch to force.
-		root, absErr := filepath.Abs(sourceRoot)
+		// sourceRoot is relative, and only fails if that fails.
+		root, absErr := absFn(sourceRoot)
 		if absErr != nil {
 			return "", absErr
 		}

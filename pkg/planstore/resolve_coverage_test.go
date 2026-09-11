@@ -14,6 +14,7 @@ package planstore
 // the real binary.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -464,43 +465,22 @@ func TestSecureJoinInspectAncestorPermissionDenied(t *testing.T) {
 	}
 }
 
-// --- Hard-to-reach defensive branches, exercised via a deleted cwd --------
+// --- Hard-to-reach defensive branches, exercised via an injectable seam ---
 
-// withDeletedCwd chdirs into a throwaway directory, deletes it out from
-// under the process, runs fn, and restores the original working directory
-// afterward. It lets tests exercise the (normally unreachable in practice)
-// error paths that fire when os.Getwd/lstat-relative-to-cwd operations fail
-// because the working directory no longer exists.
-func withDeletedCwd(t *testing.T, fn func()) {
-	t.Helper()
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
+// TestOrgConfigPathAbsFailsPropagates covers OrgConfigPath's non-git
+// fallback error path (filepath.Abs failing on os.Getwd, e.g. a deleted
+// working directory) deterministically via the absFn seam, rather than
+// relying on a platform-specific and non-portable trick like actually
+// deleting the process's working directory out from under it.
+func TestOrgConfigPathAbsFailsPropagates(t *testing.T) {
+	orig := absFn
+	t.Cleanup(func() { absFn = orig })
+	absFn = func(string) (string, error) {
+		return "", errors.New("injected abs failure")
 	}
-	dead, err := os.MkdirTemp("", "planstore-dead-cwd-")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := OrgConfigPath("relative-nonexistent-source"); err == nil || !strings.Contains(err.Error(), "injected abs failure") {
+		t.Fatalf("err = %v", err)
 	}
-	if err := os.Chdir(dead); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := os.Chdir(orig); err != nil {
-			t.Fatal(err)
-		}
-	}()
-	if err := os.RemoveAll(dead); err != nil {
-		t.Fatal(err)
-	}
-	fn()
-}
-
-func TestOrgConfigPathAbsFailsWhenCwdRemoved(t *testing.T) {
-	withDeletedCwd(t, func() {
-		if _, err := OrgConfigPath("relative-nonexistent-source"); err == nil {
-			t.Skip("filepath.Abs did not fail with a deleted cwd on this platform")
-		}
-	})
 }
 
 func TestSecureJoinAncestorSymlinkResolutionFails(t *testing.T) {

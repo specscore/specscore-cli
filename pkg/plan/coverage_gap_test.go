@@ -7,16 +7,17 @@ package plan
 // resolve_test.go/path_external_test.go/reconcile_test.go's behavioral focus
 // didn't already happen to exercise.
 //
-// A few branches this file does NOT attempt to cover are noted inline at the
-// call site in the production source: they are provably unreachable given
-// the caller's own invariants (e.g. a Rel() call against a path that was
-// just built via Join() from the same base), or they are TOCTOU-only
-// defenses (e.g. an ancestor directory or plansDir itself being swapped out
-// from under a call mid-flight) that only a genuinely racy, and therefore
-// CI-flaky, test could exercise — not something worth trading test
-// reliability for.
+// A few branches are provably unreachable given the caller's own invariants
+// (e.g. a Rel() call against a path that was just built via Join() from the
+// same base) and are simplified in place at the call site rather than
+// tested. TOCTOU-only defenses (e.g. an ancestor directory or plansDir
+// itself being swapped out from under a call mid-flight) sit behind
+// injectable seams (discoverWalkDirFn, validateResolvedPlanPathFn) so they
+// still get a deterministic test instead of a genuinely racy, CI-flaky one.
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,27 @@ func TestResolveFileCanonicalAncestorSymlinkEscapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := ResolveFile(plansDir, "escaped"); err == nil || !strings.Contains(err.Error(), "escapes plans directory") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestResolveFileFlatValidateReparseErrorPropagates covers ResolveFile's
+// flat-form validateResolvedPlanPathFn call: unlike the canonical branch
+// above (an intermediate directory segment CAN be a symlink), there is no
+// intermediate path component for a flat plan file, so in real operation
+// this can only fail via a genuine concurrent mutation — not something a
+// deterministic, non-racy test can force by construction.
+func TestResolveFileFlatValidateReparseErrorPropagates(t *testing.T) {
+	plansDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plansDir, "flat.md"), []byte("# Plan: Flat\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := validateResolvedPlanPathFn
+	t.Cleanup(func() { validateResolvedPlanPathFn = orig })
+	validateResolvedPlanPathFn = func(string, string) error {
+		return errors.New("injected validate failure")
+	}
+	if _, err := ResolveFile(plansDir, "flat"); err == nil || !strings.Contains(err.Error(), "injected validate failure") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -233,6 +255,75 @@ func TestDiscoverPropagatesParseError(t *testing.T) {
 	defer func() { _ = os.Chmod(blocked, 0o644) }()
 	if _, err := Discover(plansDir); err == nil {
 		t.Fatal("expected Parse's read error to propagate")
+	}
+}
+
+// TestDiscoverPropagatesRealWalkErrorFromSubdirectory covers Discover's
+// walkErr fallthrough ("return walkErr") for a real, non-tolerated error: a
+// nested directory that WalkDir cannot even ReadDir (unlike the
+// plansDir-itself-removed TOCTOU tolerance, this is a deterministic,
+// reproducible permission failure on a genuinely present subdirectory).
+func TestDiscoverPropagatesRealWalkErrorFromSubdirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks do not apply while running as root")
+	}
+	plansDir := t.TempDir()
+	blocked := filepath.Join(plansDir, "blocked")
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "README.md"), []byte("# Plan: Blocked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(blocked, 0o755) }()
+	if _, err := Discover(plansDir); err == nil {
+		t.Fatal("expected the unreadable subdirectory's walk error to propagate")
+	}
+}
+
+// TestDiscoverToleratesPlansDirRemovedBetweenStatAndWalk covers the
+// TOCTOU-tolerance branch: os.Stat(plansDir) above succeeded, but
+// filepath.WalkDir's own first Lstat(plansDir) can still observe the
+// directory gone if a concurrent process removed it in that (usually
+// microseconds-wide) window. discoverWalkDirFn stands in for
+// filepath.WalkDir so the test can invoke Discover's real callback with
+// that exact walkErr deterministically, instead of racing a real deletion.
+func TestDiscoverToleratesPlansDirRemovedBetweenStatAndWalk(t *testing.T) {
+	plansDir := t.TempDir()
+	orig := discoverWalkDirFn
+	t.Cleanup(func() { discoverWalkDirFn = orig })
+	discoverWalkDirFn = func(root string, fn fs.WalkDirFunc) error {
+		return fn(root, nil, fs.ErrNotExist)
+	}
+	plans, err := Discover(plansDir)
+	if err != nil {
+		t.Fatalf("err = %v, want the not-exist walkErr tolerated", err)
+	}
+	if len(plans) != 0 {
+		t.Fatalf("plans = %#v, want none", plans)
+	}
+}
+
+// TestDiscoverValidateResolvedPathReparseErrorPropagates covers Discover's
+// defense-in-depth validateResolvedPlanPathFn call: in real operation it can
+// only fail if plansDir is swapped out from under an in-progress walk, not
+// something a deterministic, non-racy test can force by construction — so
+// the seam is overridden directly instead.
+func TestDiscoverValidateResolvedPathReparseErrorPropagates(t *testing.T) {
+	plansDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plansDir, "visible.md"), []byte("# Plan: Visible\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := validateResolvedPlanPathFn
+	t.Cleanup(func() { validateResolvedPlanPathFn = orig })
+	validateResolvedPlanPathFn = func(string, string) error {
+		return errors.New("injected validate failure")
+	}
+	if _, err := Discover(plansDir); err == nil || !strings.Contains(err.Error(), "injected validate failure") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

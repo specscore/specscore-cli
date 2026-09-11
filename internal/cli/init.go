@@ -110,11 +110,11 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	}
 	// appendPlanRoutingHint reopens configPath (for O_APPEND) with the exact
 	// same write-access requirement projectdef.WriteSpecConfig just
-	// satisfied a few lines up — so a failure here needs configPath's
-	// permissions or existence to change concurrently between those two
-	// calls, which only a genuine concurrent mutation (not a deterministic
-	// test) could force.
-	if err := appendPlanRoutingHint(configPath); err != nil {
+	// satisfied a few lines up — so in real operation a failure here needs
+	// configPath's permissions or existence to change concurrently between
+	// those two calls. appendPlanRoutingHintFn is an injectable seam so this
+	// caller's error-handling branch still gets a deterministic test.
+	if err := appendPlanRoutingHintFn(configPath); err != nil {
 		return exitcode.UnexpectedErrorf("writing Plan repository configuration hint: %v", err)
 	}
 
@@ -142,6 +142,10 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized SpecScore project at %s\n", root)
 	return nil
 }
+
+// appendPlanRoutingHintFn is an injectable seam over appendPlanRoutingHint
+// so runInit's error-handling branch can be tested deterministically.
+var appendPlanRoutingHintFn = appendPlanRoutingHint
 
 func appendPlanRoutingHint(path string) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)

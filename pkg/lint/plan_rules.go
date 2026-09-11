@@ -16,6 +16,15 @@ import (
 // parseFeatureACsMaxBuf is the scanner max-token size; tests may shrink it.
 var parseFeatureACsMaxBuf = 1 << 20
 
+// planFixParseBytesFn is an injectable seam over plan.ParseBytes for the
+// fixers' re-parse-under-lock step (fixNoSourceLines, fixLegacyTaskStatusesInDir,
+// fixP007InDir). In real operation plan.Discover already parsed the same
+// file successfully once before TransformArtifact's locked re-read, so this
+// can only fail via a genuine concurrent rewrite between those two reads —
+// not something a single-threaded, non-racy test can force by construction.
+// The seam lets that branch still get a deterministic test.
+var planFixParseBytesFn = plan.ParseBytes
+
 // planRulesChecker implements the SpecStudio plan-Feature lint rules P-001
 // through P-004 plus the parser-side validations they piggyback on
 // (`**Mode:**` and `**Status:**` token validity covered by P-004). One
@@ -156,12 +165,10 @@ func (c *planRulesChecker) fixNoSourceLines(specRoot string) error {
 	for _, discovered := range plans {
 		planPath := discovered.Path
 		if err := lifecycle.TransformArtifact(planPath, func(before []byte) ([]byte, error) {
-			// plan.Discover above already parsed planPath successfully once;
-			// TransformArtifact's tx.Before() re-reads it fresh under lock,
-			// so this can only fail if the file's bytes changed between
-			// those two reads — a genuine concurrent-mutation scenario, not
-			// something a deterministic test can force without racing.
-			p, parseErr := plan.ParseBytes(planPath, before)
+			// See planFixParseBytesFn's doc comment: plan.Discover above
+			// already parsed planPath successfully once, so a real failure
+			// here needs a genuine concurrent rewrite.
+			p, parseErr := planFixParseBytesFn(planPath, before)
 			if parseErr != nil {
 				return nil, fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
 			}
@@ -326,11 +333,10 @@ func fixLegacyTaskStatusesInDir(plansDir string) error {
 		planPath := discovered.Path
 		if err := lifecycle.TransformArtifact(planPath, func(before []byte) ([]byte, error) {
 			// Parse inside the same lock as the rewrite: the task-line map is
-			// derived from precisely the bytes subsequently transformed.
-			// (Same reasoning as fixNoSourceLines above: plan.Discover
-			// already parsed this file once, so parseErr can only fire on a
-			// genuine concurrent mutation between that read and this one.)
-			p, parseErr := plan.ParseBytes(planPath, before)
+			// derived from precisely the bytes subsequently transformed. See
+			// planFixParseBytesFn's doc comment for why parseErr is
+			// TOCTOU-only here.
+			p, parseErr := planFixParseBytesFn(planPath, before)
 			if parseErr != nil {
 				return nil, fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
 			}
@@ -890,11 +896,9 @@ func fixP007InDir(plansDir string) error {
 	for _, discovered := range plans {
 		planPath := discovered.Path
 		if err := lifecycle.TransformArtifact(planPath, func(before []byte) ([]byte, error) {
-			// Same reasoning as fixNoSourceLines/fixLegacyTaskStatusesInDir
-			// above: plan.Discover already parsed this file once, so
-			// parseErr can only fire on a genuine concurrent mutation
-			// between that read and TransformArtifact's locked re-read.
-			p, parseErr := plan.ParseBytes(planPath, before)
+			// See planFixParseBytesFn's doc comment for why parseErr is
+			// TOCTOU-only here.
+			p, parseErr := planFixParseBytesFn(planPath, before)
 			if parseErr != nil {
 				return nil, fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
 			}

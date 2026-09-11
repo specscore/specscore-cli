@@ -9,19 +9,23 @@ package lint
 //
 // Three near-identical "re-parse under lock" error branches in
 // plan_rules.go (fixNoSourceLines, fixLegacyTaskStatusesInDir, fixP007InDir)
-// are NOT covered here: plan.Discover already parses each file successfully
-// once before these fixers re-parse it under TransformArtifact's lock, so
-// that re-parse can only fail if the file's bytes changed concurrently
-// between the two reads — a genuine race, not something a deterministic
-// test should force. Each call site carries a comment explaining this.
+// share the planFixParseBytesFn seam (an injectable wrapper over
+// plan.ParseBytes) below: plan.Discover already parses each file
+// successfully once before these fixers re-parse it under
+// TransformArtifact's lock, so in real operation that re-parse can only
+// fail on a genuine concurrent rewrite — not something a deterministic test
+// should force by racing. The seam lets each branch still get a
+// deterministic test.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gofrs/flock"
+	"github.com/specscore/specscore-cli/pkg/plan"
 )
 
 // --- plan_path.go / plan_index.go ------------------------------------------
@@ -219,6 +223,49 @@ func TestFixP007InDirLockContentionPropagates(t *testing.T) {
 	release := holdArtifactLock(t, planPath)
 	defer release()
 	if err := fixP007InDir(plansDir); err == nil || !strings.Contains(err.Error(), "fixing") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// withFailingPlanFixParseBytes overrides planFixParseBytesFn to fail for the
+// duration of the test, restoring the real plan.ParseBytes afterward.
+func withFailingPlanFixParseBytes(t *testing.T) {
+	t.Helper()
+	orig := planFixParseBytesFn
+	t.Cleanup(func() { planFixParseBytesFn = orig })
+	planFixParseBytesFn = func(string, []byte) (*plan.Plan, error) {
+		return nil, errors.New("injected re-parse failure")
+	}
+}
+
+func TestFixNoSourceLinesReparseErrorPropagates(t *testing.T) {
+	plansDir := t.TempDir()
+	planPath := filepath.Join(plansDir, "auth.md")
+	writeFile(t, planPath, "# Plan: Auth\n")
+	withFailingPlanFixParseBytes(t)
+	c := &planRulesChecker{plansDir: plansDir}
+	err := c.fixNoSourceLines("")
+	if err == nil || !strings.Contains(err.Error(), "injected re-parse failure") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFixLegacyTaskStatusesInDirReparseErrorPropagates(t *testing.T) {
+	plansDir := t.TempDir()
+	planPath := filepath.Join(plansDir, "auth.md")
+	writeFile(t, planPath, "# Plan: Auth\n")
+	withFailingPlanFixParseBytes(t)
+	if err := fixLegacyTaskStatusesInDir(plansDir); err == nil || !strings.Contains(err.Error(), "injected re-parse failure") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFixP007InDirReparseErrorPropagates(t *testing.T) {
+	plansDir := t.TempDir()
+	planPath := filepath.Join(plansDir, "auth.md")
+	writeFile(t, planPath, "# Plan: Auth\n")
+	withFailingPlanFixParseBytes(t)
+	if err := fixP007InDir(plansDir); err == nil || !strings.Contains(err.Error(), "injected re-parse failure") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -90,3 +90,48 @@ func TestSpecLint_FindsSpecscoreYAMLInAncestor(t *testing.T) {
 		}
 	}
 }
+
+// TestSpecLint_FixTextFormatPrintsReconciledRows covers runSpecLint's text
+// -format reconciliation summary: --fix repairing a feature-index-row-sync
+// drift (the index Status cell for "auth" left stale after the Feature
+// file's own **Status:** line was edited directly, bypassing `feature
+// change-status`) must be echoed to stderr in text format.
+func TestSpecLint_FixTextFormatPrintsReconciledRows(t *testing.T) {
+	root := setupFeatureSpec(t, "Draft")
+	// Host/Org/Repo satisfy the studio-toolbar rule so the only violation
+	// exercised by this test is the feature-index drift being fixed below.
+	cfg := projectdef.SpecConfig{Project: &projectdef.ProjectConfig{Host: "github.com", Org: "acme", Repo: "widgets"}}
+	if err := projectdef.WriteSpecConfig(root, cfg); err != nil {
+		t.Fatalf("write specscore.yaml: %v", err)
+	}
+
+	// Drift the Feature file's Status directly (not via `feature
+	// change-status`, which would already repair the index itself) so the
+	// features/README.md index row is left stale at "Draft".
+	authPath := filepath.Join(root, "spec", "features", "auth", "README.md")
+	before, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("read auth/README.md: %v", err)
+	}
+	drifted := strings.Replace(string(before), "**Status:** Draft", "**Status:** In Review", 1)
+	if drifted == string(before) {
+		t.Fatalf("drift replacement did not match; fixture changed?")
+	}
+	if err := os.WriteFile(authPath, []byte(drifted), 0o644); err != nil {
+		t.Fatalf("write drifted auth/README.md: %v", err)
+	}
+
+	out, errOut, err := runSpecLintCmd(t, "--fix", "--project", root)
+	if err != nil {
+		t.Fatalf("unexpected err: %v\nstdout=%s\nstderr=%s", err, out, errOut)
+	}
+	if !strings.Contains(errOut, "Reconciled 1 index row(s) from their artifact file(s):") {
+		t.Fatalf("stderr missing reconciliation summary header; got: %q", errOut)
+	}
+	if !strings.Contains(errOut, "auth") {
+		t.Fatalf("stderr missing reconciled row detail for auth; got: %q", errOut)
+	}
+	if got := readIndexStatus(t, root); got != "In Review" {
+		t.Errorf("index Status after --fix = %q, want In Review", got)
+	}
+}

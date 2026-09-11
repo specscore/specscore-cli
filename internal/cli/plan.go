@@ -21,6 +21,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// planChangeStatusParseBytesFn is an injectable seam over plan.ParseBytes
+// for planChangeStatusMutate's ValidateSnapshot callback. In real operation
+// preflightPlanChangeStatus already runs a full lint.Lint pass (which
+// Parses every discovered Plan, this one included) before this locked
+// snapshot is ever reached, so a real failure here needs a genuine
+// concurrent rewrite of the file between that preflight and this lock — not
+// something a deterministic, non-racy test can force. The seam lets that
+// branch still get a deterministic test.
+var planChangeStatusParseBytesFn = plan.ParseBytes
+
+// planNewStatFn and planNewPublishFileExclusiveFn are injectable seams over
+// os.Stat and publishFileExclusive for runPlanNew's target-existence races.
+// In real operation each of their non-"doesn't exist"/non-"created it
+// first" branches only fires if a concurrent process changes target's
+// existence or permissions in a narrow window between an earlier check and
+// the call in question — not something a deterministic, single-threaded
+// test can force without actually racing a second process. The seams let
+// those branches still get a deterministic test.
+var planNewStatFn = os.Stat
+var planNewPublishFileExclusiveFn = publishFileExclusive
+
 // planCommand returns the "plan" command group. With no Run/RunE, cobra
 // prints help and exits 0 for `specscore plan`.
 func planCommand() *cobra.Command {
@@ -233,13 +254,9 @@ func planChangeStatusMutate(sourceRoot, plansDir, coordinationRoot, slug string,
 		Note:      note,
 		Successor: successor,
 		ValidateSnapshot: func(path string, before []byte) error {
-			// runPlanChangeStatus's preflightPlanChangeStatus runs a full
-			// lint.Lint pass (which itself Parses every discovered Plan,
-			// this one included) before ever reaching this locked snapshot,
-			// so a malformed file would already have failed preflight —
-			// this ParseBytes can only fail here on a genuine concurrent
-			// rewrite of the file between that preflight and this lock.
-			parsedPlan, err := plan.ParseBytes(path, before)
+			// See planChangeStatusParseBytesFn's doc comment for why this
+			// is TOCTOU-only.
+			parsedPlan, err := planChangeStatusParseBytesFn(path, before)
 			if err != nil {
 				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, err), err)
 			}
@@ -384,14 +401,10 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 	// Preserve the write-free fast conflict while the exclusive publication
 	// below remains the authoritative no-clobber decision under races.
 	//
-	// The "else if !os.IsNotExist(statErr)" arm is a genuine defense against
-	// a concurrent process changing target's existence or permissions
-	// between plan.ResolveFile's own Lstat (moments above, which just
-	// established this exact path does NOT exist) and this Stat call — not
-	// something a deterministic, single-threaded test can force without
-	// actually racing a second process against this one.
+	// See planNewStatFn's doc comment for why the "else if
+	// !os.IsNotExist(statErr)" arm below is TOCTOU-only.
 	if !force {
-		if _, statErr := os.Stat(target); statErr == nil {
+		if _, statErr := planNewStatFn(target); statErr == nil {
 			return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
 		} else if !os.IsNotExist(statErr) {
 			return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking %s: %v", target, statErr), statErr)
@@ -422,7 +435,7 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		return exitcode.UnexpectedErrorf("scaffolding plan: %v", err)
 	}
 	if force {
-		if _, statErr := os.Stat(target); statErr == nil {
+		if _, statErr := planNewStatFn(target); statErr == nil {
 			if err := lifecycle.TransformArtifact(target, func([]byte) ([]byte, error) { return body, nil }); err != nil {
 				return exitcode.UnexpectedErrorCause(fmt.Sprintf("replacing %s: %v", target, err), err)
 			}
@@ -430,19 +443,18 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 			if err := publishFileExclusive(target, body, 0o644); err != nil {
 				return exitcode.UnexpectedErrorCause(fmt.Sprintf("publishing %s: %v", target, err), err)
 			}
-			// The "else" arm below (any Stat outcome besides "exists" or
-			// "doesn't exist") would need target's ancestors to change
-			// underneath this same call between the MkdirAll a few lines up
-			// and this Stat — a concurrent-mutation scenario, not something
-			// a deterministic test can force.
+			// See planNewStatFn's doc comment: the "else" arm below (any
+			// Stat outcome besides "exists" or "doesn't exist") is
+			// TOCTOU-only.
 		} else {
 			return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking %s: %v", target, statErr), statErr)
 		}
-	} else if err := publishFileExclusive(target, body, 0o644); err != nil {
+	} else if err := planNewPublishFileExclusiveFn(target, body, 0o644); err != nil {
 		// os.ErrExist here means a second process published target in the
 		// window between plan.ResolveFile's check above and this exclusive
 		// create — the exact race publishFileExclusive's O_EXCL open exists
-		// to catch. Genuinely racy; not reachable from a single-threaded test.
+		// to catch. See planNewPublishFileExclusiveFn's doc comment for why
+		// the seam exists for this branch.
 		if errors.Is(err, os.ErrExist) {
 			return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
 		}
