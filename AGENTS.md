@@ -15,10 +15,7 @@ Go CLI that implements `specscore` — lint, query, scaffold, and lifecycle-tran
 
 ## Release workflow
 
-Releases are explicit and tag-driven. Two trigger paths, both gated by a human action:
-
-1. **Push a `vX.Y.Z` tag** — the `release.yml` workflow builds, signs, and publishes via GoReleaser.
-2. **`gh workflow run release.yml --field release_tag=auto`** — svu picks the next version from conventional commits since the last tag (`feat:` → minor, `fix:` → patch, breaking change → major).
+Releases are continuous. Every merge to `main` runs `release.yml`, which delegates to the shared `strongo/cicd` release workflow: it infers the bump from the conventional commits since the last tag (`feat:` → minor, `fix:` → patch; `chore:`/`ci:`/`docs:`/`refactor:` release nothing; a breaking change is capped to a minor bump while pre-1.0), then tags, builds, signs, and publishes via GoReleaser — gated on `Go CI` being green for that commit. Pushing an explicit `vX.Y.Z` tag releases exactly that version. There is no dispatch input to pick a bump level or version: `gh workflow run release.yml` only re-runs the merge path for the head of `main`, i.e. it is a retry, not a release trigger. Details in the README's [Releasing](README.md#releasing) section.
 
 After release, install with `curl -fsSL https://specscore.md/install/get-cli | sh` and verify `specscore --version` matches.
 
@@ -30,7 +27,7 @@ When changing a convention:
 
 1. **Spec the change in the meta-spec** (`specscore` repo). Update the entity Features, indexes, AGENTS.md if relevant. PR + merge to main.
 2. **Implement in the CLI** (this repo). Update lint rules, scaffolders, parsers, tests. Include spec edits to `spec/features/cli/spec/lint/README.md` if a new REQ or AC is added.
-3. **Release the CLI** (workflow_dispatch with `release_tag=auto`). Wait for the new tag to publish.
+3. **Release the CLI** — merging step 2 to `main` with a `feat:`/`fix:` commit releases it automatically. Wait for the new tag to publish.
 4. **Bump the pin** — every downstream repo's `.github/workflows/dogfood.yml` needs `SPECSCORE_VERSION: vNEW`. Start with `specscore` itself; sibling repos (`specstudio-skills`, `ai-plugin-specscore`, etc.) follow. Each bump is its own commit per the "`# bump intentionally via PR`" convention.
 5. **Migrate existing artifacts** by running `specscore spec lint --fix` in each touched repo. Commit the mechanical rewrites.
 

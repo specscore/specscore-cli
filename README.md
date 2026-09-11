@@ -271,17 +271,29 @@ All contributions are required to maintain 100% coverage. If your change adds or
 
 > [!IMPORTANT]
 > **Do not bump the version manually.** There is no version string to edit in
-> source — the version is derived from the git tag at build time. Cut releases
-> only through the [Release workflow](.github/workflows/release.yml):
+> source — the version is derived from the git tag at build time, and releases
+> are continuous. The [Release workflow](.github/workflows/release.yml) runs on
+> every push to `main` and delegates to the shared
+> [`strongo/cicd` release workflow](https://github.com/strongo/cicd/blob/main/.github/workflows/release.yml)
+> (pinned to an exact tag in `release.yml`), which computes the next version
+> from the conventional commits since the last tag, then tags, builds, signs,
+> and publishes the GitHub release in one run.
 >
-> - **Actions → Release → Run workflow**, then pick `auto` (next version from
->   conventional commits since the last tag), `patch` / `minor` / `major`, or an
->   explicit `vX.Y.Z`; or
-> - push a `vX.Y.Z` tag.
+> - **Merge to `main`** — the bump is inferred from the commit types since the
+>   last tag: `feat:` → minor, `fix:` (or any other releasing type) → patch.
+>   `chore:`, `ci:`, `docs:` and `refactor:` commits cut no tag and publish
+>   nothing. specscore is pre-1.0, so a `feat!:` / `BREAKING CHANGE:` commit is
+>   capped to a minor bump (`0.x` → `0.(x+1)`); it never produces `v1.0.0`.
+> - **Push a `vX.Y.Z` tag** — releases exactly that version and skips the bump.
+>   This is also how `v1.0.0` gets cut, deliberately.
 >
-> Or from the CLI: `gh workflow run release.yml -f release_tag=auto`. The
-> workflow tags, builds, and publishes the GitHub release; afterwards run
-> `specscore self-update` to pull the new binary locally.
+> Both paths are gated on the `Go CI` workflow: a red run for that commit
+> blocks the release, and re-running it green clears the gate. The workflow can
+> also be started by hand on `main` (**Actions → Release → Run workflow**, or
+> `gh workflow run release.yml`), but it takes no inputs: that re-runs the
+> merge-to-`main` path against the current head of `main`, so it only serves to
+> retry a failed release run — it cannot pick a bump level or a version. After
+> a release, run `specscore self-update` to pull the new binary locally.
 
 ## License
 
