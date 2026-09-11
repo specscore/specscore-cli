@@ -287,9 +287,11 @@ All contributions are required to maintain 100% coverage. If your change adds or
 > - **Push a `vX.Y.Z` tag** — releases exactly that version and skips the bump.
 >   This is also how `v1.0.0` gets cut, deliberately.
 >
-> Both paths are gated on the `Go CI` workflow: a red run for that commit
-> blocks the release, and re-running it green clears the gate. The workflow can
-> also be started by hand on `main` (**Actions → Release → Run workflow**, or
+> On either path, a red `Go CI` run for that commit blocks the release, and
+> re-running it green clears the gate. The gate only sees runs that exist, and
+> `go-ci.yml` has no tag trigger, so only tag commits that are already on
+> `main`, where the merge produced one. The workflow can also be started by
+> hand on `main` (**Actions → Release → Run workflow**, or
 > `gh workflow run release.yml`), but it takes no inputs: that re-runs the
 > merge-to-`main` path against the current head of `main`, so it only serves to
 > retry a failed release run — it cannot pick a bump level or a version. After
