@@ -9,6 +9,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +51,7 @@ func runPlanReadiness(cmd *cobra.Command, args []string) error {
 		return exitcode.InvalidArgsErrorf(
 			"too many positional arguments: readiness accepts exactly one <slug>, got %d", len(args))
 	}
-	if err := plan.ValidateSlug(args[0]); err != nil {
+	if err := plan.ValidateID(args[0]); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", args[0], err)
 	}
 	format, _ := cmd.Flags().GetString("format")
@@ -58,11 +59,11 @@ func runPlanReadiness(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	projectFlag, _ := cmd.Flags().GetString("project")
-	specRoot, err := resolveSpecRoot(projectFlag)
+	store, err := resolvePlanStore(projectFlag, planstore.ReadOnly)
 	if err != nil {
 		return err
 	}
-	readiness, err := plan.PlanReadiness(specRoot, args[0])
+	readiness, err := plan.PlanReadinessDir(store.PlansDir, args[0])
 	if err != nil {
 		return readinessCLIError(err)
 	}

@@ -702,7 +702,7 @@ func TestSkip_NonPlanAndDirectoryPlans(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "README.md"),
-		[]byte("# Plan: Legacy\n\n**Status:** draft\n\n## Steps\n\n- do thing\n"),
+		[]byte("# Plan: Legacy\n\n**Status:** draft\n**Source:** none\n\n## Steps\n\n- do thing\n"),
 		0o644); err != nil {
 		t.Fatal(err)
 	}

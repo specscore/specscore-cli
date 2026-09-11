@@ -37,7 +37,7 @@ func stageReconcilablePlan(t *testing.T, slug, status string, taskStatuses ...st
 		t.Fatalf("write features README: %v", err)
 	}
 
-	path := filepath.Join(root, "spec", "plans", slug+".md")
+	path := filepath.Join(root, "spec", "plans", slug, "README.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
@@ -101,7 +101,7 @@ func TestPlanReconcile_HappyPath_CLI(t *testing.T) {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
 
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	s := string(body)
 	if !strings.Contains(s, "**Status:** Implemented") {
 		t.Errorf("status not rewritten:\n%s", s)
@@ -150,19 +150,19 @@ func TestPlanReconcile_TreeTransactionPublishesDeclaredPlanChanges(t *testing.T)
 		t.Fatalf("tree transaction receipts = %#v, %v", receipts, err)
 	}
 	receipt := receipts[0]
-	if receipt.State != "committed" || !slices.Equal(receipt.DeclaredWriteSet, []string{"plans/README.md", "plans/auth.md"}) {
+	if receipt.State != "committed" || !slices.Equal(receipt.DeclaredWriteSet, []string{"plans/README.md", "plans/auth/README.md"}) {
 		t.Fatalf("tree transaction receipt = %#v", receipt)
 	}
-	live, err := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	live, err := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if err != nil || !strings.Contains(string(live), "**Status:** Implemented") {
 		t.Fatalf("published Plan = %v\n%s", err, live)
 	}
-	predecessor, err := os.ReadFile(filepath.Join(receipt.RecoveryRoot, "spec", "plans", "auth.md"))
+	predecessor, err := os.ReadFile(filepath.Join(receipt.RecoveryRoot, "spec", "plans", "auth", "README.md"))
 	if err != nil || !strings.Contains(string(predecessor), "**Status:** Draft") {
 		t.Fatalf("retained predecessor = %v\n%s", err, predecessor)
 	}
 	index, err := os.ReadFile(filepath.Join(root, "spec", "plans", "README.md"))
-	if err != nil || !strings.Contains(string(index), "| [auth](auth.md) | Implemented |") {
+	if err != nil || !strings.Contains(string(index), "| [auth](auth/README.md) | Implemented |") {
 		t.Fatalf("published plans index = %v\n%s", err, index)
 	}
 }
@@ -328,7 +328,7 @@ func TestPlanReconcile_ForceTasks_OverrideSucceeds_CLI(t *testing.T) {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
 
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "Overridden from a terminal failure state via --force-tasks:** Task 2 (was failed)") {
 		t.Errorf("Resolution must itemize the override:\n%s", body)
 	}
@@ -360,7 +360,7 @@ func TestPlanReconcile_LintFailureRollsBack_CLI(t *testing.T) {
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Implemented") {
 		t.Errorf("committed status missing after lint failure:\n%s", body)
 	}
@@ -373,7 +373,7 @@ func TestPlanReconcile_LintFailureRollsBack_CLI(t *testing.T) {
 // execution prerequisites. Its readiness refusal happens before any rewrite.
 func TestPlanReconcile_UnmetPrerequisiteRefusesWithoutMutation_CLI(t *testing.T) {
 	root := stageReconcilablePlan(t, "delivery", "Draft", "planning")
-	deliveryPath := filepath.Join(root, "spec", "plans", "delivery.md")
+	deliveryPath := filepath.Join(root, "spec", "plans", "delivery", "README.md")
 	body, err := os.ReadFile(deliveryPath)
 	if err != nil {
 		t.Fatal(err)
@@ -419,7 +419,7 @@ func TestPlanReconcile_UnmetPrerequisiteRefusesWithoutMutation_CLI(t *testing.T)
 // operational failure (10), and reconcile must not write any bytes first.
 func TestPlanReconcile_PreservesInvalidStateReadinessErrorWithoutMutation_CLI(t *testing.T) {
 	root := stageReconcilablePlan(t, "delivery", "Draft", "planning")
-	deliveryPath := filepath.Join(root, "spec", "plans", "delivery.md")
+	deliveryPath := filepath.Join(root, "spec", "plans", "delivery", "README.md")
 	body, err := os.ReadFile(deliveryPath)
 	if err != nil {
 		t.Fatal(err)
@@ -471,7 +471,7 @@ func TestPlanReconcile_ReopenTasks_CLI(t *testing.T) {
 	if want := "auth: Implemented → Blocked (reconciled, 1 task(s) marked blocked)\n"; stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
-	body, err := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, err := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

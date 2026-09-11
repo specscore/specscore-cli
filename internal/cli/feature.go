@@ -16,6 +16,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
@@ -258,8 +259,17 @@ func runFeatureInfo(cmd *cobra.Command, args []string) error {
 	if !feature.Exists(featuresDir, featureID) {
 		return exitcode.NotFoundErrorf("feature not found: %s", featureID)
 	}
+	// Feature operations are independent of Plan routing (repo-config#req:plan-route-required
+	// explicitly exempts Feature/Idea/Lesson operations): an unresolved or absent
+	// Plan route must not fail `feature info`. Resolve the Plan store best-effort
+	// so the Plans back-reference is populated when routing IS configured, but
+	// fall back to no Plans context otherwise.
+	plansDir := ""
+	if store, storeErr := resolvePlanStore(projectFlag, planstore.ReadOnly); storeErr == nil {
+		plansDir = store.PlansDir
+	}
 
-	info, err := feature.GetInfo(featuresDir, featureID)
+	info, err := feature.GetInfoWithPlansDir(featuresDir, plansDir, featureID)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("getting feature info: %v", err)
 	}

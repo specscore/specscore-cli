@@ -123,6 +123,7 @@ func TestPlanInfo_TooManyArgsExits2(t *testing.T) {
 // TestResolvePlansDir_ProjectFlagSuccess covers the --project success path.
 func TestResolvePlansDir_ProjectFlagSuccess(t *testing.T) {
 	root := t.TempDir()
+	configureSameRepoPlans(t, root)
 	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -206,6 +207,7 @@ func TestPlanInfo_ResolvePlansDirError(t *testing.T) {
 // making spec/plans a regular file so os.ReadDir fails inside Discover.
 func TestPlanList_DiscoverError(t *testing.T) {
 	root := t.TempDir()
+	configureSameRepoPlans(t, root)
 	if err := os.MkdirAll(filepath.Join(root, "spec", "features"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

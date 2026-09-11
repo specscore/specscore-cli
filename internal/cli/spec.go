@@ -12,6 +12,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
@@ -207,9 +208,36 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	if err := lint.ValidateFixTargets(fixTargets); err != nil {
 		return exitcode.InvalidArgsError(err.Error())
 	}
+	mode := planstore.ReadOnly
+	if fix {
+		mode = planstore.Write
+	}
+	// `spec lint` sweeps the whole spec tree (Features, Ideas, Plans, ...) in
+	// one pass; it is not itself one of the dedicated Plan verbs that
+	// repo-config#req:plan-route-required binds to. Resolve the Plan store
+	// best-effort: when routing IS configured, plan-specific rules validate
+	// the resolved (possibly external) namespace; when it is not, fall back to
+	// the historical same-repo default (`<spec>/plans`) so unrelated
+	// Feature/Idea/Lesson rules — and repos that have not adopted Plan
+	// routing yet — are unaffected by an absent or unresolved route.
+	//
+	// PlansDir only: leave ProjectRoot unset so lint.Options.effectiveProjectRoot
+	// derives it from specRoot (filepath.Dir(specRoot)), the same basis
+	// resolveConfigSpecRoot used. store.SourceRoot comes from a SEPARATE
+	// resolution path (planstore.Resolve calls filepath.EvalSymlinks on the
+	// git top-level) that can disagree with specRoot's own string form on a
+	// symlinked tmp dir (e.g. macOS /var -> /private/var) even though both
+	// name the same directory — feeding that mismatched string into
+	// ProjectRoot broke filepath.Rel-based rules (e.g. studio-toolbar) that
+	// assume ProjectRoot and SpecRoot share one consistent path prefix.
+	plansDir := ""
+	if store, storeErr := resolvePlanStore(projectFlag, mode); storeErr == nil {
+		plansDir = store.PlansDir
+	}
 
 	opts := lint.Options{
 		SpecRoot:   specRoot,
+		PlansDir:   plansDir,
 		Rules:      rules,
 		Ignore:     ignore,
 		Severity:   severity,

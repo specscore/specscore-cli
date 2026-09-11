@@ -9,10 +9,14 @@ import (
 
 // planROIChecker validates ROI metadata values in plan README headers.
 // When present, Effort must be S/M/L/XL and Impact must be low/medium/high/critical.
-type planROIChecker struct{}
+type planROIChecker struct{ plansDir string }
 
-func newPlanROIChecker() checker {
-	return &planROIChecker{}
+func newPlanROIChecker(plansDir ...string) checker {
+	c := &planROIChecker{}
+	if len(plansDir) > 0 {
+		c.plansDir = plansDir[0]
+	}
+	return c
 }
 
 func (c *planROIChecker) name() string     { return "plan-roi-metadata" }
@@ -27,7 +31,7 @@ var validImpact = map[string]bool{
 }
 
 func (c *planROIChecker) check(specRoot string) ([]Violation, error) {
-	plansDir := filepath.Join(specRoot, "plans")
+	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	info, err := os.Stat(plansDir)
 	if err != nil || !info.IsDir() {
 		return nil, nil

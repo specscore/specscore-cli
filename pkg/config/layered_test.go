@@ -76,6 +76,27 @@ func TestResolveDir_MostSpecificWins(t *testing.T) {
 	}
 }
 
+func TestResolveDirWithOrg_Precedence(t *testing.T) {
+	repo, home, org := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), ".specscore.yaml")
+	writeLayer(t, filepath.Join(home, HomeFile), "plans_repo: home/plans\n")
+	writeLayer(t, org, "plans_repo: org/plans\n")
+	got, err := ResolveDirWithOrg(repo, home, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Values["plans_repo"] != "org/plans" || got.Origin["plans_repo"] != "org" {
+		t.Fatalf("org result = %#v", got)
+	}
+	writeLayer(t, filepath.Join(repo, ProjectFile), "plans_repo: repo/plans\n")
+	got, err = ResolveDirWithOrg(repo, home, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Values["plans_repo"] != "repo/plans" || got.Origin["plans_repo"] != "project" {
+		t.Fatalf("project result = %#v", got)
+	}
+}
+
 func TestResolveDir_DeepMergeReplacesSequences(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()

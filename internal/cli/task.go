@@ -15,6 +15,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/specscore/specscore-cli/pkg/task"
 	"github.com/spf13/cobra"
 )
@@ -141,7 +142,7 @@ are never subject to this check.`,
 	cmd.Flags().String("to", "", "target status (required), case-insensitive. One of: "+
 		strings.Join(taskStatusNames(), ", "))
 	cmd.Flags().String("project", "", "project root (autodetected from current directory if omitted)")
-	cmd.Flags().String("plan", "", "resolve <task> as a plan-inline task by its **Id:** inside spec/plans/<plan>.md (instead of the tasks board)")
+	cmd.Flags().String("plan", "", "resolve <task> by **Id:** inside a Plan ID in the configured Plan repository (instead of the tasks board)")
 	// Provenance flags: on --to=complete these are assembled into an
 	// **Implemented-by:** field on the task. Values come ONLY from these flags;
 	// the verb never reads ambient git HEAD.
@@ -187,7 +188,7 @@ func runTaskChangeStatus(cmd *cobra.Command, args []string, deps taskMutationDep
 	// so an explicit blank or traversal-shaped value is always a usage error and
 	// cannot address an unrelated file or fall back to a board task.
 	if planFlagChanged {
-		if err := plan.ValidateSlug(planSlug); err != nil {
+		if err := plan.ValidateID(planSlug); err != nil {
 			return exitcode.InvalidArgsErrorf("invalid --plan value %q: %v", planSlug, err)
 		}
 	}
@@ -493,16 +494,19 @@ func withImplementedByLine(lines []string, statusIdx int, ref string) []string {
 // **Status:** in the same atomic write.
 func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string, to lifecycle.Status, deps taskMutationDeps) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
-	specRoot, err := resolveSpecRoot(projectFlag)
+	store, err := resolvePlanStore(projectFlag, planstore.Write)
 	if err != nil {
 		return err
 	}
 
-	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
+	planPath, err := plan.ResolveFile(store.PlansDir, planSlug)
+	if err != nil {
+		return err
+	}
 	var from lifecycle.Status
 	var coordinationWarning bytes.Buffer
 	err = deps.transformArtifact(planPath, func(before []byte) ([]byte, error) {
-		return changePlanTaskStatusBytes(cmd, planPath, taskSlug, planSlug, specRoot, to, &from, before, &coordinationWarning, deps.rewritePlanTaskStatus)
+		return changePlanTaskStatusBytes(cmd, planPath, taskSlug, planSlug, store.SourceRoot, store.PlansDir, to, &from, before, &coordinationWarning, deps.rewritePlanTaskStatus)
 	})
 	if err != nil {
 		var committed *lifecycle.CommittedMutationError
@@ -523,11 +527,14 @@ func runTaskChangeStatusPlanInline(cmd *cobra.Command, taskSlug, planSlug string
 		return exitcode.UnexpectedErrorCause(fmt.Sprintf("changing plan-inline task status: %v", err), err)
 	}
 	_, _ = cmd.ErrOrStderr().Write(coordinationWarning.Bytes())
+	if err := lintPostMutationHookWithPlans(filepath.Join(store.SourceRoot, "spec"), store.PlansDir)(); err != nil {
+		return err
+	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s → %s\n", taskSlug, string(from), string(to))
 	return nil
 }
 
-func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug, specRoot string, to lifecycle.Status, fromOut *lifecycle.Status, before []byte, coordinationWarning io.Writer, rewriteStatus func([]byte, int, lifecycle.Status, []string) ([]byte, error)) ([]byte, error) {
+func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug, specRoot, plansDir string, to lifecycle.Status, fromOut *lifecycle.Status, before []byte, coordinationWarning io.Writer, rewriteStatus func([]byte, int, lifecycle.Status, []string) ([]byte, error)) ([]byte, error) {
 	p, err := plan.ParseBytes(planPath, before)
 	if err != nil {
 		// ParseBytes consumes the supplied snapshot only and never performs I/O.
@@ -566,7 +573,8 @@ func changePlanTaskStatusBytes(cmd *cobra.Command, planPath, taskSlug, planSlug,
 	// entrypoint. Keep the check before the file rewrite so an unmet
 	// prerequisite leaves the task byte-for-byte untouched.
 	if to == lifecycle.TaskInProgress {
-		readiness, readinessErr := p.PrerequisiteReadiness(filepath.Join(specRoot, "spec", "plans"))
+		p.Slug = planSlug
+		readiness, readinessErr := p.PrerequisiteReadiness(plansDir)
 		if readinessErr != nil {
 			return nil, readinessCLIError(readinessErr)
 		}
@@ -790,12 +798,15 @@ func runTaskAmendProvenanceBoard(cmd *cobra.Command, taskSlug string, deps taskM
 // must be in complete (else exit 4); an empty assembled ref clears the field.
 func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug string, deps taskMutationDeps) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
-	specRoot, err := resolveSpecRoot(projectFlag)
+	store, err := resolvePlanStore(projectFlag, planstore.Write)
 	if err != nil {
 		return err
 	}
 
-	planPath := filepath.Join(specRoot, "spec", "plans", planSlug+".md")
+	planPath, err := plan.ResolveFile(store.PlansDir, planSlug)
+	if err != nil {
+		return err
+	}
 	var coordinationWarning bytes.Buffer
 	err = deps.transformArtifact(planPath, func(before []byte) ([]byte, error) {
 		p, err := plan.ParseBytes(planPath, before)
@@ -807,7 +818,7 @@ func runTaskAmendProvenancePlanInline(cmd *cobra.Command, taskSlug, planSlug str
 				"plan %q is not a Plan artifact: expected first H1 to start with '# Plan:'", planSlug)
 		}
 		forceCoordination, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-		if err := enforceCoordinationBranch(p, specRoot, forceCoordination, &coordinationWarning); err != nil {
+		if err := enforceCoordinationBranch(p, store.SourceRoot, forceCoordination, &coordinationWarning); err != nil {
 			return nil, err
 		}
 		target, err := uniquePlanTaskByID(p, taskSlug)

@@ -68,7 +68,7 @@ None at this time.
 
 func readPlan(t *testing.T, root, slug string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(root, "spec", "plans", slug+".md"))
+	b, err := os.ReadFile(filepath.Join(root, "spec", "plans", slug, "README.md"))
 	if err != nil {
 		t.Fatalf("reading plan %s: %v", slug, err)
 	}
@@ -175,7 +175,7 @@ func TestPlanNew_InvalidSlug(t *testing.T) {
 	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
 		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "spec", "plans", "Bad_Slug.md")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "plans", "Bad_Slug", "README.md")); statErr == nil {
 		t.Error("no file should be created for an invalid slug")
 	}
 }
@@ -202,7 +202,7 @@ func TestPlanNew_ParentEmptyExits2(t *testing.T) {
 	if got := exitCodeOf(err); got != exitcode.InvalidArgs {
 		t.Errorf("exit = %d, want %d", got, exitcode.InvalidArgs)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "spec", "plans", "p.md")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(root, "spec", "plans", "p", "README.md")); statErr == nil {
 		t.Error("no file should be created when --parent is empty")
 	}
 }
@@ -214,7 +214,7 @@ func TestPlanNew_Collision(t *testing.T) {
 		t.Fatalf("first plan new: %v", err)
 	}
 	// Mark the file so we can prove --force overwrote vs left-untouched.
-	path := filepath.Join(root, "spec", "plans", "dup.md")
+	path := filepath.Join(root, "spec", "plans", "dup", "README.md")
 	orig := readPlan(t, root, "dup")
 
 	_, _, err := runPlan(t, "new", "dup", "--feature", "f")
@@ -247,7 +247,7 @@ func TestPlanNew_AncestorIndexesMaterialized(t *testing.T) {
 	if _, _, err := runPlan(t, "new", "p1", "--feature", "f"); err != nil {
 		t.Fatalf("plan new: %v", err)
 	}
-	for _, rel := range []string{"spec/README.md", "spec/plans/README.md", "spec/plans/p1.md"} {
+	for _, rel := range []string{"spec/README.md", "spec/plans/README.md", "spec/plans/p1/README.md"} {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("expected %s to exist: %v", rel, err)
 		}
@@ -266,7 +266,7 @@ func TestPlanNew_AncestorIndexesMaterialized(t *testing.T) {
 		t.Error("plan new must preserve hand-authored plans-index content")
 	}
 	for _, slug := range []string{"p1", "p2"} {
-		if !strings.Contains(string(after), "["+slug+"]("+slug+".md)") {
+		if !strings.Contains(string(after), "["+slug+"]("+slug+"/README.md)") {
 			t.Errorf("plans index missing derived row for %q:\n%s", slug, after)
 		}
 	}
@@ -274,6 +274,7 @@ func TestPlanNew_AncestorIndexesMaterialized(t *testing.T) {
 
 func TestPlanNew_SyncsPlansIndex(t *testing.T) {
 	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
 	if _, _, err := runPlan(t, "new", "indexed-plan", "--project", root, "--owner", "alex"); err != nil {
 		t.Fatalf("plan new: %v", err)
 	}
@@ -281,7 +282,7 @@ func TestPlanNew_SyncsPlansIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(index), "| [indexed-plan](indexed-plan.md) | Draft | none |") {
+	if !strings.Contains(string(index), "| [indexed-plan](indexed-plan/README.md) | Draft | none |") {
 		t.Errorf("plan new must synchronize the plans index:\n%s", index)
 	}
 }
@@ -337,6 +338,7 @@ func TestPlanNew_FetchedTemplateIsLintClean(t *testing.T) {
 	t.Setenv("SPECSCORE_TEMPLATE_BASE_URL", srv.URL)
 
 	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
 	if _, _, err := runPlan(t, "new", "fetched-clean", "--project", root); err != nil {
 		t.Fatalf("plan new: %v", err)
 	}
@@ -367,10 +369,21 @@ func TestPlanNew_FeatureThenPlanThenProductionLint(t *testing.T) {
 	t.Setenv("SPECSCORE_TEMPLATE_BASE_URL", srv.URL)
 
 	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
 	withCwd(t, root)
-	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{Project: &projectdef.ProjectConfig{
-		Host: "github.com", Org: "specscore", Repo: "specscore-cli",
-	}}); err != nil {
+	// projectdef.WriteSpecConfig does a fresh marshal with no plans_repo
+	// field of its own — carry the Plan self-route through as an Extras key
+	// (SpecConfig.Extras is inlined at the document root) rather than losing
+	// it, and route it to the identity configureSameRepoPlans actually put on
+	// "origin" (specscore/test-fixture): plan-store resolution reads the real
+	// git remote, not this project: identity override (which exists only for
+	// source-reference/studio-toolbar URL building, a separate concern).
+	if err := projectdef.WriteSpecConfig(root, projectdef.SpecConfig{
+		Project: &projectdef.ProjectConfig{
+			Host: "github.com", Org: "specscore", Repo: "specscore-cli",
+		},
+		Extras: map[string]any{"plans_repo": "specscore/test-fixture"},
+	}); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 	if _, _, err := runFeature(t, "new",
@@ -449,6 +462,7 @@ func TestPlanNew_TitleOwnerDefaults(t *testing.T) {
 // unresolved source Feature, which the AC explicitly tolerates).
 func TestPlanNew_LintCleanOutsideFile(t *testing.T) {
 	root := setupLintCleanProject(t)
+	configureSameRepoPlans(t, root)
 	if _, _, err := runPlan(t, "new", "clean-plan", "--feature", "nonexistent", "--project", root); err != nil {
 		t.Fatalf("plan new: %v", err)
 	}
@@ -457,7 +471,7 @@ func TestPlanNew_LintCleanOutsideFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	planRel := filepath.Join("plans", "clean-plan.md")
+	planRel := filepath.Join("plans", "clean-plan", "README.md")
 	for _, v := range violations {
 		if v.Severity == "error" && v.File != planRel {
 			t.Errorf("unexpected error-severity violation outside the plan file: %s:%d [%s] %s",

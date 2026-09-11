@@ -19,6 +19,7 @@ import (
 func setupSpecRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	configureSameRepoPlans(t, root)
 	specDir := filepath.Join(root, "spec")
 	featDir := filepath.Join(specDir, "features")
 	if err := os.MkdirAll(featDir, 0o755); err != nil {

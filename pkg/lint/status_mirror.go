@@ -26,14 +26,18 @@ import (
 // --severity=error and FilterBySeverity excludes "warning" violations at that
 // level, so un-migrated repos are not broken on landing. The severity flips to
 // "error" once the target repos are migrated.
-type statusMirrorChecker struct{ projectRoot string }
+type statusMirrorChecker struct{ projectRoot, plansDir string }
 
 func newStatusMirrorChecker(projectRoot ...string) checker {
 	var root string
 	if len(projectRoot) > 0 {
 		root = projectRoot[0]
 	}
-	return &statusMirrorChecker{projectRoot: root}
+	var plans string
+	if len(projectRoot) > 1 {
+		plans = projectRoot[1]
+	}
+	return &statusMirrorChecker{projectRoot: root, plansDir: plans}
 }
 
 func (c *statusMirrorChecker) name() string     { return "status-mirror" }
@@ -49,7 +53,7 @@ func (c *statusMirrorChecker) check(specRoot string) ([]Violation, error) {
 	for _, t := range docTypeTargets {
 		target := t
 		var bodyStatusErr error
-		err := target.walk(specRoot, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, func(path string, content []byte) {
 			if bodyStatusErr != nil {
 				return
 			}
@@ -152,7 +156,7 @@ func (c *statusMirrorChecker) fix(specRoot string) error {
 		target := t
 		var writeErr error
 		var bodyStatusErr error
-		err := target.walk(specRoot, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, func(path string, content []byte) {
 			if writeErr != nil || bodyStatusErr != nil {
 				return
 			}

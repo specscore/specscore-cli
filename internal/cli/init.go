@@ -108,6 +108,15 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	if err := projectdef.WriteSpecConfig(root, cfg); err != nil {
 		return exitcode.UnexpectedErrorf("writing %s: %v", projectdef.SpecConfigFile, err)
 	}
+	// appendPlanRoutingHint reopens configPath (for O_APPEND) with the exact
+	// same write-access requirement projectdef.WriteSpecConfig just
+	// satisfied a few lines up — so a failure here needs configPath's
+	// permissions or existence to change concurrently between those two
+	// calls, which only a genuine concurrent mutation (not a deterministic
+	// test) could force.
+	if err := appendPlanRoutingHint(configPath); err != nil {
+		return exitcode.UnexpectedErrorf("writing Plan repository configuration hint: %v", err)
+	}
 
 	// Index files are written only when missing — idempotent partial-state
 	// resume per req:partial-state-resume.
@@ -132,6 +141,16 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized SpecScore project at %s\n", root)
 	return nil
+}
+
+func appendPlanRoutingHint(path string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = f.WriteString("\n# Required before using Plan commands; may point to this repository.\n# plans_repo: owner/repository\n")
+	return err
 }
 
 // resolveProjectRootForInit resolves the project root for init. Unlike

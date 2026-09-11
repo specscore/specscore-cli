@@ -14,6 +14,7 @@ var UserScopedKeys = []string{
 	"recaps.user",
 	"journal.repo",
 	"journal.stream",
+	"repo_checkouts",
 }
 
 // CommittedScopeViolation reports a user-scoped key found in the committed

@@ -370,12 +370,29 @@ func TestLessonNew_ResolveSpecRootError(t *testing.T) {
 func TestLessonNew_ConfigPreflightWritesNothing(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
+	// setupSpecRoot's shared fixture (configureSameRepoPlans) configures a
+	// lessons.classifications vocabulary so runLesson's other callers (which
+	// pass --classification process) have a valid vocabulary to select from.
+	// This test specifically exercises the "no vocabulary configured at all"
+	// preflight rejection, so strip that block back out while keeping the
+	// schema header and Plan self-route intact.
+	config := projectdef.SchemaHeader + "\n\nproject:\n  host: github.com\n  org: specscore\n  repo: test-fixture\nplans_repo: specscore/test-fixture\n"
+	configPath := filepath.Join(root, "specscore.yaml")
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cmd := lessonCommand()
 	cmd.SetArgs([]string{"new", "must-not-write"})
 	if err := cmd.Execute(); exitCodeOf(err) != exitcode.InvalidState {
 		t.Fatalf("exit = %d, want InvalidState; err=%v", exitCodeOf(err), err)
 	}
-	for _, rel := range []string{"specscore.yaml", "spec/README.md", "spec/lessons/must-not-write/README.md"} {
+	// specscore.yaml itself is part of the fixture (it must exist for
+	// resolveSpecRoot to find the project at all) — the preflight must leave
+	// its bytes untouched rather than not creating the file from scratch.
+	if got, err := os.ReadFile(configPath); err != nil || string(got) != config {
+		t.Errorf("preflight unexpectedly modified specscore.yaml: err=%v got=%q", err, got)
+	}
+	for _, rel := range []string{"spec/README.md", "spec/lessons/must-not-write/README.md"} {
 		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
 			t.Errorf("preflight unexpectedly wrote %s", rel)
 		}

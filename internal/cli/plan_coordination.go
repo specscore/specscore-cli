@@ -88,6 +88,14 @@ func coordinationCheck(projectRoot, wantOwner, wantRepo, wantBranch string) (mat
 	}
 	remote, ok := gitremote.Parse(originURL)
 	if !ok {
+		return false, fmt.Sprintf("origin remote %q (not a recognized owner/repo)", originURL)
+	}
+	// The Coordination field's <owner>/<repo> is defined as a GitHub pair
+	// (plan#req:coordination-branch-format), independent of gitremote.Parse now
+	// accepting arbitrary hosts for Plan-routing repository identities. A
+	// same-owner/repo match on a non-GitHub host (e.g. a GitLab mirror) must
+	// still fail closed rather than being silently accepted as coordinated.
+	if remote.Host != "github.com" {
 		return false, fmt.Sprintf("origin remote %q (not a recognized GitHub owner/repo)", originURL)
 	}
 	branch, err := gitremote.CurrentBranch(projectRoot)

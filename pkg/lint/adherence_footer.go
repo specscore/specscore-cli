@@ -30,6 +30,7 @@ type docTypeTarget struct {
 	severity      string
 	statusBearing bool
 	planArtifact  bool
+	planOwned     string
 	walk          func(specRoot string, fn func(path string, content []byte)) error
 }
 
@@ -67,6 +68,7 @@ var docTypeTargets = []docTypeTarget{
 		url:         "https://specscore.md/plans-index-specification",
 		severity:    "warn",
 		walk:        walkPlansIndex,
+		planOwned:   "index",
 	},
 	{
 		description: "ideas-index README",
@@ -80,6 +82,7 @@ var docTypeTargets = []docTypeTarget{
 		severity:      "warn",
 		statusBearing: true,
 		planArtifact:  true,
+		planOwned:     "artifact",
 		walk:          walkPlanArtifacts,
 	},
 	{
@@ -87,6 +90,7 @@ var docTypeTargets = []docTypeTarget{
 		url:           "https://specscore.md/task-specification",
 		severity:      "warn",
 		statusBearing: true,
+		planOwned:     "task",
 		walk:          walkTaskReadmes,
 	},
 	{
@@ -157,7 +161,7 @@ var docTypeTargets = []docTypeTarget{
 // adherenceFooterChecker verifies that every SpecScore document of a
 // Document or Index Kind carries the adherence footer URL corresponding
 // to its document type, as required by the Adherence Footer feature.
-type adherenceFooterChecker struct{ projectRoot string }
+type adherenceFooterChecker struct{ projectRoot, plansDir string }
 
 var adherenceFooterURLPattern = regexp.MustCompile(`^https://specscore\.md/[a-z0-9-]+-specification$`)
 
@@ -166,7 +170,11 @@ func newAdherenceFooterChecker(projectRoot ...string) checker {
 	if len(projectRoot) > 0 {
 		root = projectRoot[0]
 	}
-	return &adherenceFooterChecker{projectRoot: root}
+	var plans string
+	if len(projectRoot) > 1 {
+		plans = projectRoot[1]
+	}
+	return &adherenceFooterChecker{projectRoot: root, plansDir: plans}
 }
 
 func (c *adherenceFooterChecker) name() string     { return "adherence-footer" }
@@ -176,7 +184,7 @@ func (c *adherenceFooterChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	for _, t := range docTypeTargets {
 		target := t
-		err := target.walk(specRoot, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, func(path string, content []byte) {
 			if strings.Contains(string(content), target.url) {
 				return
 			}
@@ -205,7 +213,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 	for _, t := range docTypeTargets {
 		target := t
 		var writeErr error
-		err := target.walk(specRoot, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, func(path string, content []byte) {
 			if writeErr != nil {
 				return
 			}
@@ -294,7 +302,14 @@ func walkIdeaFiles(specRoot string, fn func(path string, content []byte)) error 
 
 // walkPlansIndex invokes fn for specRoot/plans/README.md if present.
 func walkPlansIndex(specRoot string, fn func(path string, content []byte)) error {
-	path := filepath.Join(specRoot, "plans", "README.md")
+	return walkPlansIndexDir(filepath.Join(specRoot, "plans"), fn)
+}
+
+func walkPlansIndexDir(plansDir string, fn func(path string, content []byte)) error {
+	path := filepath.Join(plansDir, "README.md")
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("plan index must not be a symbolic link: %s", path)
+	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -392,17 +407,24 @@ func walkFeatureReadmesExcludingIndex(specRoot string, fn func(path string, cont
 // directory-form README. Keeping the pair in one walker prevents status- and
 // frontmatter rules from silently protecting only the legacy shape.
 func walkPlanArtifacts(specRoot string, fn func(path string, content []byte)) error {
-	if err := walkFlatPlanFiles(specRoot, fn); err != nil {
+	return walkPlanArtifactsDir(filepath.Join(specRoot, "plans"), fn)
+}
+
+func walkPlanArtifactsDir(plansDir string, fn func(path string, content []byte)) error {
+	if err := walkFlatPlanFilesDir(plansDir, fn); err != nil {
 		return err
 	}
-	return walkPlanReadmes(specRoot, fn)
+	return walkPlanReadmesDir(plansDir, fn)
 }
 
 // walkFlatPlanFiles invokes fn for direct .md children of spec/plans, except
 // README.md (the plans index). Nested markdown belongs to a directory-form
 // Plan, Task, or other sub-artifact and is handled by its dedicated walker.
 func walkFlatPlanFiles(specRoot string, fn func(path string, content []byte)) error {
-	plansDir := filepath.Join(specRoot, "plans")
+	return walkFlatPlanFilesDir(filepath.Join(specRoot, "plans"), fn)
+}
+
+func walkFlatPlanFilesDir(plansDir string, fn func(path string, content []byte)) error {
 	entries, err := os.ReadDir(plansDir)
 	if os.IsNotExist(err) {
 		return nil
@@ -413,6 +435,9 @@ func walkFlatPlanFiles(specRoot string, fn func(path string, content []byte)) er
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Name() == "README.md" || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("plan must not be a symbolic link: %s", filepath.Join(plansDir, entry.Name()))
 		}
 		path := filepath.Join(plansDir, entry.Name())
 		parsed, parseErr := plan.Parse(path)
@@ -439,7 +464,10 @@ var readFlatPlanFile = os.ReadFile
 // excluding specRoot/plans/README.md (which is the plans-index, walked separately)
 // and any README.md inside a reserved _-prefixed directory.
 func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) error {
-	plansDir := filepath.Join(specRoot, "plans")
+	return walkPlanReadmesDir(filepath.Join(specRoot, "plans"), fn)
+}
+
+func walkPlanReadmesDir(plansDir string, fn func(path string, content []byte)) error {
 	info, err := os.Stat(plansDir)
 	if err != nil || !info.IsDir() {
 		return nil
@@ -456,6 +484,9 @@ func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) erro
 		}
 		if info.Name() != "README.md" {
 			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("plan must not be a symbolic link: %s", path)
 		}
 		// Skip the plans-index itself (handled by walkPlansIndex).
 		if path == filepath.Join(plansDir, "README.md") {
@@ -477,7 +508,10 @@ func walkPlanReadmes(specRoot string, fn func(path string, content []byte)) erro
 // walkTaskReadmes invokes fn for every Task README under
 // specRoot/plans/**/tasks/*/README.md.
 func walkTaskReadmes(specRoot string, fn func(path string, content []byte)) error {
-	plansDir := filepath.Join(specRoot, "plans")
+	return walkTaskReadmesDir(filepath.Join(specRoot, "plans"), fn)
+}
+
+func walkTaskReadmesDir(plansDir string, fn func(path string, content []byte)) error {
 	info, err := os.Stat(plansDir)
 	if err != nil || !info.IsDir() {
 		return nil
@@ -488,6 +522,9 @@ func walkTaskReadmes(specRoot string, fn func(path string, content []byte)) erro
 		}
 		if info.IsDir() || info.Name() != "README.md" {
 			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("plan task must not be a symbolic link: %s", path)
 		}
 		// A Task README lives at plans/**/tasks/<slug>/README.md. Check that
 		// the grandparent directory is "tasks".
@@ -501,6 +538,22 @@ func walkTaskReadmes(specRoot string, fn func(path string, content []byte)) erro
 		fn(path, content)
 		return nil
 	})
+}
+
+func walkDocTarget(target docTypeTarget, specRoot, plansDir string, fn func(path string, content []byte)) error {
+	if plansDir == "" || target.planOwned == "" {
+		return target.walk(specRoot, fn)
+	}
+	switch target.planOwned {
+	case "index":
+		return walkPlansIndexDir(plansDir, fn)
+	case "artifact":
+		return walkPlanArtifactsDir(plansDir, fn)
+	case "task":
+		return walkTaskReadmesDir(plansDir, fn)
+	default:
+		return fmt.Errorf("unknown plan-owned document type %q", target.planOwned)
+	}
 }
 
 // walkScenariosIndexes invokes fn for every scenarios index at

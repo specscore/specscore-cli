@@ -59,6 +59,9 @@ type ReconcileOptions struct {
 	// (.../spec/plans/<slug>/README.md) is NOT supported — embedded-task
 	// reconciliation requires the single-file parser (pkg/plan.Parse).
 	SpecRoot string
+	// PlansDir is the resolved authoritative Plan namespace. Empty preserves
+	// the historical SpecRoot/spec/plans behavior for direct callers.
+	PlansDir string
 
 	// Slug is the Plan slug, e.g. "user-auth". Caller is expected to have
 	// validated it via plan.ValidateSlug.
@@ -145,6 +148,13 @@ type ReconcileResult struct {
 	Target TaskStatus
 }
 
+func reconcilePlansDir(opts ReconcileOptions) string {
+	if opts.PlansDir != "" {
+		return opts.PlansDir
+	}
+	return filepath.Join(opts.SpecRoot, "spec", "plans")
+}
+
 // PreviewReconcile runs the complete read-only reconciliation validation and
 // composition against the current Plan bytes. It is used by whole-tree
 // transactions to reject an invalid command before creating recovery state;
@@ -160,16 +170,17 @@ func PreviewReconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, exitcode.InvalidArgsError(
 			"PreviewReconcile: --note required — describe why the plan is being reconciled")
 	}
-	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
-	flatPath := filepath.Join(plansDir, opts.Slug+".md")
-	resolved, err := resolvePlanFile(plansDir, opts.Slug)
+	plansDir := reconcilePlansDir(opts)
+	// PathForID's result itself isn't needed on this path — only its
+	// validation of opts.Slug is; the actual target path comes from
+	// resolvePlanFile below (which accepts both the canonical directory form
+	// and the legacy flat form).
+	if _, pathErr := PathForID(plansDir, opts.Slug); pathErr != nil {
+		return ReconcileResult{}, exitcode.InvalidArgsErrorf("invalid plan ID %q: %v", opts.Slug, pathErr)
+	}
+	flatPath, err := resolvePlanFile(plansDir, opts.Slug)
 	if err != nil {
 		return ReconcileResult{}, err
-	}
-	if resolved != flatPath {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
-			"plan %q uses the directory form (spec/plans/%s/README.md); `plan reconcile` only supports the flat single-file form",
-			opts.Slug, opts.Slug)
 	}
 	before, err := os.ReadFile(flatPath)
 	if err != nil {
@@ -225,16 +236,17 @@ func Reconcile(opts ReconcileOptions) (ReconcileResult, error) {
 		return ReconcileResult{}, exitcode.UnexpectedErrorf("Reconcile: PostMutation hook required")
 	}
 
-	plansDir := filepath.Join(opts.SpecRoot, "spec", "plans")
-	flatPath := filepath.Join(plansDir, opts.Slug+".md")
-	resolved, err := resolvePlanFile(plansDir, opts.Slug)
+	plansDir := reconcilePlansDir(opts)
+	// PathForID's result itself isn't needed on this path — only its
+	// validation of opts.Slug is; the actual target path comes from
+	// resolvePlanFile below (which accepts both the canonical directory form
+	// and the legacy flat form).
+	if _, pathErr := PathForID(plansDir, opts.Slug); pathErr != nil {
+		return ReconcileResult{}, exitcode.InvalidArgsErrorf("invalid plan ID %q: %v", opts.Slug, pathErr)
+	}
+	flatPath, err := resolvePlanFile(plansDir, opts.Slug)
 	if err != nil {
 		return ReconcileResult{}, err
-	}
-	if resolved != flatPath {
-		return ReconcileResult{}, exitcode.InvalidStateErrorf(
-			"plan %q uses the directory form (spec/plans/%s/README.md); `plan reconcile` only supports the flat single-file form",
-			opts.Slug, opts.Slug)
 	}
 	var result ReconcileResult
 	err = transformPlanArtifact(opts.transformArtifact, flatPath, func(before []byte) ([]byte, error) {
@@ -277,6 +289,7 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	if err != nil {
 		return ReconcileResult{}, nil, exitcode.UnexpectedErrorf("parsing plan %s: %v", flatPath, err)
 	}
+	p.Slug = opts.Slug
 	if err := requirePlanArtifact(p, "target"); err != nil {
 		return ReconcileResult{}, nil, err
 	}
@@ -369,7 +382,7 @@ func reconcileBytes(opts ReconcileOptions, flatPath string, original []byte) (Re
 	// It is an out-of-band history correction, not a prerequisite bypass: the
 	// same readiness evaluator used by dispatch entrypoints must pass before
 	// any transformed bytes are produced or written, preserving atomic refusal.
-	readiness, err := p.PrerequisiteReadiness(filepath.Join(opts.SpecRoot, "spec", "plans"))
+	readiness, err := p.PrerequisiteReadiness(reconcilePlansDir(opts))
 	if err != nil {
 		return ReconcileResult{}, nil, preserveReadinessError(opts.Slug, err)
 	}

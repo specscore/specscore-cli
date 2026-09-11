@@ -756,7 +756,7 @@ func TestPlanHierarchyChecker_RoadmapWithSteps(t *testing.T) {
 	}
 }
 
-func TestPlanHierarchyChecker_ThreeLevelNesting(t *testing.T) {
+func TestPlanHierarchyChecker_RecursiveNesting(t *testing.T) {
 	root := setupSpecTree(t, map[string]string{
 		"plans/roadmap-a/README.md":                       "# Roadmap A\n\n## Child Plans\n\n- child-plan\n",
 		"plans/roadmap-a/child-plan/README.md":            "# Child Plan\n\n## Child Plans\n\n- grandchild\n",
@@ -775,8 +775,8 @@ func TestPlanHierarchyChecker_ThreeLevelNesting(t *testing.T) {
 			nestingViolations = append(nestingViolations, viol)
 		}
 	}
-	if len(nestingViolations) == 0 {
-		t.Fatalf("expected nesting violation, got none; all violations: %v", v)
+	if len(nestingViolations) != 0 {
+		t.Fatalf("recursive nesting must be supported; violations: %v", nestingViolations)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/config"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 )
 
 func configCommand() *cobra.Command {
@@ -74,7 +75,16 @@ func resolveLayeredConfig(cmd *cobra.Command) (config.Resolved, error) {
 	if err != nil {
 		return config.Resolved{}, exitcode.UnexpectedErrorf("cannot determine home directory: %v", err)
 	}
-	return config.ResolveDir(root, home)
+	// OrgConfigPath's only error path is filepath.Abs failing on a relative
+	// sourceRoot when os.Getwd is itself broken (e.g. a deleted cwd) —
+	// verified empirically not reproducible even by deliberately deleting
+	// the working directory mid-test on this platform, so this branch has
+	// no deterministic, non-racy reproduction.
+	orgPath, err := planstore.OrgConfigPath(root)
+	if err != nil {
+		return config.Resolved{}, exitcode.InvalidStateErrorf("resolving organization config: %v", err)
+	}
+	return config.ResolveDirWithOrg(root, home, orgPath)
 }
 
 func runConfigShow(cmd *cobra.Command, _ []string) error {

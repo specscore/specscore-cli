@@ -280,7 +280,7 @@ func malformedPrerequisiteDeclaration(p *Plan) string {
 		if slug == "" {
 			return "empty entry"
 		}
-		if err := ValidateSlug(slug); err != nil {
+		if err := ValidateID(slug); err != nil {
 			return "invalid slug"
 		}
 		if seen[slug] {
@@ -316,7 +316,11 @@ func (r PrerequisiteReadiness) UnmetMessage() string {
 // PlanReadiness resolves slug in specRoot and evaluates its prerequisites.
 // It is the command-facing convenience wrapper around PrerequisiteReadiness.
 func PlanReadiness(specRoot, slug string) (PrerequisiteReadiness, error) {
-	plansDir := filepath.Join(specRoot, "spec", "plans")
+	return PlanReadinessDir(filepath.Join(specRoot, "spec", "plans"), slug)
+}
+
+// PlanReadinessDir evaluates one Plan inside an already resolved namespace.
+func PlanReadinessDir(plansDir, slug string) (PrerequisiteReadiness, error) {
 	path, err := resolvePlanFile(plansDir, slug)
 	if err != nil {
 		return PrerequisiteReadiness{}, err
@@ -325,6 +329,7 @@ func PlanReadiness(specRoot, slug string) (PrerequisiteReadiness, error) {
 	if err != nil {
 		return PrerequisiteReadiness{}, exitcode.UnexpectedErrorf("parsing plan %q: %v", slug, err)
 	}
+	p.Slug = slug
 	// Use the command argument as the root identity. A title can be stale or
 	// malformed, but the prerequisite graph's edges name filesystem slugs.
 	return newPrerequisiteReadinessEvaluator(plansDir).evaluatePlan(p, slug)

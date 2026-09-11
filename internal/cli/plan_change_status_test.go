@@ -31,7 +31,7 @@ func stagePlan(t *testing.T, slug, status string) string {
 		t.Fatalf("write features README: %v", err)
 	}
 
-	path := filepath.Join(root, "spec", "plans", slug+".md")
+	path := filepath.Join(root, "spec", "plans", slug, "README.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
@@ -71,7 +71,7 @@ func TestPlanChangeStatus_DraftToInReview_CLI(t *testing.T) {
 	if want := "auth: Draft → In Review\n"; stdout != want {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** In Review") {
 		t.Errorf("status not rewritten:\n%s", body)
 	}
@@ -87,7 +87,7 @@ func TestPlanChangeStatus_DraftToApprovedDirect_CLI(t *testing.T) {
 	if want := "auth: Draft → Approved\n"; stdout != want {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Approved") {
 		t.Errorf("status not rewritten:\n%s", body)
 	}
@@ -103,7 +103,7 @@ func TestPlanChangeStatus_InReviewToApproved_CaseInsensitive_CLI(t *testing.T) {
 	if want := "auth: In Review → Approved\n"; stdout != want {
 		t.Errorf("stdout = %q; want %q", stdout, want)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Approved") {
 		t.Errorf("canonical title-case not written:\n%s", body)
 	}
@@ -116,7 +116,7 @@ func TestPlanChangeStatus_Withdrawn_CLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** Withdrawn") || !strings.Contains(string(body), "abandoned after pivot") {
 		t.Errorf("withdrawn/resolution not written:\n%s", body)
 	}
@@ -132,7 +132,7 @@ func TestPlanChangeStatus_Superseded_CLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	for _, want := range []string{"**Status:** Superseded", "**Superseded By:** auth-v2", "replaced"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("missing %q:\n%s", want, body)
@@ -201,7 +201,7 @@ func TestPlanChangeStatus_LintFailureRetainsCommittedTransaction_CLI(t *testing.
 	if !errors.As(err, &committed) || committed.Phase != "post-mutation callback" {
 		t.Fatalf("error = %T %v, want committed callback failure", err, err)
 	}
-	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth.md"))
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "plans", "auth", "README.md"))
 	if !strings.Contains(string(body), "**Status:** In Review") {
 		t.Errorf("committed status was not retained after lint failure:\n%s", body)
 	}
@@ -212,7 +212,7 @@ func TestPlanChangeStatus_LintFailureRetainsCommittedTransaction_CLI(t *testing.
 // This is the user-visible recovery guarantee for the issue-166 failure mode.
 func TestPlanChangeStatus_InvalidPlanPreflightIsWriteFree(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
-	path := filepath.Join(root, "spec", "plans", "auth.md")
+	path := filepath.Join(root, "spec", "plans", "auth", "README.md")
 	planBefore, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func transactionLockFiles(t *testing.T, root string) []string {
 
 func TestPlanChangeStatus_ForceWarningSurvivesCommittedCallbackFailure_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
-	path := filepath.Join(root, "spec", "plans", "auth.md")
+	path := filepath.Join(root, "spec", "plans", "auth", "README.md")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

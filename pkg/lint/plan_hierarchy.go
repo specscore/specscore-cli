@@ -10,17 +10,21 @@ import (
 // planHierarchyChecker validates hierarchical plan conventions:
 // - Roadmaps (plans with child plan subdirectories) must not have Steps sections
 // - Nesting is limited to 2 levels (roadmap -> plan)
-type planHierarchyChecker struct{}
+type planHierarchyChecker struct{ plansDir string }
 
-func newPlanHierarchyChecker() checker {
-	return &planHierarchyChecker{}
+func newPlanHierarchyChecker(plansDir ...string) checker {
+	c := &planHierarchyChecker{}
+	if len(plansDir) > 0 {
+		c.plansDir = plansDir[0]
+	}
+	return c
 }
 
 func (c *planHierarchyChecker) name() string     { return "plan-hierarchy" }
 func (c *planHierarchyChecker) severity() string { return "error" }
 
 func (c *planHierarchyChecker) check(specRoot string) ([]Violation, error) {
-	plansDir := filepath.Join(specRoot, "plans")
+	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	info, err := os.Stat(plansDir)
 	if err != nil || !info.IsDir() {
 		return nil, nil
@@ -54,22 +58,6 @@ func (c *planHierarchyChecker) check(specRoot string) ([]Violation, error) {
 		}
 
 		relReadme, _ := filepath.Rel(specRoot, readmePath)
-
-		// Determine nesting depth relative to plans/
-		relToPlans, _ := filepath.Rel(plansDir, path)
-		depth := len(strings.Split(relToPlans, string(os.PathSeparator)))
-
-		// Check nesting depth: max 2 levels (roadmap -> plan)
-		if depth > 2 {
-			violations = append(violations, Violation{
-				File:     relReadme,
-				Line:     0,
-				Severity: "error",
-				Rule:     "plan-hierarchy",
-				Message:  "Plan nesting depth exceeds 2 levels; maximum is roadmap -> plan",
-			})
-			return nil
-		}
 
 		// Detect if this is a roadmap (has child plan subdirectories containing README.md)
 		isRoadmap := hasChildPlanDirs(path)

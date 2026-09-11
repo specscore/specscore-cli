@@ -24,6 +24,7 @@ var parseFeatureACsMaxBuf = 1 << 20
 //
 // See spec/features/cli/spec/lint/plan-rules/README.md for the contract.
 type planRulesChecker struct {
+	plansDir string
 	// fixNoSource, when true, makes the fix pass rewrite a plan that declares
 	// no source line at all into a source-less plan (`**Source:** none`). It is
 	// opt-in (enabled via `--fix=no-source`) because a fully-absent source line
@@ -48,8 +49,12 @@ type planRulesChecker struct {
 	fixP004Legacy bool
 }
 
-func newPlanRulesChecker() *planRulesChecker {
-	return &planRulesChecker{}
+func newPlanRulesChecker(plansDir ...string) *planRulesChecker {
+	c := &planRulesChecker{}
+	if len(plansDir) > 0 {
+		c.plansDir = plansDir[0]
+	}
+	return c
 }
 
 // name returns the primary rule name. The checker is registered under all
@@ -65,12 +70,12 @@ func (c *planRulesChecker) fixTargets() []string {
 }
 
 func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
-	plansDir := filepath.Join(specRoot, "plans")
+	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
 		return nil, nil
 	}
 
-	entries, err := os.ReadDir(plansDir)
+	discovered, err := plan.Discover(plansDir)
 	if err != nil {
 		return nil, fmt.Errorf("reading plans dir: %w", err)
 	}
@@ -80,23 +85,10 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	parsedPlans := map[string]*plan.Plan{}
 	relPaths := map[string]string{}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == "README.md" || !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		planPath := filepath.Join(plansDir, name)
-		p, parseErr := plan.Parse(planPath)
-		if parseErr != nil {
-			return nil, fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
-		}
-		if !p.HasPlanTitle {
-			continue // not a SpecStudio single-file Plan
-		}
-		relPath, _ := filepath.Rel(specRoot, planPath)
+	for _, p := range discovered {
+		planPath := p.Path
+		relPath, _ := filepath.Rel(plansDir, planPath)
+		relPath = filepath.Join("plans", relPath)
 		violations = append(violations, lintPlan(p, relPath, featuresDir)...)
 		parsedPlans[p.Slug] = p
 		relPaths[p.Slug] = relPath
@@ -125,17 +117,17 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 // P-007 execution-band reconciliation. Both are idempotent.
 func (c *planRulesChecker) fix(specRoot string) error {
 	if c.fixP004Legacy {
-		if err := fixLegacyTaskStatuses(specRoot); err != nil {
+		if err := fixLegacyTaskStatusesInDir(effectivePlansDir(specRoot, c.plansDir)); err != nil {
 			return err
 		}
 	}
 	if c.fixP006Legacy {
-		if err := fixLegacyStatusesInTree(filepath.Join(specRoot, "plans"), legacyPlanStatusMap, false); err != nil {
+		if err := fixLegacyStatusesInTree(effectivePlansDir(specRoot, c.plansDir), legacyPlanStatusMap, false); err != nil {
 			return err
 		}
 	}
 	if c.fixP007 {
-		if err := fixP007(specRoot); err != nil {
+		if err := fixP007InDir(effectivePlansDir(specRoot, c.plansDir)); err != nil {
 			return err
 		}
 	}
@@ -153,24 +145,22 @@ func (c *planRulesChecker) fix(specRoot string) error {
 // value) is left untouched — only a fully-absent source line is repaired, and an
 // unrecognized value stays a hard P-002 error. Idempotent.
 func (c *planRulesChecker) fixNoSourceLines(specRoot string) error {
-	plansDir := filepath.Join(specRoot, "plans")
+	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
 		return nil
 	}
-	entries, err := os.ReadDir(plansDir)
+	plans, err := plan.Discover(plansDir)
 	if err != nil {
 		return fmt.Errorf("reading plans dir: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == "README.md" || !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		planPath := filepath.Join(plansDir, name)
+	for _, discovered := range plans {
+		planPath := discovered.Path
 		if err := lifecycle.TransformArtifact(planPath, func(before []byte) ([]byte, error) {
+			// plan.Discover above already parsed planPath successfully once;
+			// TransformArtifact's tx.Before() re-reads it fresh under lock,
+			// so this can only fail if the file's bytes changed between
+			// those two reads — a genuine concurrent-mutation scenario, not
+			// something a deterministic test can force without racing.
 			p, parseErr := plan.ParseBytes(planPath, before)
 			if parseErr != nil {
 				return nil, fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
@@ -321,33 +311,35 @@ func lintP004SchemaTokens(p *plan.Plan, relPath string) []Violation {
 // each task's **Status:** line. It mirrors lintP004SchemaTokens' legacy detection
 // so a second pass is a no-op (the rewritten value is canonical, not legacy).
 func fixLegacyTaskStatuses(specRoot string) error {
-	plansDir := filepath.Join(specRoot, "plans")
+	return fixLegacyTaskStatusesInDir(filepath.Join(specRoot, "plans"))
+}
+
+func fixLegacyTaskStatusesInDir(plansDir string) error {
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
 		return nil
 	}
-	entries, err := os.ReadDir(plansDir)
+	plans, err := plan.Discover(plansDir)
 	if err != nil {
 		return fmt.Errorf("reading plans dir: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == "README.md" || !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		planPath := filepath.Join(plansDir, name)
+	for _, discovered := range plans {
+		planPath := discovered.Path
 		if err := lifecycle.TransformArtifact(planPath, func(before []byte) ([]byte, error) {
 			// Parse inside the same lock as the rewrite: the task-line map is
 			// derived from precisely the bytes subsequently transformed.
+			// (Same reasoning as fixNoSourceLines above: plan.Discover
+			// already parsed this file once, so parseErr can only fire on a
+			// genuine concurrent mutation between that read and this one.)
 			p, parseErr := plan.ParseBytes(planPath, before)
 			if parseErr != nil {
 				return nil, fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
 			}
-			if !p.HasPlanTitle {
-				return before, nil
-			}
+			// No "!p.HasPlanTitle { return before, nil }" guard here: unlike
+			// fixP007InDir's equivalent check (which also gates on StatusLine
+			// and derivationEligibleStatuses, both independently reachable),
+			// plan.Discover above already filters its returned list to only
+			// HasPlanTitle==true entries, so re-parsing the exact same bytes
+			// for one of discovered.Path's entries cannot yield false here.
 			rewrites := map[int]string{}
 			for _, t := range p.Tasks {
 				if t.StatusPresent {
@@ -884,24 +876,24 @@ func lintP007(p *plan.Plan, relPath string) []Violation {
 // second pass is a no-op. Only the **Status:** line is rewritten; the rest of
 // the file is byte-preserved.
 func fixP007(specRoot string) error {
-	plansDir := filepath.Join(specRoot, "plans")
+	return fixP007InDir(filepath.Join(specRoot, "plans"))
+}
+
+func fixP007InDir(plansDir string) error {
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
 		return nil
 	}
-	entries, err := os.ReadDir(plansDir)
+	plans, err := plan.Discover(plansDir)
 	if err != nil {
 		return fmt.Errorf("reading plans dir: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == "README.md" || !strings.HasSuffix(name, ".md") {
-			continue
-		}
-		planPath := filepath.Join(plansDir, name)
+	for _, discovered := range plans {
+		planPath := discovered.Path
 		if err := lifecycle.TransformArtifact(planPath, func(before []byte) ([]byte, error) {
+			// Same reasoning as fixNoSourceLines/fixLegacyTaskStatusesInDir
+			// above: plan.Discover already parsed this file once, so
+			// parseErr can only fire on a genuine concurrent mutation
+			// between that read and TransformArtifact's locked re-read.
 			p, parseErr := plan.ParseBytes(planPath, before)
 			if parseErr != nil {
 				return nil, fmt.Errorf("parsing plan %s: %w", planPath, parseErr)
@@ -936,7 +928,7 @@ func rewritePlanStatusLineBytes(data []byte, statusLine int, band string) ([]byt
 		return nil, lifecycle.ErrConcurrentMutation
 	}
 	lines[statusLine-1] = "**Status:** " + band
-	return []byte(strings.Join(lines, "\n")), nil
+	return setFrontmatterStatus([]byte(strings.Join(lines, "\n")), band), nil
 }
 
 // ----- P-008 implementation-commit-provenance ref format -----
@@ -1197,7 +1189,7 @@ func lintP009(parsedPlans map[string]*plan.Plan, relPaths map[string]string) []V
 				})
 				continue
 			}
-			if err := plan.ValidateSlug(prerequisite); err != nil {
+			if err := plan.ValidateID(prerequisite); err != nil {
 				out = append(out, Violation{
 					File: relPaths[slug], Line: p.PrerequisiteLine, Severity: "error", Rule: "P-009",
 					Message: fmt.Sprintf("invalid prerequisite plan slug %q: %v", prerequisite, err),

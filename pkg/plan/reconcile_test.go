@@ -83,8 +83,8 @@ func TestPreviewReconcileRefusalBranches(t *testing.T) {
 		if err := os.WriteFile(path, []byte(reconcilePlanBody("Draft", "planning")), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := PreviewReconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "reason"}); err == nil {
-			t.Fatal("PreviewReconcile accepted directory-form plan")
+		if _, err := PreviewReconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "reason"}); err != nil {
+			t.Fatalf("PreviewReconcile directory-form plan: %v", err)
 		}
 	})
 

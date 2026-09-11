@@ -10,15 +10,21 @@ import (
 // planIndexChecker keeps the canonical plans index a derived projection of the
 // single-file Plan artifacts. It deliberately owns rows only; prose sections
 // such as Recently Closed remain author-maintained.
-type planIndexChecker struct{}
+type planIndexChecker struct{ plansDir string }
 
-func newPlanIndexChecker() *planIndexChecker { return &planIndexChecker{} }
+func newPlanIndexChecker(plansDir ...string) *planIndexChecker {
+	c := &planIndexChecker{}
+	if len(plansDir) > 0 {
+		c.plansDir = plansDir[0]
+	}
+	return c
+}
 
 func (c *planIndexChecker) name() string     { return "plan-index-sync" }
 func (c *planIndexChecker) severity() string { return "error" }
 
 func (c *planIndexChecker) check(specRoot string) ([]Violation, error) {
-	plansDir := filepath.Join(specRoot, "plans")
+	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
 		return nil, nil
 	}
@@ -52,8 +58,15 @@ func (c *planIndexChecker) check(specRoot string) ([]Violation, error) {
 }
 
 func (c *planIndexChecker) fix(specRoot string) error {
-	plansDir := filepath.Join(specRoot, "plans")
+	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
+		return nil
+	}
+	// A missing plans/README.md is not this fixer's concern (readme-exists owns
+	// a missing index document, mirroring check() above) — a Plan mutation that
+	// runs before the namespace's index has been materialized must not hard-fail
+	// the whole post-mutation lint pass over an absent derived file.
+	if _, err := os.Stat(filepath.Join(plansDir, "README.md")); os.IsNotExist(err) {
 		return nil
 	}
 	_, err := plan.SyncIndex(plansDir)

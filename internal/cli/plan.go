@@ -13,10 +13,10 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/dryrun"
 	"github.com/specscore/specscore-cli/pkg/exitcode"
-	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/spf13/cobra"
 )
@@ -45,11 +45,11 @@ func planCommand() *cobra.Command {
 func planTransitionsCommand() *cobra.Command {
 	return transitionsCommand(lifecycle.KindPlan, "slug", "Show the Plan status matrix, or one plan's legal next statuses",
 		func(projectFlag, slug string) (string, error) {
-			specRoot, err := resolveSpecRoot(projectFlag)
+			store, err := resolvePlanStore(projectFlag, planstore.ReadOnly)
 			if err != nil {
 				return "", err
 			}
-			return resolvePlanFile(filepath.Join(specRoot, "spec", "plans"), slug)
+			return resolvePlanFile(store.PlansDir, slug)
 		})
 }
 
@@ -63,8 +63,8 @@ func planChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "change-status <slug> --to=<status>",
 		Short: "Transition a Plan's Status (human-authored arcs only)",
-		Long: `Transitions spec/plans/<slug>.md (or the directory-form
-spec/plans/<slug>/README.md) from its current **Status:** to the value named
+		Long: `Transitions <configured-plans-namespace>/<plan-id>/README.md (with
+legacy flat files still readable) from its current **Status:** to the value named
 by --to. The transition is validated against the Plan legal-transition matrix
 below; illegal (from, to) pairs exit 4. On success, the verb runs
 ` + "`specscore spec lint --fix`" + ` to keep the plans-index in sync, prints
@@ -125,7 +125,7 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 			"too many positional arguments: change-status accepts exactly one <slug>, got %d", len(args))
 	}
 	slug := args[0]
-	if err := plan.ValidateSlug(slug); err != nil {
+	if err := plan.ValidateID(slug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
 	}
 
@@ -171,7 +171,7 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 			return exitcode.InvalidArgsError(
 				"transition to Superseded requires --successor naming the plan that replaces this one")
 		}
-		if err := plan.ValidateSlug(strings.TrimSpace(successor)); err != nil {
+		if err := plan.ValidateID(strings.TrimSpace(successor)); err != nil {
 			return exitcode.InvalidArgsErrorf("invalid successor plan slug: %v", err)
 		}
 	} else if strings.TrimSpace(successor) != "" {
@@ -180,7 +180,7 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	projectFlag, _ := cmd.Flags().GetString("project")
-	specRoot, err := resolveSpecRoot(projectFlag)
+	store, err := resolvePlanStore(projectFlag, planstore.Write)
 	if err != nil {
 		return err
 	}
@@ -190,8 +190,13 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 	var coordinationWarning bytes.Buffer
 
 	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (plan.ChangeStatusResult, error) {
-			return planChangeStatusMutate(sandboxRoot, specRoot, slug, to, note, successor, forceCoordination, &coordinationWarning)
+		result, changes, err := dryrun.Sandbox(store.PlansCheckout, func(sandboxRoot string) (plan.ChangeStatusResult, error) {
+			// store.PlansDir is always PlansCheckout itself (same-repo) or a
+			// path planstore.Resolve built via secureJoin(PlansCheckout, ...)
+			// (external) — either way a descendant of PlansCheckout by
+			// construction, so this Rel call cannot fail.
+			relPlans, _ := filepath.Rel(store.PlansCheckout, store.PlansDir)
+			return planChangeStatusMutate(store.SourceRoot, filepath.Join(sandboxRoot, relPlans), store.SourceRoot, slug, to, note, successor, forceCoordination, &coordinationWarning)
 		})
 		if err != nil {
 			return handlePlanChangeStatusError(err, &coordinationWarning, cmd.ErrOrStderr())
@@ -201,7 +206,7 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	result, err := planChangeStatusMutate(specRoot, specRoot, slug, to, note, successor, forceCoordination, &coordinationWarning)
+	result, err := planChangeStatusMutate(store.SourceRoot, store.PlansDir, store.SourceRoot, slug, to, note, successor, forceCoordination, &coordinationWarning)
 	if err != nil {
 		return handlePlanChangeStatusError(err, &coordinationWarning, cmd.ErrOrStderr())
 	}
@@ -216,17 +221,24 @@ func runPlanChangeStatus(cmd *cobra.Command, args []string) error {
 // real command and --dry-run. ArtifactRoot is the tree that is transformed;
 // coordinationRoot stays on the real project during a preview because the
 // sandbox intentionally contains only spec/ and is not a Git checkout.
-func planChangeStatusMutate(artifactRoot, coordinationRoot, slug string, to lifecycle.Status, note, successor string, forceCoordination bool, coordinationWarning *bytes.Buffer) (plan.ChangeStatusResult, error) {
-	if err := preflightPlanChangeStatus(artifactRoot); err != nil {
+func planChangeStatusMutate(sourceRoot, plansDir, coordinationRoot, slug string, to lifecycle.Status, note, successor string, forceCoordination bool, coordinationWarning *bytes.Buffer) (plan.ChangeStatusResult, error) {
+	if err := preflightPlanChangeStatus(sourceRoot, plansDir); err != nil {
 		return plan.ChangeStatusResult{}, err
 	}
 	return plan.ChangeStatus(plan.ChangeStatusOptions{
-		SpecRoot:  artifactRoot,
+		SpecRoot:  sourceRoot,
+		PlansDir:  plansDir,
 		Slug:      slug,
 		To:        to,
 		Note:      note,
 		Successor: successor,
 		ValidateSnapshot: func(path string, before []byte) error {
+			// runPlanChangeStatus's preflightPlanChangeStatus runs a full
+			// lint.Lint pass (which itself Parses every discovered Plan,
+			// this one included) before ever reaching this locked snapshot,
+			// so a malformed file would already have failed preflight —
+			// this ParseBytes can only fail here on a genuine concurrent
+			// rewrite of the file between that preflight and this lock.
 			parsedPlan, err := plan.ParseBytes(path, before)
 			if err != nil {
 				return exitcode.UnexpectedErrorCause(fmt.Sprintf("parsing plan %s: %v", slug, err), err)
@@ -235,13 +247,13 @@ func planChangeStatusMutate(artifactRoot, coordinationRoot, slug string, to life
 				return err
 			}
 			if to == lifecycle.PlanSuperseded {
-				if _, err := resolvePlanFile(filepath.Join(artifactRoot, "spec", "plans"), successor); err != nil {
+				if _, err := resolvePlanFile(plansDir, successor); err != nil {
 					return exitcode.InvalidArgsErrorf("successor plan %q does not resolve to an existing plan at spec/plans/%s.md", successor, successor)
 				}
 			}
 			return nil
 		},
-		PostMutation: plan.PostMutationHook(lintPostMutationHook(filepath.Join(artifactRoot, "spec"))),
+		PostMutation: plan.PostMutationHook(lintPostMutationHookWithPlans(filepath.Join(sourceRoot, "spec"), plansDir)),
 	})
 }
 
@@ -250,9 +262,10 @@ func planChangeStatusMutate(artifactRoot, coordinationRoot, slug string, to life
 // necessary for derived index synchronization, but it is too late to protect
 // an invalid source/AC reference: by then the Plan status is durable. Keeping
 // this pass read-only makes an invalid lifecycle request write-free.
-func preflightPlanChangeStatus(projectRoot string) error {
+func preflightPlanChangeStatus(projectRoot, plansDir string) error {
 	violations, err := lint.Lint(lint.Options{
 		SpecRoot: filepath.Join(projectRoot, "spec"),
+		PlansDir: plansDir,
 		Severity: "error",
 	})
 	if err != nil {
@@ -285,24 +298,15 @@ func handlePlanChangeStatusError(err error, coordinationWarning *bytes.Buffer, s
 // spec/plans/<slug>.md or the directory-form spec/plans/<slug>/README.md
 // exists.
 func resolvePlanFile(plansDir, slug string) (string, error) {
-	flat := filepath.Join(plansDir, slug+".md")
-	if _, err := os.Stat(flat); err == nil {
-		return flat, nil
-	}
-	dir := filepath.Join(plansDir, slug, "README.md")
-	if _, err := os.Stat(dir); err == nil {
-		return dir, nil
-	}
-	return "", exitcode.NotFoundErrorf("plan not found: %s", slug)
+	return plan.ResolveFile(plansDir, slug)
 }
 
-// planNewCommand scaffolds a lint-clean flat Plan artifact at
-// spec/plans/<slug>.md per the cli/plan/new Feature.
+// planNewCommand scaffolds a lint-clean canonical directory-form Plan.
 func planNewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "new <slug>",
 		Short: "Scaffold a new Plan artifact",
-		Long: `Creates a lint-clean Plan at spec/plans/<slug>.md, carrying the
+		Long: `Creates a lint-clean Plan at <configured-plans-namespace>/<plan-id>/README.md, carrying the
 artifact-frontmatter-convention frontmatter (format:/status:), the
 body-metadata header, the required sections with TODO prompts, and the
 adherence footer.
@@ -318,7 +322,7 @@ warning is printed to stderr.`,
 	}
 	cmd.Flags().String("feature", "", "source Feature slug (mutually exclusive with --idea)")
 	cmd.Flags().String("idea", "", "source Idea slug (mutually exclusive with --feature)")
-	cmd.Flags().String("parent", "", "parent (master) plan reference — same-repo slug or <repo-slug>:<slug> cross-repo soft ref")
+	cmd.Flags().String("parent", "", "parent Plan ID — slash-separated within the configured source-project namespace, or <repo-slug>:<id> cross-repo soft ref")
 	cmd.Flags().String("title", "", "plan title (defaults to title-cased slug)")
 	cmd.Flags().String("owner", "", "owner/author (defaults to $USER)")
 	cmd.Flags().Bool("force", false, "overwrite an existing plan file at that slug")
@@ -328,7 +332,7 @@ warning is printed to stderr.`,
 
 func runPlanNew(cmd *cobra.Command, args []string) error {
 	slug := args[0]
-	if err := plan.ValidateSlug(slug); err != nil {
+	if err := plan.ValidateID(slug); err != nil {
 		return exitcode.InvalidArgsErrorf("invalid slug %q: %v", slug, err)
 	}
 
@@ -357,14 +361,35 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		owner = os.Getenv("USER")
 	}
 
-	root, err := resolveSpecRoot(projectFlag)
+	store, err := resolvePlanStore(projectFlag, planstore.Write)
 	if err != nil {
 		return err
 	}
 
-	target := filepath.Join(root, "spec", "plans", slug+".md")
+	// plan.ValidateID(slug) already succeeded above, and PathForID's own
+	// first step is exactly that same check on the same slug — so it cannot
+	// fail here.
+	target, _ := plan.PathForID(store.PlansDir, slug)
+	if existing, resolveErr := plan.ResolveFile(store.PlansDir, slug); resolveErr == nil {
+		target = existing
+		if !force {
+			return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
+		}
+	} else {
+		var coded interface{ ExitCode() int }
+		if !errors.As(resolveErr, &coded) || coded.ExitCode() != exitcode.NotFound {
+			return resolveErr
+		}
+	}
 	// Preserve the write-free fast conflict while the exclusive publication
 	// below remains the authoritative no-clobber decision under races.
+	//
+	// The "else if !os.IsNotExist(statErr)" arm is a genuine defense against
+	// a concurrent process changing target's existence or permissions
+	// between plan.ResolveFile's own Lstat (moments above, which just
+	// established this exact path does NOT exist) and this Stat call — not
+	// something a deterministic, single-threaded test can force without
+	// actually racing a second process against this one.
 	if !force {
 		if _, statErr := os.Stat(target); statErr == nil {
 			return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
@@ -373,11 +398,23 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 		}
 	}
 	// Materialize ancestor indexes before the plan file
-	// (cli/plan/new#req:ancestor-indexes-materialized). This also creates the
-	// spec/plans/ directory (via spec/plans/README.md), so the plan file's
-	// parent is guaranteed to exist before the write below.
-	if err := ensurePlanAncestorIndexes(root); err != nil {
+	// (cli/plan/new#req:ancestor-indexes-materialized). spec/README.md is
+	// always anchored at the source project root, regardless of where Plans
+	// are routed; the Plans namespace index (spec/plans/README.md, or its
+	// external-namespace equivalent) is materialized separately at the
+	// resolved store.PlansDir. This also creates the plans directory, so the
+	// plan file's parent is guaranteed to exist before the write below.
+	if err := writeMissingIndex(store.SourceRoot, "spec/README.md", specReadmeContent(readSpecConfigBestEffort(store.SourceRoot))); err != nil {
+		return exitcode.UnexpectedErrorf("materializing spec/README.md: %v", err)
+	}
+	if err := ensurePlansNamespace(store.PlansDir); err != nil {
 		return exitcode.UnexpectedErrorf("materializing ancestor indexes: %v", err)
+	}
+	if err := plan.ValidateWritePath(store.PlansDir, target); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return exitcode.UnexpectedErrorf("creating plan directory: %v", err)
 	}
 
 	body, err := buildPlanBody(cmd, slug, title, owner, featureSrc, ideaSrc)
@@ -393,16 +430,25 @@ func runPlanNew(cmd *cobra.Command, args []string) error {
 			if err := publishFileExclusive(target, body, 0o644); err != nil {
 				return exitcode.UnexpectedErrorCause(fmt.Sprintf("publishing %s: %v", target, err), err)
 			}
+			// The "else" arm below (any Stat outcome besides "exists" or
+			// "doesn't exist") would need target's ancestors to change
+			// underneath this same call between the MkdirAll a few lines up
+			// and this Stat — a concurrent-mutation scenario, not something
+			// a deterministic test can force.
 		} else {
 			return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking %s: %v", target, statErr), statErr)
 		}
 	} else if err := publishFileExclusive(target, body, 0o644); err != nil {
+		// os.ErrExist here means a second process published target in the
+		// window between plan.ResolveFile's check above and this exclusive
+		// create — the exact race publishFileExclusive's O_EXCL open exists
+		// to catch. Genuinely racy; not reachable from a single-threaded test.
 		if errors.Is(err, os.ErrExist) {
 			return exitcode.ConflictErrorf("plan already exists: %s (pass --force to overwrite)", target)
 		}
 		return exitcode.UnexpectedErrorCause(fmt.Sprintf("publishing %s: %v", target, err), err)
 	}
-	if _, err := planSyncIndexFn(filepath.Dir(target)); err != nil {
+	if _, err := planSyncIndexFn(store.PlansDir); err != nil {
 		committed := lifecycle.CommittedError(target, "syncing plans index", err)
 		return exitcode.UnexpectedErrorCause(fmt.Sprintf("syncing plans index after committed Plan publication: %v", err), committed)
 	}
@@ -494,27 +540,16 @@ func normalizePlanTaskACPlaceholders(body []byte) []byte {
 	return []byte(strings.Join(lines, "\n"))
 }
 
-// ensurePlanAncestorIndexes materializes spec/README.md and spec/plans/README.md
-// when they don't already exist, using the same templates as `specscore init`.
-// Existing files are left untouched except that the plans index receives the
-// derived row for each newly scaffolded Plan.
-func ensurePlanAncestorIndexes(root string) error {
+// readSpecConfigBestEffort reads root's specscore.yaml for template rendering
+// (e.g. spec/README.md content); an unreadable or malformed config degrades
+// to zero-value SpecConfig rather than failing the caller, matching the
+// pre-existing `specscore init` fallback.
+func readSpecConfigBestEffort(root string) projectdef.SpecConfig {
 	cfg, err := projectdef.ReadSpecConfig(root)
 	if err != nil {
-		cfg = projectdef.SpecConfig{}
+		return projectdef.SpecConfig{}
 	}
-	for _, w := range []struct {
-		path    string
-		content string
-	}{
-		{"spec/README.md", specReadmeContent(cfg)},
-		{"spec/plans/README.md", plansIndexContent(cfg)},
-	} {
-		if err := writeMissingIndex(root, w.path, w.content); err != nil {
-			return fmt.Errorf("writing %s: %w", w.path, err)
-		}
-	}
-	return nil
+	return cfg
 }
 
 // resolvePlansDir resolves the plans directory from a --project flag or CWD.
@@ -522,35 +557,15 @@ func ensurePlanAncestorIndexes(root string) error {
 // path is returned regardless (emptiness is handled by the list command).
 // Only a missing project root produces an error.
 func resolvePlansDir(projectFlag string) (string, error) {
-	var startDir string
-	if projectFlag != "" {
-		abs, err := filepathAbsFn(projectFlag)
-		if err != nil {
-			return "", exitcode.InvalidArgsErrorf("resolving --project path: %v", err)
-		}
-		startDir = abs
-	} else {
-		cwd, err := osGetwdFn()
-		if err != nil {
-			return "", exitcode.UnexpectedErrorf("cannot determine working directory: %v", err)
-		}
-		startDir = cwd
-	}
-
-	root, err := feature.FindSpecRepoRoot(startDir)
+	store, err := resolvePlanStore(projectFlag, planstore.ReadOnly)
 	if err != nil {
 		return "", err
 	}
-
-	return filepath.Join(root, "spec", "plans"), nil
+	return store.PlansDir, nil
 }
 
 // resolvePlanPath joins plansDir/<slug>.md and verifies the file exists.
 // A missing file yields an exit-3 NotFound error naming the slug.
 func resolvePlanPath(plansDir, slug string) (string, error) {
-	path := filepath.Join(plansDir, slug+".md")
-	if _, err := os.Stat(path); err != nil {
-		return "", exitcode.NotFoundErrorf("plan not found: %s", slug)
-	}
-	return path, nil
+	return plan.ResolveFile(plansDir, slug)
 }

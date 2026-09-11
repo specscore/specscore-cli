@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore plan` commands work with Plan artifacts in `spec/plans/` — listing them, inspecting one plan's metadata and task rollup, reporting whether its declared prerequisites permit execution, scaffolding a new plan, transitioning a plan's lifecycle status, and correcting the record when work landed outside the tracked flow — so agents and humans can answer "what plans exist and what status do they hold?", determine which plan may execute next, create new ones, advance them through one stable entry point, and fix the record when it fell behind reality. The `list`, `info`, and `readiness` subcommands are read-only; `new` scaffolds a fresh plan; `change-status` transitions an existing plan's `**Status:**` without creating one; `reconcile` corrects an existing plan's `**Status:**` (and its embedded tasks') out of band, when `change-status`'s legal-transition matrix cannot reach where the work actually already is.
+`specscore plan` commands work with Plan artifacts in the routed Plans namespace (same-repository `spec/plans/` by default, or an external repository's `spec/plans/{host}/{owner}/{repo}/` when routed there — see REQ:plan-repository-routing) — listing them, inspecting one plan's metadata and task rollup, reporting whether its declared prerequisites permit execution, scaffolding a new plan, transitioning a plan's lifecycle status, and correcting the record when work landed outside the tracked flow — so agents and humans can answer "what plans exist and what status do they hold?", determine which plan may execute next, create new ones, advance them through one stable entry point, and fix the record when it fell behind reality. The `list`, `info`, and `readiness` subcommands are read-only; `new` scaffolds a fresh plan; `change-status` transitions an existing plan's `**Status:**` without creating one; `reconcile` corrects an existing plan's `**Status:**` (and its embedded tasks') out of band, when `change-status`'s legal-transition matrix cannot reach where the work actually already is.
 
 ## Contents
 
@@ -55,15 +55,27 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 
 ### Plan-slug resolution
 
-Plan slugs are flat: a plan's slug is its filename without the `.md` extension (e.g., `cli-rules`). Unlike features, plans have no hierarchy, so slugs never contain `/`.
+A plan's slug is its filename without the `.md` extension for the legacy flat form (e.g., `cli-rules`), or its path under the Plans namespace for the canonical directory form (e.g., `cli-rules` resolving to `cli-rules/README.md`; nested plans use slash-separated slugs such as `roadmap/child`).
 
 #### REQ: slug-resolution
 
-Commands that take a `<slug>` argument MUST resolve it to `spec/plans/<slug>.md` in the project root.
+Commands that take a `<slug>` argument MUST resolve it against the routed Plans namespace (see REQ:plan-repository-routing below): the canonical directory form `<plans-dir>/<slug>/README.md` first, falling back to the legacy flat form `<plans-dir>/<slug>.md` when the directory form does not exist. Both forms existing for the same slug is a conflict, not an implicit winner.
 
 #### REQ: not-found-exit-code
 
 When a `<slug>` does not resolve to an existing plan file, commands MUST exit `3` (NotFound) with a message that names the requested slug.
+
+### Plan repository routing
+
+Every Plan operation resolves ONE authoritative Plans namespace before touching any Plan artifact — same-repository (`<spec>/plans/`) by default only when explicitly self-routed, or an external repository's `spec/plans/{host}/{owner}/{repo}/` namespace when routed there. The full precedence, identity-normalization, and checkout-validation rules are the [Repo Config](../../repo-config/README.md) Feature's contract (canonical upstream, not duplicated here); this section covers only how the CLI applies it.
+
+#### REQ: plan-repository-routing
+
+Every dedicated Plan verb (`list`, `info`, `new`, `readiness`, `change-status`, `reconcile`, and any `task` command that writes a plan-embedded task) MUST resolve a Plans repository route before reading or writing any Plan artifact. An absent or ambiguous route MUST fail before touching Plan artifacts, with guidance naming the config files a route can be set in (`specscore.yaml`, `specscore.local.yaml`, the organization layer, or `~/.specscore.yaml`). Feature, Idea, and Lesson operations are unaffected by an absent or unresolved Plan route — they MUST NOT be gated on Plan routing.
+
+#### REQ: project-flag-names-source
+
+`--project` always names the SOURCE project — the repository whose Features/ACs a Plan's `**Source Feature:**`/`**Verifies:**` lines reference — even when the resolved Plans namespace lives in a different, externally-routed repository checkout. Running a Plan command from within the Plans checkout itself does not change what `--project` (or its cwd-autodetected default) names.
 
 ### Plan status
 
@@ -78,7 +90,8 @@ The reported status of a plan MUST be the literal value of its `**Status:**` lin
 | Feature | Interaction |
 |---|---|
 | [CLI](../README.md) | Inherits shared exit-code contract, `--format`/`--project` conventions, and project autodetection. |
-| [cli/feature](../feature/README.md) | Sibling query group whose `list`/`info` contract this group mirrors. |
+| [cli/feature](../feature/README.md) | Sibling query group whose `list`/`info` contract this group mirrors. Feature operations are exempt from REQ:plan-repository-routing. |
+| [Repo Config](../../repo-config/README.md) | Canonical authority for `plans_repo`, `plan_repos`, and `repo_checkouts` — schema, precedence across `specscore.local.yaml` / `specscore.yaml` / the organization layer / `~/.specscore.yaml`, and identity normalization. This Feature applies that contract; it does not restate it. |
 
 ## Acceptance Criteria
 
@@ -105,6 +118,12 @@ The reported status of a plan MUST be the literal value of its `**Status:**` lin
 **Given** a plan file whose `**Status:**` line is absent
 **When** the user inspects it via `specscore plan info <slug>`
 **Then** the reported status is empty/unset and the command still exits `0`.
+
+### AC: unrouted-project-fails-with-guidance (verifies REQ:plan-repository-routing)
+
+**Given** a project with a lint-clean `specscore.yaml` that declares no `plans_repo` and no applicable `plan_repos` mapping in any config layer
+**When** the user runs `specscore plan list`
+**Then** the command fails before reading `spec/plans/`, and the error names `specscore.yaml`, `specscore.local.yaml`, and `~/.specscore.yaml` as the files a route can be set in.
 
 ## Open Questions
 

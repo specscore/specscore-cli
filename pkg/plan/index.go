@@ -69,7 +69,13 @@ func IndexContent(plansDir string, content []byte) ([]byte, bool, error) {
 		if owner == "" {
 			owner = "—"
 		}
-		rows = append(rows, fmt.Sprintf("| [%s](%s.md) | %s | %s | %s | %s |", p.Slug, p.Slug, status, source, date, owner))
+		// p.Path always comes from Discover(plansDir) above, which only ever
+		// yields paths built as filepath.Join(plansDir, ...) — so this Rel
+		// call, against that same plansDir, cannot fail: an error return
+		// here would be permanently unreachable dead code, not a real
+		// defense against anything Discover can produce.
+		rel, _ := filepath.Rel(plansDir, p.Path)
+		rows = append(rows, fmt.Sprintf("| [%s](%s) | %s | %s | %s | %s |", p.Slug, filepath.ToSlash(rel), status, source, date, owner))
 	}
 
 	updated := make([]string, 0, len(lines)+len(rows))

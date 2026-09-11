@@ -38,6 +38,10 @@ type SectionInfo struct {
 
 // GetInfo builds and returns the full Info for a feature.
 func GetInfo(featuresDir, featureID string) (*Info, error) {
+	return GetInfoWithPlansDir(featuresDir, "", featureID)
+}
+
+func GetInfoWithPlansDir(featuresDir, plansDir, featureID string) (*Info, error) {
 	readmePath := ReadmePath(featuresDir, featureID)
 
 	status, err := parseFeatureStatusFn(readmePath)
@@ -60,8 +64,13 @@ func GetInfo(featuresDir, featureID string) (*Info, error) {
 		return nil, fmt.Errorf("discovering children: %w", err)
 	}
 
-	specRoot := filepath.Dir(featuresDir) // spec/features/ -> spec/
-	plans, err := findLinkedPlansFn(filepath.Dir(specRoot), featureID)
+	var plans []string
+	if plansDir == "" {
+		specRoot := filepath.Dir(featuresDir)
+		plans, err = findLinkedPlansFn(filepath.Dir(specRoot), featureID)
+	} else {
+		plans, err = FindLinkedPlansDir(plansDir, featureID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("finding linked plans: %w", err)
 	}
@@ -238,7 +247,10 @@ func ParseContentsTable(readmePath string) (map[string]bool, error) {
 // FindLinkedPlans scans spec/plans/*/README.md for plans that reference
 // the given feature.
 func FindLinkedPlans(repoRoot, featureID string) ([]string, error) {
-	plansDir := filepath.Join(repoRoot, "spec", "plans")
+	return FindLinkedPlansDir(filepath.Join(repoRoot, "spec", "plans"), featureID)
+}
+
+func FindLinkedPlansDir(plansDir, featureID string) ([]string, error) {
 	if _, err := os.Stat(plansDir); err != nil {
 		return nil, nil
 	}
@@ -258,7 +270,11 @@ func FindLinkedPlans(repoRoot, featureID string) ([]string, error) {
 		if planDir == plansDir {
 			return nil
 		}
-		planName := filepath.Base(planDir)
+		// planDir is filepath.Dir(path), and path always comes from
+		// WalkDir(plansDir, ...) — always a descendant of plansDir by
+		// construction — so this Rel call cannot fail.
+		planName, _ := filepath.Rel(plansDir, planDir)
+		planName = filepath.ToSlash(planName)
 
 		if planReferencesFeature(path, featureID) {
 			plans = append(plans, planName)

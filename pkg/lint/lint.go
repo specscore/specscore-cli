@@ -30,10 +30,13 @@ type Options struct {
 	// never reaches back into the live project through filepath derivation.
 	SpecRoot    string
 	ProjectRoot string
-	Rules       []string // enabled rules; nil = all
-	Ignore      []string // disabled rules
-	Severity    string   // minimum severity: error, warning, info
-	Fix         bool     // when true, auto-fixable violations are repaired on disk by checkers that support it
+	// PlansDir overrides SpecRoot/plans for projects whose authoritative Plans
+	// live in a separate, namespaced repository checkout.
+	PlansDir string
+	Rules    []string // enabled rules; nil = all
+	Ignore   []string // disabled rules
+	Severity string   // minimum severity: error, warning, info
+	Fix      bool     // when true, auto-fixable violations are repaired on disk by checkers that support it
 	// FixTargets names opt-in fixes to enable on top of the standard fix pass
 	// (only consulted when Fix is true). These are fixes that are deliberately
 	// off by default because they mask a likely authoring mistake — e.g.

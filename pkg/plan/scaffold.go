@@ -63,7 +63,7 @@ func titleCaseFromSlug(slug string) string {
 // the four required sections with HTML-comment prompts, and the adherence
 // footer whose URL agrees with `format:`.
 func Scaffold(opts ScaffoldOptions) ([]byte, error) {
-	if err := ValidateSlug(opts.Slug); err != nil {
+	if err := ValidateID(opts.Slug); err != nil {
 		return nil, err
 	}
 	if opts.SourceFeature != "" && opts.SourceIdea != "" {
@@ -72,7 +72,8 @@ func Scaffold(opts ScaffoldOptions) ([]byte, error) {
 
 	title := strings.TrimSpace(opts.Title)
 	if title == "" {
-		title = titleCaseFromSlug(opts.Slug)
+		parts := strings.Split(opts.Slug, "/")
+		title = titleCaseFromSlug(parts[len(parts)-1])
 	}
 	owner := strings.TrimSpace(opts.Owner)
 	if owner == "" {

@@ -1,5 +1,5 @@
 // Package gitremote parses git remote URLs into their owner / repo / host
-// components. MVP supports GitHub hosts only; other hosts return ok=false.
+// components across standard HTTPS, SSH URL, and SCP-style remotes.
 package gitremote
 
 import (
@@ -26,17 +26,12 @@ var (
 )
 
 // Parse extracts the owner/repo/host from a git remote URL. It returns
-// (Remote, true) only for GitHub hosts in MVP; any other host (GitLab,
-// Bitbucket, self-hosted) yields (_, false) so callers can gracefully
-// skip rather than emit broken links.
+// (Remote, true) for any syntactically supported host.
 func Parse(url string) (Remote, bool) {
 	url = strings.TrimSpace(url)
 	for _, re := range []*regexp.Regexp{httpsRE, sshURLRE, sshSCPRE} {
 		if m := re.FindStringSubmatch(url); m != nil {
 			r := Remote{Host: strings.ToLower(m[1]), Owner: m[2], Repo: m[3]}
-			if r.Host != "github.com" {
-				return Remote{}, false
-			}
 			return r, true
 		}
 	}

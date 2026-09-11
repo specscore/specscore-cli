@@ -155,6 +155,35 @@ None at this time.
 	}
 }
 
+// TestGetInfoWithPlansDir_ExternalPlansDir proves the plansDir != "" branch:
+// when Plan routing points the Plans namespace at a directory NOT nested
+// under the source project's own spec/ tree (an externally-routed
+// checkout), GetInfoWithPlansDir must still find plans referencing the
+// feature via FindLinkedPlansDir(plansDir, ...) rather than the
+// same-repo-only findLinkedPlansFn fallback.
+func TestGetInfoWithPlansDir_ExternalPlansDir(t *testing.T) {
+	authReadme := "# Feature: Auth\n\n**Status:** Approved\n\n## Summary\n\nAuth.\n\n## Open Questions\n\nNone at this time.\n"
+	_, featDir := setupSpecRepo(t, map[string]string{"auth": authReadme}, nil)
+
+	externalPlansDir := t.TempDir()
+	planDir := filepath.Join(externalPlansDir, "implement-auth")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	planReadme := "# Plan: Implement Auth\n\n**Features:**\n- [Auth](../../features/auth/README.md)\n\n## Tasks\n\n- Task 1\n"
+	if err := os.WriteFile(filepath.Join(planDir, "README.md"), []byte(planReadme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := GetInfoWithPlansDir(featDir, externalPlansDir, "auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Plans) != 1 || info.Plans[0] != "implement-auth" {
+		t.Errorf("Plans = %v, want [implement-auth]", info.Plans)
+	}
+}
+
 func TestGetInfo_NonexistentFeature(t *testing.T) {
 	_, featDir := setupSpecRepo(t, map[string]string{
 		"auth": "# Feature: Auth\n\n**Status:** Draft\n",

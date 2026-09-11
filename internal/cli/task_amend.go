@@ -13,6 +13,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
+	"github.com/specscore/specscore-cli/pkg/planstore"
 	"github.com/specscore/specscore-cli/pkg/task"
 	"github.com/spf13/cobra"
 )
@@ -47,7 +48,7 @@ func runTaskAmend(cmd *cobra.Command, args []string, deps taskMutationDeps) erro
 	}
 	if slug, _ := cmd.Flags().GetString("plan"); strings.TrimSpace(slug) != "" {
 		planSlug := strings.TrimSpace(slug)
-		if err := plan.ValidateSlug(planSlug); err != nil {
+		if err := plan.ValidateID(planSlug); err != nil {
 			return exitcode.InvalidArgsErrorf("invalid plan slug: %v", err)
 		}
 		return amendPlanTask(cmd, taskSlug, planSlug, a, deps)
@@ -114,21 +115,13 @@ func resolveBoardTaskPath(dir, slug string) (string, error) {
 }
 
 func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAmendment, deps taskMutationDeps) error {
-	root, err := resolveSpecRoot(flagString(cmd, "project"))
+	store, err := resolvePlanStore(flagString(cmd, "project"), planstore.Write)
 	if err != nil {
 		return err
 	}
-	var path string
-	for _, p := range []string{filepath.Join(root, "spec", "plans", planSlug+".md"), filepath.Join(root, "spec", "plans", planSlug, "README.md")} {
-		if _, e := os.Stat(p); e == nil {
-			path = p
-			break
-		} else if !os.IsNotExist(e) {
-			return exitcode.UnexpectedErrorCause(fmt.Sprintf("checking plan artifact %s: %v", p, e), e)
-		}
-	}
-	if path == "" {
-		return exitcode.NotFoundErrorf("plan not found: %s", planSlug)
+	path, err := plan.ResolveFile(store.PlansDir, planSlug)
+	if err != nil {
+		return err
 	}
 	var coordinationWarning bytes.Buffer
 	err = deps.transformArtifact(path, func(before []byte) ([]byte, error) {
@@ -137,7 +130,7 @@ func amendPlanTask(cmd *cobra.Command, taskSlug, planSlug string, a annotationAm
 			return nil, err
 		}
 		force, _ := cmd.Flags().GetBool(coordinationForceFlagName)
-		if err := enforceCoordinationBranch(p, root, force, &coordinationWarning); err != nil {
+		if err := enforceCoordinationBranch(p, store.SourceRoot, force, &coordinationWarning); err != nil {
 			return nil, err
 		}
 		target, err := uniquePlanTaskByID(p, taskSlug)

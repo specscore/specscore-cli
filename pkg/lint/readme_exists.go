@@ -7,10 +7,14 @@ import (
 )
 
 // readmeExistsChecker verifies that every spec directory has a README.md file.
-type readmeExistsChecker struct{}
+type readmeExistsChecker struct{ plansDir string }
 
-func newReadmeExistsChecker() checker {
-	return &readmeExistsChecker{}
+func newReadmeExistsChecker(plansDir ...string) checker {
+	c := &readmeExistsChecker{}
+	if len(plansDir) > 0 {
+		c.plansDir = plansDir[0]
+	}
+	return c
 }
 
 func (c *readmeExistsChecker) name() string     { return "readme-exists" }
@@ -26,6 +30,9 @@ func (c *readmeExistsChecker) check(specRoot string) ([]Violation, error) {
 	seedsRel := filepath.Join("ideas", "seeds")
 
 	err := walkSpecDirs(specRoot, func(dirPath, relPath string) error {
+		if c.plansDir != "" && (relPath == "plans" || strings.HasPrefix(filepath.ToSlash(relPath), "plans/")) {
+			return nil
+		}
 		if relPath == seedsRel || isFeatureProposalsContainer(relPath) || isLessonOccurrencesContainer(relPath) {
 			return nil
 		}
@@ -41,6 +48,24 @@ func (c *readmeExistsChecker) check(specRoot string) ([]Violation, error) {
 		}
 		return nil
 	})
+	if err == nil && c.plansDir != "" {
+		err = filepath.Walk(c.plansDir, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !info.IsDir() {
+				return nil
+			}
+			if path != c.plansDir && strings.HasPrefix(info.Name(), ".") {
+				return filepath.SkipDir
+			}
+			if _, statErr := os.Stat(filepath.Join(path, "README.md")); statErr != nil {
+				rel, _ := filepath.Rel(c.plansDir, path)
+				violations = append(violations, Violation{File: filepath.Join("plans", rel), Severity: "error", Rule: c.name(), Message: "README.md not found"})
+			}
+			return nil
+		})
+	}
 
 	return violations, err
 }

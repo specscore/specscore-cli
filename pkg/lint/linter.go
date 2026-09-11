@@ -63,18 +63,18 @@ func newLinter(opts Options) *linter {
 		ruleSet: make(map[string]checker),
 	}
 
-	l.registerChecker(newReadmeExistsChecker())
+	l.registerChecker(newReadmeExistsChecker(opts.PlansDir))
 	oqChecker := newOQSectionChecker(projectRoot)
 	l.registerChecker(oqChecker)
 	l.ruleSet["oq-not-empty"] = oqChecker
 	l.registerChecker(newIndexEntriesChecker())
 	l.registerChecker(newConfigScopeChecker(projectRoot))
-	l.registerChecker(newPlanHierarchyChecker())
-	l.registerChecker(newPlanROIChecker())
-	l.registerChecker(newPlanIndexChecker())
-	l.registerChecker(newAdherenceFooterChecker(projectRoot))
+	l.registerChecker(newPlanHierarchyChecker(opts.PlansDir))
+	l.registerChecker(newPlanROIChecker(opts.PlansDir))
+	l.registerChecker(newPlanIndexChecker(opts.PlansDir))
+	l.registerChecker(newAdherenceFooterChecker(projectRoot, opts.PlansDir))
 	l.registerChecker(newFormatFieldChecker())
-	l.registerChecker(newStatusMirrorChecker(projectRoot))
+	l.registerChecker(newStatusMirrorChecker(projectRoot, opts.PlansDir))
 	l.registerChecker(newFooterFormatMirrorChecker(projectRoot))
 	l.registerChecker(newStudioToolbarChecker(projectRoot))
 	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion, projectRoot))
@@ -118,7 +118,7 @@ func newLinter(opts Options) *linter {
 	// Register plan-rules checker under all rule IDs (P-001..P-007).
 	// The single checker emits violations for all rules; deduping by
 	// pointer identity in lint() ensures it runs once per pass.
-	pc := newPlanRulesChecker()
+	pc := newPlanRulesChecker(opts.PlansDir)
 	pc.fixNoSource = slices.Contains(opts.FixTargets, FixTargetNoSource)
 	pc.fixP007 = opts.fixRequested("P-007")
 	pc.fixP006Legacy = opts.fixRequested("P-006")
@@ -229,10 +229,25 @@ func (l *linter) fix() ([]Reconciliation, error) {
 	}
 	unscoped := l.opts.fixUnscoped()
 
+	// l.ruleSet is a map, whose iteration order Go randomizes on every run.
+	// Some fixers depend on another fixer's output within the SAME pass — the
+	// plan-index-sync fixer reads each Plan's **Status:**, which the P-007
+	// execution-band-rollup fixer (part of the plan-rules checker) may itself
+	// rewrite in this same call. Iterating rule names in sorted order makes
+	// which checker runs first deterministic across runs (P-0xx sorts before
+	// plan-index-sync ASCII-wise, so the rollup always lands before the index
+	// reads it), rather than depending on map-iteration luck.
+	sortedRuleNames := make([]string, 0, len(l.ruleSet))
+	for ruleName := range l.ruleSet {
+		sortedRuleNames = append(sortedRuleNames, ruleName)
+	}
+	sort.Strings(sortedRuleNames)
+
 	seen := make(map[checker]bool)
 	var firstErr error
 	var reconciled []Reconciliation
-	for _, c := range l.ruleSet {
+	for _, ruleName := range sortedRuleNames {
+		c := l.ruleSet[ruleName]
 		if seen[c] {
 			continue
 		}
