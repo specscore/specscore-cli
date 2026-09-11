@@ -1,6 +1,7 @@
 package planstore
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -163,7 +164,17 @@ func TestResolveRejectsCommittedCheckoutPath(t *testing.T) {
 	initRepo(t, source, "git@github.com:acme/app.git")
 	t.Setenv("HOME", t.TempDir())
 	write(t, filepath.Join(source, RepoConfigFile), "plans_repo: acme/app\nrepo_checkouts:\n  acme/app: /tmp/app\n")
-	if _, err := Resolve(source, ReadOnly); err == nil || !strings.Contains(err.Error(), "machine-local") {
+	_, err := Resolve(source, ReadOnly)
+	if err == nil || !strings.Contains(err.Error(), "machine-local") {
 		t.Fatalf("committed checkout error = %v", err)
+	}
+	// This is the one call site that builds a routeUnresolvedError with no
+	// separate cause (a plain routeUnresolved(...) call, not
+	// routeUnresolvedWrap around another function's error) — asserting
+	// errors.Is here exercises that no-cause branch of
+	// routeUnresolvedError.Unwrap, distinct from every other
+	// ErrRouteUnresolved-producing path in this file.
+	if !errors.Is(err, ErrRouteUnresolved) {
+		t.Fatalf("errors.Is(err, ErrRouteUnresolved) = false; err = %v", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/config"
 	"github.com/specscore/specscore-cli/pkg/gitremote"
 	"gopkg.in/yaml.v3"
 )
@@ -29,6 +30,86 @@ const (
 	ReadOnly AccessMode = iota
 	Write
 )
+
+// ErrNoRoute is the sentinel wrapped (via %w, errors.Is-detectable) by
+// Resolve when NO Plan route is configured for the source project at all —
+// neither plans_repo nor plan_repos names it in any layer. It is deliberately
+// distinct from every other resolution failure (a configured-but-broken
+// route: missing checkout, wrong origin, nested path, ambiguous plan_repos
+// mapping, a misplaced key) so a caller with a legitimate no-route default —
+// `spec lint`, which is not itself one of the dedicated Plan verbs
+// repo-config#req:plan-route-required binds to — can fall back to the
+// historical same-repository default ONLY for "nothing configured", and must
+// never do so for "something is configured and it's broken" (that shape must
+// fail closed instead of silently reading or writing the wrong spec/plans
+// tree). The wrapped message text is unchanged from before this sentinel
+// existed.
+var ErrNoRoute = errors.New("no plans repository is configured")
+
+// ErrRouteUnresolved is the sentinel wrapped (errors.Is-detectable, via
+// routeUnresolvedError.Unwrap) by every Resolve failure that occurs once a
+// route destination has actually been found or a routing key has actually
+// been read — an ambiguous plan_repos mapping, a misplaced routing key
+// (plan_repos in project/local config, plans_repo in organization/user
+// config), a committed repo_checkouts, a missing or malformed
+// repo_checkouts entry, a checkout with the wrong origin or that names a
+// nested path, or a Plan namespace path that escapes its checkout through a
+// symlink. These are exactly the shapes the reviewer's reproduction named
+// (repo-config#req:plan-route-required's "route configured but checkout
+// missing / wrong origin / nested / ambiguous plan_repos").
+//
+// Deliberately NOT wrapped: repositoryRoots/repositoryIdentity/UserHomeDir
+// failures for the SOURCE project, and a malformed local/repo/org/user layer
+// file — these happen before routing can even be evaluated (e.g. the source
+// isn't a git repository at all) and are unrelated to whether a route is
+// configured, so a caller like `spec lint` must keep treating them the same
+// permissive way it always has (same as ErrNoRoute), not as "route
+// configured but broken".
+var ErrRouteUnresolved = errors.New("plan routing is configured but could not be resolved")
+
+// routeUnresolvedError formats a message exactly like fmt.Errorf (preserving
+// every existing error string byte for byte), while additionally making
+// errors.Is(err, ErrRouteUnresolved) true and, when cause is non-nil,
+// preserving errors.Is/errors.As access to that inner cause too (Go's
+// multi-error Unwrap() []error form).
+type routeUnresolvedError struct {
+	msg   string
+	cause error
+}
+
+func (e *routeUnresolvedError) Error() string { return e.msg }
+
+func (e *routeUnresolvedError) Unwrap() []error {
+	if e.cause != nil {
+		return []error{ErrRouteUnresolved, e.cause}
+	}
+	return []error{ErrRouteUnresolved}
+}
+
+// routeUnresolved builds a routeUnresolvedError whose Error() text is
+// exactly fmt.Sprintf(format, args...) — identical to what fmt.Errorf(format,
+// args...) would have rendered before ErrRouteUnresolved existed.
+func routeUnresolved(format string, args ...any) error {
+	return &routeUnresolvedError{msg: fmt.Sprintf(format, args...)}
+}
+
+// routeUnresolvedCause is routeUnresolved plus a preserved inner cause, for
+// call sites that used %w to keep errors.Is/errors.As access to an
+// underlying error (e.g. os.ErrNotExist) before ErrRouteUnresolved existed.
+func routeUnresolvedCause(cause error, format string, args ...any) error {
+	return &routeUnresolvedError{msg: fmt.Sprintf(format, args...), cause: cause}
+}
+
+// routeUnresolvedWrap wraps an already-formatted, already-non-nil error
+// (typically another function's own returned error, message unchanged) so
+// errors.Is(result, ErrRouteUnresolved) is true while every existing
+// errors.Is/errors.As path through err keeps working. Every call site is
+// already inside an `if err != nil` block, so unlike routeUnresolved and
+// routeUnresolvedCause there is no format string to build here — just err
+// itself, always non-nil by construction.
+func routeUnresolvedWrap(err error) error {
+	return &routeUnresolvedError{msg: err.Error(), cause: err}
+}
 
 // Resolution names both halves of a Plan operation. SourceRoot continues to
 // own Features and ACs; PlansDir is the only editable Plan namespace.
@@ -102,8 +183,18 @@ func Resolve(sourceRoot string, mode AccessMode) (Resolution, error) {
 	if err != nil {
 		return Resolution{}, err
 	}
-	if _, present := repo.data["repo_checkouts"]; present {
-		return Resolution{}, fmt.Errorf("%s: repo_checkouts is machine-local and must be configured in %s, the organization layer, or %s", repo.path, LocalConfigFile, UserConfigFile)
+	// Reuse the shared committed-scope gate (pkg/config.CheckCommittedScopeMap)
+	// against the map readLayer just parsed, instead of hand-rolling the same
+	// "repo_checkouts must not be in the committed project file" check a
+	// second time — layered-config#req:gate-committed-file is enforced once,
+	// here and for lint, so the two call sites cannot drift on the key
+	// registry or the traversal logic. CheckCommittedScopeMap takes the
+	// already-parsed map (not CheckCommittedScope, which would re-read this
+	// same file a second time for no benefit).
+	for _, v := range config.CheckCommittedScopeMap(repo.data) {
+		if v.Key == "repo_checkouts" {
+			return Resolution{}, routeUnresolved("%s: repo_checkouts is machine-local and must be configured in %s, the organization layer, or %s", repo.path, LocalConfigFile, UserConfigFile)
+		}
 	}
 	local, err := readLayer(filepath.Join(root, LocalConfigFile))
 	if err != nil {
@@ -112,41 +203,58 @@ func Resolve(sourceRoot string, mode AccessMode) (Resolution, error) {
 
 	destination, routePath, err := resolveRoute(source, local, repo, org, user)
 	if err != nil {
-		return Resolution{}, err
+		// resolveRoute's error is EITHER the final "nothing configured at
+		// all" fallback (ErrNoRoute, left exactly as returned so a caller
+		// like `spec lint` keeps its lenient no-route default) OR an
+		// ambiguous plan_repos mapping / misplaced routing key — both of
+		// which mean something WAS found while resolving routing, just
+		// wrong, so they get wrapped as ErrRouteUnresolved here rather than
+		// inside resolveRoute/matchPlanRepos/misplacedRouteKeyError
+		// themselves.
+		if errors.Is(err, ErrNoRoute) {
+			return Resolution{}, err
+		}
+		return Resolution{}, routeUnresolvedWrap(err)
 	}
 	result := Resolution{SourceRoot: root, SourceRepo: source, PlansRepo: destination, RouteConfigPath: routePath}
 	if destination == source {
 		result.PlansCheckout = root
 		result.PlansDir, err = secureJoin(root, "spec", "plans")
 		if err != nil {
-			return Resolution{}, err
+			return Resolution{}, routeUnresolvedWrap(err)
 		}
 		return result, nil
 	}
 	result.External = true
+	// Every error from here on — a missing/malformed repo_checkouts entry,
+	// a checkout with the wrong origin, a nested checkout path, or a Plan
+	// namespace escaping through a symlink — happens only once a route
+	// destination has already been found, so all of it is ErrRouteUnresolved
+	// territory (finding 1's exact reproduction: committed plans_repo, no
+	// matching repo_checkouts).
 	checkout, checkoutPath, err := resolveCheckout(destination, source, local, org, user)
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, routeUnresolvedWrap(err)
 	}
 	actual, err := repositoryIdentity(checkout)
 	if err != nil {
-		return Resolution{}, fmt.Errorf("plans checkout %s: %w", checkout, err)
+		return Resolution{}, routeUnresolvedCause(err, "plans checkout %s: %v", checkout, err)
 	}
 	if actual != destination {
-		return Resolution{}, fmt.Errorf("plans checkout %s has origin %s, want %s", checkout, actual, destination)
+		return Resolution{}, routeUnresolved("plans checkout %s has origin %s, want %s", checkout, actual, destination)
 	}
 	checkoutRoot, _, err := repositoryRoots(checkout)
 	if err != nil {
-		return Resolution{}, fmt.Errorf("resolve plans checkout root: %w", err)
+		return Resolution{}, routeUnresolvedCause(err, "resolve plans checkout root: %v", err)
 	}
 	if checkoutRoot != checkout {
-		return Resolution{}, fmt.Errorf("plans checkout %s must name the repository root, not nested path %s", checkout, checkoutRoot)
+		return Resolution{}, routeUnresolved("plans checkout %s must name the repository root, not nested path %s", checkout, checkoutRoot)
 	}
 	_ = mode // access mode is retained for future mutation-specific validation.
 	parts := strings.Split(source, "/")
 	plansDir, err := secureJoin(checkout, "spec", "plans", parts[0], parts[1], parts[2])
 	if err != nil {
-		return Resolution{}, err
+		return Resolution{}, routeUnresolvedWrap(err)
 	}
 	result.PlansCheckout = checkout
 	result.PlansDir = plansDir
@@ -177,7 +285,34 @@ func resolveRoute(source string, local, repo, org, user layer) (string, string, 
 			return destination, l.path, nil
 		}
 	}
-	return "", "", fmt.Errorf("no plans repository is configured for %s; set plans_repo in %s or map it under plan_repos in %s", source, repo.path, user.path)
+	if err := misplacedRouteKeyError(local, repo, org, user); err != nil {
+		return "", "", err
+	}
+	return "", "", fmt.Errorf("%w for %s; set plans_repo in %s or map it under plan_repos in %s", ErrNoRoute, source, repo.path, user.path)
+}
+
+// misplacedRouteKeyError names a routing key declared in a layer its owning
+// Feature does not read from — REQ:plans-repo-project-selection scopes
+// plans_repo to specscore.local.yaml or the repository's committed
+// specscore.yaml, and REQ:plan-repos-aggregate-routing scopes plan_repos to
+// organization or user config. Without this check such a key was silently
+// ignored and the resulting error looked identical to "nothing configured at
+// all" (finding 5), which gives no hint that the key exists but is in the
+// wrong file. Called only after both real resolution loops in resolveRoute
+// have failed, so a project with a correctly-placed route (e.g. a committed
+// plans_repo) never reaches this diagnostic — it resolves first.
+func misplacedRouteKeyError(local, repo, org, user layer) error {
+	for _, l := range []layer{local, repo} {
+		if _, present := l.data["plan_repos"]; present {
+			return fmt.Errorf("%s: plan_repos belongs in organization config or %s, not %s; use plans_repo here to route this project", l.path, UserConfigFile, l.path)
+		}
+	}
+	for _, l := range []layer{org, user} {
+		if _, present := l.data["plans_repo"]; present {
+			return fmt.Errorf("%s: plans_repo belongs in %s or the repository's committed %s, not organization or user config; use plan_repos here to route one or more source projects", l.path, LocalConfigFile, RepoConfigFile)
+		}
+	}
+	return nil
 }
 
 func matchPlanRepos(l layer, source string) (string, bool, error) {
