@@ -63,18 +63,45 @@ func newLinter(opts Options) *linter {
 		ruleSet: make(map[string]checker),
 	}
 
-	l.registerChecker(newReadmeExistsChecker(opts.PlansDir))
+	// routeBroken means Plan routing is configured for this project but
+	// failed to resolve. Every Plan-owned checker below is switched to its
+	// "route error" construction, which is a strict no-op that never reads
+	// or writes the local spec/plans tree — see finding 1 /
+	// repo-config#req:plan-route-required and plan_route_error.go, whose
+	// checker is registered unconditionally below and is the only one of
+	// this group that actually emits, naming opts.PlanRouteError.
+	routeBroken := opts.PlanRouteError != ""
+
+	if routeBroken {
+		l.registerChecker(newReadmeExistsCheckerSkipPlans())
+	} else {
+		l.registerChecker(newReadmeExistsChecker(opts.PlansDir))
+	}
 	oqChecker := newOQSectionChecker(projectRoot)
 	l.registerChecker(oqChecker)
 	l.ruleSet["oq-not-empty"] = oqChecker
 	l.registerChecker(newIndexEntriesChecker())
 	l.registerChecker(newConfigScopeChecker(projectRoot))
-	l.registerChecker(newPlanHierarchyChecker(opts.PlansDir))
-	l.registerChecker(newPlanROIChecker(opts.PlansDir))
-	l.registerChecker(newPlanIndexChecker(opts.PlansDir))
-	l.registerChecker(newAdherenceFooterChecker(projectRoot, opts.PlansDir))
+	if routeBroken {
+		l.registerChecker(newPlanHierarchyCheckerRouteError())
+		l.registerChecker(newPlanROICheckerRouteError())
+		l.registerChecker(newPlanIndexCheckerRouteError())
+	} else {
+		l.registerChecker(newPlanHierarchyChecker(opts.PlansDir))
+		l.registerChecker(newPlanROIChecker(opts.PlansDir))
+		l.registerChecker(newPlanIndexChecker(opts.PlansDir))
+	}
+	if routeBroken {
+		l.registerChecker(newAdherenceFooterCheckerSkipPlans(projectRoot))
+	} else {
+		l.registerChecker(newAdherenceFooterChecker(projectRoot, opts.PlansDir))
+	}
 	l.registerChecker(newFormatFieldChecker())
-	l.registerChecker(newStatusMirrorChecker(projectRoot, opts.PlansDir))
+	if routeBroken {
+		l.registerChecker(newStatusMirrorCheckerSkipPlans(projectRoot))
+	} else {
+		l.registerChecker(newStatusMirrorChecker(projectRoot, opts.PlansDir))
+	}
 	l.registerChecker(newFooterFormatMirrorChecker(projectRoot))
 	l.registerChecker(newStudioToolbarChecker(projectRoot))
 	l.registerChecker(newDogfoodVersionChecker(opts.CLIVersion, projectRoot))
@@ -82,6 +109,7 @@ func newLinter(opts Options) *linter {
 	l.registerChecker(newImplementationMatrixChecker())
 	l.registerChecker(newOtherPlatformsChecker())
 	l.registerChecker(newLifecycleLockLitterChecker())
+	l.registerChecker(newPlanRouteErrorChecker(opts.PlanRouteError))
 
 	// Register idea checker under every idea-* rule name.
 	ic := newIdeaChecker()
@@ -118,11 +146,16 @@ func newLinter(opts Options) *linter {
 	// Register plan-rules checker under all rule IDs (P-001..P-007).
 	// The single checker emits violations for all rules; deduping by
 	// pointer identity in lint() ensures it runs once per pass.
-	pc := newPlanRulesChecker(opts.PlansDir)
-	pc.fixNoSource = slices.Contains(opts.FixTargets, FixTargetNoSource)
-	pc.fixP007 = opts.fixRequested("P-007")
-	pc.fixP006Legacy = opts.fixRequested("P-006")
-	pc.fixP004Legacy = opts.fixRequested("P-004")
+	var pc *planRulesChecker
+	if routeBroken {
+		pc = newPlanRulesCheckerRouteError()
+	} else {
+		pc = newPlanRulesChecker(opts.PlansDir)
+		pc.fixNoSource = slices.Contains(opts.FixTargets, FixTargetNoSource)
+		pc.fixP007 = opts.fixRequested("P-007")
+		pc.fixP006Legacy = opts.fixRequested("P-006")
+		pc.fixP004Legacy = opts.fixRequested("P-004")
+	}
 	for _, n := range []string{"P-001", "P-002", "P-003", "P-004", "P-005", "P-006", "P-007", "P-008", "P-009", "P-010"} {
 		l.ruleSet[n] = pc
 	}

@@ -56,6 +56,12 @@ type planRulesChecker struct {
 	// in-progress→in_progress) to the canonical Task-status enum. Standard
 	// fixer: unscoped pass or `--fix=P-004`.
 	fixP004Legacy bool
+
+	// routeBroken, when true, means Plan routing is configured but failed to
+	// resolve: check() and fix() must both no-op, without ever touching the
+	// local spec/plans tree that an empty plansDir would otherwise default
+	// to (finding 1 / repo-config#req:plan-route-required).
+	routeBroken bool
 }
 
 func newPlanRulesChecker(plansDir ...string) *planRulesChecker {
@@ -64,6 +70,12 @@ func newPlanRulesChecker(plansDir ...string) *planRulesChecker {
 		c.plansDir = plansDir[0]
 	}
 	return c
+}
+
+// newPlanRulesCheckerRouteError returns a P-001..P-010 checker configured for
+// a configured-but-broken Plan route: see routeBroken.
+func newPlanRulesCheckerRouteError() *planRulesChecker {
+	return &planRulesChecker{routeBroken: true}
 }
 
 // name returns the primary rule name. The checker is registered under all
@@ -79,6 +91,9 @@ func (c *planRulesChecker) fixTargets() []string {
 }
 
 func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
+	if c.routeBroken {
+		return nil, nil
+	}
 	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
 		return nil, nil
@@ -125,6 +140,9 @@ func (c *planRulesChecker) check(specRoot string) ([]Violation, error) {
 // each gated by its own flag: the opt-in "no-source" repair and the standard
 // P-007 execution-band reconciliation. Both are idempotent.
 func (c *planRulesChecker) fix(specRoot string) error {
+	if c.routeBroken {
+		return nil
+	}
 	if c.fixP004Legacy {
 		if err := fixLegacyTaskStatusesInDir(effectivePlansDir(specRoot, c.plansDir)); err != nil {
 			return err

@@ -161,7 +161,18 @@ var docTypeTargets = []docTypeTarget{
 // adherenceFooterChecker verifies that every SpecScore document of a
 // Document or Index Kind carries the adherence footer URL corresponding
 // to its document type, as required by the Adherence Footer feature.
-type adherenceFooterChecker struct{ projectRoot, plansDir string }
+type adherenceFooterChecker struct {
+	projectRoot, plansDir string
+	// skipPlans excludes every plan-owned docTypeTarget (the plans index,
+	// Plan artifacts, embedded task READMEs) from check()/fix() entirely,
+	// without ever reading them — set only when Plan routing is configured
+	// but failed to resolve (finding 1 / repo-config#req:plan-route-required),
+	// so these targets never fall back to the possibly-stale local plans
+	// tree the way an empty plansDir normally would (walkDocTarget's
+	// plansDir=="" branch). Non-plan-owned targets (Features, Ideas,
+	// Decisions, ...) are unaffected.
+	skipPlans bool
+}
 
 var adherenceFooterURLPattern = regexp.MustCompile(`^https://specscore\.md/[a-z0-9-]+-specification$`)
 
@@ -177,6 +188,12 @@ func newAdherenceFooterChecker(projectRoot ...string) checker {
 	return &adherenceFooterChecker{projectRoot: root, plansDir: plans}
 }
 
+// newAdherenceFooterCheckerSkipPlans returns an adherence-footer checker
+// configured for a configured-but-broken Plan route: see skipPlans.
+func newAdherenceFooterCheckerSkipPlans(projectRoot string) checker {
+	return &adherenceFooterChecker{projectRoot: projectRoot, skipPlans: true}
+}
+
 func (c *adherenceFooterChecker) name() string     { return "adherence-footer" }
 func (c *adherenceFooterChecker) severity() string { return "error" }
 
@@ -184,7 +201,7 @@ func (c *adherenceFooterChecker) check(specRoot string) ([]Violation, error) {
 	var violations []Violation
 	for _, t := range docTypeTargets {
 		target := t
-		err := walkDocTarget(target, specRoot, c.plansDir, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, c.skipPlans, func(path string, content []byte) {
 			if strings.Contains(string(content), target.url) {
 				return
 			}
@@ -213,7 +230,7 @@ func (c *adherenceFooterChecker) fix(specRoot string) error {
 	for _, t := range docTypeTargets {
 		target := t
 		var writeErr error
-		err := walkDocTarget(target, specRoot, c.plansDir, func(path string, content []byte) {
+		err := walkDocTarget(target, specRoot, c.plansDir, c.skipPlans, func(path string, content []byte) {
 			if writeErr != nil {
 				return
 			}
@@ -540,7 +557,17 @@ func walkTaskReadmesDir(plansDir string, fn func(path string, content []byte)) e
 	})
 }
 
-func walkDocTarget(target docTypeTarget, specRoot, plansDir string, fn func(path string, content []byte)) error {
+// skipPlanOwned, when true, makes every plan-owned target (planOwned != "")
+// a complete no-op — no filesystem access at all — regardless of plansDir.
+// It is set only when Plan routing is configured but failed to resolve
+// (finding 1 / repo-config#req:plan-route-required): the plansDir=="" branch
+// below is reserved for the "no route configured at all" default and must
+// not also cover "a route is configured and broken", which must never read
+// the possibly-stale local plans tree that default falls back to.
+func walkDocTarget(target docTypeTarget, specRoot, plansDir string, skipPlanOwned bool, fn func(path string, content []byte)) error {
+	if skipPlanOwned && target.planOwned != "" {
+		return nil
+	}
 	if plansDir == "" || target.planOwned == "" {
 		return target.walk(specRoot, fn)
 	}

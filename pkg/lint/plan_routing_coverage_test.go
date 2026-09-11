@@ -174,14 +174,44 @@ func TestWalkTaskReadmesDirRejectsSymlink(t *testing.T) {
 
 func TestWalkDocTargetPlanOwnedRouting(t *testing.T) {
 	plansDir := t.TempDir()
-	if err := walkDocTarget(docTypeTarget{planOwned: "index"}, "unused", plansDir, func(string, []byte) {}); err != nil {
+	if err := walkDocTarget(docTypeTarget{planOwned: "index"}, "unused", plansDir, false, func(string, []byte) {}); err != nil {
 		t.Fatalf("index routing: %v", err)
 	}
-	if err := walkDocTarget(docTypeTarget{planOwned: "task"}, "unused", plansDir, func(string, []byte) {}); err != nil {
+	if err := walkDocTarget(docTypeTarget{planOwned: "task"}, "unused", plansDir, false, func(string, []byte) {}); err != nil {
 		t.Fatalf("task routing: %v", err)
 	}
-	if err := walkDocTarget(docTypeTarget{planOwned: "bogus"}, "unused", plansDir, func(string, []byte) {}); err == nil || !strings.Contains(err.Error(), "unknown plan-owned document type") {
+	if err := walkDocTarget(docTypeTarget{planOwned: "bogus"}, "unused", plansDir, false, func(string, []byte) {}); err == nil || !strings.Contains(err.Error(), "unknown plan-owned document type") {
 		t.Fatalf("unknown routing err = %v", err)
+	}
+}
+
+// AC: skip-plan-owned — when skipPlanOwned is true, a plan-owned target is a
+// complete no-op (fn is never invoked, no error), regardless of plansDir;
+// this is what a configured-but-broken Plan route relies on to never read
+// spec/plans (finding 1 / repo-config#req:plan-route-required). A
+// non-plan-owned target is unaffected — skipPlanOwned only ever gates
+// target.planOwned != "" targets.
+func TestWalkDocTargetSkipPlanOwned(t *testing.T) {
+	plansDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plansDir, "README.md"), []byte("plans index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := walkDocTarget(docTypeTarget{planOwned: "index"}, "unused", plansDir, true, func(string, []byte) { called = true }); err != nil {
+		t.Fatalf("skip-plan-owned index: %v", err)
+	}
+	if called {
+		t.Fatal("skipPlanOwned=true must never invoke fn for a plan-owned target")
+	}
+
+	specRoot := t.TempDir()
+	nonPlanCalled := false
+	nonPlan := docTypeTarget{walk: func(string, func(string, []byte)) error { nonPlanCalled = true; return nil }}
+	if err := walkDocTarget(nonPlan, specRoot, plansDir, true, func(string, []byte) {}); err != nil {
+		t.Fatalf("skip-plan-owned non-plan target: %v", err)
+	}
+	if !nonPlanCalled {
+		t.Fatal("skipPlanOwned=true must not affect a non-plan-owned target")
 	}
 }
 

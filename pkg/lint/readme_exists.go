@@ -7,7 +7,15 @@ import (
 )
 
 // readmeExistsChecker verifies that every spec directory has a README.md file.
-type readmeExistsChecker struct{ plansDir string }
+type readmeExistsChecker struct {
+	plansDir string
+	// skipPlans excludes spec/plans from the walk entirely without ever
+	// reading it — set only when Plan routing is configured but failed to
+	// resolve (finding 1 / repo-config#req:plan-route-required), so this
+	// rule never falls back to the possibly-stale local plans tree the way
+	// an empty plansDir normally would.
+	skipPlans bool
+}
 
 func newReadmeExistsChecker(plansDir ...string) checker {
 	c := &readmeExistsChecker{}
@@ -15,6 +23,12 @@ func newReadmeExistsChecker(plansDir ...string) checker {
 		c.plansDir = plansDir[0]
 	}
 	return c
+}
+
+// newReadmeExistsCheckerSkipPlans returns a readme-exists checker configured
+// for a configured-but-broken Plan route: see skipPlans.
+func newReadmeExistsCheckerSkipPlans() checker {
+	return &readmeExistsChecker{skipPlans: true}
 }
 
 func (c *readmeExistsChecker) name() string     { return "readme-exists" }
@@ -29,8 +43,9 @@ func (c *readmeExistsChecker) check(specRoot string) ([]Violation, error) {
 	// the readme-exists rule.
 	seedsRel := filepath.Join("ideas", "seeds")
 
+	excludePlans := c.plansDir != "" || c.skipPlans
 	err := walkSpecDirs(specRoot, func(dirPath, relPath string) error {
-		if c.plansDir != "" && (relPath == "plans" || strings.HasPrefix(filepath.ToSlash(relPath), "plans/")) {
+		if excludePlans && (relPath == "plans" || strings.HasPrefix(filepath.ToSlash(relPath), "plans/")) {
 			return nil
 		}
 		if relPath == seedsRel || isFeatureProposalsContainer(relPath) || isLessonOccurrencesContainer(relPath) {

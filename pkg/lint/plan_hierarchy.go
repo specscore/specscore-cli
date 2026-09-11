@@ -10,7 +10,14 @@ import (
 // planHierarchyChecker validates hierarchical plan conventions:
 // - Roadmaps (plans with child plan subdirectories) must not have Steps sections
 // - Nesting is limited to 2 levels (roadmap -> plan)
-type planHierarchyChecker struct{ plansDir string }
+type planHierarchyChecker struct {
+	plansDir string
+	// routeBroken, when true, means Plan routing is configured but failed to
+	// resolve: check() must skip entirely, without ever touching the local
+	// spec/plans tree that an empty plansDir would otherwise default to
+	// (finding 1 / repo-config#req:plan-route-required).
+	routeBroken bool
+}
 
 func newPlanHierarchyChecker(plansDir ...string) checker {
 	c := &planHierarchyChecker{}
@@ -20,10 +27,19 @@ func newPlanHierarchyChecker(plansDir ...string) checker {
 	return c
 }
 
+// newPlanHierarchyCheckerRouteError returns a plan-hierarchy checker
+// configured for a configured-but-broken Plan route: see routeBroken.
+func newPlanHierarchyCheckerRouteError() checker {
+	return &planHierarchyChecker{routeBroken: true}
+}
+
 func (c *planHierarchyChecker) name() string     { return "plan-hierarchy" }
 func (c *planHierarchyChecker) severity() string { return "error" }
 
 func (c *planHierarchyChecker) check(specRoot string) ([]Violation, error) {
+	if c.routeBroken {
+		return nil, nil
+	}
 	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	info, err := os.Stat(plansDir)
 	if err != nil || !info.IsDir() {

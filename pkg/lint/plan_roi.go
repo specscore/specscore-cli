@@ -9,7 +9,14 @@ import (
 
 // planROIChecker validates ROI metadata values in plan README headers.
 // When present, Effort must be S/M/L/XL and Impact must be low/medium/high/critical.
-type planROIChecker struct{ plansDir string }
+type planROIChecker struct {
+	plansDir string
+	// routeBroken, when true, means Plan routing is configured but failed to
+	// resolve: check() must skip entirely, without ever touching the local
+	// spec/plans tree that an empty plansDir would otherwise default to
+	// (finding 1 / repo-config#req:plan-route-required).
+	routeBroken bool
+}
 
 func newPlanROIChecker(plansDir ...string) checker {
 	c := &planROIChecker{}
@@ -17,6 +24,12 @@ func newPlanROIChecker(plansDir ...string) checker {
 		c.plansDir = plansDir[0]
 	}
 	return c
+}
+
+// newPlanROICheckerRouteError returns a plan-roi-metadata checker configured
+// for a configured-but-broken Plan route: see routeBroken.
+func newPlanROICheckerRouteError() checker {
+	return &planROIChecker{routeBroken: true}
 }
 
 func (c *planROIChecker) name() string     { return "plan-roi-metadata" }
@@ -31,6 +44,9 @@ var validImpact = map[string]bool{
 }
 
 func (c *planROIChecker) check(specRoot string) ([]Violation, error) {
+	if c.routeBroken {
+		return nil, nil
+	}
 	plansDir := effectivePlansDir(specRoot, c.plansDir)
 	info, err := os.Stat(plansDir)
 	if err != nil || !info.IsDir() {
