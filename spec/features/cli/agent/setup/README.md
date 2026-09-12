@@ -359,6 +359,7 @@ Positional arguments: one or more agent names from the supported set, given sepa
 
 ## Open Questions
 
+- During the shared `strongo/cli-helpers/skillsync` cutover, should `agent setup --force` replace each selected skill directory as a complete verified snapshot (including local edits and extra files), or preserve today's per-file overlay that retains extra files? The proposed behavior is complete replacement only under explicit `--force`, while refusing a skill owned by a different plugin; ordinary sync continues to preserve conflicting local content. This remains an owner decision because `skill-copy-idempotent` currently promises per-file overwrite semantics. Instruction-file generation and explicit source/ref controls remain in scope.
 - Should `agent setup` also generate `.gitignore` entries for agent-specific files that users might not want tracked (e.g., `.cursor/`)? Some teams track these, others don't.
 - Should a future `agent remove <name>` verb be added to clean up generated files?
 - Should the command support `--dry-run` to preview which files would be created without writing them?
