@@ -939,6 +939,90 @@ func TestLifecycleDescriptorContextAndReceiptWriterDefences(t *testing.T) {
 	}
 }
 
+func TestLifecycleDescriptorContextCopiesLinkedWorktreeConfiguration(t *testing.T) {
+	canonical := t.TempDir()
+	runGit(t, canonical, "init", "-b", "main")
+	runGit(t, canonical, "config", "user.email", "specscore-test@example.com")
+	runGit(t, canonical, "config", "user.name", "SpecScore Test")
+	runGit(t, canonical, "config", "extensions.worktreeConfig", "true")
+	runGit(t, canonical, "config", "specscore.shared", "shared-value")
+	mustWriteLifecycleFile(t, filepath.Join(canonical, "README.md"), "fixture\n")
+	runGit(t, canonical, "add", ".")
+	runGit(t, canonical, "commit", "-m", "fixture")
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, canonical, "worktree", "add", "-b", "linked-context", linked)
+	runGit(t, linked, "config", "--worktree", "specscore.scope", "linked-value")
+	project, err := openLifecycleProjectNoFollow(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+	stage, err := createLifecycleStageProjectNoFollow(project, "linked-context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+	movedLinked := linked + "-moved"
+	if err := os.Rename(linked, movedLinked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteLifecycleFile(t, filepath.Join(linked, ".git"), "not the held worktree\n")
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "unrelated-git-dir"))
+
+	if err := materializeLifecycleProjectContext(project, stage); err != nil {
+		t.Fatalf("materialize linked-worktree context: %v", err)
+	}
+	stagedPath := filepath.Join(movedLinked, ".specscore-txn-linked-context")
+	shared, err := os.ReadFile(filepath.Join(stagedPath, ".git", "config"))
+	if err != nil || !strings.Contains(string(shared), "shared-value") || !strings.Contains(string(shared), "worktreeConfig = true") {
+		t.Fatalf("staged shared config = %q, %v", shared, err)
+	}
+	worktree, err := os.ReadFile(filepath.Join(stagedPath, ".git", "config.worktree"))
+	if err != nil || !strings.Contains(string(worktree), "linked-value") {
+		t.Fatalf("staged worktree config = %q, %v", worktree, err)
+	}
+}
+
+func TestLifecycleDescriptorContextSupportsRelativeGitPointers(t *testing.T) {
+	root := t.TempDir()
+	projectRoot := filepath.Join(root, "worktree")
+	gitDirectory := filepath.Join(root, "admin", "worktrees", "linked")
+	commonDirectory := filepath.Join(root, "admin", "shared.git")
+	for _, path := range []string{projectRoot, gitDirectory, commonDirectory} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWriteLifecycleFile(t, filepath.Join(projectRoot, ".git"), "gitdir: ../admin/worktrees/linked\n")
+	mustWriteLifecycleFile(t, filepath.Join(gitDirectory, "commondir"), "../../shared.git\n")
+	mustWriteLifecycleFile(t, filepath.Join(gitDirectory, "config.worktree"), "[specscore]\n\tscope = relative\n")
+	mustWriteLifecycleFile(t, filepath.Join(commonDirectory, "config"), "[specscore]\n\tshared = relative\n")
+	project, err := openLifecycleProjectNoFollow(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+	stage, err := createLifecycleStageProjectNoFollow(project, "relative-git-context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+
+	if err := materializeLifecycleProjectContext(project, stage); err != nil {
+		t.Fatalf("materialize relative linked-worktree context: %v", err)
+	}
+	for name, marker := range map[string]string{"config": "shared = relative", "config.worktree": "scope = relative"} {
+		content, readErr := os.ReadFile(filepath.Join(stage.path, ".git", name))
+		if readErr != nil || !strings.Contains(string(content), marker) {
+			t.Fatalf("staged %s = %q, %v", name, content, readErr)
+		}
+	}
+}
+
 func TestLifecycleProjectContextRejectsNonDirectoryGit(t *testing.T) {
 	projectRoot := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(projectRoot, ".git"), "not a directory\n")
@@ -954,6 +1038,272 @@ func TestLifecycleProjectContextRejectsNonDirectoryGit(t *testing.T) {
 	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
 	if err := materializeLifecycleProjectContext(project, stage); err == nil {
 		t.Fatal("regular .git file accepted as frozen context")
+	}
+}
+
+func TestLifecycleLinkedWorktreeContextFailureBranches(t *testing.T) {
+	openContext := func(t *testing.T, root, id string) (*stagedSpecTree, *stagedSpecTree) {
+		t.Helper()
+		project, err := openLifecycleProjectNoFollow(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+		stage, err := createLifecycleStageProjectNoFollow(project, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+		return project, stage
+	}
+
+	t.Run("pointer read", func(t *testing.T) {
+		root := t.TempDir()
+		mustWriteLifecycleFile(t, filepath.Join(root, ".git"), strings.Repeat("x", 4097))
+		project, stage := openContext(t, root, "pointer-read")
+		if err := materializeLifecycleProjectContext(project, stage); err == nil || !strings.Contains(err.Error(), "reading linked-worktree .git pointer") {
+			t.Fatalf("materialize error = %v", err)
+		}
+	})
+
+	t.Run("pointer disappeared", func(t *testing.T) {
+		resetLifecycleUnixSeams(t)
+		root := t.TempDir()
+		mustWriteLifecycleFile(t, filepath.Join(root, ".git"), "gitdir: missing\n")
+		project, stage := openContext(t, root, "pointer-disappeared")
+		lifecycleContextOpenChild = func(_ *stagedSpecTree, name string) (*stagedSpecTree, error) {
+			if name == ".git" {
+				if err := os.Remove(filepath.Join(root, ".git")); err != nil {
+					t.Fatal(err)
+				}
+				return nil, unix.ENOTDIR
+			}
+			return nil, fmt.Errorf("unexpected child %q", name)
+		}
+		if err := materializeLifecycleProjectContext(project, stage); err == nil || !strings.Contains(err.Error(), "pointer disappeared") {
+			t.Fatalf("materialize error = %v", err)
+		}
+	})
+
+	t.Run("git directory missing", func(t *testing.T) {
+		root := t.TempDir()
+		mustWriteLifecycleFile(t, filepath.Join(root, ".git"), "gitdir: missing\n")
+		project, stage := openContext(t, root, "git-directory-missing")
+		if err := materializeLifecycleProjectContext(project, stage); err == nil || !strings.Contains(err.Error(), "opening linked-worktree git directory") {
+			t.Fatalf("materialize error = %v", err)
+		}
+	})
+
+	t.Run("invalid common directory", func(t *testing.T) {
+		root := t.TempDir()
+		gitDirectory := filepath.Join(root, "git-directory")
+		if err := os.Mkdir(gitDirectory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		mustWriteLifecycleFile(t, filepath.Join(root, ".git"), "gitdir: git-directory\n")
+		mustWriteLifecycleFile(t, filepath.Join(gitDirectory, "commondir"), "\n")
+		project, stage := openContext(t, root, "invalid-common-directory")
+		if err := materializeLifecycleProjectContext(project, stage); err == nil || !strings.Contains(err.Error(), "invalid linked-worktree commondir") {
+			t.Fatalf("materialize error = %v", err)
+		}
+	})
+
+	t.Run("worktree config copy", func(t *testing.T) {
+		resetLifecycleUnixSeams(t)
+		root := t.TempDir()
+		mustWriteLifecycleFile(t, filepath.Join(root, "config"), "[core]\n")
+		mustWriteLifecycleFile(t, filepath.Join(root, "config.worktree"), "[specscore]\n")
+		source, stage := openContext(t, root, "worktree-config-copy")
+		calls := 0
+		lifecycleContextCopyFile = func(source *stagedSpecTree, sourceName string, destination *stagedSpecTree, destinationName string) error {
+			calls++
+			if calls == 2 {
+				return errors.New("worktree config copy failed")
+			}
+			return copyOptionalLifecycleRegularFile(source, sourceName, destination, destinationName)
+		}
+		if err := materializeLifecycleGitConfig(source, source, stage); err == nil || !strings.Contains(err.Error(), "copying .git/config.worktree") {
+			t.Fatalf("materialize config error = %v", err)
+		}
+	})
+
+	if _, err := parseLifecycleGitDirectoryPointer([]byte("gitdir: .\n")); err == nil || !strings.Contains(err.Error(), "directory path") {
+		t.Fatalf("dot git directory error = %v", err)
+	}
+}
+
+func TestLifecycleCommonGitDirectoryFailureBranches(t *testing.T) {
+	openDirectory := func(t *testing.T) *stagedSpecTree {
+		t.Helper()
+		directory, err := openLifecycleProjectNoFollow(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = closeStagedSpecTree(directory) })
+		return directory
+	}
+
+	t.Run("commondir read", func(t *testing.T) {
+		directory := openDirectory(t)
+		if err := os.Mkdir(filepath.Join(directory.path, "commondir"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := openLifecycleCommonGitDirectory(directory); err == nil || !strings.Contains(err.Error(), "reading linked-worktree commondir") {
+			t.Fatalf("common directory error = %v", err)
+		}
+	})
+
+	t.Run("commondir absent", func(t *testing.T) {
+		directory := openDirectory(t)
+		common, err := openLifecycleCommonGitDirectory(directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if common.root == nil {
+			t.Fatal("duplicated common directory is closed")
+		}
+		_ = closeStagedSpecTree(common)
+	})
+
+	t.Run("descriptor duplication", func(t *testing.T) {
+		resetLifecycleUnixSeams(t)
+		directory := openDirectory(t)
+		lifecycleContextDup = func(int) (int, error) { return -1, errors.New("dup failed") }
+		if _, err := openLifecycleCommonGitDirectory(directory); err == nil || !strings.Contains(err.Error(), "dup failed") {
+			t.Fatalf("common directory error = %v", err)
+		}
+	})
+
+	t.Run("commondir open", func(t *testing.T) {
+		directory := openDirectory(t)
+		mustWriteLifecycleFile(t, filepath.Join(directory.path, "commondir"), "missing\n")
+		if _, err := openLifecycleCommonGitDirectory(directory); err == nil || !strings.Contains(err.Error(), "opening linked-worktree commondir") {
+			t.Fatalf("common directory error = %v", err)
+		}
+	})
+}
+
+func TestOpenLifecycleDirectoryPathNoFollowFailureBranches(t *testing.T) {
+	if _, err := openLifecycleDirectoryPathNoFollow(nil, "."); err == nil || !strings.Contains(err.Error(), "descriptor is closed") {
+		t.Fatalf("closed base error = %v", err)
+	}
+	base, err := openLifecycleProjectNoFollow(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(base) })
+
+	t.Run("duplicate root", func(t *testing.T) {
+		resetLifecycleUnixSeams(t)
+		lifecycleContextDup = func(int) (int, error) { return -1, errors.New("dup failed") }
+		if _, err := openLifecycleDirectoryPathNoFollow(base, "."); err == nil || !strings.Contains(err.Error(), "dup failed") {
+			t.Fatalf("open directory error = %v", err)
+		}
+	})
+
+	t.Run("wrap root", func(t *testing.T) {
+		resetLifecycleUnixSeams(t)
+		lifecycleContextNewFile = func(uintptr, string) *os.File { return nil }
+		if _, err := openLifecycleDirectoryPathNoFollow(base, "."); err == nil || !strings.Contains(err.Error(), "wrapping lifecycle directory path root") {
+			t.Fatalf("open directory error = %v", err)
+		}
+	})
+
+	t.Run("open segment", func(t *testing.T) {
+		if _, err := openLifecycleDirectoryPathNoFollow(base, "missing"); err == nil {
+			t.Fatal("missing directory segment accepted")
+		}
+	})
+
+	t.Run("wrap segment", func(t *testing.T) {
+		resetLifecycleUnixSeams(t)
+		if err := os.Mkdir(filepath.Join(base.path, "child"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		calls := 0
+		lifecycleContextNewFile = func(fd uintptr, name string) *os.File {
+			calls++
+			if calls == 2 {
+				return nil
+			}
+			return os.NewFile(fd, name)
+		}
+		if _, err := openLifecycleDirectoryPathNoFollow(base, "child"); err == nil || !strings.Contains(err.Error(), "wrapping lifecycle directory segment") {
+			t.Fatalf("open directory error = %v", err)
+		}
+	})
+}
+
+func TestReadLifecycleContextRegularFileFailureBranches(t *testing.T) {
+	if _, _, err := readLifecycleContextRegularFile(nil, "source"); err == nil || !strings.Contains(err.Error(), "descriptor is closed") {
+		t.Fatalf("closed directory error = %v", err)
+	}
+	root := t.TempDir()
+	mustWriteLifecycleFile(t, filepath.Join(root, "source"), "source\n")
+	directory, err := openLifecycleProjectNoFollow(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(directory) })
+	if content, found, err := readLifecycleContextRegularFile(directory, "missing"); err != nil || found || content != nil {
+		t.Fatalf("missing file = %q, %t, %v", content, found, err)
+	}
+
+	t.Run("open", func(t *testing.T) {
+		if err := os.Symlink("source", filepath.Join(root, "source-link")); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := readLifecycleContextRegularFile(directory, "source-link"); err == nil {
+			t.Fatal("symlink source accepted")
+		}
+	})
+
+	t.Run("wrap", func(t *testing.T) {
+		resetLifecycleUnixSeams(t)
+		lifecycleContextNewFile = func(uintptr, string) *os.File { return nil }
+		if _, _, err := readLifecycleContextRegularFile(directory, "source"); err == nil || !strings.Contains(err.Error(), "wrapping project context") {
+			t.Fatalf("read file error = %v", err)
+		}
+	})
+
+	for _, failure := range []struct {
+		name    string
+		arrange func()
+	}{
+		{name: "initial stat", arrange: func() {
+			lifecycleContextFileStat = func(*os.File) (os.FileInfo, error) { return nil, errors.New("initial stat failed") }
+		}},
+		{name: "read", arrange: func() {
+			lifecycleContextReadAll = func(io.Reader) ([]byte, error) { return nil, errors.New("read failed") }
+		}},
+		{name: "post-read stat", arrange: func() {
+			calls := 0
+			lifecycleContextFileStat = func(file *os.File) (os.FileInfo, error) {
+				calls++
+				if calls == 2 {
+					return nil, errors.New("post-read stat failed")
+				}
+				return file.Stat()
+			}
+		}},
+		{name: "changed while reading", arrange: func() {
+			calls := 0
+			lifecycleContextFileStat = func(file *os.File) (os.FileInfo, error) {
+				calls++
+				if calls == 2 {
+					return lifecycleTestFileInfo{mode: 0o600}, nil
+				}
+				return file.Stat()
+			}
+		}},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			resetLifecycleUnixSeams(t)
+			failure.arrange()
+			if _, _, err := readLifecycleContextRegularFile(directory, "source"); err == nil {
+				t.Fatalf("%s failure accepted", failure.name)
+			}
+		})
 	}
 }
 
@@ -2565,6 +2915,8 @@ func resetLifecycleUnixSeams(t *testing.T) {
 	originalContextCopyDirectory := lifecycleContextCopyDirectory
 	originalContextOpenChild := lifecycleContextOpenChild
 	originalContextMkdirAt := lifecycleContextMkdirAt
+	originalContextDup := lifecycleContextDup
+	originalContextNewFile := lifecycleContextNewFile
 	originalContextFileStat := lifecycleContextFileStat
 	originalContextReadAll := lifecycleContextReadAll
 	originalContextWriteAll := lifecycleContextWriteAll
@@ -2577,6 +2929,8 @@ func resetLifecycleUnixSeams(t *testing.T) {
 	lifecycleContextCopyDirectory = copyOptionalLifecycleDirectory
 	lifecycleContextOpenChild = openLifecycleProjectChildNoFollow
 	lifecycleContextMkdirAt = unix.Mkdirat
+	lifecycleContextDup = unix.Dup
+	lifecycleContextNewFile = os.NewFile
 	lifecycleContextFileStat = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
 	lifecycleContextReadAll = io.ReadAll
 	lifecycleContextWriteAll = writeAllAtFD
@@ -2590,6 +2944,8 @@ func resetLifecycleUnixSeams(t *testing.T) {
 		lifecycleContextCopyDirectory = originalContextCopyDirectory
 		lifecycleContextOpenChild = originalContextOpenChild
 		lifecycleContextMkdirAt = originalContextMkdirAt
+		lifecycleContextDup = originalContextDup
+		lifecycleContextNewFile = originalContextNewFile
 		lifecycleContextFileStat = originalContextFileStat
 		lifecycleContextReadAll = originalContextReadAll
 		lifecycleContextWriteAll = originalContextWriteAll
