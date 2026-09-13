@@ -161,9 +161,37 @@ func materializeLifecycleProjectContext(project, stage *stagedSpecTree) error {
 		if errors.Is(err, unix.ENOENT) {
 			return nil
 		}
-		return fmt.Errorf("opening .git: %w", err)
+		if !errors.Is(err, unix.ENOTDIR) {
+			return fmt.Errorf("opening .git: %w", err)
+		}
+		pointer, found, readErr := readLifecycleContextRegularFile(project, ".git")
+		if readErr != nil {
+			return fmt.Errorf("reading linked-worktree .git pointer: %w", readErr)
+		}
+		if !found {
+			return fmt.Errorf("linked-worktree .git pointer disappeared")
+		}
+		gitDirectory, parseErr := parseLifecycleGitDirectoryPointer(pointer)
+		if parseErr != nil {
+			return parseErr
+		}
+		gitSource, err = openLifecycleDirectoryPathNoFollow(project, gitDirectory)
+		if err != nil {
+			return fmt.Errorf("opening linked-worktree git directory: %w", err)
+		}
+		defer func() { _ = closeStagedSpecTree(gitSource) }()
+		commonSource, commonErr := openLifecycleCommonGitDirectory(gitSource)
+		if commonErr != nil {
+			return commonErr
+		}
+		defer func() { _ = closeStagedSpecTree(commonSource) }()
+		return materializeLifecycleGitConfig(commonSource, gitSource, stage)
 	}
 	defer func() { _ = closeStagedSpecTree(gitSource) }()
+	return materializeLifecycleGitConfig(gitSource, gitSource, stage)
+}
+
+func materializeLifecycleGitConfig(commonSource, worktreeSource, stage *stagedSpecTree) error {
 	if err := lifecycleContextMkdirAt(int(stage.root.Fd()), ".git", 0o700); err != nil {
 		return fmt.Errorf("creating staged .git: %w", err)
 	}
@@ -172,10 +200,135 @@ func materializeLifecycleProjectContext(project, stage *stagedSpecTree) error {
 		return err
 	}
 	defer func() { _ = closeStagedSpecTree(gitStage) }()
-	if err := lifecycleContextCopyFile(gitSource, "config", gitStage, "config"); err != nil {
+	if err := lifecycleContextCopyFile(commonSource, "config", gitStage, "config"); err != nil {
 		return fmt.Errorf("copying .git/config: %w", err)
 	}
+	if err := lifecycleContextCopyFile(worktreeSource, "config.worktree", gitStage, "config.worktree"); err != nil {
+		return fmt.Errorf("copying .git/config.worktree: %w", err)
+	}
 	return nil
+}
+
+func parseLifecycleGitDirectoryPointer(content []byte) (string, error) {
+	const prefix = "gitdir:"
+	pointer := strings.TrimSpace(string(content))
+	if strings.ContainsAny(pointer, "\r\n") || !strings.HasPrefix(pointer, prefix) {
+		return "", fmt.Errorf("invalid linked-worktree .git pointer")
+	}
+	path := filepath.Clean(strings.TrimSpace(strings.TrimPrefix(pointer, prefix)))
+	if path == "." {
+		return "", fmt.Errorf("invalid linked-worktree .git directory path")
+	}
+	return path, nil
+}
+
+func openLifecycleCommonGitDirectory(gitDirectory *stagedSpecTree) (*stagedSpecTree, error) {
+	content, found, err := readLifecycleContextRegularFile(gitDirectory, "commondir")
+	if err != nil {
+		return nil, fmt.Errorf("reading linked-worktree commondir: %w", err)
+	}
+	if !found {
+		fd, dupErr := unix.Dup(int(gitDirectory.root.Fd()))
+		if dupErr != nil {
+			return nil, dupErr
+		}
+		return &stagedSpecTree{path: gitDirectory.path, root: os.NewFile(uintptr(fd), "git-common-directory")}, nil
+	}
+	path := strings.TrimSpace(string(content))
+	if path == "" || strings.ContainsAny(path, "\r\n") {
+		return nil, fmt.Errorf("invalid linked-worktree commondir")
+	}
+	common, openErr := openLifecycleDirectoryPathNoFollow(gitDirectory, path)
+	if openErr != nil {
+		return nil, fmt.Errorf("opening linked-worktree commondir: %w", openErr)
+	}
+	return common, nil
+}
+
+func openLifecycleDirectoryPathNoFollow(base *stagedSpecTree, path string) (*stagedSpecTree, error) {
+	if base == nil || base.root == nil {
+		return nil, fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	clean := filepath.Clean(path)
+	var (
+		fd    int
+		err   error
+		label string
+	)
+	if filepath.IsAbs(clean) {
+		fd, err = unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		label = string(filepath.Separator)
+	} else {
+		fd, err = unix.Dup(int(base.root.Fd()))
+		label = base.path
+	}
+	if err != nil {
+		return nil, err
+	}
+	current := os.NewFile(uintptr(fd), "lifecycle-directory-path")
+	if current == nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("wrapping lifecycle directory path root")
+	}
+	segments := strings.Split(clean, string(filepath.Separator))
+	for _, segment := range segments {
+		if segment == "" || segment == "." {
+			continue
+		}
+		nextFD, openErr := unix.Openat(int(current.Fd()), segment, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		if openErr != nil {
+			_ = current.Close()
+			return nil, openErr
+		}
+		next := os.NewFile(uintptr(nextFD), "lifecycle-directory-segment")
+		if next == nil {
+			_ = unix.Close(nextFD)
+			_ = current.Close()
+			return nil, fmt.Errorf("wrapping lifecycle directory segment %q", segment)
+		}
+		_ = current.Close()
+		current = next
+		label = filepath.Join(label, segment)
+	}
+	return &stagedSpecTree{path: filepath.Clean(label), root: current}, nil
+}
+
+func readLifecycleContextRegularFile(directory *stagedSpecTree, name string) ([]byte, bool, error) {
+	if directory == nil || directory.root == nil {
+		return nil, false, fmt.Errorf("lifecycle project descriptor is closed")
+	}
+	fd, err := unix.Openat(int(directory.root.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	file := os.NewFile(uintptr(fd), name)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, false, fmt.Errorf("wrapping project context %s", name)
+	}
+	defer func() { _ = file.Close() }()
+	before, err := lifecycleContextFileStat(file)
+	if err != nil {
+		return nil, false, err
+	}
+	if !before.Mode().IsRegular() || before.Size() > 4096 {
+		return nil, false, fmt.Errorf("refusing invalid project context %s", name)
+	}
+	content, err := lifecycleContextReadAll(file)
+	if err != nil {
+		return nil, false, err
+	}
+	after, err := lifecycleContextFileStat(file)
+	if err != nil {
+		return nil, false, err
+	}
+	if !os.SameFile(before, after) || before.Mode() != after.Mode() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, false, fmt.Errorf("project context changed while reading %s", name)
+	}
+	return content, true, nil
 }
 
 func copyOptionalLifecycleDirectory(sourceProject *stagedSpecTree, sourceName string, stageProject *stagedSpecTree, stageName string) error {

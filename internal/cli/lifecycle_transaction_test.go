@@ -939,6 +939,90 @@ func TestLifecycleDescriptorContextAndReceiptWriterDefences(t *testing.T) {
 	}
 }
 
+func TestLifecycleDescriptorContextCopiesLinkedWorktreeConfiguration(t *testing.T) {
+	canonical := t.TempDir()
+	runGit(t, canonical, "init", "-b", "main")
+	runGit(t, canonical, "config", "user.email", "specscore-test@example.com")
+	runGit(t, canonical, "config", "user.name", "SpecScore Test")
+	runGit(t, canonical, "config", "extensions.worktreeConfig", "true")
+	runGit(t, canonical, "config", "specscore.shared", "shared-value")
+	mustWriteLifecycleFile(t, filepath.Join(canonical, "README.md"), "fixture\n")
+	runGit(t, canonical, "add", ".")
+	runGit(t, canonical, "commit", "-m", "fixture")
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, canonical, "worktree", "add", "-b", "linked-context", linked)
+	runGit(t, linked, "config", "--worktree", "specscore.scope", "linked-value")
+	project, err := openLifecycleProjectNoFollow(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+	stage, err := createLifecycleStageProjectNoFollow(project, "linked-context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+	movedLinked := linked + "-moved"
+	if err := os.Rename(linked, movedLinked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteLifecycleFile(t, filepath.Join(linked, ".git"), "not the held worktree\n")
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "unrelated-git-dir"))
+
+	if err := materializeLifecycleProjectContext(project, stage); err != nil {
+		t.Fatalf("materialize linked-worktree context: %v", err)
+	}
+	stagedPath := filepath.Join(movedLinked, ".specscore-txn-linked-context")
+	shared, err := os.ReadFile(filepath.Join(stagedPath, ".git", "config"))
+	if err != nil || !strings.Contains(string(shared), "shared-value") || !strings.Contains(string(shared), "worktreeConfig = true") {
+		t.Fatalf("staged shared config = %q, %v", shared, err)
+	}
+	worktree, err := os.ReadFile(filepath.Join(stagedPath, ".git", "config.worktree"))
+	if err != nil || !strings.Contains(string(worktree), "linked-value") {
+		t.Fatalf("staged worktree config = %q, %v", worktree, err)
+	}
+}
+
+func TestLifecycleDescriptorContextSupportsRelativeGitPointers(t *testing.T) {
+	root := t.TempDir()
+	projectRoot := filepath.Join(root, "worktree")
+	gitDirectory := filepath.Join(root, "admin", "worktrees", "linked")
+	commonDirectory := filepath.Join(root, "admin", "shared.git")
+	for _, path := range []string{projectRoot, gitDirectory, commonDirectory} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWriteLifecycleFile(t, filepath.Join(projectRoot, ".git"), "gitdir: ../admin/worktrees/linked\n")
+	mustWriteLifecycleFile(t, filepath.Join(gitDirectory, "commondir"), "../../shared.git\n")
+	mustWriteLifecycleFile(t, filepath.Join(gitDirectory, "config.worktree"), "[specscore]\n\tscope = relative\n")
+	mustWriteLifecycleFile(t, filepath.Join(commonDirectory, "config"), "[specscore]\n\tshared = relative\n")
+	project, err := openLifecycleProjectNoFollow(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(project) })
+	stage, err := createLifecycleStageProjectNoFollow(project, "relative-git-context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeStagedSpecTree(stage) })
+
+	if err := materializeLifecycleProjectContext(project, stage); err != nil {
+		t.Fatalf("materialize relative linked-worktree context: %v", err)
+	}
+	for name, marker := range map[string]string{"config": "shared = relative", "config.worktree": "scope = relative"} {
+		content, readErr := os.ReadFile(filepath.Join(stage.path, ".git", name))
+		if readErr != nil || !strings.Contains(string(content), marker) {
+			t.Fatalf("staged %s = %q, %v", name, content, readErr)
+		}
+	}
+}
+
 func TestLifecycleProjectContextRejectsNonDirectoryGit(t *testing.T) {
 	projectRoot := t.TempDir()
 	mustWriteLifecycleFile(t, filepath.Join(projectRoot, ".git"), "not a directory\n")

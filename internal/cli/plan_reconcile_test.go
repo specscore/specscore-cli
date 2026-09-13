@@ -167,6 +167,35 @@ func TestPlanReconcile_TreeTransactionPublishesDeclaredPlanChanges(t *testing.T)
 	}
 }
 
+func TestPlanReconcile_TreeTransactionSupportsGitLinkedWorktree(t *testing.T) {
+	canonical := stageReconcilablePlan(t, "auth", "Draft", "planning")
+	runGit(t, canonical, "init", "-b", "main")
+	runGit(t, canonical, "config", "user.email", "specscore-test@example.com")
+	runGit(t, canonical, "config", "user.name", "SpecScore Test")
+	runGit(t, canonical, "add", ".")
+	runGit(t, canonical, "commit", "-m", "initial spec")
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, canonical, "worktree", "add", "-b", "linked-plan-reconcile", linked)
+	info, err := os.Stat(filepath.Join(linked, ".git"))
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("linked worktree .git = %v, %v; want regular pointer file", info, err)
+	}
+
+	stdout, stderr, err := runPlan(t, "reconcile", "auth", "--tasks=complete",
+		"--note", "delivered from an isolated linked worktree", "--tree-transaction", "--project", linked)
+	if err != nil {
+		t.Fatalf("tree transaction reconcile in linked worktree: %v (stderr=%s)", err, stderr)
+	}
+	if !strings.Contains(stdout, "auth: Draft → Implemented") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	live, err := os.ReadFile(filepath.Join(linked, "spec", "plans", "auth", "README.md"))
+	if err != nil || !strings.Contains(string(live), "**Status:** Implemented") {
+		t.Fatalf("published linked-worktree Plan = %v\n%s", err, live)
+	}
+}
+
 func TestPlanReconcile_TreeTransactionValidationCreatesNoRecoveryState(t *testing.T) {
 	root := stageReconcilablePlan(t, "auth", "Draft", "failed")
 	_, _, err := runPlan(t, "reconcile", "auth", "--tasks=complete", "--note", "unsupported claim", "--tree-transaction")
