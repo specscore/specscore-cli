@@ -22,6 +22,8 @@ var (
 	lifecycleContextCopyDirectory = copyOptionalLifecycleDirectory
 	lifecycleContextOpenChild     = openLifecycleProjectChildNoFollow
 	lifecycleContextMkdirAt       = unix.Mkdirat
+	lifecycleContextDup           = unix.Dup
+	lifecycleContextNewFile       = os.NewFile
 	lifecycleContextFileStat      = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
 	lifecycleContextReadAll       = io.ReadAll
 	lifecycleContextWriteAll      = writeAllAtFD
@@ -228,7 +230,7 @@ func openLifecycleCommonGitDirectory(gitDirectory *stagedSpecTree) (*stagedSpecT
 		return nil, fmt.Errorf("reading linked-worktree commondir: %w", err)
 	}
 	if !found {
-		fd, dupErr := unix.Dup(int(gitDirectory.root.Fd()))
+		fd, dupErr := lifecycleContextDup(int(gitDirectory.root.Fd()))
 		if dupErr != nil {
 			return nil, dupErr
 		}
@@ -259,13 +261,13 @@ func openLifecycleDirectoryPathNoFollow(base *stagedSpecTree, path string) (*sta
 		fd, err = unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		label = string(filepath.Separator)
 	} else {
-		fd, err = unix.Dup(int(base.root.Fd()))
+		fd, err = lifecycleContextDup(int(base.root.Fd()))
 		label = base.path
 	}
 	if err != nil {
 		return nil, err
 	}
-	current := os.NewFile(uintptr(fd), "lifecycle-directory-path")
+	current := lifecycleContextNewFile(uintptr(fd), "lifecycle-directory-path")
 	if current == nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("wrapping lifecycle directory path root")
@@ -280,7 +282,7 @@ func openLifecycleDirectoryPathNoFollow(base *stagedSpecTree, path string) (*sta
 			_ = current.Close()
 			return nil, openErr
 		}
-		next := os.NewFile(uintptr(nextFD), "lifecycle-directory-segment")
+		next := lifecycleContextNewFile(uintptr(nextFD), "lifecycle-directory-segment")
 		if next == nil {
 			_ = unix.Close(nextFD)
 			_ = current.Close()
@@ -304,7 +306,7 @@ func readLifecycleContextRegularFile(directory *stagedSpecTree, name string) ([]
 	if err != nil {
 		return nil, false, err
 	}
-	file := os.NewFile(uintptr(fd), name)
+	file := lifecycleContextNewFile(uintptr(fd), name)
 	if file == nil {
 		_ = unix.Close(fd)
 		return nil, false, fmt.Errorf("wrapping project context %s", name)
