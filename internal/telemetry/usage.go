@@ -65,6 +65,7 @@ var CallerEnumKnown = []string{
 	CallerZed,
 	CallerAmazonQ,
 	CallerTabnine,
+	CallerDeepSeek,
 	CallerPiDev,
 	CallerAntigravityGoogle,
 	CallerOther,
@@ -92,6 +93,7 @@ const (
 	CallerZed               = "zed"
 	CallerAmazonQ           = "amazon-q"
 	CallerTabnine           = "tabnine"
+	CallerDeepSeek          = "deepseek"
 	CallerPiDev             = "pi.dev"
 	CallerAntigravityGoogle = "antigravity.google"
 	CallerOther             = "other"

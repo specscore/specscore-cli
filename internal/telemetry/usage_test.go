@@ -88,6 +88,8 @@ func TestResolveCaller(t *testing.T) {
 		{"pi-dev-recognized", "pi.dev", "", "pi.dev"},
 		{"antigravity-google-recognized", "antigravity.google", "", "antigravity.google"},
 		{"amazon-q-recognized", "amazon-q", "", "amazon-q"},
+		{"deepseek-recognized", "deepseek", "", "deepseek"},
+		{"deepseek-recognized-via-env", "", "deepseek", "deepseek"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,10 +102,10 @@ func TestResolveCaller(t *testing.T) {
 }
 
 // TestCallerEnumKnown_HasExpectedSize is a regression guard: the closed enum
-// is documented in docs/telemetry.md as 20 values. If someone adds or removes
+// is documented in docs/telemetry.md as 21 values. If someone adds or removes
 // a value without updating the doc table, this test fires.
 func TestCallerEnumKnown_HasExpectedSize(t *testing.T) {
-	const want = 20
+	const want = 21
 	if got := len(CallerEnumKnown); got != want {
 		t.Errorf("CallerEnumKnown has %d entries, expected %d; "+
 			"if the change is intentional, update docs/telemetry.md table AND this test",
