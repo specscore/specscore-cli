@@ -123,6 +123,7 @@ The `caller` field is a closed enum populated by the agent driving the CLI
 | `zed` | Zed — collaborative editor with AI mode. |
 | `amazon-q` | Amazon Q Developer (AWS). |
 | `tabnine` | Tabnine. |
+| `deepseek` | DeepSeek Harness (DeepSeek). |
 | `pi.dev` | Pi (https://pi.dev/). |
 | `antigravity.google` | Antigravity (https://antigravity.google/). |
 | `other` | Catch-all for any unrecognized value. |

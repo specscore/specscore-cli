@@ -58,10 +58,12 @@ func TestAgentSetup_CommaSeparatedAgents(t *testing.T) {
 }
 
 func TestAgentSkillsDirRegistry(t *testing.T) {
-	// Only claude and cursor have a skills directory in the MVP.
+	// Only agents with a confirmed project-local skills directory receive skill
+	// bundles; every other agent is instruction-file only.
 	want := map[string]string{
-		"claude": ".claude/skills",
-		"cursor": ".cursor/skills",
+		"claude":   ".claude/skills",
+		"cursor":   ".cursor/skills",
+		"deepseek": ".dsh/skills",
 	}
 	for _, a := range supportedAgents {
 		if got := a.skillsDir; got != want[a.name] {
@@ -142,6 +144,56 @@ func TestAgentSetup_SkillCopyClaudeAlways(t *testing.T) {
 	}
 	if _, e := os.Stat(filepath.Join(root, ".claude", "skills", "spec", "SKILL.md")); e != nil {
 		t.Errorf("claude skill not copied: %v", e)
+	}
+}
+
+func TestAgentSetup_SkillCopyDeepSeekDefault(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "ideate/SKILL.md", content: []byte("ideate skill")})
+	out, _, err := runAgentCmd(t, "setup", "deepseek", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	// The DeepSeek Harness reads its project instruction file from AGENTS.md and
+	// its project-scoped skills from <project>/.dsh/skills.
+	if _, e := os.Stat(filepath.Join(root, "AGENTS.md")); e != nil {
+		t.Errorf("AGENTS.md not created: %v", e)
+	}
+	got, readErr := os.ReadFile(filepath.Join(root, ".dsh", "skills", "ideate", "SKILL.md"))
+	if readErr != nil {
+		t.Fatalf("deepseek skill not copied: %v", readErr)
+	}
+	if string(got) != "ideate skill" {
+		t.Errorf("skill content = %q", got)
+	}
+	if !strings.Contains(out, "added .dsh/skills/ideate/SKILL.md") {
+		t.Errorf("expected skill add line, got: %q", out)
+	}
+	// A deepseek-only run must not touch another harness's directory.
+	for _, rel := range []string{".claude", ".cursor", ".codex"} {
+		if _, e := os.Stat(filepath.Join(root, rel)); e == nil {
+			t.Errorf("%s must not be created by a deepseek-only run", rel)
+		}
+	}
+}
+
+func TestAgentSetup_AllSharesAgentsMDButStillCopiesDeepSeekSkills(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "ideate/SKILL.md", content: []byte("ideate skill")})
+	out, _, err := runAgentCmd(t, "setup", "--all", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	// opencode is requested before deepseek, so opencode owns AGENTS.md and the
+	// later AGENTS.md agents are skipped as duplicates.
+	if !strings.Contains(out, "skipped AGENTS.md (already written this run)") {
+		t.Errorf("expected AGENTS.md dedup line, got: %q", out)
+	}
+	// That skip covers the instruction file only: deepseek's skills directory
+	// must still be populated, or sharing AGENTS.md would silently cost it the
+	// skill bundles every other skills-dir agent receives.
+	if _, e := os.Stat(filepath.Join(root, ".dsh", "skills", "ideate", "SKILL.md")); e != nil {
+		t.Errorf("deepseek skills must still be copied under --all: %v", e)
 	}
 }
 
@@ -425,6 +477,7 @@ func TestAgentSetup_ContentCallerFlag(t *testing.T) {
 		{"codex", "codex.md", "codex"},
 		{"antigravity.google", "GEMINI.md", "antigravity.google"},
 		{"opencode", "AGENTS.md", "opencode"},
+		{"deepseek", "AGENTS.md", "deepseek"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agent, func(t *testing.T) {

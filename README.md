@@ -241,7 +241,7 @@ Teach the AI coding agents working in this repo about its SpecScore conventions 
 Pass agents as a comma-separated list (space-separated and `--all` also work):
 
 ```bash
-specscore agent setup claude,codex,copilot,cursor,antigravity.google,pi.dev,opencode
+specscore agent setup claude,codex,copilot,cursor,antigravity.google,pi.dev,opencode,deepseek
 ```
 
 Supported agents: `claude`, `codex`, `copilot`, `cursor`, `antigravity.google`, `pi.dev`, `opencode`. The command is idempotent (existing files are skipped unless `--force`) and reports every path it adds, modifies, or skips. Full contract: [`spec/features/cli/agent/setup/`](spec/features/cli/agent/setup/).

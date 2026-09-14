@@ -32,6 +32,10 @@ var supportedAgents = []agentDef{
 	{"cursor", ".cursor/rules/specscore.mdc", ".cursor/skills", cursorTemplate},
 	{"opencode", "AGENTS.md", "", opencodeTemplate},
 	{"pi.dev", "AGENTS.md", "", piTemplate},
+	// Appended, not inserted: AGENTS.md is shared with opencode and pi.dev and
+	// the first requested agent wins the file, so adding DeepSeek earlier would
+	// change which content an existing "agent setup --all" writes.
+	{"deepseek", "AGENTS.md", ".dsh/skills", deepseekTemplate},
 }
 
 func supportedAgentNames() []string {
@@ -314,6 +318,14 @@ func piTemplate(projectTitle string) string {
 
 func opencodeTemplate(projectTitle string) string {
 	return agentsMDTemplate("opencode", projectTitle)
+}
+
+// deepseekTemplate targets AGENTS.md because the DeepSeek Harness reads the
+// project instruction file from there. Its project-scoped skill root is
+// <project>/.dsh/skills, which the harness's filesystem skill provider scans at
+// its highest project rank.
+func deepseekTemplate(projectTitle string) string {
+	return agentsMDTemplate("deepseek", projectTitle)
 }
 
 func agentsMDTemplate(callerID, projectTitle string) string {

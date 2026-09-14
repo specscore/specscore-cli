@@ -12,7 +12,7 @@ status: Stable
 
 ## Summary
 
-`specscore agent setup` generates agent-specific instruction/rules files for AI coding agents in a SpecScore-managed project. Each generated file teaches the agent about SpecScore conventions, the spec tree structure, key CLI commands (with the correct `--caller` flag), and (where applicable) plugin installation instructions. The command supports seven agents in its MVP: Claude Code, Codex, GitHub Copilot, Cursor, Antigravity, Pi, and OpenCode. For agents that read skills from a known directory (Claude and Cursor), the command also copies SpecScore's invokable skill bundles into that directory, so agents without a skill marketplace get the same skills Claude Code installs from its plugin. Every path the command adds, modifies, or skips is reported.
+`specscore agent setup` generates agent-specific instruction/rules files for AI coding agents in a SpecScore-managed project. Each generated file teaches the agent about SpecScore conventions, the spec tree structure, key CLI commands (with the correct `--caller` flag), and (where applicable) plugin installation instructions. The command supports eight agents in its MVP: Claude Code, Codex, GitHub Copilot, Cursor, Antigravity, Pi, OpenCode, and the DeepSeek Harness. For agents that read skills from a known directory (Claude, Cursor, and DeepSeek), the command also copies SpecScore's invokable skill bundles into that directory, so agents without a skill marketplace get the same skills Claude Code installs from its plugin. Every path the command adds, modifies, or skips is reported.
 
 ## Synopsis
 
@@ -62,7 +62,7 @@ Agent names MAY be supplied as a single comma-separated value (`claude,codex`), 
 
 #### REQ: supported-agents-mvp
 
-The MVP supports seven agents with the following config file mappings. The **Skills Dir** column gives the directory into which skill bundles are copied; `—` marks agents with no known skills directory (instruction file only).
+The MVP supports eight agents with the following config file mappings. The **Skills Dir** column gives the directory into which skill bundles are copied; `—` marks agents with no known skills directory (instruction file only).
 
 | Agent | Caller ID | Config File | Skills Dir |
 |---|---|---|---|
@@ -73,12 +73,15 @@ The MVP supports seven agents with the following config file mappings. The **Ski
 | Antigravity (Google) | `antigravity.google` | `GEMINI.md` | — |
 | Pi (StackBlitz) | `pi.dev` | `AGENTS.md` | — |
 | OpenCode | `opencode` | `AGENTS.md` | — |
+| DeepSeek Harness | `deepseek` | `AGENTS.md` | `.dsh/skills/` |
 
 Codex uses `codex.md` (not `AGENTS.md`) to avoid clobbering the project's existing `AGENTS.md` maintainer documentation. Pi and OpenCode both target `AGENTS.md`; when both are requested in the same run, the first writes the file and the second is skipped with an informational message.
 
 #### REQ: skills-dir-agents-mvp
 
-Only agents with a confirmed skills directory receive skill bundles: `claude` (`.claude/skills/`) and `cursor` (`.cursor/skills/`). Agents whose Skills Dir is `—` MUST receive only their instruction file; the command MUST NOT invent a skills directory for them. As other agents adopt a stable skills-directory convention, they are added to this set.
+Only agents with a confirmed skills directory receive skill bundles: `claude` (`.claude/skills/`), `cursor` (`.cursor/skills/`), and `deepseek` (`.dsh/skills/`). Agents whose Skills Dir is `—` MUST receive only their instruction file; the command MUST NOT invent a skills directory for them. As other agents adopt a stable skills-directory convention, they are added to this set.
+
+`deepseek` is instruction-file only in one respect: it shares `AGENTS.md` with `opencode` and `pi.dev`, and the first requested agent wins that file per `duplicate-path-dedup`. That skip MUST cover the instruction file alone — a requested `deepseek` MUST still receive its skill bundles under `.dsh/skills/` when the copy step runs, because sharing an instruction file is not a reason to lose the skills every other skills-dir agent receives.
 
 ### File writing
 
@@ -363,7 +366,7 @@ Positional arguments: one or more agent names from the supported set, given sepa
 - Should `agent setup` also generate `.gitignore` entries for agent-specific files that users might not want tracked (e.g., `.cursor/`)? Some teams track these, others don't.
 - Should a future `agent remove <name>` verb be added to clean up generated files?
 - Should the command support `--dry-run` to preview which files would be created without writing them?
-- Which agents beyond Claude and Cursor have a stable skills-directory convention worth adding to `skills-dir-agents-mvp` (Codex, Copilot, Antigravity, Pi, OpenCode)?
+- Which remaining agents have a stable skills-directory convention worth adding to `skills-dir-agents-mvp`? DeepSeek is answered (`.dsh/skills/`). Vendor-primary sources give project-local roots for the others: `codex` and `antigravity.google` — `.agents/skills/`; `copilot` — `.github/skills/`; `opencode` — `.opencode/skills/`; `pi.dev` — none established. The paths alone do not settle it: `codex` and `antigravity.google` would share `.agents/skills/`, and the copy step does not deduplicate by skills directory, so both would write the same bundle into one directory; and `copilot`'s skills root differs from the `.github/copilot-instructions.md` instruction path it already uses, so its row's Skills Dir would stop being `—` while that path stays.
 - Should copied skill bundles eventually be transpiled per agent (e.g., Cursor-native skill/command format) rather than copied as raw markdown?
 - A single `--ref` is applied to both the marketplace repo and every plugin repo; should plugins be pinnable to independent refs (e.g. resolved from the marketplace manifest) when their tags diverge?
 
