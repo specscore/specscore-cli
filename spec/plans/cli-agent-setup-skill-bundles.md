@@ -31,7 +31,7 @@ Split each positional agent argument on commas, trim whitespace, and drop empty 
 
 **Verifies:** cli/agent/setup#ac:non-skilldir-agent-instruction-only
 
-Extend `agentDef` with an optional skills-directory field and populate it only for `claude` (`.claude/skills/`) and `cursor` (`.cursor/skills/`); all other agents resolve to no skills directory and remain instruction-file only. This registry is the single source of truth the copy engine consults.
+Extend `agentDef` with an optional skills-directory field and populate it for every agent with a confirmed project root: `claude` (`.claude/skills/`), `cursor` (`.cursor/skills/`), `copilot` (`.github/skills/`), `opencode` (`.opencode/skills/`), `deepseek` (`.dsh/skills/`), and `codex` with `antigravity.google` (both `.agents/skills/`). Agents with no published root — currently only `pi.dev` — resolve to no skills directory and remain instruction-file only. This registry is the single source of truth the copy engine consults.
 
 ### Task 3: Download skill bundles from the GitHub marketplace registry
 
@@ -41,9 +41,9 @@ Download skill bundles in three steps — marketplace manifest (`specscore/ai-ma
 
 ### Task 4: Copy skill bundles into the agent skills directory
 
-**Verifies:** cli/agent/setup#ac:skill-copy-cursor-default, cli/agent/setup#ac:skill-copy-claude-always, cli/agent/setup#ac:skill-copy-skips-existing
+**Verifies:** cli/agent/setup#ac:skill-copy-cursor-default, cli/agent/setup#ac:skill-copy-claude-always, cli/agent/setup#ac:skill-copy-skips-existing, cli/agent/setup#ac:skill-shared-directory-copied-once
 
-For each requested agent that has a skills directory, copy the sourced bundle as raw markdown into per-skill subdirectories, creating parent directories as needed. Copying is on by default and treats Claude like any other skills-directory agent; existing skill files are preserved byte-identical and skipped unless `--force` overwrites them.
+For each requested agent that has a skills directory, copy the sourced bundle as raw markdown into per-skill subdirectories, creating parent directories as needed. Deduplicate by target directory rather than by agent, so agents sharing a root — `codex` and `antigravity.google` both use `.agents/skills/` — copy the bundle once. Copying is on by default and treats Claude like any other skills-directory agent; existing skill files are preserved byte-identical and skipped unless `--force` overwrites them.
 
 ### Task 5: Gate copying behind the `--no-skills` flag
 
@@ -80,7 +80,7 @@ Replace the hardcoded `main` ref with a resolved value: the `--ref` flag wins, e
 
 ## Open Questions
 
-- Which agents beyond Claude and Cursor gain a stable skills directory (would extend Task 2's registry)?
+- ~~Which agents beyond Claude and Cursor gain a stable skills directory (would extend Task 2's registry)?~~ Resolved: every current agent has a verified root or none — `codex` and `antigravity.google` (`.agents/skills/`), `copilot` (`.github/skills/`), `opencode` (`.opencode/skills/`), `deepseek` (`.dsh/skills/`), `pi.dev` (none). The registry now carries them, and `codex`/`antigravity.google` sharing one directory is handled by copying once per directory. See `cli/agent/setup#req:skills-dir-agents-mvp`.
 - Which marketplace ref (branch/tag/commit) does the CLI pin when downloading manifests and skills, and should it be configurable?
 
 ---

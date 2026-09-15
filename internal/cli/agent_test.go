@@ -61,28 +61,69 @@ func TestAgentSkillsDirRegistry(t *testing.T) {
 	// Only agents with a confirmed project-local skills directory receive skill
 	// bundles; every other agent is instruction-file only.
 	want := map[string]string{
-		"claude":   ".claude/skills",
-		"cursor":   ".cursor/skills",
-		"deepseek": ".dsh/skills",
+		"antigravity.google": ".agents/skills",
+		"claude":             ".claude/skills",
+		"codex":              ".agents/skills",
+		"copilot":            ".github/skills",
+		"cursor":             ".cursor/skills",
+		"opencode":           ".opencode/skills",
+		"deepseek":           ".dsh/skills",
 	}
 	for _, a := range supportedAgents {
 		if got := a.skillsDir; got != want[a.name] {
 			t.Errorf("agent %q skillsDir = %q, want %q", a.name, got, want[a.name])
 		}
 	}
+	// pi.dev is the only agent left with no published project skills root, so it
+	// is the regression guard for the instruction-only path.
+	if a, ok := findAgent("pi.dev"); !ok || a.skillsDir != "" {
+		t.Errorf("pi.dev must stay instruction-file only, got %q", a.skillsDir)
+	}
 }
 
 func TestAgentSetup_NonSkillsDirAgentInstructionOnly(t *testing.T) {
 	root := setupSpecScoreProject(t, "")
-	if _, _, err := runAgentCmd(t, "setup", "codex", "--project", root); err != nil {
+	stubSkillBundle(t, skillFile{relPath: "spec/SKILL.md", content: []byte("spec skill")})
+	if _, _, err := runAgentCmd(t, "setup", "pi.dev", "--project", root); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "codex.md")); statErr != nil {
-		t.Errorf("codex.md not created: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(root, "AGENTS.md")); statErr != nil {
+		t.Errorf("AGENTS.md not created: %v", statErr)
 	}
-	// Codex has no skills directory — none must be created for it.
-	if _, statErr := os.Stat(filepath.Join(root, ".codex", "skills")); statErr == nil {
-		t.Error("no skills directory should be created for codex")
+	// pi.dev publishes no skills directory, so the copy step must write nothing
+	// for it rather than inventing one.
+	for _, rel := range []string{".pi.dev", ".pi/skills", ".agents"} {
+		if _, statErr := os.Stat(filepath.Join(root, rel)); statErr == nil {
+			t.Errorf("no skills directory should be created for pi.dev, found %s", rel)
+		}
+	}
+}
+
+func TestAgentSetup_SharedSkillsDirectoryCopiedOnce(t *testing.T) {
+	root := setupSpecScoreProject(t, "")
+	stubSkillBundle(t, skillFile{relPath: "ideate/SKILL.md", content: []byte("ideate skill")})
+	// codex and antigravity.google both resolve to .agents/skills.
+	out, _, err := runAgentCmd(t, "setup", "codex", "antigravity.google", "--project", root)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(root, ".agents", "skills", "ideate", "SKILL.md"))
+	if readErr != nil {
+		t.Fatalf("shared skill not copied: %v", readErr)
+	}
+	if string(got) != "ideate skill" {
+		t.Errorf("skill content = %q", got)
+	}
+	// The bundle must be written once for the shared directory, not once per
+	// agent that reads it.
+	if n := strings.Count(out, "added .agents/skills/ideate/SKILL.md"); n != 1 {
+		t.Errorf("shared skills file written %d times, want 1; output: %q", n, out)
+	}
+	// Each agent's own instruction file is still written.
+	for _, rel := range []string{"codex.md", "GEMINI.md"} {
+		if _, statErr := os.Stat(filepath.Join(root, rel)); statErr != nil {
+			t.Errorf("%s not created: %v", rel, statErr)
+		}
 	}
 }
 
