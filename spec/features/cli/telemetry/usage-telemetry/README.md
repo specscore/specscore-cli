@@ -331,7 +331,7 @@ Per-AC Rehearse stubs MAY be scaffolded for the testable ACs. The PostHog-funnel
 > **Resolved during user review (2026-05-21):**
 > - `pi` disambiguated to `pi.dev` (https://pi.dev/).
 > - `antigravity` disambiguated to `antigravity.google` (https://antigravity.google/).
-> - Enum expansion (was an OQ): all 8 previously-suggested agents — `devin`, `cline`, `roo`, `continue`, `windsurf`, `zed`, `amazon-q`, `tabnine` — are now in the enum. Total: 20 values including `cli` default and `other` coercion target.
+> - Enum expansion (was an OQ): all 8 previously-suggested agents — `devin`, `cline`, `roo`, `continue`, `windsurf`, `zed`, `amazon-q`, `tabnine` — are now in the enum. Total **at this review**: 20 values including `cli` default and `other` coercion target. The enum has since grown to twenty-one with `deepseek`; REQ:caller-enum-known-values and the `docs/telemetry.md` table carry the current set, and this dated line records only what that review decided.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

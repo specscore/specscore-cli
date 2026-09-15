@@ -25,12 +25,18 @@ type agentDef struct {
 }
 
 var supportedAgents = []agentDef{
-	{"antigravity.google", "GEMINI.md", "", antigravityTemplate},
+	{"antigravity.google", "GEMINI.md", ".agents/skills", antigravityTemplate},
 	{"claude", "CLAUDE.md", ".claude/skills", claudeTemplate},
-	{"codex", "codex.md", "", codexTemplate},
-	{"copilot", ".github/copilot-instructions.md", "", copilotTemplate},
+	// Codex and Antigravity both read the cross-client .agents/skills root:
+	// Codex documents no project-scoped directory of its own, and Antigravity
+	// names .agents/skills its default. They share one directory rather than
+	// each getting a vendor-private one, so copySkillBundles writes it once.
+	{"codex", "codex.md", ".agents/skills", codexTemplate},
+	{"copilot", ".github/copilot-instructions.md", ".github/skills", copilotTemplate},
 	{"cursor", ".cursor/rules/specscore.mdc", ".cursor/skills", cursorTemplate},
-	{"opencode", "AGENTS.md", "", opencodeTemplate},
+	{"opencode", "AGENTS.md", ".opencode/skills", opencodeTemplate},
+	// Pi publishes no project-scoped skills convention, so it stays
+	// instruction-file only rather than being given an invented directory.
 	{"pi.dev", "AGENTS.md", "", piTemplate},
 	// Appended, not inserted: AGENTS.md is shared with opencode and pi.dev and
 	// the first requested agent wins the file, so adding DeepSeek earlier would
@@ -207,13 +213,20 @@ func writeAgentFile(w io.Writer, root, relPath string, content []byte, force boo
 // skills directory are left untouched. A download failure surfaces as exit 10
 // with no partial skills directory written. Verifies #ac:skill-copy-default-on,
 // #ac:skill-copy-cursor-default, #ac:skill-copy-claude-always,
-// #ac:skill-source-offline-fails.
+// #ac:skill-shared-directory-copied-once, #ac:skill-source-offline-fails.
 func copySkillBundles(w io.Writer, root string, agents []agentDef, force bool, ref string) error {
+	// Deduplicate by target directory, not by agent: agents that share one
+	// skills root (codex and antigravity.google both use .agents/skills) must
+	// copy the bundle once. Writing it per agent would repeat every file write
+	// and report each path twice for a single destination.
 	var targets []agentDef
+	seen := make(map[string]bool)
 	for _, a := range agents {
-		if a.skillsDir != "" {
-			targets = append(targets, a)
+		if a.skillsDir == "" || seen[a.skillsDir] {
+			continue
 		}
+		seen[a.skillsDir] = true
+		targets = append(targets, a)
 	}
 	if len(targets) == 0 {
 		return nil
