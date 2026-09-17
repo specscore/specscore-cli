@@ -1,4 +1,0 @@
-products:
-  - id: configius
-    brand: Configius
-    domains: [config.app]

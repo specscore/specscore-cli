@@ -1,4 +1,0 @@
-products:
-  - id: x
-    domains:
-      - name: [not, a, scalar]
