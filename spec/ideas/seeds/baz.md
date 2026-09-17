@@ -1,6 +1,0 @@
----
-status: queued
----
-# Baz
-
-prose
