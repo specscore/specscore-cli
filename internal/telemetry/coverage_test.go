@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -847,6 +848,86 @@ func TestSetupUsageChannel_WithEmptyKey(t *testing.T) {
 	setupUsageChannel()
 	if usageClient != nil {
 		t.Error("expected usageClient to remain nil with empty key")
+	}
+}
+
+// spyRoundTripper records whether it was ever invoked, without making a real
+// network request — used by TestSetupUsageChannel_MakesNoHTTPCalls and
+// TestSetupErrorsChannel_MakesNoHTTPCalls (M8 review fix) to prove client
+// construction itself performs no synchronous HTTP call.
+type spyRoundTripper struct {
+	called bool
+}
+
+func (s *spyRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	s.called = true
+	return nil, errors.New("spyRoundTripper: no real network call is expected here")
+}
+
+// M8 review fix: setupUsageChannel constructs a real posthog client (when
+// posthogWriteKey is non-empty, as it is in a released binary) on every
+// process, `specscore version --json` included. This proves that
+// CONSTRUCTION alone -- posthog.NewWithConfig, which builds local state and
+// starts a background flush loop that only sends when something is actually
+// enqueued -- never makes a synchronous HTTP call: the spy transport, wired
+// through the new usageHTTPTransport seam, records zero invocations.
+// Combined with TestPreRun_VersionJSONProbeSkipsAllSideEffects (internal/cli
+// telemetry_test.go), which proves `version --json` never reaches
+// transmitUsage/Enqueue at all, this closes the gap the review flagged: only
+// the preRun skip was tested before, not the client-construction claim
+// "shows no request" rested on.
+func TestSetupUsageChannel_MakesNoHTTPCalls(t *testing.T) {
+	origKey := posthogWriteKey
+	origClient := usageClient
+	origTransport := usageHTTPTransport
+	t.Cleanup(func() {
+		posthogWriteKey = origKey
+		usageClient = origClient
+		usageHTTPTransport = origTransport
+	})
+
+	spy := &spyRoundTripper{}
+	usageHTTPTransport = spy
+	posthogWriteKey = "phc_test_fake_key_for_no_http_calls"
+	usageClient = nil
+
+	setupUsageChannel()
+	if usageClient == nil {
+		t.Fatal("expected usageClient to be set after setupUsageChannel with a valid key")
+	}
+	t.Cleanup(func() { _ = usageClient.Close() })
+
+	if spy.called {
+		t.Error("setupUsageChannel made an HTTP call during client construction; want zero (no message was ever enqueued)")
+	}
+}
+
+// M8 review fix: the errors-telemetry counterpart to
+// TestSetupUsageChannel_MakesNoHTTPCalls above -- setupErrorsChannel's
+// sentry.Init call constructs local client state only; the spy transport,
+// wired through the new errorsHTTPTransport seam, records zero invocations.
+func TestSetupErrorsChannel_MakesNoHTTPCalls(t *testing.T) {
+	origDSN := sentryDSN
+	origInit := errorsClientInitialized
+	origTransport := errorsHTTPTransport
+	t.Cleanup(func() {
+		sentryDSN = origDSN
+		errorsClientInitialized = origInit
+		errorsHTTPTransport = origTransport
+	})
+
+	spy := &spyRoundTripper{}
+	errorsHTTPTransport = spy
+	sentryDSN = "https://examplePublicKey@o0.ingest.de.sentry.io/0"
+	errorsClientInitialized = false
+
+	setupErrorsChannel()
+	if !errorsClientInitialized {
+		t.Fatal("expected errorsClientInitialized=true after setupErrorsChannel with a valid DSN")
+	}
+
+	if spy.called {
+		t.Error("setupErrorsChannel made an HTTP call during client construction; want zero (no event was ever captured)")
 	}
 }
 

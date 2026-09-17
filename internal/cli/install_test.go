@@ -65,6 +65,9 @@ func TestInstall_UnknownTargetExits2(t *testing.T) {
 	if strings.Contains(err.Error(), "self-update:") {
 		t.Errorf("message %q carries a self-update: prefix; install errors MUST NOT (cli-install#req:host-owned-exit-codes)", err.Error())
 	}
+	if !strings.HasPrefix(err.Error(), "install: ") {
+		t.Errorf("message %q does not start with the exact \"install: \" prefix (S3 review fix)", err.Error())
+	}
 }
 
 // AC: cli-install#req:host-owned-exit-codes — installErrors.Failure maps
@@ -94,7 +97,7 @@ func TestInstallErrors_FailureExitCodes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := installErrors{}.Failure(&selfupdate.Failure{Kind: c.kind, Err: errors.New("boom")})
+			err := installErrors{cmd: "install"}.Failure(&selfupdate.Failure{Kind: c.kind, Err: errors.New("boom")})
 			ec, ok := err.(exitCoder)
 			if !ok {
 				t.Fatalf("error %T does not expose ExitCode()", err)
@@ -105,6 +108,9 @@ func TestInstallErrors_FailureExitCodes(t *testing.T) {
 			if strings.Contains(err.Error(), "self-update:") {
 				t.Errorf("message %q carries a self-update: prefix; install errors MUST NOT", err.Error())
 			}
+			if !strings.HasPrefix(err.Error(), "install: ") {
+				t.Errorf("message %q does not start with the exact \"install: \" prefix (S3 review fix: the prefix names the command the user ran)", err.Error())
+			}
 		})
 	}
 }
@@ -113,7 +119,7 @@ func TestInstallErrors_FailureExitCodes(t *testing.T) {
 // installErrors.Failure's own doc comment for why cliinstall/cobracmd
 // v0.20.0 calls opts.Errors.Failure(nil) on every successful run.
 func TestInstallErrors_FailureNilIsNil(t *testing.T) {
-	err := installErrors{}.Failure(nil)
+	err := installErrors{cmd: "install"}.Failure(nil)
 	if err != nil {
 		t.Errorf("Failure(nil) = %v, want nil", err)
 	}
@@ -123,7 +129,7 @@ func TestInstallErrors_FailureNilIsNil(t *testing.T) {
 // MUST map to exitcode.InvalidArgs (2), matching every other specscore
 // command's convention for a malformed argument.
 func TestInstallErrors_FailureUsageError(t *testing.T) {
-	err := installErrors{}.Failure(&cobracmd.UsageError{Err: errors.New("invalid --format")})
+	err := installErrors{cmd: "install"}.Failure(&cobracmd.UsageError{Err: errors.New("invalid --format")})
 	ec, ok := err.(exitCoder)
 	if !ok {
 		t.Fatalf("error %T does not expose ExitCode()", err)
@@ -140,7 +146,7 @@ func TestInstallErrors_FailureUsageError(t *testing.T) {
 // for anything that isn't one) still maps to the unexpected code rather than
 // panicking or losing the underlying message.
 func TestInstallErrors_FailureWrapsPlainError(t *testing.T) {
-	err := installErrors{}.Failure(errors.New("not a *selfupdate.Failure"))
+	err := installErrors{cmd: "install"}.Failure(errors.New("not a *selfupdate.Failure"))
 	ec, ok := err.(exitCoder)
 	if !ok {
 		t.Fatalf("error %T does not expose ExitCode()", err)
@@ -168,7 +174,7 @@ func TestInstallErrors_SharedKindsMatchSelfUpdateErrors(t *testing.T) {
 	}
 	for _, kind := range shared {
 		t.Run(kind.String(), func(t *testing.T) {
-			installErr := installErrors{}.Failure(&selfupdate.Failure{Kind: kind, Err: errors.New("boom")})
+			installErr := installErrors{cmd: "install"}.Failure(&selfupdate.Failure{Kind: kind, Err: errors.New("boom")})
 			selfUpdateErr := selfUpdateErrors{}.Failure(&selfupdate.Failure{Kind: kind, Err: errors.New("boom")})
 			installEC, ok := installErr.(exitCoder)
 			if !ok {

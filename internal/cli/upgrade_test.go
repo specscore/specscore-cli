@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/strongo/cli-helpers/cliinstall"
+	"github.com/strongo/cli-helpers/selfupdate"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
@@ -39,7 +41,10 @@ func TestUpgrade_Registration(t *testing.T) {
 // cli-install#req:unknown-target-refused — `specscore upgrade nosuchcli`
 // MUST fail before any confirmation, network request or write, with exit
 // code 2 (InvalidArgs), the same code `install nosuchcli` returns, carrying
-// no "self-update:" prefix.
+// the exact "upgrade: " prefix (S3 review fix: the fleet rule is that a
+// message's prefix names the command the user actually ran — before this
+// fix, upgradeErrors embedded a zero-value installErrors, so every
+// `specscore upgrade` failure printed "install: " instead).
 func TestUpgrade_UnknownTargetExits2(t *testing.T) {
 	cmd := upgradeCommand()
 	cmd.SetArgs([]string{"nosuchcli"})
@@ -63,6 +68,31 @@ func TestUpgrade_UnknownTargetExits2(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "self-update:") {
 		t.Errorf("message %q carries a self-update: prefix; upgrade errors MUST NOT", err.Error())
+	}
+	if !strings.HasPrefix(err.Error(), "upgrade: ") {
+		t.Errorf("message %q does not start with the exact %q prefix (S3 review fix)", err.Error(), "upgrade: ")
+	}
+	if strings.HasPrefix(err.Error(), "install: ") {
+		t.Errorf("message %q carries install's prefix instead of upgrade's own (S3 review fix)", err.Error())
+	}
+}
+
+// TestUpgradeErrors_FailurePrefixesMessagesWithUpgrade is S3's own
+// regression test at the mapper level (not just through the real command
+// above): a bare installErrors{cmd: "upgrade"} value — the exact
+// construction upgradeCommand uses — MUST prefix every message "upgrade: ",
+// never "install: ".
+func TestUpgradeErrors_FailurePrefixesMessagesWithUpgrade(t *testing.T) {
+	mapper := upgradeErrors{installErrors: installErrors{cmd: "upgrade"}}
+	err := mapper.Failure(&selfupdate.Failure{Kind: selfupdate.KindChecksum, Err: errors.New("boom")})
+	if err == nil {
+		t.Fatal("Failure(...) = nil, want a non-nil error")
+	}
+	if !strings.HasPrefix(err.Error(), "upgrade: ") {
+		t.Errorf("message %q does not start with %q", err.Error(), "upgrade: ")
+	}
+	if strings.HasPrefix(err.Error(), "install: ") {
+		t.Errorf("message %q carries install's prefix instead of upgrade's own", err.Error())
 	}
 }
 

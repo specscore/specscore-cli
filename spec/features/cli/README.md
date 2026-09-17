@@ -149,9 +149,10 @@ Every `specscore` command MUST observe the following exit-code contract. These c
 | `6` | Target directory is not a SpecScore-managed repo |
 | `7` | Working tree has uncommitted changes in paths to be modified |
 | `8` | Unsupported subcommand (outdated `specscore` that predates a required subcommand) — distinct from the shell's `127` (binary absent) |
-| `10` | Unexpected / catch-all runtime error |
+| `9` | `self-update`/`install`/`upgrade` local update failure (`pkg/exitcode.UpdateFailed`) — extraction, staging, or the swap itself, or a configured manager command failing. Kept distinct from `10` so this and "an update is available" (`self-update --check`'s own exit `10`) are never confused. |
+| `10` | Unexpected / catch-all runtime error, EXCEPT in `self-update --check`, where it instead means "an update is available" |
 
-Exit codes `9` and `11–19` are reserved for future standard codes and MUST NOT be used by individual commands.
+Exit codes `11–19` are reserved for future standard codes and MUST NOT be used by individual commands.
 
 #### REQ: standard-exit-codes
 

@@ -237,11 +237,13 @@ func selfUpdateCommand() *cobra.Command {
 		Aliases:     []string{"update"},
 		Errors:      selfUpdateErrors{},
 		Interactive: selfUpdateInteractiveFunc,
-		// JSONFormat left false: specscore's Feature spec's flag surface
-		// (cli/self-update#req:flag-surface) does not include --format, so
-		// cobracmd never registers it. --dry-run IS registered — cobracmd.New
-		// always adds it, and specscore's flag surface is a floor, not a
-		// ceiling: "report what would happen without downloading or writing
-		// anything" is useful on its own and costs nothing to expose.
+		// JSONFormat true (M2 review fix): specscore's Feature spec's flag
+		// surface (cli/self-update#req:flag-surface) is a floor, not a
+		// ceiling, and `upgrade` already registers --format text|json —
+		// self-update now matches it, so the two commands' flag surfaces
+		// stay aligned rather than only upgrade offering machine-readable
+		// output. --dry-run is registered the same way, for the same
+		// reason: cobracmd.New always adds it.
+		JSONFormat: true,
 	})
 }

@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/getsentry/sentry-go"
 )
@@ -38,6 +39,13 @@ var errorsClientInitialized bool
 // only calls it under the test hook.
 var transmitErrorsTestPanic func()
 
+// errorsHTTPTransport is a test seam over sentry.ClientOptions.HTTPTransport:
+// nil in production, which the SDK treats as its own default transport.
+// Tests set this to a spy http.RoundTripper (M8 review fix) to prove
+// setupErrorsChannel's client construction makes no synchronous HTTP call —
+// see TestSetupErrorsChannel_MakesNoHTTPCalls in coverage_test.go.
+var errorsHTTPTransport http.RoundTripper
+
 // setupErrorsChannel encapsulates the crash-reports channel initialization
 // logic, extracted from init() so tests can exercise both the sentryDSN-empty
 // and sentryDSN-populated branches without compile-time constants.
@@ -46,7 +54,8 @@ var setupErrorsChannel = func() {
 		return
 	}
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn: sentryDSN,
+		Dsn:           sentryDSN,
+		HTTPTransport: errorsHTTPTransport,
 		// AttachStacktrace=true tells the SDK to attach the Go stack at
 		// CaptureMessage / CaptureException call sites. We DO want stack
 		// frames (the scrubber strips paths), so this stays true.

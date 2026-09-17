@@ -25,13 +25,13 @@ import (
 func installCommand() *cobra.Command {
 	return cobracmd.New(cobracmd.CommandOptions{
 		Short:  "List and install fleet CLIs relevant to specscore",
-		Errors: installErrors{},
+		Errors: installErrors{cmd: "install"},
 		HostID: specscoreCatalogID,
 	})
 }
 
 // installErrors implements cobracmd.ErrorMapper for specscore's own install
-// command, keeping the exit-code contract
+// AND upgrade commands, keeping the exit-code contract
 // cli/install#req:exit-code-contract documents:
 //   - *cobracmd.UsageError (an invalid --format, or --all combined with
 //     names): exitcode.InvalidArgs (2), the same bucket every other
@@ -53,13 +53,20 @@ func installCommand() *cobra.Command {
 //     "self-update: " prefix this command's messages MUST NOT carry
 //     ("MUST NOT let them fall into a self-update default branch or print a
 //     self-update: message prefix").
-type installErrors struct{}
+//
+// cmd names the command whose own messages this instance produces —
+// "install" or "upgrade" (S3 review fix): the fleet-wide rule is that a
+// message's prefix names the command the user actually ran, and
+// upgradeErrors (upgrade.go) constructs its own installErrors{cmd:
+// "upgrade"} rather than embedding a zero-value one, so `specscore upgrade
+// nosuchcli` prints "upgrade: ..." and not "install: ...".
+type installErrors struct{ cmd string }
 
-// Failure maps every install failure per the kinds table on installErrors.
-// Also serves as upgrade's own error mapper (see upgradeErrors in
-// upgrade.go), so the SAME table applies to both commands'
-// self-update-shared kinds (cli-install#req:host-owned-exit-codes: "The
-// upgrade command MUST use the same error mapper").
+// Failure maps every install/upgrade failure per the kinds table on
+// installErrors, prefixing every message with e.cmd (cli-install#req:host-
+// owned-exit-codes: "The upgrade command MUST use the same error mapper" —
+// the SAME table applies to both commands' self-update-shared kinds; only
+// the prefix differs per command).
 //
 // cliinstall/cobracmd v0.21.0's mapFailure short-circuits a nil err before
 // ever calling opts.Errors.Failure (the fix for the known v0.20.0 bug this
@@ -67,29 +74,29 @@ type installErrors struct{}
 // that path anymore; the guard below stays only because it is trivially
 // free and keeps this method nil-safe for any direct caller, including
 // TestInstallErrors_FailureNilIsNil.
-func (installErrors) Failure(err error) error {
+func (e installErrors) Failure(err error) error {
 	if err == nil {
 		return nil
 	}
 
 	var usage *cobracmd.UsageError
 	if errors.As(err, &usage) {
-		return exitcode.InvalidArgsErrorf("install: %v", err)
+		return exitcode.InvalidArgsErrorf("%s: %v", e.cmd, err)
 	}
 
 	switch selfupdate.KindOf(err) {
 	case selfupdate.KindUnknownTarget:
-		return exitcode.InvalidArgsErrorf("install: %v", err)
+		return exitcode.InvalidArgsErrorf("%s: %v", e.cmd, err)
 	case selfupdate.KindNoInstallDir, selfupdate.KindDestinationExists:
-		return exitcode.InvalidStateErrorf("install: %v", err)
+		return exitcode.InvalidStateErrorf("%s: %v", e.cmd, err)
 	case selfupdate.KindPermission, selfupdate.KindAmbiguous, selfupdate.KindDowngrade,
 		selfupdate.KindNonInteractive, selfupdate.KindChecksum, selfupdate.KindManagedVersion:
-		return exitcode.InvalidStateErrorf("install: %v", err)
+		return exitcode.InvalidStateErrorf("%s: %v", e.cmd, err)
 	case selfupdate.KindReleaseLookup, selfupdate.KindDownload, selfupdate.KindUnknownTag, selfupdate.KindUnsupportedPlatform:
-		return exitcode.NotFoundErrorf("install: %v", err)
+		return exitcode.NotFoundErrorf("%s: %v", e.cmd, err)
 	case selfupdate.KindManagedCommand:
-		return exitcode.New(selfUpdateUnexpectedCode, "install: "+err.Error())
+		return exitcode.New(selfUpdateUnexpectedCode, e.cmd+": "+err.Error())
 	default: // selfupdate.KindUnexpected, and any kind a future library version adds.
-		return exitcode.New(selfUpdateUnexpectedCode, "install: "+err.Error())
+		return exitcode.New(selfUpdateUnexpectedCode, e.cmd+": "+err.Error())
 	}
 }

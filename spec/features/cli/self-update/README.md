@@ -92,10 +92,13 @@ upstream in the library, not in a specscore-local fork.
 
 #### REQ: flag-surface
 
-The command MUST expose `--check`, `--yes` (short `-y`), `--version <tag>`, and
-`--allow-downgrade`, bound to the library's corresponding options. `--version`
-here is `self-update`-local and distinct from the root `specscore --version`,
-which prints build identity.
+The command MUST expose `--check`, `--yes` (short `-y`), `--version <tag>`,
+`--allow-downgrade`, and `--format text|json`, bound to the library's
+corresponding options (M2 review fix: `--format` now matches `upgrade`'s
+own flag surface, so the two commands never disagree about whether
+machine-readable output is available). `--version` here is
+`self-update`-local and distinct from the root `specscore --version`, which
+prints build identity.
 
 ### specscore's configuration of the library
 

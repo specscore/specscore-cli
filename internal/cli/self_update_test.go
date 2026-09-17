@@ -92,13 +92,18 @@ func TestSelfUpdate_FlagSurface(t *testing.T) {
 	}
 }
 
-// --format stays absent: specscore's Feature spec (req:flag-surface) does
-// not include it, so JSONFormat is left false and cobracmd never registers
-// a --format flag at all.
-func TestSelfUpdate_NoFormatFlag(t *testing.T) {
+// M2 review fix: --format IS registered now, matching `upgrade`'s own
+// --format text|json flag surface (JSONFormat: true in selfUpdateCommand).
+// specscore's Feature spec's flag surface (req:flag-surface) is a floor,
+// not a ceiling.
+func TestSelfUpdate_HasFormatFlag(t *testing.T) {
 	cmd := selfUpdateCommand()
-	if f := cmd.Flags().Lookup("format"); f != nil {
-		t.Errorf("--format flag registered; JSONFormat must stay false per the Feature spec")
+	f := cmd.Flags().Lookup("format")
+	if f == nil {
+		t.Fatal("--format flag is missing; self-update must match upgrade's flag surface (M2 review fix)")
+	}
+	if f.DefValue != "text" {
+		t.Errorf("--format default = %q, want %q", f.DefValue, "text")
 	}
 }
 
@@ -797,24 +802,39 @@ func TestSelfUpdate_AliasProducesIdenticalOutput(t *testing.T) {
 	}
 }
 
-// --check's JSON encode path is never reachable from specscore (JSONFormat
-// is false, so cobracmd never registers --format and always takes the text
-// branch) — this is a sanity check that the flag really is absent, keeping
-// the "JSONFormat stays false" contract honest against cobracmd's own
-// behavior rather than just this package's intent.
-func TestSelfUpdate_NoFormatFlagMeansNoJSONOutput(t *testing.T) {
+// M2 review fix: --check's default format is text (matching --format's own
+// "text" default), and --check --format json now produces real, parseable
+// JSON (JSONFormat is true — see TestSelfUpdate_HasFormatFlag), inverting
+// the old "no --format flag exists" contract this test used to pin.
+func TestSelfUpdate_CheckFormatDefaultTextExplicitJSON(t *testing.T) {
 	withVersion(t, "1.0.0")
 	withFakeReleases(t, releaseServer(t, `[{"tag_name":"v1.0.0","prerelease":false,"draft":false}]`))
 
-	cmd := selfUpdateCommand()
-	var out strings.Builder
-	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--check"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("--check returned error: %v", err)
-	}
-	var probe json.RawMessage
-	if err := json.Unmarshal([]byte(out.String()), &probe); err == nil {
-		t.Errorf("stdout %q parses as JSON; --check must always be text (no --format flag exists)", out.String())
-	}
+	t.Run("default format is text", func(t *testing.T) {
+		cmd := selfUpdateCommand()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"--check"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("--check returned error: %v", err)
+		}
+		var probe json.RawMessage
+		if err := json.Unmarshal([]byte(out.String()), &probe); err == nil {
+			t.Errorf("stdout %q parses as JSON; the default format is text", out.String())
+		}
+	})
+
+	t.Run("--format json produces parseable JSON", func(t *testing.T) {
+		cmd := selfUpdateCommand()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"--check", "--format", "json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("--check --format json returned error: %v", err)
+		}
+		var probe json.RawMessage
+		if err := json.Unmarshal([]byte(out.String()), &probe); err != nil {
+			t.Errorf("stdout %q does not parse as JSON: %v", out.String(), err)
+		}
+	})
 }

@@ -146,9 +146,11 @@ other.
 
 `specscore upgrade` MUST use the exact SAME error mapper `install` uses
 (the table above), extended with one upgrades-available method
-(cli-install#req:upgrade-check), called whenever `--check` (or `--all`/named
-targets without `--check`) finds at least one target with an update
-available or an undetermined verdict. That method MUST map the signal the
+(cli-install#req:upgrade-check), called only from an explicit `--check` over
+named targets or `--all` (never from the apply path: `upgrade --all` or
+`upgrade <name>...` without `--check` never calls it, regardless of what the
+batch finds), whenever that `--check` finds at least one target with an
+update available or an undetermined verdict. That method MUST map the
 same way `self-update --check` already does: exit `10`
 (`selfUpdateCheckPendingCode`) with an empty message
 (`cli/self-update#req:exit-code-contract`). The bare `specscore upgrade`

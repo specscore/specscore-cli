@@ -992,6 +992,7 @@
                 "--allow-downgrade",
                 "--check",
                 "--dry-run",
+                "--format",
                 "--version",
                 "--yes"
               ],

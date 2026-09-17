@@ -25,7 +25,7 @@ import (
 func upgradeCommand() *cobra.Command {
 	return cobracmd.NewUpgrade(cobracmd.UpgradeCommandOptions{
 		Short:       "Upgrade installed fleet CLIs, including specscore itself",
-		Errors:      upgradeErrors{},
+		Errors:      upgradeErrors{installErrors: installErrors{cmd: "upgrade"}},
 		HostID:      specscoreCatalogID,
 		HostConfig:  selfUpdateConfigFunc(),
 		Interactive: selfUpdateInteractiveFunc,
@@ -39,7 +39,10 @@ func upgradeCommand() *cobra.Command {
 // Failure itself is inherited unchanged from installErrors — the SAME
 // exit-code table applies to `upgrade`'s failures as to `install`'s
 // (cli-install#req:host-owned-exit-codes: "The upgrade command MUST use the
-// same error mapper").
+// same error mapper") — but upgradeCommand constructs its own
+// installErrors{cmd: "upgrade"} (S3 review fix), never the zero value, so
+// every `specscore upgrade` failure message is prefixed "upgrade: ", not
+// "install: ".
 type upgradeErrors struct{ installErrors }
 
 // UpgradesAvailable maps `upgrade --check`'s (or the bare report's, though
