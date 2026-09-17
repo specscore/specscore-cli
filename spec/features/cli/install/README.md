@@ -15,8 +15,16 @@ status: Implementing
 `specscore install` lists the other fleet CLIs relevant to specscore
 (`wb`, `ingitdb`, `synchestra`, `chatwright`, `codegrapher`), each with its
 live installed status, and `specscore install <name>...` installs named ones
-consistently with how specscore itself was installed. The behavior is not
-specified here: specscore binds the shared
+consistently with how specscore itself was installed. `specscore upgrade`
+is the fleet-wide counterpart: `specscore upgrade` (no arguments) reports
+every installed catalog CLI plus specscore itself — current version, latest
+stable release, and verdict — without changing anything;
+`specscore upgrade --all`/`specscore upgrade <name>...` upgrade what the
+report showed. `specscore self-update` is `specscore upgrade specscore`:
+both reach the exact same library call, because specscore is always
+upgraded last and classified from its own self-update Config, never a `PATH`
+probe of its own binary. The behavior is not specified here: specscore binds
+the shared
 [strongo/cli-helpers](https://specscore.studio/app/github.com/strongo/cli-helpers/spec/features/cli-install?op=explore)
 library (`github.com/strongo/cli-helpers/cliinstall`), whose Feature owns the
 catalog, status probing, destination policy, Homebrew-cask and direct-release
@@ -34,6 +42,14 @@ specscore install wb ingitdb --yes              # install several, skipping the 
 specscore install wb --dry-run                  # report the plan without installing anything
 specscore install nosuchcli                     # refused before any confirmation, network request, or write
 specscore install --format json                 # machine-readable listing/result
+
+specscore upgrade                                # report every installed catalog CLI plus specscore, unchanged
+specscore upgrade --all                          # upgrade every installed catalog CLI plus specscore
+specscore upgrade wb ingitdb --yes                # upgrade several, skipping the confirmation prompt
+specscore upgrade --all --check                   # report upgrade availability only; change nothing
+specscore upgrade wb --dry-run                    # report the plan without upgrading anything
+specscore upgrade nosuchcli                       # refused before any confirmation, network request, or write
+specscore self-update                             # equivalent to `specscore upgrade specscore`
 ```
 
 ## Problem
@@ -80,6 +96,23 @@ package-manager invocation code.
 The command MUST expose `--all`, `--yes` (short `-y`), `--dry-run`, `--dir`,
 and `--format text|json`, bound to the library's corresponding options.
 
+#### REQ: upgrade-command
+
+The CLI MUST expose `specscore upgrade [name...]`, built from
+`github.com/strongo/cli-helpers/cliinstall/cobracmd`'s `cobracmd.NewUpgrade`
+rather than reimplementing any of its behavior. The command inherits the
+library's full upgrade flag surface — `--all`, `--check`, `--yes`/`-y`,
+`--dry-run`, and `--format text|json` — none of which is re-specified here,
+and MUST carry no `update` alias
+(cli-install#req:update-alias-policy: "`upgrade` MUST NOT get an `update`
+alias"; specscore's own `update` alias stays on `self-update` only).
+`upgrade`'s `HostConfig` and `HostAfterUpdate` MUST be the exact SAME
+`selfUpdateConfig()`-derived value and hook (currently none) `self-update`
+itself builds from, so `specscore self-update` and `specscore upgrade
+specscore` reach the identical library call
+(cli-install#req:self-update-equals-upgrade-self,
+cli-install#req:host-target-is-running-binary).
+
 ### specscore's configuration of the library
 
 #### REQ: specscore-host-identity
@@ -109,13 +142,28 @@ No message from this command carries a `self-update:` prefix, so a script
 that greps for one to distinguish the two commands cannot mistake one for the
 other.
 
+#### REQ: upgrade-exit-code-contract
+
+`specscore upgrade` MUST use the exact SAME error mapper `install` uses
+(the table above), extended with one upgrades-available method
+(cli-install#req:upgrade-check), called whenever `--check` (or `--all`/named
+targets without `--check`) finds at least one target with an update
+available or an undetermined verdict. That method MUST map the signal the
+same way `self-update --check` already does: exit `10`
+(`selfUpdateCheckPendingCode`) with an empty message
+(`cli/self-update#req:exit-code-contract`). The bare `specscore upgrade`
+report (no names, no `--all`) MUST exit `0` regardless of verdict — it never
+calls the upgrades-available method at all
+(cli-install#req:upgrade-no-args-reports). `upgrade nosuchcli` MUST exit `2`
+and name the unknown target, matching `install nosuchcli` exactly.
+
 ## Interaction with Other Features
 
 | Feature | Interaction |
 |---|---|
 | [strongo/cli-helpers: CLI Install Command Library](https://specscore.studio/app/github.com/strongo/cli-helpers/spec/features/cli-install?op=explore) | Owns the behavior contract this Feature binds. specscore is a consumer; behavior changes belong there. |
 | [CLI](../README.md) | Parent feature. Inherits shared CLI conventions and the shared error path. |
-| [Self-Update](../self-update/README.md) | Sibling command built on the same fleet catalog (`cliinstall.ByID("specscore")`); `specscore install specscore` is reported as already installed with a `specscore self-update` pointer rather than reinstalling. |
+| [Self-Update](../self-update/README.md) | Sibling command built on the same fleet catalog (`cliinstall.ByID("specscore")`); `specscore install specscore` is reported as already installed with a `specscore self-update` pointer rather than reinstalling. `specscore self-update` and `specscore upgrade specscore` reach the identical library call (cli-install#req:self-update-equals-upgrade-self). |
 | [Version](../version/README.md) | `version --json` is what every other fleet CLI's `install specscore` probes to report specscore's own installed status. |
 
 ## Acceptance Criteria
@@ -144,12 +192,25 @@ other.
 **When** the user runs `specscore install <name> --yes` in each case
 **Then** the first exits `4` and the second exits with the same code `specscore self-update` would return for that same underlying failure kind, and neither message carries a `self-update:` prefix.
 
+### AC: self-update-equals-upgrade-self
+
+**Requirements:** cli/install#req:upgrade-command, cli-install#req:self-update-equals-upgrade-self
+
+**Given** the real `self-update` and `upgrade` commands, each wired exactly as `root.go` builds them
+**When** `specscore self-update --check` and `specscore upgrade specscore --check` run against the same release state
+**Then** both report the same current/latest verdict and exit the same code.
+
+### AC: upgrade-unknown-target-and-no-args-report
+
+**Requirements:** cli/install#req:upgrade-exit-code-contract
+
+**Given** an installed `specscore` binary
+**When** the user runs `specscore upgrade nosuchcli`, and separately `specscore upgrade` with no arguments while an upgrade is available
+**Then** the first fails before any confirmation, network request, or write and exits `2` naming the unknown target, and the second exits `0` regardless of what the report shows.
+
 ## Open Questions
 
-- Should `specscore install` gain the `upgrade` command's own wiring once
-  `strongo/cli-helpers` ships its Cobra adapter for it? Tracked by the
-  fleet-wide [cli-install Plan](https://specscore.studio/app/github.com/strongo/cli-helpers/spec/plans/cli-install?op=explore)'s
-  task-22; out of scope for this round.
+None at this time.
 
 ---
 *This document follows the https://specscore.md/feature-specification*

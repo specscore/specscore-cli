@@ -234,6 +234,25 @@ specscore self-update --version 0.4.0 --allow-downgrade   # an older target requ
 
 `--check` exit codes: `0` up to date, `10` update available, other non-zero on error — convenient for CI staleness gates. Full contract: [`spec/features/cli/self-update/`](spec/features/cli/self-update/).
 
+### Installing and upgrading sibling fleet CLIs
+
+`specscore install` lists and installs the other fleet CLIs (`wb`, `ingitdb`, `synchestra`, `chatwright`, `codegrapher`) relevant to specscore, the same way `self-update` installs specscore itself:
+
+```bash
+specscore install                # list fleet CLIs relevant to specscore, with live status
+specscore install wb ingitdb     # install named ones, after one confirmation
+```
+
+`specscore upgrade` is the fleet-wide counterpart to `self-update`: it reports and upgrades every *installed* catalog CLI, including specscore itself.
+
+```bash
+specscore upgrade                # report every installed catalog CLI plus specscore; changes nothing
+specscore upgrade --all          # upgrade every installed catalog CLI plus specscore
+specscore upgrade --all --check  # report upgrade availability only; changes nothing
+```
+
+`specscore self-update` is exactly `specscore upgrade specscore`: both are built from the same release identity and reach the same library call, so they never disagree. Full contract: [`spec/features/cli/install/`](spec/features/cli/install/).
+
 ## Configure your AI agents
 
 Teach the AI coding agents working in this repo about its SpecScore conventions in one command. `specscore agent setup` writes each agent's instruction file (and, where the agent supports a skills directory, copies the SpecScore skill bundles into it).

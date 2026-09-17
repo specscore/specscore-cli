@@ -56,19 +56,17 @@ func installCommand() *cobra.Command {
 type installErrors struct{}
 
 // Failure maps every install failure per the kinds table on installErrors.
+// Also serves as upgrade's own error mapper (see upgradeErrors in
+// upgrade.go), so the SAME table applies to both commands'
+// self-update-shared kinds (cli-install#req:host-owned-exit-codes: "The
+// upgrade command MUST use the same error mapper").
 //
-// A nil err IS a real, reachable call on the ordinary success and dry-run
-// path, not just a defensive guard: cliinstall/cobracmd v0.20.0's
-// runInstall calls mapFailure(opts, plan.Failure()) and mapFailure(opts,
-// result.Failure()) unconditionally, and both return nil for a fully
-// successful batch, so opts.Errors.Failure(nil) is called on every
-// successful `specscore install` and `specscore install <name> --dry-run`
-// run. Feedback for cli-helpers (known bug, unchanged as of v0.20.0):
-// mapFailure itself should short-circuit nil before calling
-// opts.Errors.Failure, matching what ErrorMapper.Failure's own doc comment
-// already promises ("maps a non-nil command error") — see ingitdb-cli's
-// identical nil-guard note on its own install command for the same
-// observation against the same library version.
+// cliinstall/cobracmd v0.21.0's mapFailure short-circuits a nil err before
+// ever calling opts.Errors.Failure (the fix for the known v0.20.0 bug this
+// comment used to document), so Failure is never called with nil through
+// that path anymore; the guard below stays only because it is trivially
+// free and keeps this method nil-safe for any direct caller, including
+// TestInstallErrors_FailureNilIsNil.
 func (installErrors) Failure(err error) error {
 	if err == nil {
 		return nil

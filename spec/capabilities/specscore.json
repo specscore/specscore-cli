@@ -43,7 +43,7 @@
         "ai_skill": {
           "status": "Absent",
           "skills": [],
-          "limitation": "No AI skill wraps `install` yet; it ships CLI-first and a skill package follows once the fleet-wide `upgrade` companion command lands."
+          "limitation": "No AI skill wraps `install` yet; it ships CLI-first."
         },
         "tests": {
           "status": "Full",
@@ -1243,6 +1243,72 @@
         }
       },
       "notes": "Bounded full-binary inventory prevents changed-feature rows from masquerading as complete CLI coverage."
+    },
+    {
+      "id": "specscore.cli.upgrade",
+      "feature_refs": [
+        "spec/features/cli/install/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore upgrade",
+              "flags": [
+                "--all",
+                "--check",
+                "--dry-run",
+                "--format",
+                "--yes"
+              ],
+              "modes": []
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore upgrade --help",
+              "contains": [
+                "Upgrade installed fleet CLIs, including specscore itself",
+                "report upgrade availability without applying it"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Absent",
+          "skills": [],
+          "limitation": "No AI skill wraps `upgrade` yet; it ships CLI-first."
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/upgrade_test.go",
+              "name": "TestUpgrade_UnknownTargetExits2",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/upgrade_test.go",
+              "name": "TestUpgradeErrors_UpgradesAvailableMapsLikeSelfUpdateCheck",
+              "kind": "unit"
+            },
+            {
+              "path": "internal/cli/upgrade_test.go",
+              "name": "TestUpgrade_SelfUpdateEqualsUpgradeSelf",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "specscore upgrade reports and upgrades every installed catalog CLI plus specscore itself (current version, latest stable release, verdict), with no arguments running a read-only report. Built from github.com/strongo/cli-helpers/cliinstall/cobracmd's NewUpgrade adapter, reusing install's own error mapper; specscore is always upgraded last and classified from its own self-update Config, so `specscore self-update` and `specscore upgrade specscore` reach the identical library call (cli-install#req:self-update-equals-upgrade-self)."
     },
     {
       "id": "specscore.event.ledger-tamper-evidence",
