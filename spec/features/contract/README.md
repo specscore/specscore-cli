@@ -1,3 +1,3 @@
 # Feature: Contract
 
-#### REQ: retained
+#### REQ: renamed
