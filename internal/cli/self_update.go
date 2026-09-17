@@ -2,8 +2,10 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/strongo/cli-helpers/cliinstall"
 	"github.com/strongo/cli-helpers/selfupdate"
 	"github.com/strongo/cli-helpers/selfupdate/cobracmd"
 
@@ -46,63 +48,63 @@ const selfUpdateCheckPendingCode = exitcode.Unexpected
 // which is the very bug this constant exists to fix.
 const selfUpdateUnexpectedCode = exitcode.UpdateFailed
 
-// selfUpdateConfig returns specscore's own selfupdate.Config: its release
-// identity, the package managers that publish it, and the version-probe
-// arguments used to confirm a swap succeeded
-// (cli/self-update#req:specscore-release-identity,
+// specscoreCatalogID is this binary's own catalog id in
+// github.com/strongo/cli-helpers/cliinstall — the fleet-wide compiled-in
+// registry of installable CLIs and their release identities
+// (cli-install#req:host-identity-from-catalog). Both selfUpdateConfig and
+// installCommand resolve the SAME entry, so `specscore self-update` and
+// every other fleet CLI's `install specscore` agree on how specscore is
+// released, by construction rather than by two copies staying in sync.
+const specscoreCatalogID = "specscore"
+
+// catalogEntryByID is a test seam over cliinstall.ByID so the defensive
+// panic below (a host id absent from the compiled catalog, which never
+// happens in production — specscore's own catalog entry always exists) is
+// exercisable. Tests that replace it must not run in parallel with other
+// tests calling selfUpdateConfig.
+var catalogEntryByID = cliinstall.ByID
+
+// selfUpdateConfig returns specscore's own selfupdate.Config, built from its
+// compiled-in catalog entry (cli/self-update#req:specscore-release-identity,
 // cli/self-update#req:specscore-managers,
-// cli/self-update#req:specscore-version-identity). Asset naming, the
-// checksums filename, and the download URL are all left at the library's
-// GoReleaser-shaped defaults — they already match .goreleaser.yml's own
-// name_template ("specscore_<version>_<os>_<arch>" archives,
-// "specscore_<version>_checksums.txt" checksums) exactly, so nothing here
-// overrides them.
-//
-// Every manager is opted into EXECUTABLE upgrade mode via
-// WithExecutableUpgrade: specscore MUST actually run the manager, not just
-// print its command (this is the behavior change this migration exists for
-// — see the founder's report that the previously-printed `brew upgrade
-// specscore` fails against a cask install). UpgradeCommand stays the
-// human-readable text shown in the availability preview and in --check's
-// guidance; UpgradeExecutable/UpgradeArgs is the structured argv the
-// library actually invokes (github.com/strongo/cli-helpers/selfupdate/
-// cliui.ManagedCommandRunner — wired automatically by cobracmd.New, never
-// through a shell).
+// cli/self-update#req:specscore-version-identity;
+// cli-install#req:catalog-identity-single-source). The catalog entry — not
+// this function — is the single source of specscore's release identity
+// (GitHub repository, supported platforms, asset/checksums naming left at
+// the library's GoReleaser-shaped defaults, which already match
+// .goreleaser.yml's own name_template exactly) and its package managers,
+// each already opted into EXECUTABLE upgrade mode via WithExecutableUpgrade
+// in cli-helpers' own catalog_specscore.go: specscore MUST actually run the
+// manager, not just print its command (the behavior change the 2026-09
+// self-update amendment made — see the founder's report that the
+// previously-printed `brew upgrade specscore` fails against a cask
+// install). UpgradeCommand stays the human-readable text shown in the
+// availability preview and in --check's guidance; UpgradeExecutable/
+// UpgradeArgs is the structured argv the library actually invokes
+// (github.com/strongo/cli-helpers/selfupdate/cliui.ManagedCommandRunner —
+// wired automatically by cobracmd.New, never through a shell):
 //
 //   - Homebrew: specscore ships as a CASK in tap specscore/tap (not a
-//     formula), so both the display command and the executable argv MUST
-//     be `brew upgrade --cask specscore`. `brew upgrade specscore` (the
-//     pre-migration text) fails with "Treating specscore as a formula ...
-//     specscore/tap/specscore not installed" — reproduced against the
-//     founder's real Homebrew install before this fix.
+//     formula), so both the display command and the executable argv are
+//     `brew upgrade --cask specscore`.
 //   - Scoop: `scoop update specscore`, argv ["update", "specscore"].
 //   - WinGet: the display text stays `winget upgrade SpecScore.CLI` (the
-//     pre-migration, human-typed form), but the executable argv uses
-//     `--id SpecScore.CLI` instead of the bare package name. `winget
-//     upgrade <name>` resolves by a fuzzy name/moniker match and can find
-//     zero or multiple candidates depending on what else is installed;
-//     `--id` selects the exact package deterministically, which matters
-//     far more once this runs non-interactively than it does for a command
-//     a human reads and can adjust. This manager's argv is UNVERIFIED in
-//     this environment (no Windows host to run a real `winget` against);
-//     flagged in the migration's report per the runbook-executed-before-
-//     published rule.
+//     human-typed form), but the executable argv uses `--id SpecScore.CLI`
+//     instead of the bare package name — `winget upgrade <name>` resolves
+//     by a fuzzy name/moniker match and can find zero or multiple
+//     candidates depending on what else is installed; `--id` selects the
+//     exact package deterministically. This manager's argv remains
+//     UNVERIFIED in this environment (no Windows host to run a real
+//     `winget` against).
 func selfUpdateConfig() selfupdate.Config {
-	return selfupdate.Config{
-		BinaryName:           "specscore",
-		Repository:           "specscore/specscore-cli",
-		CurrentVersion:       buildInfo.Version,
-		UndeterminedVersions: []string{"dev"},
-		Managers: []selfupdate.Manager{
-			selfupdate.Homebrew("brew upgrade --cask specscore").
-				WithExecutableUpgrade("brew", "upgrade", "--cask", "specscore"),
-			selfupdate.Scoop("scoop update specscore").
-				WithExecutableUpgrade("scoop", "update", "specscore"),
-			selfupdate.WinGet("winget upgrade SpecScore.CLI").
-				WithExecutableUpgrade("winget", "upgrade", "--id", "SpecScore.CLI"),
-		},
-		VersionProbeArgs: []string{"--version"},
+	entry, ok := catalogEntryByID(specscoreCatalogID)
+	if !ok {
+		// A host id absent from the compiled catalog is a programming error
+		// caught by this package's own tests, never a runtime state a user
+		// can trigger (cli-install#req:host-identity-from-catalog).
+		panic(fmt.Sprintf("cliinstall: no catalog entry for %q", specscoreCatalogID))
 	}
+	return entry.Config(buildInfo.Version)
 }
 
 // selfUpdateConfigFunc is a seam over selfUpdateConfig so tests can point a
@@ -235,11 +237,13 @@ func selfUpdateCommand() *cobra.Command {
 		Aliases:     []string{"update"},
 		Errors:      selfUpdateErrors{},
 		Interactive: selfUpdateInteractiveFunc,
-		// JSONFormat left false: specscore's Feature spec's flag surface
-		// (cli/self-update#req:flag-surface) does not include --format, so
-		// cobracmd never registers it. --dry-run IS registered — cobracmd.New
-		// always adds it, and specscore's flag surface is a floor, not a
-		// ceiling: "report what would happen without downloading or writing
-		// anything" is useful on its own and costs nothing to expose.
+		// JSONFormat true (M2 review fix): specscore's Feature spec's flag
+		// surface (cli/self-update#req:flag-surface) is a floor, not a
+		// ceiling, and `upgrade` already registers --format text|json —
+		// self-update now matches it, so the two commands' flag surfaces
+		// stay aligned rather than only upgrade offering machine-readable
+		// output. --dry-run is registered the same way, for the same
+		// reason: cobracmd.New always adds it.
+		JSONFormat: true,
 	})
 }

@@ -2,6 +2,12 @@
 # To setup git hooks run:
 #   > git config core.hooksPath .git-hooks || echo 'Not in a git repo'
 echo "Running .git-hooks/pre-push — checking 100% test coverage..."
+# Git exports GIT_DIR (and more) to hooks; tests that create temporary
+# repositories would otherwise operate on this repository instead.
+# `git rev-parse --local-env-vars` is git's own complete list of these
+# variables — more complete, and harder to silently drift stale, than a
+# hand-maintained enumeration (matching .git-hooks/pre-commit's own fix).
+unset $(git rev-parse --local-env-vars)
 
 COVER_OUT=$(mktemp)
 trap 'rm -f "$COVER_OUT"' EXIT

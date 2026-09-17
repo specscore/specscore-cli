@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"net/http"
 	"slices"
 
 	"github.com/posthog/posthog-go"
@@ -135,6 +136,18 @@ func coerceCaller(s string) string {
 	return CallerOther
 }
 
+// usageHTTPTransport is a test seam over posthog.Config.Transport: nil in
+// production, which posthog's own makeHttpClient treats as "clone
+// http.DefaultTransport". Tests set this to a spy http.RoundTripper (M8
+// review fix) to prove setupUsageChannel's client construction makes no
+// synchronous HTTP call — see TestSetupUsageChannel_MakesNoHTTPCalls in
+// coverage_test.go, which is the evidence behind
+// cli-install#req:version-json-side-effect-free's "no network I/O" claim at
+// the client-construction layer, complementing preRun's own
+// isVersionJSONProbe gate (telemetry_wiring.go in internal/cli) that stops
+// `version --json` from ever reaching transmitUsage at all.
+var usageHTTPTransport http.RoundTripper
+
 // setupUsageChannel encapsulates the usage-stats channel initialization
 // logic, extracted from init() so tests can exercise both the
 // posthogWriteKey-empty and posthogWriteKey-populated branches without
@@ -144,7 +157,8 @@ var setupUsageChannel = func() {
 		return
 	}
 	client, err := posthogNew(posthogWriteKey, posthog.Config{
-		Endpoint: posthogEUEndpoint,
+		Endpoint:  posthogEUEndpoint,
+		Transport: usageHTTPTransport,
 	})
 	if err != nil {
 		// Init failure is non-fatal — the transmit-fn checks for nil and no-ops.

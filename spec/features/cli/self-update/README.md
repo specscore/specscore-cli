@@ -92,20 +92,32 @@ upstream in the library, not in a specscore-local fork.
 
 #### REQ: flag-surface
 
-The command MUST expose `--check`, `--yes` (short `-y`), `--version <tag>`, and
-`--allow-downgrade`, bound to the library's corresponding options. `--version`
-here is `self-update`-local and distinct from the root `specscore --version`,
-which prints build identity.
+The command MUST expose `--check`, `--yes` (short `-y`), `--version <tag>`,
+`--allow-downgrade`, and `--format text|json`, bound to the library's
+corresponding options (M2 review fix: `--format` now matches `upgrade`'s
+own flag surface, so the two commands never disagree about whether
+machine-readable output is available). `--version` here is
+`self-update`-local and distinct from the root `specscore --version`, which
+prints build identity.
 
 ### specscore's configuration of the library
 
 #### REQ: specscore-release-identity
 
-specscore MUST configure the library with its own release identity: the GitHub
-repository `specscore/specscore-cli`, the binary name `specscore`, and release
-assets named as this project's GoReleaser publishes them
+specscore's release identity — the GitHub repository
+`specscore/specscore-cli`, the binary name `specscore`, release assets named
+as this project's GoReleaser publishes them
 (`specscore_<version>_<os>_<arch>` archives with a
-`specscore_<version>_checksums.txt` checksums file).
+`specscore_<version>_checksums.txt` checksums file), and its Homebrew/Scoop/
+WinGet managers — MUST come from `cliinstall.ByID("specscore")`'s compiled
+catalog entry in `github.com/strongo/cli-helpers/cliinstall`, never restated
+by hand. That catalog entry is the single source of specscore's identity
+shared with every other fleet CLI's `install specscore`
+(`cli-install#req:catalog-identity-single-source`); a CLI that changes its
+GoReleaser archive or checksum naming updates that catalog entry first, not
+this repository. This repository's own
+[cli/install](../install/README.md#req-specscore-host-identity) Feature
+resolves the identical entry for `specscore install`.
 
 #### REQ: specscore-managers
 

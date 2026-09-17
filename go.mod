@@ -18,8 +18,8 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	github.com/strongo/buildinfo v0.2.0
-	github.com/strongo/cli-helpers v0.9.4
+	github.com/strongo/buildinfo v0.3.0
+	github.com/strongo/cli-helpers v0.21.0
 	github.com/zclconf/go-cty v1.19.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/sys v0.47.0

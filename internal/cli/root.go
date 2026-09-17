@@ -88,6 +88,8 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 		lifecycleRecoveryCommand(),
 		debugCommand(),
 		selfUpdateCommand(),
+		installCommand(),
+		upgradeCommand(),
 	)
 
 	// `version` subcommand + `--version`/`-v` flag are both wired from

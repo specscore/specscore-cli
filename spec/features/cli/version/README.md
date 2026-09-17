@@ -18,6 +18,7 @@ status: Stable
 
 ```
 specscore version
+specscore version --json
 specscore --version
 specscore -v
 ```
@@ -59,6 +60,28 @@ specscore <version> (<commit>) <date>
 #### REQ: short-flag
 
 `-v` MUST be accepted as a short alias for `--version` and MUST produce identical output.
+
+#### REQ: json-output
+
+`specscore version --json` MUST print exactly one JSON object to stdout and
+nothing else, and exit `0`. The object is `buildinfo.VersionJSON` — the
+fleet-wide `version --json` contract owned by
+[strongo/cli-helpers: CLI Install Command Library](https://specscore.studio/app/github.com/strongo/cli-helpers/spec/features/cli-install?op=explore)'s
+`cli-install#req:version-json-contract` — carrying `name` (equal to
+specscore's catalog id, `"specscore"`), `version`, `commit`, `date`, and
+`date_source`. `--json` is the fleet-wide probe flag, independent of any
+`--format` flag other specscore commands offer; specscore's `version`
+subcommand has no `--format` flag of its own. This surface is wired by
+`github.com/strongo/buildinfo/fangcmd.Wire` — the same wiring point as
+[REQ: subcommand-output](#req-subcommand-output) — so it can never disagree
+with the plain `version` and `--version` surfaces on the same build's
+identity.
+
+`--json` MUST perform no network I/O, write or create no files, start no
+daemons, run no update checks, and emit no telemetry — including the
+start/exit telemetry event every other specscore command sends
+(`cli-install#req:version-json-side-effect-free`) — so that a fleet CLI
+probing an installed specscore is safe to repeat.
 
 #### REQ: no-v-prefix
 
@@ -164,6 +187,14 @@ A `specscore` binary built without `-ldflags` exits `0` and never errors or pani
 
 Version output follows Go-ecosystem convention: no `v` prefix on the printed number, even though the underlying git tag is `v`-prefixed. Any CLI output containing `v0.` or `v1.` at the start of the version field is a regression.
 
+### AC: json-is-uniform-and-quiet
+
+**Requirements:** cli/version#req:json-output
+
+**Given** a specscore binary built with release ldflags and, separately, a plain `go build`, with telemetry configured and no network access
+**When** the user runs `specscore version --json` against each
+**Then** stdout is exactly one JSON object whose `name` is `"specscore"`, `date_source` is `build` for the stamped build and `commit`/`date_source` empty or `commit` for the plain build, no network connection or file write occurs, and no telemetry event is emitted — verified by comparing against the events a plain `specscore version` invocation (without `--json`) does emit.
+
 ### AC: published-artifact-revalidation
 
 **Requirements:** cli/version#req:flag-output, cli/version#req:published-artifact-revalidation
@@ -172,7 +203,6 @@ Dispatching the validation-only workflow with an existing SpecScore CLI release 
 
 ## Open Questions
 
-- Should `specscore version` gain a `--json` (or `--format`) flag for machine consumption that includes the commit and date, now that the bare `--version` flag is reserved for the minimal scripting form?
 - Should the build-date field have a normative time-zone requirement (UTC only) to make output reproducible across release machines, or is any valid RFC 3339 value acceptable?
 
 ---

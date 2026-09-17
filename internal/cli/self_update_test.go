@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/strongo/cli-helpers/cliinstall"
 	"github.com/strongo/cli-helpers/selfupdate"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -91,13 +92,18 @@ func TestSelfUpdate_FlagSurface(t *testing.T) {
 	}
 }
 
-// --format stays absent: specscore's Feature spec (req:flag-surface) does
-// not include it, so JSONFormat is left false and cobracmd never registers
-// a --format flag at all.
-func TestSelfUpdate_NoFormatFlag(t *testing.T) {
+// M2 review fix: --format IS registered now, matching `upgrade`'s own
+// --format text|json flag surface (JSONFormat: true in selfUpdateCommand).
+// specscore's Feature spec's flag surface (req:flag-surface) is a floor,
+// not a ceiling.
+func TestSelfUpdate_HasFormatFlag(t *testing.T) {
 	cmd := selfUpdateCommand()
-	if f := cmd.Flags().Lookup("format"); f != nil {
-		t.Errorf("--format flag registered; JSONFormat must stay false per the Feature spec")
+	f := cmd.Flags().Lookup("format")
+	if f == nil {
+		t.Fatal("--format flag is missing; self-update must match upgrade's flag surface (M2 review fix)")
+	}
+	if f.DefValue != "text" {
+		t.Errorf("--format default = %q, want %q", f.DefValue, "text")
 	}
 }
 
@@ -147,8 +153,16 @@ func TestSelfUpdateConfig_Identity(t *testing.T) {
 	if cfg.CurrentVersion != "1.2.3" {
 		t.Errorf("CurrentVersion = %q, want the package version var (1.2.3)", cfg.CurrentVersion)
 	}
-	if len(cfg.UndeterminedVersions) != 1 || cfg.UndeterminedVersions[0] != "dev" {
-		t.Errorf("UndeterminedVersions = %v, want [\"dev\"]", cfg.UndeterminedVersions)
+	// specscore's catalog entry (cliinstall/catalog_specscore.go) leaves
+	// UndeterminedVersions unset, deferring to selfupdate.Config's own
+	// withDefaults() fallback ({"dev"}) applied inside Check/Update rather
+	// than restating it here — cli-install#req:catalog-identity-single-
+	// source keeps the catalog entry, not this function, as the one place
+	// specscore's identity is declared. See TestSelfUpdate_CheckExitCodeContract's
+	// "undetermined version also exits 10" subtest for proof the runtime
+	// behavior ("dev" reports Undetermined) is unchanged end-to-end.
+	if len(cfg.UndeterminedVersions) != 0 {
+		t.Errorf("UndeterminedVersions = %v, want empty (catalog leaves it at the library's own {\"dev\"} default)", cfg.UndeterminedVersions)
 	}
 	if len(cfg.VersionProbeArgs) != 1 || cfg.VersionProbeArgs[0] != "--version" {
 		t.Errorf("VersionProbeArgs = %v, want [\"--version\"]", cfg.VersionProbeArgs)
@@ -220,6 +234,45 @@ func TestSelfUpdateConfig_Managers(t *testing.T) {
 			t.Errorf("manager %q not configured", name)
 		}
 	}
+}
+
+// AC: cli-install#ac:catalog-matrix-is-valid,
+// cli-install#req:catalog-identity-single-source — specscore's Config comes
+// from the SAME compiled-in catalog entry every other fleet CLI's
+// `install specscore` resolves, not a hand-maintained duplicate.
+func TestSelfUpdateConfig_MatchesCatalogEntry(t *testing.T) {
+	withVersion(t, "1.2.3")
+	entry, ok := cliinstall.ByID("specscore")
+	if !ok {
+		t.Fatal(`cliinstall.ByID("specscore") not found`)
+	}
+	want := entry.Config("1.2.3")
+	got := selfUpdateConfig()
+	if got.Repository != want.Repository || got.BinaryName != want.BinaryName {
+		t.Errorf("selfUpdateConfig() = %+v, want built from cliinstall.ByID(\"specscore\").Config(...): %+v", got, want)
+	}
+	if len(got.Managers) != len(want.Managers) {
+		t.Errorf("Managers = %d entries, want %d (the same catalog entry's managers)", len(got.Managers), len(want.Managers))
+	}
+	if len(got.SupportedPlatforms) != len(want.SupportedPlatforms) {
+		t.Errorf("SupportedPlatforms = %d entries, want %d (the catalog entry's own platform matrix)", len(got.SupportedPlatforms), len(want.SupportedPlatforms))
+	}
+}
+
+// cli-install#req:host-identity-from-catalog — a host id absent from the
+// compiled catalog is a programming error caught by this package's own
+// tests, never a runtime state a user can trigger.
+func TestSelfUpdateConfig_PanicsWhenCatalogEntryMissing(t *testing.T) {
+	prev := catalogEntryByID
+	catalogEntryByID = func(string) (cliinstall.Entry, bool) { return cliinstall.Entry{}, false }
+	t.Cleanup(func() { catalogEntryByID = prev })
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected selfUpdateConfig to panic when the catalog entry is missing")
+		}
+	}()
+	selfUpdateConfig()
 }
 
 // releasePinnedHomebrewConfig returns a copy of specscore's real Config with
@@ -749,24 +802,39 @@ func TestSelfUpdate_AliasProducesIdenticalOutput(t *testing.T) {
 	}
 }
 
-// --check's JSON encode path is never reachable from specscore (JSONFormat
-// is false, so cobracmd never registers --format and always takes the text
-// branch) — this is a sanity check that the flag really is absent, keeping
-// the "JSONFormat stays false" contract honest against cobracmd's own
-// behavior rather than just this package's intent.
-func TestSelfUpdate_NoFormatFlagMeansNoJSONOutput(t *testing.T) {
+// M2 review fix: --check's default format is text (matching --format's own
+// "text" default), and --check --format json now produces real, parseable
+// JSON (JSONFormat is true — see TestSelfUpdate_HasFormatFlag), inverting
+// the old "no --format flag exists" contract this test used to pin.
+func TestSelfUpdate_CheckFormatDefaultTextExplicitJSON(t *testing.T) {
 	withVersion(t, "1.0.0")
 	withFakeReleases(t, releaseServer(t, `[{"tag_name":"v1.0.0","prerelease":false,"draft":false}]`))
 
-	cmd := selfUpdateCommand()
-	var out strings.Builder
-	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--check"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("--check returned error: %v", err)
-	}
-	var probe json.RawMessage
-	if err := json.Unmarshal([]byte(out.String()), &probe); err == nil {
-		t.Errorf("stdout %q parses as JSON; --check must always be text (no --format flag exists)", out.String())
-	}
+	t.Run("default format is text", func(t *testing.T) {
+		cmd := selfUpdateCommand()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"--check"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("--check returned error: %v", err)
+		}
+		var probe json.RawMessage
+		if err := json.Unmarshal([]byte(out.String()), &probe); err == nil {
+			t.Errorf("stdout %q parses as JSON; the default format is text", out.String())
+		}
+	})
+
+	t.Run("--format json produces parseable JSON", func(t *testing.T) {
+		cmd := selfUpdateCommand()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"--check", "--format", "json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("--check --format json returned error: %v", err)
+		}
+		var probe json.RawMessage
+		if err := json.Unmarshal([]byte(out.String()), &probe); err != nil {
+			t.Errorf("stdout %q does not parse as JSON: %v", out.String(), err)
+		}
+	})
 }
