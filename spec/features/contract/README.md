@@ -1,3 +1,0 @@
-# Feature: Contract
-
-#### REQ: renamed
