@@ -4,6 +4,82 @@
   "binary": "specscore",
   "capabilities": [
     {
+      "id": "specscore.cli.install",
+      "feature_refs": [
+        "spec/features/cli/install/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Full",
+          "commands": [
+            {
+              "path": "specscore install",
+              "flags": [
+                "--all",
+                "--dir",
+                "--dry-run",
+                "--format",
+                "--yes"
+              ],
+              "modes": []
+            }
+          ],
+          "limitation": null
+        },
+        "help": {
+          "status": "Full",
+          "anchors": [
+            {
+              "command": "specscore install --help",
+              "contains": [
+                "List and install fleet CLIs relevant to specscore",
+                "report what would happen without downloading, writing, or running brew"
+              ]
+            }
+          ],
+          "limitation": null
+        },
+        "ai_skill": {
+          "status": "Absent",
+          "skills": [],
+          "limitation": "No AI skill wraps `install` yet; it ships CLI-first and a skill package follows once the fleet-wide `upgrade` companion command lands."
+        },
+        "tests": {
+          "status": "Full",
+          "references": [
+            {
+              "path": "internal/cli/install_test.go",
+              "name": "TestInstall_UnknownTargetExits2",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/install_test.go",
+              "name": "TestInstallErrors_FailureExitCodes",
+              "kind": "unit"
+            },
+            {
+              "path": "internal/cli/install_test.go",
+              "name": "TestInstallErrors_SharedKindsMatchSelfUpdateErrors",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/self_update_test.go",
+              "name": "TestSelfUpdateConfig_MatchesCatalogEntry",
+              "kind": "conformance"
+            },
+            {
+              "path": "internal/cli/catalog_goreleaser_test.go",
+              "name": "TestSpecscoreCatalogEntry_MatchesGoReleaserConfig",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": null
+        }
+      },
+      "notes": "specscore install lists and installs the other fleet CLIs relevant to specscore (wb, ingitdb, synchestra, chatwright, codegrapher), mirroring how specscore itself was installed. Built from github.com/strongo/cli-helpers/cliinstall's compiled catalog and Cobra adapter; specscore supplies only its own catalog id and exit-code mapping. See spec/features/cli/self-update/README.md for the sibling self-update command built from the same catalog entry."
+    },
+    {
       "id": "specscore.cli.merge-driver",
       "feature_refs": [
         "spec/features/cli/README.md",
@@ -1123,7 +1199,9 @@
             },
             {
               "path": "specscore version",
-              "flags": [],
+              "flags": [
+                "--json"
+              ],
               "modes": []
             }
           ],

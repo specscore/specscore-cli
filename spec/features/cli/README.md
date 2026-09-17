@@ -39,6 +39,7 @@ Commands that grew inside the codebase without written specs accrete inconsisten
 | [version/](version/README.md) | CLI version reporting |
 | [consilium](consilium/README.md) | The deterministic consilium engine: gate-rule arbitration, vote-schema and roster validation, gate configuration, and the parent command. |
 | [event](event/README.md) | TODO: Add description. |
+| [install](install/README.md) | List and install the other fleet CLIs relevant to specscore, mirroring how specscore itself was installed. |
 | [lesson](lesson/README.md) | Record and query process-gap lessons and advance them through their enforcement lifecycle. |
 | [plan](plan/README.md) | Query Plan artifacts, including plan metadata and task rollups. |
 | [publication-policy](publication-policy/README.md) | Mutate publication policy, resolve effective policy, validate branch guards, and support manifest-based publication. |

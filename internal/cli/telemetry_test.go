@@ -246,6 +246,103 @@ func newRootCommandForTest() *cobra.Command {
 	return &cobra.Command{Use: "specscore"}
 }
 
+// versionCmdForTest builds a minimal stand-in for the real `version`
+// subcommand fangcmd.Wire registers (Use "version", a bool --json flag),
+// with --json set to asJSON. Good enough to drive isVersionJSONProbe and
+// preRun without pulling in the real buildinfo/cobracmd.VersionCommand.
+func versionCmdForTest(t *testing.T, asJSON bool) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "version"}
+	cmd.Flags().Bool("json", false, "")
+	if asJSON {
+		if err := cmd.Flags().Set("json", "true"); err != nil {
+			t.Fatalf("Flags().Set(json, true): %v", err)
+		}
+	}
+	return cmd
+}
+
+// cli-install#req:version-json-side-effect-free, cli/version#req:json-output
+func TestIsVersionJSONProbe(t *testing.T) {
+	if !isVersionJSONProbe(versionCmdForTest(t, true)) {
+		t.Error("expected true for `version --json`")
+	}
+	if isVersionJSONProbe(versionCmdForTest(t, false)) {
+		t.Error("expected false for plain `version` (no --json)")
+	}
+	if isVersionJSONProbe(&cobra.Command{Use: "install"}) {
+		t.Error("expected false for a non-version command")
+	}
+	noFlagVersion := &cobra.Command{Use: "version"}
+	if isVersionJSONProbe(noFlagVersion) {
+		t.Error("expected false when the command carries no --json flag at all")
+	}
+	if isVersionJSONProbe(nil) {
+		t.Error("expected false for a nil command")
+	}
+}
+
+// AC: version-json-is-uniform-and-quiet — `version --json` must perform no
+// file write (no install_id creation, no first-run notice) and must leave
+// invocation.StartTime zero, so emitInvocationEvent's own "PreRun never
+// fired" guard skips telemetry emission entirely
+// (cli-install#req:version-json-side-effect-free).
+func TestPreRun_VersionJSONProbeSkipsAllSideEffects(t *testing.T) {
+	home := withTempHomeForCLI(t)
+	invocation = runtimeState{}
+	noTelemetryFlag = false
+	var notice bytes.Buffer
+	prevWriter := firstRunNoticeWriter
+	firstRunNoticeWriter = &notice
+	t.Cleanup(func() { firstRunNoticeWriter = prevWriter })
+
+	preRun(versionCmdForTest(t, true))
+
+	if !invocation.StartTime.IsZero() {
+		t.Error("invocation.StartTime must stay zero for a version --json probe")
+	}
+	if notice.Len() > 0 {
+		t.Errorf("first-run notice must not print for version --json, got %q", notice.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".specscore", "install_id")); err == nil {
+		t.Error("install_id must not be created by a version --json probe")
+	}
+
+	// The full chain, not just the StartTime guard in isolation: no channel
+	// transmission is attempted either.
+	emitInvocationEvent(nil)
+}
+
+// AC: version-json-is-uniform-and-quiet — driven through the real,
+// production command tree (Run, not a hand-built stand-in), `specscore
+// version --json` creates no install_id file.
+func TestRun_VersionJSON_CreatesNoInstallID(t *testing.T) {
+	home := withTempHomeForCLI(t)
+	invocation = runtimeState{}
+
+	if err := Run([]string{"specscore", "version", "--json"}); err != nil {
+		t.Fatalf("Run([version --json]) = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".specscore", "install_id")); err == nil {
+		t.Error("install_id must not be created by `specscore version --json`")
+	}
+}
+
+// Contrast: plain `specscore version` (no --json) is an ordinary command and
+// DOES create install_id like any other invocation — proving the exemption
+// above is scoped to --json, not to the version subcommand as a whole.
+func TestRun_PlainVersion_StillCreatesInstallID(t *testing.T) {
+	home := withTempHomeForCLI(t)
+	invocation = runtimeState{}
+
+	if err := Run([]string{"specscore", "version"}); err != nil {
+		t.Fatalf("Run([version]) = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".specscore", "install_id")); err != nil {
+		t.Error("install_id SHOULD be created by a plain `specscore version` invocation")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Cobra-level tests for telemetry subcommands (status, enable, disable).
 // These exercise the command constructors via cmd.Execute(), covering the

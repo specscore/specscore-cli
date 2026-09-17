@@ -93,9 +93,41 @@ func attachTelemetry(rootCmd *cobra.Command) {
 	}
 }
 
+// isVersionJSONProbe reports whether cmd is the `version` subcommand
+// invoked with --json, per cli/version#req:json-output and
+// cli-install#req:version-json-side-effect-free: probing an installed
+// CLI's build identity must be safe to repeat, so it must perform no
+// network I/O, no file writes, and emit no telemetry event — including the
+// start/exit event every other command sends. Checking for a bool --json
+// flag (only the version subcommand fangcmd.Wire registers one) alongside
+// the command name guards against a future unrelated command also named
+// "version" or carrying an unrelated "json" flag.
+func isVersionJSONProbe(cmd *cobra.Command) bool {
+	if cmd == nil || cmd.Name() != "version" {
+		return false
+	}
+	f := cmd.Flags().Lookup("json")
+	if f == nil || f.Value.Type() != "bool" {
+		return false
+	}
+	asJSON, err := cmd.Flags().GetBool("json")
+	return err == nil && asJSON
+}
+
 // preRun is the hook body factored out so tests can drive it directly with a
 // constructed cobra.Command rather than going through cobra.Execute.
 func preRun(cmd *cobra.Command) {
+	if isVersionJSONProbe(cmd) {
+		// Leave invocation.StartTime at its zero value: emitInvocationEvent's
+		// own "PreRun never fired" guard then skips telemetry emission
+		// entirely (see its first check below), and skipping every
+		// side-effecting step past this point — install-id creation, the
+		// persistent-state read, the first-run notice — keeps this
+		// invocation's only I/O the one JSON object it writes to stdout
+		// (cli-install#req:version-json-side-effect-free).
+		return
+	}
+
 	invocation.StartTime = time.Now()
 	invocation.CommandPath = commandDotPath(cmd)
 

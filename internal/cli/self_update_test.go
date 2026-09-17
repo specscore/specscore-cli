@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/strongo/cli-helpers/cliinstall"
 	"github.com/strongo/cli-helpers/selfupdate"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
@@ -147,8 +148,16 @@ func TestSelfUpdateConfig_Identity(t *testing.T) {
 	if cfg.CurrentVersion != "1.2.3" {
 		t.Errorf("CurrentVersion = %q, want the package version var (1.2.3)", cfg.CurrentVersion)
 	}
-	if len(cfg.UndeterminedVersions) != 1 || cfg.UndeterminedVersions[0] != "dev" {
-		t.Errorf("UndeterminedVersions = %v, want [\"dev\"]", cfg.UndeterminedVersions)
+	// specscore's catalog entry (cliinstall/catalog_specscore.go) leaves
+	// UndeterminedVersions unset, deferring to selfupdate.Config's own
+	// withDefaults() fallback ({"dev"}) applied inside Check/Update rather
+	// than restating it here — cli-install#req:catalog-identity-single-
+	// source keeps the catalog entry, not this function, as the one place
+	// specscore's identity is declared. See TestSelfUpdate_CheckExitCodeContract's
+	// "undetermined version also exits 10" subtest for proof the runtime
+	// behavior ("dev" reports Undetermined) is unchanged end-to-end.
+	if len(cfg.UndeterminedVersions) != 0 {
+		t.Errorf("UndeterminedVersions = %v, want empty (catalog leaves it at the library's own {\"dev\"} default)", cfg.UndeterminedVersions)
 	}
 	if len(cfg.VersionProbeArgs) != 1 || cfg.VersionProbeArgs[0] != "--version" {
 		t.Errorf("VersionProbeArgs = %v, want [\"--version\"]", cfg.VersionProbeArgs)
@@ -220,6 +229,45 @@ func TestSelfUpdateConfig_Managers(t *testing.T) {
 			t.Errorf("manager %q not configured", name)
 		}
 	}
+}
+
+// AC: cli-install#ac:catalog-matrix-is-valid,
+// cli-install#req:catalog-identity-single-source — specscore's Config comes
+// from the SAME compiled-in catalog entry every other fleet CLI's
+// `install specscore` resolves, not a hand-maintained duplicate.
+func TestSelfUpdateConfig_MatchesCatalogEntry(t *testing.T) {
+	withVersion(t, "1.2.3")
+	entry, ok := cliinstall.ByID("specscore")
+	if !ok {
+		t.Fatal(`cliinstall.ByID("specscore") not found`)
+	}
+	want := entry.Config("1.2.3")
+	got := selfUpdateConfig()
+	if got.Repository != want.Repository || got.BinaryName != want.BinaryName {
+		t.Errorf("selfUpdateConfig() = %+v, want built from cliinstall.ByID(\"specscore\").Config(...): %+v", got, want)
+	}
+	if len(got.Managers) != len(want.Managers) {
+		t.Errorf("Managers = %d entries, want %d (the same catalog entry's managers)", len(got.Managers), len(want.Managers))
+	}
+	if len(got.SupportedPlatforms) != len(want.SupportedPlatforms) {
+		t.Errorf("SupportedPlatforms = %d entries, want %d (the catalog entry's own platform matrix)", len(got.SupportedPlatforms), len(want.SupportedPlatforms))
+	}
+}
+
+// cli-install#req:host-identity-from-catalog — a host id absent from the
+// compiled catalog is a programming error caught by this package's own
+// tests, never a runtime state a user can trigger.
+func TestSelfUpdateConfig_PanicsWhenCatalogEntryMissing(t *testing.T) {
+	prev := catalogEntryByID
+	catalogEntryByID = func(string) (cliinstall.Entry, bool) { return cliinstall.Entry{}, false }
+	t.Cleanup(func() { catalogEntryByID = prev })
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected selfUpdateConfig to panic when the catalog entry is missing")
+		}
+	}()
+	selfUpdateConfig()
 }
 
 // releasePinnedHomebrewConfig returns a copy of specscore's real Config with
