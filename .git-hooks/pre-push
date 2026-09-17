@@ -2,6 +2,9 @@
 # To setup git hooks run:
 #   > git config core.hooksPath .git-hooks || echo 'Not in a git repo'
 echo "Running .git-hooks/pre-push — checking 100% test coverage..."
+# Git exports GIT_DIR (and more) to hooks; tests that create temporary
+# repositories would otherwise operate on this repository instead.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_COMMON_DIR
 
 COVER_OUT=$(mktemp)
 trap 'rm -f "$COVER_OUT"' EXIT
