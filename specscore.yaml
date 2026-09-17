@@ -1,0 +1,6 @@
+# SpecScore Repo Config Schema: https://specscore.md/repo-config
+
+project:
+  host: github.com
+  org: acme
+  repo: provider
