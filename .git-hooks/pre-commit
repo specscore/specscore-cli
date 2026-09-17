@@ -1,16 +1,29 @@
 #!/bin/sh
 # To setup git hooks run:
 #   > git config core.hooksPath .git-hooks || echo 'Not in a git repo'
+set -e
 echo "Running .git-hooks/pre-commit..."
+# Capture the staged file list BEFORE unsetting Git's own hook environment:
+# `git diff --cached` (and `git commit -a`/`git commit <path>`, which stage
+# through a temporary index) needs GIT_INDEX_FILE and friends to see the
+# right staged tree. Unsetting them first — the bug this hook used to have —
+# made this diff look at the wrong (or a missing) index.
+STAGED=$(git diff --name-only --cached)
 # Git exports GIT_DIR/GIT_INDEX_FILE (and more) to hooks; tests that create
 # temporary repositories would otherwise operate on this repository instead.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_COMMON_DIR
-if git diff --name-only --cached | grep -q ":\s*go\.mod"; then
+# `git rev-parse --local-env-vars` is git's own complete list of these
+# variables (GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE, GIT_PREFIX,
+# GIT_OBJECT_DIRECTORY, GIT_COMMON_DIR, GIT_ALTERNATE_OBJECT_DIRECTORIES,
+# GIT_NAMESPACE, GIT_GRAFT_FILE, GIT_NO_REPLACE_OBJECTS and more, including
+# ones a future git version adds) — more complete, and harder to silently
+# drift stale, than a hand-maintained enumeration.
+unset $(git rev-parse --local-env-vars)
+# `-x` matches the whole line: `--name-only` prints bare paths ("go.mod"),
+# never git status's "M  go.mod" short-status form the old ":\s*go\.mod"
+# pattern was shaped for — that pattern never matched anything, so
+# gomodlint was dead code before this fix.
+if echo "$STAGED" | grep -qx 'go\.mod'; then
   gomodlint
-  exit_code=$?
-  if [ $exit_code -ne 0 ]; then
-    exit $exit_code
-  fi
 fi
 go fmt ./...
 go build ./...

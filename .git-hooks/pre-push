@@ -4,7 +4,10 @@
 echo "Running .git-hooks/pre-push — checking 100% test coverage..."
 # Git exports GIT_DIR (and more) to hooks; tests that create temporary
 # repositories would otherwise operate on this repository instead.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_COMMON_DIR
+# `git rev-parse --local-env-vars` is git's own complete list of these
+# variables — more complete, and harder to silently drift stale, than a
+# hand-maintained enumeration (matching .git-hooks/pre-commit's own fix).
+unset $(git rev-parse --local-env-vars)
 
 COVER_OUT=$(mktemp)
 trap 'rm -f "$COVER_OUT"' EXIT
