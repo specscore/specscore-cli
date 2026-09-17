@@ -7,7 +7,7 @@ format: https://specscore.md/features-index-specification
 | Feature | Status | Kind | Description |
 |---------|--------|------|-------------|
 | [auth](auth/README.md) | Draft | Command | desc-auth |
-| [no-git](no-git/README.md) | Draft | — | TODO: Add description. |
+| [push-feature](push-feature/README.md) | Draft | — | TODO: Add description. |
 
 ## Open Questions
 
