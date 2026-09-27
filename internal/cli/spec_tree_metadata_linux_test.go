@@ -4,7 +4,11 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestLinuxFilesystemFlagContract(t *testing.T) {
@@ -44,4 +48,44 @@ func TestLinuxFilesystemFlagContract(t *testing.T) {
 			t.Fatalf("apply ioctl error = %v", err)
 		}
 	})
+}
+
+func TestSnapshotEntryTimes_Linux(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "timestamps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessed, modified, err := snapshotEntryTimes(info)
+	if err != nil || accessed.IsZero() || modified.IsZero() {
+		t.Fatalf("snapshotEntryTimes = %v, %v, %v", accessed, modified, err)
+	}
+	if _, _, err := snapshotEntryTimes(lifecycleTestFileInfo{mode: 0o644}); err == nil {
+		t.Fatal("unsupported timestamp stat accepted")
+	}
+}
+
+func TestSetStagedEntryTimes_Linux(t *testing.T) {
+	original := stageLinuxUtimesNanoAt
+	called := 0
+	stageLinuxUtimesNanoAt = func(_ int, _ string, _ []unix.Timespec, _ int) error {
+		called++
+		return nil
+	}
+	t.Cleanup(func() { stageLinuxUtimesNanoAt = original })
+
+	now := time.Unix(1_700_000_000, 123_456_789)
+	if err := setStagedEntryTimes(-1, time.Time{}, now); err != nil || called != 1 {
+		t.Fatalf("zero access fallback = %v, calls=%d", err, called)
+	}
+	if err := setStagedEntryTimes(-1, now, time.Time{}); err != nil || called != 2 {
+		t.Fatalf("zero modification fallback = %v, calls=%d", err, called)
+	}
+	if err := setStagedEntryModificationTime(-1, now); err != nil || called != 3 {
+		t.Fatalf("modification time helper = %v, calls=%d", err, called)
+	}
 }

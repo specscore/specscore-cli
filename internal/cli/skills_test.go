@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 
@@ -109,5 +110,60 @@ func TestSkillsSyncErrors_Conflict(t *testing.T) {
 	}
 	if !strings.Contains(coded.Error(), "1 skill(s) could not be installed") {
 		t.Errorf("unexpected error message: %q", coded.Error())
+	}
+}
+
+type subErrFS struct{}
+
+func (subErrFS) Open(name string) (fs.File, error) { return nil, errors.New("open error") }
+func (subErrFS) Sub(dir string) (fs.FS, error)     { return nil, errors.New("sub error") }
+
+type digestErrFS struct{}
+
+func (digestErrFS) Open(name string) (fs.File, error) {
+	return nil, errors.New("digest open error")
+}
+
+func TestSkillsConfig_Errors(t *testing.T) {
+	origFS := specscoreSkillsFS
+	origPlugin := specscoreSkillsPlugin
+	defer func() {
+		specscoreSkillsFS = origFS
+		specscoreSkillsPlugin = origPlugin
+	}()
+
+	// 1. Sub error
+	specscoreSkillsFS = subErrFS{}
+	if _, err := newSkillsConfig(); err == nil {
+		t.Error("newSkillsConfig with subErrFS expected error, got nil")
+	}
+
+	// 2. Digest error
+	specscoreSkillsFS = digestErrFS{}
+	if _, err := newSkillsConfig(); err == nil {
+		t.Error("newSkillsConfig with digestErrFS expected error, got nil")
+	}
+
+	// 3. EmbeddedBundle error
+	specscoreSkillsFS = origFS
+	specscoreSkillsPlugin = skillsync.PluginIdentity{}
+	if _, err := newSkillsConfig(); err == nil {
+		t.Error("newSkillsConfig with empty plugin identity expected error, got nil")
+	}
+}
+
+func TestSkillsCmd_ConfigError(t *testing.T) {
+	origFS := specscoreSkillsFS
+	defer func() {
+		specscoreSkillsFS = origFS
+	}()
+	specscoreSkillsFS = subErrFS{}
+	cmd := skillsCommand()
+	if cmd.RunE == nil {
+		t.Fatal("expected cmd.RunE to be set when config fails")
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("expected cmd.RunE to return error")
 	}
 }

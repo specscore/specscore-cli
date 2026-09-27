@@ -83,10 +83,10 @@ jobs:
         run: go build ./...
 
       - name: go test
-        run: go test ./... -count=1 -coverprofile=cover.out -covermode=atomic
+        run: go test -coverprofile=cover.out ./...
 
-      - name: coverage gate (100%)
-        run: ./scripts/coverage-gate.sh
+      - name: statement coverage (100%)
+        run: awk 'NR>1 && $NF==0 {print; bad=1} END{exit bad}' cover.out
 
   windows-event-process-tree:
     name: Windows event process-tree lifecycle
