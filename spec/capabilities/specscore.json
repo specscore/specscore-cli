@@ -600,6 +600,17 @@
               "modes": []
             },
             {
+              "path": "specscore install",
+              "flags": [
+                "--all",
+                "--dir",
+                "--dry-run",
+                "--format",
+                "--yes"
+              ],
+              "modes": []
+            },
+            {
               "path": "specscore issue change-status",
               "flags": [
                 "--dry-run",
@@ -950,7 +961,57 @@
                 "--scope"
               ],
               "modes": []
+            }
+          ],
+          "limitation": "This row proves public command and registered-flag inventory only; behavioral, help, skill, and adversarial completeness is claimed only by narrower capability rows."
+        },
+        "help": {
+          "status": "Partial",
+          "anchors": [
+            {
+              "command": "specscore --help",
+              "contains": [
+                "SpecScore CLI",
+                "Available Commands"
+              ]
+            }
+          ],
+          "limitation": "Root discovery is covered; detailed semantic help is audited only for focused capability rows."
+        },
+        "ai_skill": {
+          "status": "Absent",
+          "skills": [],
+          "limitation": "No single AI skill claims every SpecScore public command; focused skills own their declared capabilities."
+        },
+        "tests": {
+          "status": "Partial",
+          "references": [
+            {
+              "path": "internal/cli/capability_manifest_test.go",
+              "name": "TestCapabilityManifestCoversPublicCommandTree",
+              "kind": "conformance"
             },
+            {
+              "path": "internal/cli/capability_manifest_test.go",
+              "name": "TestCapabilityManifestValidatesAgainstPinnedCoreSchema",
+              "kind": "conformance"
+            }
+          ],
+          "limitation": "The conformance test proves registration/flag coverage, not behavior for every historical command."
+        }
+      },
+      "notes": "Bounded full-binary inventory prevents changed-feature rows from masquerading as complete CLI coverage."
+    },
+    {
+      "id": "specscore.cli.public-command-tree-part-2",
+      "feature_refs": [
+        "spec/features/cli/README.md"
+      ],
+      "since": null,
+      "surfaces": {
+        "runtime": {
+          "status": "Partial",
+          "commands": [
             {
               "path": "specscore rehearse acs",
               "flags": [
@@ -1024,6 +1085,17 @@
               "flags": [
                 "--format",
                 "--project"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore skills sync",
+              "flags": [
+                "--dir",
+                "--dry-run",
+                "--format",
+                "--harness",
+                "--newer-compatible"
               ],
               "modes": []
             },
@@ -1196,6 +1268,28 @@
             {
               "path": "specscore telemetry status",
               "flags": [],
+              "modes": []
+            },
+            {
+              "path": "specscore uninstall",
+              "flags": [
+                "--all",
+                "--dry-run",
+                "--format",
+                "--purge",
+                "--yes"
+              ],
+              "modes": []
+            },
+            {
+              "path": "specscore upgrade",
+              "flags": [
+                "--all",
+                "--check",
+                "--dry-run",
+                "--format",
+                "--yes"
+              ],
               "modes": []
             },
             {
