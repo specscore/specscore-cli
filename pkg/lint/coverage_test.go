@@ -29,6 +29,7 @@ func TestAllCheckerSeverityMethods(t *testing.T) {
 		{"index-entries", newIndexEntriesChecker(), "error"},
 		{"plan-hierarchy", newPlanHierarchyChecker(), "error"},
 		{"plan-roi", newPlanROIChecker(), "warning"},
+		{"plan-route-unresolved", newPlanRouteErrorChecker("err"), "error"},
 		{"studio-toolbar", newStudioToolbarChecker(), "error"},
 		{"sidekick-seed", newSidekickSeedChecker(), "error"},
 	}

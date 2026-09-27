@@ -20,12 +20,13 @@ const (
 )
 
 var (
-	specscoreSkillsCLI    = skillsync.Identity{Publisher: "specscore", Name: "specscore"}
-	specscoreSkillsPlugin = skillsync.PluginIdentity{Publisher: "specscore", Name: "specscore"}
+	specscoreSkillsCLI          = skillsync.Identity{Publisher: "specscore", Name: "specscore"}
+	specscoreSkillsPlugin       = skillsync.PluginIdentity{Publisher: "specscore", Name: "specscore"}
+	specscoreSkillsFS     fs.FS = ai.SkillsFS
 )
 
 func newSkillsConfig() (skillsync.Config, error) {
-	source, err := fs.Sub(ai.SkillsFS, "skills")
+	source, err := fs.Sub(specscoreSkillsFS, "skills")
 	if err != nil {
 		return skillsync.Config{}, err
 	}

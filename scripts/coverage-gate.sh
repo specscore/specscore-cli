@@ -13,6 +13,7 @@ COVER_PROFILE=$(mktemp "${TMPDIR:-/tmp}/specscore-coverage.XXXXXX")
 trap 'rm -f "$COVER_PROFILE"' EXIT
 
 go test ./... -count=1 -coverprofile="$COVER_PROFILE" -covermode=atomic
+awk 'NR>1 && $NF==0 {print; bad=1} END{exit bad}' "$COVER_PROFILE"
 
 PCT=$(go tool cover -func="$COVER_PROFILE" | awk '/^total:/ {gsub(/%/,""); print $NF}')
 echo "Total coverage: ${PCT}%"

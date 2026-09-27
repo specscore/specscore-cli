@@ -127,3 +127,9 @@ func TestUninstallErrors_FailurePermissionWithoutPath(t *testing.T) {
 		t.Errorf("message %q does not fall back to a generic destination phrase", coded.Error())
 	}
 }
+
+func TestUninstallErrors_FailureNil(t *testing.T) {
+	if err := (newUninstallErrors()).Failure(nil); err != nil {
+		t.Fatalf("Failure(nil) = %v, want nil", err)
+	}
+}
