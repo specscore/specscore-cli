@@ -108,6 +108,20 @@ func TestSnapshotMetadata_FailClosedBranches(t *testing.T) {
 			t.Fatalf("empty xattrs = %#v, %v", attributes, err)
 		}
 	})
+	t.Run("all empty or ephemeral xattrs", func(t *testing.T) {
+		resetSnapshotNoFollowSeams(t)
+		snapshotFlistxattr = func(_ int, dest []byte) (int, error) {
+			if dest == nil {
+				return 1, nil
+			}
+			dest[0] = 0
+			return 1, nil
+		}
+		attributes, err := readSnapshotExtendedAttributes(int(file.Fd()))
+		if err != nil || attributes != nil {
+			t.Fatalf("empty xattrs = %#v, %v", attributes, err)
+		}
+	})
 	t.Run("xattr value failures", func(t *testing.T) {
 		resetSnapshotNoFollowSeams(t)
 		snapshotFlistxattr = func(_ int, dest []byte) (int, error) {
