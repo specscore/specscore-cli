@@ -63,6 +63,7 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 		entityCommand(),
 		featureCommand(),
 		graphCommand(),
+		installCommand(),
 		lessonCommand(),
 		planCommand(),
 		propertyCommand(),
@@ -70,6 +71,7 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 		ruleCommand(),
 		rulesCommand(),
 		rootMigrateCommand(),
+		skillsCommand(),
 		specCommand(),
 		studioCommand(),
 		taskCommand(),
@@ -88,7 +90,7 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 		lifecycleRecoveryCommand(),
 		debugCommand(),
 		selfUpdateCommand(),
-		installCommand(),
+		uninstallCommand(),
 		upgradeCommand(),
 	)
 
