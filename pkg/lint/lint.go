@@ -20,6 +20,21 @@ type Violation struct {
 	// this specific violation (e.g. "no-source"). Only set on violations a fixer
 	// can actually resolve; drives the "How to fix" hint in text output.
 	FixTarget string `json:"fix_target,omitempty" yaml:"fix_target,omitempty"`
+	// Advisory is true for a finding of an advisory rule (Rule.Advisory): it is
+	// reported but never fails a run.
+	Advisory bool `json:"advisory,omitempty" yaml:"advisory,omitempty"`
+}
+
+// CountFailing returns the number of violations that decide a run's exit
+// status: every violation except the findings of advisory rules.
+func CountFailing(violations []Violation) int {
+	n := 0
+	for _, v := range violations {
+		if !v.Advisory {
+			n++
+		}
+	}
+	return n
 }
 
 // Options holds linting options.

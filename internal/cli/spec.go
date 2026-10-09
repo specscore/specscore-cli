@@ -456,11 +456,16 @@ func outputLintText(w io.Writer, violations []lint.Violation) error {
 		_, _ = fmt.Fprintf(w, "%s:%d [%s] %s: %s\n", v.File, v.Line, v.Severity, v.Rule, v.Message)
 	}
 
-	if len(violations) > 0 {
+	failing := lint.CountFailing(violations)
+	advisory := len(violations) - failing
+	if failing > 0 {
 		errorCount := 0
 		warningCount := 0
 		infoCount := 0
 		for _, v := range violations {
+			if v.Advisory {
+				continue
+			}
 			switch v.Severity {
 			case "error":
 				errorCount++
@@ -471,7 +476,7 @@ func outputLintText(w io.Writer, violations []lint.Violation) error {
 			}
 		}
 
-		_, _ = fmt.Fprintf(w, "\n%d violations found", len(violations))
+		_, _ = fmt.Fprintf(w, "\n%d violations found", failing)
 		var parts []string
 		if errorCount > 0 {
 			parts = append(parts, fmt.Sprintf("%d error%s", errorCount, lintPlural(errorCount)))
@@ -488,6 +493,10 @@ func outputLintText(w io.Writer, violations []lint.Violation) error {
 		_, _ = fmt.Fprintln(w)
 	} else {
 		_, _ = fmt.Fprintln(w, "0 violations found")
+	}
+	if advisory > 0 {
+		// Advisory findings are listed above but do not count and never fail a run.
+		_, _ = fmt.Fprintf(w, "%d advisory notice%s (not counted, never fails a run)\n", advisory, lintPlural(advisory))
 	}
 	return nil
 }

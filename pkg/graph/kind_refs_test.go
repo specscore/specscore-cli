@@ -29,94 +29,84 @@ func TestLint_LegacyModelspecForm(t *testing.T) {
 }
 
 // TestLint_KindExplicitResolution exercises the three-segment forms: exact-kind
-// hits (trio, collection, recordset), a kind mismatch, and the two-segment form
-// failing to reach a collection.
+// hits (records and the earlier entities, in either spelling of the model), a
+// kind mismatch, and the removed kind segments.
 func TestLint_KindExplicitResolution(t *testing.T) {
-	hcl := "entity \"A\" {}\ncollection \"Cats\" {}\nrecordset \"Daily\" {}\n"
-	mk := func(id, ref string) (string, string) {
-		return "spec/graph/modules/m/entities/" + id + ".md", fmArt("entity", id, "model: "+ref)
-	}
-	files := map[string]string{
-		"spec/graph/modules/m/README.md":    fmModule("m", "[]"),
-		"spec/graph/modules/m/models/m.hcl": hcl,
-	}
-	okEntity, v := mk("e-entity", "modelspec:///m.entities.A")
-	files[okEntity] = v
-	okColl, v := mk("e-coll", "modelspec:///m.collections.Cats")
-	files[okColl] = v
-	okRec, v := mk("e-rec", "modelspec:///m.recordsets.Daily")
-	files[okRec] = v
-	mismatch, v := mk("e-mismatch", "modelspec:///m.enums.A")
-	files[mismatch] = v
-	twoSegColl, v := mk("e-twoseg", "modelspec:///m.Cats")
-	files[twoSegColl] = v
-
-	res := lintRepo(t, root(t, files))
-	var mismatchMsg, twosegMsg string
-	for _, vi := range res.Violations {
-		if vi.Rule != "graph-model-ref-resolves" {
-			continue
-		}
-		if strings.Contains(vi.Message, "not an enum") {
-			mismatchMsg = vi.Message
-		}
-	}
-	// The mismatch and two-seg-collection failures both surface as
-	// graph-model-ref-resolves; confirm the mismatch message names the actual
-	// kind and the two-seg form fails as unknown concept.
-	for _, vi := range res.Violations {
-		if vi.Rule == "graph-model-ref-resolves" && strings.Contains(vi.Message, "\"Cats\"") &&
-			strings.Contains(vi.Message, "unknown concept") {
-			twosegMsg = vi.Message
-		}
-	}
-	if mismatchMsg == "" || !strings.Contains(mismatchMsg, "is an entity, not an enum") {
-		t.Fatalf("expected kind-mismatch diagnostic: %+v", res.Violations)
-	}
-	if twosegMsg == "" {
-		t.Fatalf("two-segment form must not reach a collection: %+v", res.Violations)
+	for name, hcl := range map[string]string{
+		"earlier": "entity \"A\" {}\n",
+		"current": "record \"A\" {}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			mk := func(id, ref string) (string, string) {
+				return "spec/graph/modules/m/entities/" + id + ".md", fmArt("entity", id, "model: "+ref)
+			}
+			files := map[string]string{
+				"spec/graph/modules/m/README.md":    fmModule("m", "[]"),
+				"spec/graph/modules/m/models/m.hcl": hcl,
+			}
+			for id, ref := range map[string]string{
+				"e-entities": "modelspec:///m.entities.A",
+				"e-records":  "modelspec:///m.records.A",
+				"e-twoseg":   "modelspec:///m.A",
+				"e-mismatch": "modelspec:///m.enums.A",
+				"e-removed":  "modelspec:///m.collections.A",
+			} {
+				p, v := mk(id, ref)
+				files[p] = v
+			}
+			res := lintRepo(t, root(t, files))
+			got := map[string]string{}
+			for _, vi := range res.Violations {
+				if vi.Rule == "graph-model-ref-resolves" {
+					got[vi.File] = vi.Message
+				}
+			}
+			for _, id := range []string{"e-entities", "e-records", "e-twoseg"} {
+				if msg, bad := got["spec/graph/modules/m/entities/"+id+".md"]; bad {
+					t.Errorf("%s must resolve, got %q", id, msg)
+				}
+			}
+			if msg := got["spec/graph/modules/m/entities/e-mismatch.md"]; !strings.Contains(msg, "is an entity, not an enum") {
+				t.Errorf("expected kind-mismatch diagnostic, got %q", msg)
+			}
+			if msg := got["spec/graph/modules/m/entities/e-removed.md"]; !strings.Contains(msg, `unknown kind segment "collections"`) {
+				t.Errorf("expected removed kind segment to be refused, got %q", msg)
+			}
+		})
 	}
 }
 
 // TestLint_ReservedConceptName flags concepts (any kind) named with a reserved
-// kind token.
+// kind token, including records, in either spelling of the block.
 func TestLint_ReservedConceptName(t *testing.T) {
 	root := repoWith(t, map[string]string{
 		"spec/graph/modules/m/README.md":    fmModule("m", "[]"),
-		"spec/graph/modules/m/models/m.hcl": "entity \"entities\" {}\ncollection \"collections\" {}\n",
+		"spec/graph/modules/m/models/m.hcl": "entity \"entities\" {}\nrecord \"records\" {}\ncomponent \"collections\" {}\nenum \"recordsets\" { values = [\"x\"] }\nrecord \"components\" {}\nenum \"enums\" { values = [\"x\"] }\n",
 	})
 	res := lintRepo(t, root)
-	if ruleCounts(res.Violations)["graph-model-reserved-name"] != 2 {
-		t.Fatalf("expected two reserved-name violations: %+v", res.Violations)
+	if got := ruleCounts(res.Violations)["graph-model-reserved-name"]; got != 6 {
+		t.Fatalf("expected six reserved-name violations, got %d: %+v", got, res.Violations)
+	}
+	for _, v := range res.Violations {
+		if v.Rule == "graph-model-reserved-name" && !strings.Contains(v.Message, "records,") {
+			t.Fatalf("message must list records among the reserved tokens: %+v", v)
+		}
 	}
 }
 
-// TestLint_DuplicateConceptScopes proves the trio shares one scope while
-// collections and recordsets have their own, so a collection and a same-named
-// entity coexist but two same-named collections (or recordsets, or two trio
-// members) collide.
-func TestLint_DuplicateConceptScopes(t *testing.T) {
-	// entity A + enum A: same trio scope -> duplicate. entity Shared +
-	// collection Shared: different scopes -> no duplicate. Two collections C
-	// and two recordsets R: each collides within its own scope.
+// TestLint_DuplicateConceptScope proves record types (in either spelling),
+// components, and enums share one scope, so a same-named pair collides.
+func TestLint_DuplicateConceptScope(t *testing.T) {
 	hcl := "entity \"A\" {}\nenum \"A\" { values = [\"x\"] }\n" +
-		"entity \"Shared\" {}\ncollection \"Shared\" {}\n" +
-		"collection \"C\" {}\ncollection \"C\" {}\n" +
-		"recordset \"R\" {}\nrecordset \"R\" {}\n"
+		"record \"B\" {}\nentity \"B\" {}\n" +
+		"record \"C\" {}\ncomponent \"C\" {}\n"
 	root := repoWith(t, map[string]string{
 		"spec/graph/modules/m/README.md":    fmModule("m", "[]"),
 		"spec/graph/modules/m/models/m.hcl": hcl,
 	})
 	res := lintRepo(t, root)
-	// One duplicate per colliding scope: trio (A), collections (C), recordsets
-	// (R) = 3. The entity/collection "Shared" pair must NOT collide.
 	if got := ruleCounts(res.Violations)["graph-model-duplicate-concept"]; got != 3 {
-		t.Fatalf("expected 3 duplicate-concept violations (trio, collections, recordsets), got %d: %+v", got, res.Violations)
-	}
-	for _, v := range res.Violations {
-		if v.Rule == "graph-model-duplicate-concept" && strings.Contains(v.Message, "\"Shared\"") {
-			t.Fatalf("entity and collection named Shared must not collide: %+v", v)
-		}
+		t.Fatalf("expected 3 duplicate-concept violations, got %d: %+v", got, res.Violations)
 	}
 }
 
@@ -133,8 +123,8 @@ func TestLint_ModuleAndEntitySameName(t *testing.T) {
 	if hasRule(res.Violations, "graph-duplicate-id") {
 		t.Fatalf("module and same-named entity must not collide: %+v", res.Violations)
 	}
-	if len(res.Violations) != 0 {
-		t.Fatalf("expected a clean lint, got: %+v", res.Violations)
+	if vs := withoutAdvisory(res.Violations); len(vs) != 0 {
+		t.Fatalf("expected a clean lint, got: %+v", vs)
 	}
 }
 

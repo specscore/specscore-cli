@@ -44,7 +44,7 @@ GraphSpec will become useful only if authors can trust graph references and owne
 
 #### REQ: lint-is-ci-entrypoint
 
-`graph lint` MUST be the command intended for CI. It exits `1` when violations at or above `--severity` are found, matching `specscore spec lint`.
+`graph lint` MUST be the command intended for CI. It exits `1` when violations at or above `--severity` are found, matching `specscore spec lint`; findings of advisory rules are shown but do not count (see [advisory-findings-do-not-fail](#req-advisory-findings-do-not-fail)).
 
 #### REQ: validate-is-schema-focused
 
@@ -96,7 +96,15 @@ Ownership is derived from placement (GraphSpec decision 0005). Graph validation 
 
 #### REQ: kind-segments-and-reserved-names
 
-The optional kind segment `<kind>` MUST be one of `entities`, `components`, `enums`, `collections`, or `recordsets` (decision 0011). The two-segment form `<module>.<Name>` resolves only against the flat entity/component/enum trio namespace; collections and recordsets are addressable only in the three-segment form, each with its own name scope. Duplicate-concept detection MUST treat the trio, collections, and recordsets as three separate scopes. The five kind tokens MUST be forbidden as ModelSpec concept names (reported as `graph-model-reserved-name`). An unknown kind token and a kind-segment mismatch (e.g. `...entities.Foo` where `Foo` is an enum) MUST be distinct, clear diagnostics. A `?ref=<git-ref>` pin MAY appear on any reference; it is advisory in v0.2 and does not change resolution. A fragment (`#<value>`) on a `modelspec://` reference addresses a named enum value (SpecScore decision 0013): it resolves only when the referenced concept is an enum and `<value>` is one of its declared values. A fragment on a non-enum concept and an unknown enum value MUST be distinct diagnostics under `graph-model-ref-resolves`; a malformed fragment (empty, or `#` appearing twice) remains a reference-grammar error.
+The optional kind segment `<kind>` MUST be one of `records`, `entities`, `components`, or `enums`; `records` and the earlier `entities` address the same kind, a record type. The two-segment form `<module>.<Name>` resolves against the flat record/component/enum namespace, and duplicate-concept detection runs within that one namespace. The tokens `records`, `entities`, `components`, `enums`, `collections`, and `recordsets` MUST be forbidden as ModelSpec concept names (reported as `graph-model-reserved-name`). This follows ModelSpec decisions 0018 (entity becomes record) and 0019 (collection and recordset removed, three words reserved). SpecScore decision 0011 predates them: it lists `entities`, `components`, `enums`, `collections`, and `recordsets` and does not mention `records`, and the decision that succeeds it is not yet recorded; where they differ, this requirement states what the CLI accepts. A model that declares a `collection`, `recordset`, `column`, `projection`, `index`, or `migration` block, in a record type, component, member, enum, or at the top level, is refused (reported under `graph-model-ref-resolves`), and so is a member that carries both `record =` and `entity =`. An unknown kind token and a kind-segment mismatch (e.g. `...entities.Foo` where `Foo` is an enum) MUST be distinct, clear diagnostics. A `?ref=<git-ref>` pin MAY appear on any reference; it is advisory in v0.2 and does not change resolution. A fragment (`#<value>`) on a `modelspec://` reference addresses a named enum value (SpecScore decision 0013): it resolves only when the referenced concept is an enum and `<value>` is one of its declared values. A fragment on a non-enum concept and an unknown enum value MUST be distinct diagnostics under `graph-model-ref-resolves`; a malformed fragment (empty, or `#` appearing twice) remains a reference-grammar error.
+
+#### REQ: model-spelling-notice
+
+`graph lint` MUST read ModelSpec HCL written in the current spelling (`record`, `field` in a record type, `record =` on a member) as the same model it reads when it is written in the earlier spelling (`entity`, `property`, `entity =`); a file may mix the two. It MUST report under `graph-model-deprecated-spelling` (info severity, advisory) each HCL file that uses the earlier spelling, once per file, at the line of the first earlier word, with a message that names `modelspec rewrite --write`. The notice MUST NOT change any other finding.
+
+#### REQ: advisory-findings-do-not-fail
+
+A finding of an advisory rule (currently only `graph-model-deprecated-spelling`) MUST be shown at its severity when `--severity` includes it, MUST appear in structured output marked `advisory: true`, and MUST NOT count toward the violations that decide the exit status: `graph lint` exits `1` only when a finding that is not advisory is at or above `--severity`. The text summary counts only non-advisory findings and reports advisory notices on their own line. Every other info finding keeps failing a `--severity info` run.
 
 #### REQ: legacy-form-autofix
 

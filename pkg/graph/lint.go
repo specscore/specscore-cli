@@ -39,6 +39,18 @@ var graphRuleSeverity = func() map[string]string {
 	return m
 }()
 
+// graphRuleAdvisory is the set of graph rule ids whose findings are reported
+// but never fail a run (lint.Rule.Advisory).
+var graphRuleAdvisory = func() map[string]bool {
+	m := map[string]bool{}
+	for _, r := range lint.GraphRules() {
+		if r.Advisory {
+			m[r.ID] = true
+		}
+	}
+	return m
+}()
+
 // GraphRuleNames returns the sorted set of valid graph lint rule names.
 func GraphRuleNames() []string {
 	rules := lint.GraphRules()
@@ -197,6 +209,7 @@ func (l *linter) emitSev(rule, abs string, line int, sev, msg string) {
 		Severity: sev,
 		Rule:     rule,
 		Message:  msg,
+		Advisory: graphRuleAdvisory[rule],
 	})
 }
 
@@ -704,27 +717,29 @@ func (l *linter) checkModel(m *Module) {
 		l.emit("graph-model-ref-resolves", d.File, d.Line,
 			fmt.Sprintf("cannot parse ModelSpec source: %s", d.Message))
 	}
+	for _, d := range mm.Refused {
+		l.emit("graph-model-ref-resolves", d.File, d.Line,
+			fmt.Sprintf("ModelSpec source refused: %s", d.Message))
+	}
 	// Reserved-token concept names are forbidden in every scope (decision 0011 /
 	// ModelSpec decision 0015): they are the kind segments of reference syntax.
 	for _, c := range mm.Concepts {
 		if ReservedConceptNames[c.Name] {
 			l.emit("graph-model-reserved-name", c.File, c.Line,
-				fmt.Sprintf("%s name %q is a reserved kind token (entities, components, enums, collections, recordsets) and cannot name a concept", c.Kind, c.Name))
+				fmt.Sprintf("%s name %q is a reserved kind token (records, entities, components, enums, collections, recordsets) and cannot name a concept", c.Kind, c.Name))
 		}
 	}
-	// Duplicate detection is per name scope: the entity/component/enum trio
-	// shares one scope; collections and recordsets each have their own. A
-	// module and a same-named entity never collide — modules are bare-ID
-	// citizens, not concepts (decisions 0011).
+	// Duplicate detection runs within one name scope: record types, components,
+	// and enums share it. A module and a same-named record type never collide —
+	// modules are bare-ID citizens, not concepts (decisions 0011).
 	seen := map[string]*Concept{}
 	for _, c := range mm.Concepts {
-		key := conceptScope(c.Kind) + "\x00" + c.Name
-		if prev, ok := seen[key]; ok {
+		if prev, ok := seen[c.Name]; ok {
 			l.emit("graph-model-duplicate-concept", c.File, c.Line,
-				fmt.Sprintf("duplicate concept name %q in the %s scope (also declared at line %d)", c.Name, conceptScope(c.Kind), prev.Line))
+				fmt.Sprintf("duplicate concept name %q in the %s scope (also declared at line %d)", c.Name, trioScope, prev.Line))
 			continue
 		}
-		seen[key] = c
+		seen[c.Name] = c
 	}
 	for _, c := range mm.Concepts {
 		if c.Kind != "enum" {
@@ -745,6 +760,11 @@ func (l *linter) checkModel(m *Module) {
 	}
 	for _, ref := range mm.Refs {
 		l.checkModelRef(m, ref)
+	}
+	for _, d := range mm.Deprecated {
+		l.emit("graph-model-deprecated-spelling", d.File, d.Line,
+			fmt.Sprintf("ModelSpec file uses the earlier spelling (%s) of record, field, and record =; it is still read as the current spelling, and `modelspec rewrite --write %s` rewrites it",
+				strings.Join(d.Words, ", "), l.rel(d.File)))
 	}
 }
 
