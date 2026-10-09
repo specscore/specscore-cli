@@ -10,6 +10,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/graph"
+	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/spf13/cobra"
 )
 
@@ -165,7 +166,9 @@ func graphLintCommand() *cobra.Command {
 		Short: "Validate GraphSpec structure, references, ownership, and dependencies",
 		Long: `Validates the repository's GraphSpec roots (the repo-level spec/graph plus
 per-module graph roots) against the graph-* rule set. Exits 1 when violations
-at or above --severity are found, 0 when clean or when no graph root exists.`,
+at or above --severity are found, 0 when clean or when no graph root exists.
+Findings of an advisory rule (graph-model-deprecated-spelling) are shown at
+their severity but never fail a run.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE:         runGraphLint,
@@ -255,8 +258,9 @@ func runGraphLint(cmd *cobra.Command, _ []string) error {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
 	}
-	if len(res.Violations) > 0 {
-		return exitcode.ConflictErrorf("%d violation(s) found", len(res.Violations))
+	// Findings of advisory rules are reported above but never decide the exit.
+	if n := lint.CountFailing(res.Violations); n > 0 {
+		return exitcode.ConflictErrorf("%d violation(s) found", n)
 	}
 	return nil
 }

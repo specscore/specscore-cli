@@ -39,6 +39,18 @@ var graphRuleSeverity = func() map[string]string {
 	return m
 }()
 
+// graphRuleAdvisory is the set of graph rule ids whose findings are reported
+// but never fail a run (lint.Rule.Advisory).
+var graphRuleAdvisory = func() map[string]bool {
+	m := map[string]bool{}
+	for _, r := range lint.GraphRules() {
+		if r.Advisory {
+			m[r.ID] = true
+		}
+	}
+	return m
+}()
+
 // GraphRuleNames returns the sorted set of valid graph lint rule names.
 func GraphRuleNames() []string {
 	rules := lint.GraphRules()
@@ -197,6 +209,7 @@ func (l *linter) emitSev(rule, abs string, line int, sev, msg string) {
 		Severity: sev,
 		Rule:     rule,
 		Message:  msg,
+		Advisory: graphRuleAdvisory[rule],
 	})
 }
 
@@ -703,6 +716,10 @@ func (l *linter) checkModel(m *Module) {
 	for _, d := range mm.ParseErrors {
 		l.emit("graph-model-ref-resolves", d.File, d.Line,
 			fmt.Sprintf("cannot parse ModelSpec source: %s", d.Message))
+	}
+	for _, d := range mm.Refused {
+		l.emit("graph-model-ref-resolves", d.File, d.Line,
+			fmt.Sprintf("ModelSpec source refused: %s", d.Message))
 	}
 	// Reserved-token concept names are forbidden in every scope (decision 0011 /
 	// ModelSpec decision 0015): they are the kind segments of reference syntax.

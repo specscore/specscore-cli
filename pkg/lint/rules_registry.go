@@ -17,6 +17,10 @@ type Rule struct {
 	Description string `json:"description" yaml:"description"`
 	Family      string `json:"family" yaml:"family"`
 	Severity    string `json:"severity" yaml:"severity"`
+	// Advisory marks a rule whose findings are reported but never decide a
+	// run's exit status: a finding of an advisory rule is shown at its severity
+	// and does not count as a violation that fails the run.
+	Advisory bool `json:"advisory,omitempty" yaml:"advisory,omitempty"`
 }
 
 // ruleRegistry is the canonical registry, keyed by rule ID. It is the single

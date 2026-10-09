@@ -96,6 +96,9 @@ type ModelModule struct {
 	Concepts    []*Concept
 	Refs        []*ModelRef
 	ParseErrors []ModelDiag
+	// Refused lists what ModelSpec forbids in a file that parses: a removed
+	// construct, a reserved word, or a member with both record and entity.
+	Refused []ModelDiag
 	// Deprecated lists, one per file, the files that use the earlier ModelSpec
 	// spelling (entity, property, entity =). Such a file is read in full; the
 	// linter reports it as advisory.
@@ -214,8 +217,16 @@ func (m *ModelModule) refuseWord(path string, line int, blockType string) bool {
 	if status == "removed" {
 		msg = fmt.Sprintf("%s blocks were removed from ModelSpec (decision 0019); the shape of a query result or a view is a record type with no key", blockType)
 	}
-	m.ParseErrors = append(m.ParseErrors, ModelDiag{File: path, Line: line, Message: msg})
+	m.Refused = append(m.Refused, ModelDiag{File: path, Line: line, Message: msg})
 	return true
+}
+
+// refuseNested refuses a removed construct or reserved word used as a block
+// inside body — the body of a member or of an enum, which hold no blocks.
+func (m *ModelModule) refuseNested(path string, body *hclsyntax.Body) {
+	for _, blk := range body.Blocks {
+		m.refuseWord(path, blk.DefRange().Start.Line, blk.Type)
+	}
 }
 
 // parseBlock handles a top-level record/entity/component/enum block. `record`
@@ -243,6 +254,7 @@ func (m *ModelModule) parseBlock(path string, blk *hclsyntax.Block) {
 		if vals, ok := stringListAttr(blk.Body, "values"); ok {
 			c.EnumValues = vals
 		}
+		m.refuseNested(path, blk.Body)
 		m.Concepts = append(m.Concepts, c)
 	default:
 		// Removed constructs and reserved words are refused; other block types
@@ -278,6 +290,7 @@ func (m *ModelModule) parseBody(path, owner string, record bool, body *hclsyntax
 		if len(blk.Labels) > 0 {
 			members = append(members, blk.Labels[0])
 		}
+		m.refuseNested(path, blk.Body)
 		m.collectMemberRefs(path, owner, blk.Body)
 	}
 	return members
@@ -291,7 +304,7 @@ func (m *ModelModule) collectMemberRefs(path, owner string, body *hclsyntax.Body
 		line := a.SrcRange.Start.Line
 		m.noteDeprecated(path, line, "entity =")
 		if _, both := body.Attributes["record"]; both {
-			m.ParseErrors = append(m.ParseErrors, ModelDiag{File: path, Line: line,
+			m.Refused = append(m.Refused, ModelDiag{File: path, Line: line,
 				Message: "a member has both record and entity; entity is the earlier spelling of record, and a member refers to one record type"})
 		}
 	}

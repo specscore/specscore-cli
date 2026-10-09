@@ -637,3 +637,89 @@ func (failingYAML) Close() error     { return nil }
 type failingJSON struct{}
 
 func (failingJSON) Encode(any) error { return errors.New("json boom") }
+
+// --- advisory findings ---
+
+// earlierSpellingRepo is a clean repo whose only model file is written in the
+// earlier ModelSpec spelling, so its only finding is the advisory notice.
+func earlierSpellingRepo(t *testing.T) string {
+	t.Helper()
+	dir := newGraphRepo(t)
+	model := filepath.Join(dir, "spec/graph/modules/identity/models/identity.hcl")
+	if err := os.MkdirAll(filepath.Dir(model), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(model, []byte("entity \"User\" {\n  property \"id\" {\n    type = \"uuid\"\n  }\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestGraphLint_AdvisoryNoticeNeverFailsARun(t *testing.T) {
+	dir := earlierSpellingRepo(t)
+	for _, sev := range []string{"error", "warning", "info"} {
+		out, _, err := runGraphCmd(t, "lint", "--project", dir, "--severity", sev)
+		if err != nil {
+			t.Fatalf("--severity %s: a notice-only project must exit 0: %v\n%s", sev, err, out)
+		}
+		shown := strings.Contains(out, "graph-model-deprecated-spelling")
+		if shown != (sev == "info") {
+			t.Fatalf("--severity %s: notice shown = %v\n%s", sev, shown, out)
+		}
+	}
+	// The summary says what is true: no violation, one notice not counted.
+	out, _, _ := runGraphCmd(t, "lint", "--project", dir, "--severity", "info")
+	if !strings.Contains(out, "0 violations found") || !strings.Contains(out, "1 advisory notice (not counted, never fails a run)") {
+		t.Fatalf("summary: %s", out)
+	}
+	// Structured output still lists the notice, marked advisory.
+	out, _, err := runGraphCmd(t, "lint", "--project", dir, "--severity", "info", "--format", "json")
+	if err != nil || !strings.Contains(out, `"rule": "graph-model-deprecated-spelling"`) || !strings.Contains(out, `"advisory": true`) {
+		t.Fatalf("json: %q %v", out, err)
+	}
+	out, _, err = runGraphCmd(t, "lint", "--project", dir, "--severity", "info", "--format", "yaml")
+	if err != nil || !strings.Contains(out, "advisory: true") {
+		t.Fatalf("yaml: %q %v", out, err)
+	}
+	// With --fix a structured format also lists it and still exits 0.
+	if out, _, err = runGraphCmd(t, "lint", "--project", dir, "--severity", "info", "--format", "json", "--fix"); err != nil || !strings.Contains(out, "graph-model-deprecated-spelling") {
+		t.Fatalf("fix envelope: %q %v", out, err)
+	}
+}
+
+func TestGraphLint_AdvisoryNoticeBesideAnotherInfoFinding(t *testing.T) {
+	dir := earlierSpellingRepo(t)
+	event := "---\nkind: event\nid: happened\nname: Happened\nstatus: active\nsummary: s\n---\n"
+	if err := os.MkdirAll(filepath.Join(dir, "spec/graph/modules/identity/events"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spec/graph/modules/identity/events/happened.md"), []byte(event), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runGraphCmd(t, "lint", "--project", dir, "--severity", "info")
+	if code := graphExit(t, err); code != 1 {
+		t.Fatalf("an existing info finding still fails a --severity info run, got %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "graph-event-reachability") || !strings.Contains(out, "graph-model-deprecated-spelling") {
+		t.Fatalf("both findings are listed: %s", out)
+	}
+	// The count excludes the notice.
+	if !strings.Contains(out, "1 violations found (1 info)") || !strings.Contains(out, "1 advisory notice") {
+		t.Fatalf("summary counts: %s", out)
+	}
+	if !strings.Contains(err.Error(), "1 violation(s) found") {
+		t.Fatalf("error text counts failing findings only: %v", err)
+	}
+	// At the default severity the info finding is hidden and the run passes.
+	if _, _, err := runGraphCmd(t, "lint", "--project", dir); err != nil {
+		t.Fatalf("default severity: %v", err)
+	}
+	// Two notices are pluralised.
+	if err := os.WriteFile(filepath.Join(dir, "spec/graph/modules/identity/models/second.hcl"), []byte("entity \"Other\" {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = runGraphCmd(t, "lint", "--project", dir, "--severity", "info")
+	if !strings.Contains(out, "2 advisory notices") {
+		t.Fatalf("plural: %s", out)
+	}
+}

@@ -2,6 +2,7 @@ package graph
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -185,50 +186,56 @@ func TestLoadModelModule_NonLiteralReferenceStillNoticed(t *testing.T) {
 
 func TestLoadModelModule_MemberWithBothReferenceWordsIsRefused(t *testing.T) {
 	m := loadModelSrc(t, "record \"A\" {}\nrecord \"B\" {\n  field \"a\" {\n    entity = \"A\"\n    record = \"A\"\n  }\n}\n")
-	if len(m.ParseErrors) != 1 || m.ParseErrors[0].Line != 4 || !strings.Contains(m.ParseErrors[0].Message, "both record and entity") {
-		t.Fatalf("expected the member to be refused: %+v", m.ParseErrors)
+	if len(m.Refused) != 1 || m.Refused[0].Line != 4 || !strings.Contains(m.Refused[0].Message, "both record and entity") {
+		t.Fatalf("expected the member to be refused: %+v", m.Refused)
 	}
 }
 
 func TestLoadModelModule_RemovedAndReservedWordsAreRefused(t *testing.T) {
 	removed := []string{"collection", "recordset", "column"}
 	reserved := []string{"projection", "index", "migration"}
-	for _, spelling := range []struct{ name, block string }{{"current", "record"}, {"earlier", "entity"}} {
-		for _, w := range append(append([]string{}, removed...), reserved...) {
-			// At the top level.
-			top := loadModelSrc(t, spelling.block+" \"A\" {}\n"+w+" \"X\" {\n  source = \"A\"\n}\n")
-			if len(top.ParseErrors) != 1 || top.ParseErrors[0].Line != 2 || !strings.Contains(top.ParseErrors[0].Message, w) {
-				t.Errorf("%s top-level %s: %+v", spelling.name, w, top.ParseErrors)
+	// Each position a block can stand in: at the top level, in a record type
+	// (either word), in a component, in a member of each, and in an enum.
+	positions := []struct {
+		name string
+		src  func(w string) string
+		line int
+	}{
+		{"top level", func(w string) string { return "record \"A\" {}\n" + w + " \"X\" {\n  source = \"A\"\n}\n" }, 2},
+		{"top level, no label", func(w string) string { return w + " {}\n" }, 1},
+		{"record", func(w string) string { return "record \"A\" {\n  " + w + " \"X\" {}\n}\n" }, 2},
+		{"entity", func(w string) string { return "entity \"A\" {\n  " + w + " \"X\" {}\n}\n" }, 2},
+		{"component", func(w string) string { return "component \"A\" {\n  " + w + " \"X\" {}\n}\n" }, 2},
+		{"field of a record", func(w string) string { return "record \"A\" {\n  field \"f\" {\n    " + w + " \"X\" {}\n  }\n}\n" }, 3},
+		{"property of an entity", func(w string) string { return "entity \"A\" {\n  property \"f\" {\n    " + w + " \"X\" {}\n  }\n}\n" }, 3},
+		{"field of a component", func(w string) string { return "component \"A\" {\n  field \"f\" {\n    " + w + " \"X\" {}\n  }\n}\n" }, 3},
+		{"enum", func(w string) string { return "enum \"A\" {\n  values = [\"x\"]\n  " + w + " \"X\" {}\n}\n" }, 3},
+	}
+	for _, w := range append(append([]string{}, removed...), reserved...) {
+		status := "reserved"
+		if slices.Contains(removed, w) {
+			status = "removed"
+		}
+		for _, pos := range positions {
+			m := loadModelSrc(t, pos.src(w))
+			if len(m.Refused) != 1 || m.Refused[0].Line != pos.line ||
+				!strings.Contains(m.Refused[0].Message, w) || !strings.Contains(m.Refused[0].Message, status) {
+				t.Errorf("%s in %s: want one refusal at line %d naming the word and %q, got %+v", w, pos.name, pos.line, status, m.Refused)
 			}
-			if len(top.Concepts) != 1 {
-				t.Errorf("%s top-level %s must not become a concept: %+v", spelling.name, w, top.Concepts)
-			}
-			// Inside a record type and inside a component.
-			for _, outer := range []string{spelling.block, "component"} {
-				in := loadModelSrc(t, outer+" \"A\" {\n  "+w+" \"X\" {}\n}\n")
-				if len(in.ParseErrors) != 1 || in.ParseErrors[0].Line != 2 || !strings.Contains(in.ParseErrors[0].Message, w) {
-					t.Errorf("%s %s containing %s: %+v", spelling.name, outer, w, in.ParseErrors)
-				}
+			if len(m.ParseErrors) != 0 {
+				t.Errorf("%s in %s: a file that parses has no parse error: %+v", w, pos.name, m.ParseErrors)
 			}
 		}
-	}
-	for _, w := range removed {
-		m := loadModelSrc(t, w+" \"X\" {}\n")
-		if !strings.Contains(m.ParseErrors[0].Message, "removed") {
-			t.Errorf("%s: %q should say removed", w, m.ParseErrors[0].Message)
-		}
-	}
-	for _, w := range reserved {
-		m := loadModelSrc(t, w+" \"X\" {}\n")
-		if !strings.Contains(m.ParseErrors[0].Message, "reserved") {
-			t.Errorf("%s: %q should say reserved", w, m.ParseErrors[0].Message)
+		// A refused top-level block is not a concept.
+		if m := loadModelSrc(t, positions[0].src(w)); len(m.Concepts) != 1 {
+			t.Errorf("%s must not become a concept: %+v", w, m.Concepts)
 		}
 	}
 }
 
 func TestLoadModelModule_OtherBlocksStayTolerated(t *testing.T) {
 	m := loadModelSrc(t, "record \"A\" {\n  note \"x\" {}\n}\nkey \"k\" {}\n")
-	if len(m.ParseErrors) != 0 || len(m.Concepts) != 1 {
+	if len(m.ParseErrors)+len(m.Refused) != 0 || len(m.Concepts) != 1 {
 		t.Fatalf("unknown blocks other than the refused words are ignored as before: %+v", m)
 	}
 }
@@ -249,6 +256,9 @@ func TestNoticeLint_EarlierSpellingIsAnAdvisoryNoticeOncePerFile(t *testing.T) {
 		t.Fatalf("expected one notice per file, got %+v", got)
 	}
 	for _, v := range got {
+		if !v.Advisory {
+			t.Errorf("notice must be advisory: %+v", v)
+		}
 		if v.Severity != "info" || !strings.Contains(v.Message, "modelspec rewrite --write "+v.File) {
 			t.Errorf("notice must be info and name the rewrite command for its file: %+v", v)
 		}
@@ -308,6 +318,11 @@ func TestLint_SpellingsGiveTheSameFindings(t *testing.T) {
 			t.Errorf("fixture should exercise %s: %+v", rule, cur.Violations)
 		}
 	}
+	for _, v := range cur.Violations {
+		if v.Advisory {
+			t.Errorf("only the notice is advisory: %+v", v)
+		}
+	}
 	if len(early.Violations) != len(cur.Violations)+1 {
 		t.Fatalf("the earlier spelling adds exactly the notice: %d vs %d", len(early.Violations), len(cur.Violations))
 	}
@@ -318,6 +333,7 @@ func TestLint_RefusedWordsAreFindings(t *testing.T) {
 	n := 0
 	for _, v := range res.Violations {
 		if v.Rule == "graph-model-ref-resolves" && v.Severity == "error" &&
+			strings.HasPrefix(v.Message, "ModelSpec source refused: ") &&
 			(strings.Contains(v.Message, "collection") || strings.Contains(v.Message, "index")) {
 			n++
 		}
