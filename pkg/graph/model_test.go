@@ -78,10 +78,6 @@ entity "BadListVar" {
 entity "BadListNull" {
   use = null
 }
-
-collection "c" {
-  source = "Booking"
-}
 `
 
 func loadModelSrc(t *testing.T, src string) *ModelModule {

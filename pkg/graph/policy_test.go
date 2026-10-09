@@ -97,8 +97,8 @@ func TestRules_CleanBlock(t *testing.T) {
 			"    refs: [catalog.item]"),
 	})
 	res := lintRepo(t, root)
-	if len(res.Violations) != 0 {
-		t.Fatalf("clean rules blocks should lint clean: %+v", res.Violations)
+	if vs := withoutAdvisory(res.Violations); len(vs) != 0 {
+		t.Fatalf("clean rules blocks should lint clean: %+v", vs)
 	}
 	g, _, err := Load(root, "")
 	if err != nil {
@@ -231,8 +231,8 @@ func TestPolicy_CleanArtifacts(t *testing.T) {
 			"    then: {self-state: cancelled}"),
 	})
 	res := lintRepo(t, root)
-	if len(res.Violations) != 0 {
-		t.Fatalf("clean policies should lint clean: %+v", res.Violations)
+	if vs := withoutAdvisory(res.Violations); len(vs) != 0 {
+		t.Fatalf("clean policies should lint clean: %+v", vs)
 	}
 	g, _, err := Load(root, "")
 	if err != nil {

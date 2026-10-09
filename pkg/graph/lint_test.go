@@ -10,15 +10,17 @@ func TestLint_ValidFixtureClean(t *testing.T) {
 	if res.NoGraphRoot {
 		t.Fatal("expected a graph root")
 	}
-	if len(res.Violations) != 0 {
-		t.Fatalf("expected clean, got: %+v", res.Violations)
+	// The fixtures are written in the earlier spelling, so the only finding is
+	// the advisory notice about it.
+	if vs := withoutAdvisory(res.Violations); len(vs) != 0 {
+		t.Fatalf("expected clean, got: %+v", vs)
 	}
 }
 
 func TestLint_MultirootClean(t *testing.T) {
 	res := lintRepo(t, "testdata/multiroot")
-	if len(res.Violations) != 0 {
-		t.Fatalf("expected clean multiroot, got: %+v", res.Violations)
+	if vs := withoutAdvisory(res.Violations); len(vs) != 0 {
+		t.Fatalf("expected clean multiroot, got: %+v", vs)
 	}
 }
 

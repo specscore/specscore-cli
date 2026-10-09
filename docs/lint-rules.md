@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 182
+Total rules: 183
 
 ## capability
 
@@ -131,7 +131,7 @@ Total rules: 182
 | graph-reference-resolves | error | Requires qualified graph references (from/to/subject/actors/participants/inputs.ref/possibleEvents) to resolve to existing artifacts. |
 | graph-model-ref-resolves | error | Requires modelspec:// and HCL concept references to resolve per decisions 0007/0010/0011 (unknown module / unknown concept / kind mismatch / unavailable repository / bad grammar). |
 | graph-model-legacy-form | error | Rejects the legacy modelspec://x.Y reference form (authority present, empty path); carries the exact modelspec:///x.Y rewrite that `graph lint --fix` applies (decision 0010). |
-| graph-model-reserved-name | error | Rejects a ModelSpec concept named with a reserved kind token (entities, components, enums, collections, recordsets) (decision 0011). |
+| graph-model-reserved-name | error | Rejects a ModelSpec concept named with a reserved kind token (records, entities, components, enums, collections, recordsets) (decision 0011). |
 | graph-dependency-direction | error | Requires every cross-module reference (graph or model level) to target a module in the owning module's dependsOn. |
 | graph-relationship-owner-covers-endpoints | error | Requires a relationship's owning module to cover both endpoint modules in its dependsOn closure. |
 | graph-metadata-shape | error | Requires relationship metadata to be a flat map of scalar, qualified graph, or modelspec:// values. |
@@ -147,6 +147,7 @@ Total rules: 182
 | graph-role-labels | error | Requires role-labeled endpoints and participants to be well-formed {ref, role} maps with kebab-case role tokens (decision 0012). |
 | graph-ambiguous-endpoints | warning | Warns on a self-referential relationship without endpoint role labels and on same-reference event participants lacking distinguishing roles (decision 0012). |
 | graph-unknown-key | warning | Warns on frontmatter keys the artifact's placement-derived kind does not define (silently ignored by tooling, e.g. lifecycle: on a relationship). |
+| graph-model-deprecated-spelling | info | Reports, once per file, a ModelSpec HCL file written in the earlier spelling (entity, property, entity =); it is read as record, field, record =, and `modelspec rewrite --write` rewrites it. |
 | graph-event-reachability | info | Reports an event that is in no command's possibleEvents and declares no sources — nothing can produce it. |
 
 ## idea

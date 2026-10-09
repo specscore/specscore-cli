@@ -286,7 +286,7 @@ component "Loose" {
 	// The lint pass stays clean apart from the expected unavailable-repo error
 	// on the cross-repo fixture.
 	res := lintRepo(t, root)
-	for _, v := range res.Violations {
+	for _, v := range withoutAdvisory(res.Violations) {
 		if v.Rule != "graph-model-ref-resolves" {
 			t.Fatalf("unexpected violation: %+v", v)
 		}

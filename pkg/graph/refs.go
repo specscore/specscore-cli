@@ -47,14 +47,16 @@ func ParseQualifiedRef(ref string) (QualifiedRef, bool) {
 // ModelspecKindTokens maps the plural kind segment of a modelspec:// reference
 // (decision 0011) to the singular ModelSpec concept kind it addresses. The kind
 // segment is OPTIONAL: the two-segment form modelspec:///<module>.<Name>
-// resolves against the flat entity/component/enum trio; the three-segment form
-// modelspec:///<module>.<kind>.<Name> names one of these five kinds explicitly.
+// resolves against the flat record/component/enum scope; the three-segment form
+// modelspec:///<module>.<kind>.<Name> names one of these kinds explicitly.
+// `records` and the earlier `entities` address the same kind (a record type,
+// kept as "entity"). The kinds `collections` and `recordsets` were removed from
+// ModelSpec (its decision 0019); they remain reserved concept names.
 var ModelspecKindTokens = map[string]string{
-	"entities":    "entity",
-	"components":  "component",
-	"enums":       "enum",
-	"collections": "collection",
-	"recordsets":  "recordset",
+	"records":    "entity",
+	"entities":   "entity",
+	"components": "component",
+	"enums":      "enum",
 }
 
 // ReservedConceptNames is the set of tokens (decision 0011 / ModelSpec decision
@@ -62,6 +64,7 @@ var ModelspecKindTokens = map[string]string{
 // segments of consumer reference syntax, so reserving them keeps kind-explicit
 // references unambiguous without lookahead.
 var ReservedConceptNames = map[string]bool{
+	"records":     true,
 	"entities":    true,
 	"components":  true,
 	"enums":       true,
@@ -78,7 +81,7 @@ var ReservedConceptNames = map[string]bool{
 // resolves only when the referenced concept is an enum declaring that value.
 type ModelspecRef struct {
 	Module   string
-	Kind     string // singular: entity|component|enum|collection|recordset; "" = two-segment (trio)
+	Kind     string // singular: entity|component|enum; "" = two-segment (trio)
 	Name     string
 	Repo     string // "{host}/{org}/{repo}" for cross-repo, or "" for local
 	Ref      string // advisory ?ref= git pin (branch/tag/commit), or ""
@@ -94,7 +97,7 @@ const (
 	msErrNotScheme                           // value does not carry the modelspec:// scheme
 	msErrLegacyForm                          // legacy modelspec://x.Y (authority present, empty path)
 	msErrFragment                            // malformed fragment (empty, or '#' appearing twice)
-	msErrUnknownKind                         // kind segment is not one of the five tokens
+	msErrUnknownKind                         // kind segment is not one of the four tokens
 )
 
 // ModelspecParseError is the typed error returned by ParseModelspecRef. Rewrite
@@ -220,7 +223,7 @@ func parseConceptSegment(concept, repo, gitRef, fragment string) (ModelspecRef, 
 		if !ok {
 			return ModelspecRef{}, &ModelspecParseError{
 				kind:    msErrUnknownKind,
-				message: fmt.Sprintf("unknown kind segment %q (expected one of entities, components, enums, collections, recordsets)", parts[1]),
+				message: fmt.Sprintf("unknown kind segment %q (expected one of records, entities, components, enums)", parts[1]),
 			}
 		}
 		return ModelspecRef{Module: parts[0], Kind: kind, Name: parts[2], Repo: repo, Ref: gitRef, Fragment: fragment}, nil

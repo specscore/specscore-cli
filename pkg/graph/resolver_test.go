@@ -171,7 +171,7 @@ func TestProjectIdentity(t *testing.T) {
 func TestConceptOutcome(t *testing.T) {
 	mm := &ModelModule{Concepts: []*Concept{
 		{Name: "A", Kind: "entity"},
-		{Name: "Cats", Kind: "collection"},
+		{Name: "Cats", Kind: "component"},
 	}}
 	if conceptOutcome(nil, "", "A", "", false).outcome != resUnknownModule {
 		t.Fatal("not found")
@@ -185,13 +185,9 @@ func TestConceptOutcome(t *testing.T) {
 	if conceptOutcome(mm, "", "B", "", true).outcome != resUnknownConcept {
 		t.Fatal("unknown concept")
 	}
-	// Two-segment form never reaches collections/recordsets.
-	if conceptOutcome(mm, "", "Cats", "", true).outcome != resUnknownConcept {
-		t.Fatal("collection is not two-segment addressable")
-	}
 	// Kind-explicit forms.
-	if conceptOutcome(mm, "collection", "Cats", "", true).outcome != resResolved {
-		t.Fatal("collection kind resolved")
+	if conceptOutcome(mm, "component", "Cats", "", true).outcome != resResolved {
+		t.Fatal("component kind resolved")
 	}
 	if got := conceptOutcome(mm, "enum", "A", "", true); got.outcome != resKindMismatch || got.actualKind != "entity" {
 		t.Fatalf("kind mismatch: %+v", got)

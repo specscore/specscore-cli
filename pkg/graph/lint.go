@@ -709,22 +709,20 @@ func (l *linter) checkModel(m *Module) {
 	for _, c := range mm.Concepts {
 		if ReservedConceptNames[c.Name] {
 			l.emit("graph-model-reserved-name", c.File, c.Line,
-				fmt.Sprintf("%s name %q is a reserved kind token (entities, components, enums, collections, recordsets) and cannot name a concept", c.Kind, c.Name))
+				fmt.Sprintf("%s name %q is a reserved kind token (records, entities, components, enums, collections, recordsets) and cannot name a concept", c.Kind, c.Name))
 		}
 	}
-	// Duplicate detection is per name scope: the entity/component/enum trio
-	// shares one scope; collections and recordsets each have their own. A
-	// module and a same-named entity never collide — modules are bare-ID
-	// citizens, not concepts (decisions 0011).
+	// Duplicate detection runs within one name scope: record types, components,
+	// and enums share it. A module and a same-named record type never collide —
+	// modules are bare-ID citizens, not concepts (decisions 0011).
 	seen := map[string]*Concept{}
 	for _, c := range mm.Concepts {
-		key := conceptScope(c.Kind) + "\x00" + c.Name
-		if prev, ok := seen[key]; ok {
+		if prev, ok := seen[c.Name]; ok {
 			l.emit("graph-model-duplicate-concept", c.File, c.Line,
-				fmt.Sprintf("duplicate concept name %q in the %s scope (also declared at line %d)", c.Name, conceptScope(c.Kind), prev.Line))
+				fmt.Sprintf("duplicate concept name %q in the %s scope (also declared at line %d)", c.Name, trioScope, prev.Line))
 			continue
 		}
-		seen[key] = c
+		seen[c.Name] = c
 	}
 	for _, c := range mm.Concepts {
 		if c.Kind != "enum" {
@@ -745,6 +743,11 @@ func (l *linter) checkModel(m *Module) {
 	}
 	for _, ref := range mm.Refs {
 		l.checkModelRef(m, ref)
+	}
+	for _, d := range mm.Deprecated {
+		l.emit("graph-model-deprecated-spelling", d.File, d.Line,
+			fmt.Sprintf("ModelSpec file uses the earlier spelling (%s) of record, field, and record =; it is still read as the current spelling, and `modelspec rewrite --write %s` rewrites it",
+				strings.Join(d.Words, ", "), l.rel(d.File)))
 	}
 }
 

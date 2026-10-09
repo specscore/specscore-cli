@@ -17,7 +17,7 @@ var graphCatalogRules = []Rule{
 	{ID: "graph-reference-resolves", Family: "graph", Severity: "error", Description: "Requires qualified graph references (from/to/subject/actors/participants/inputs.ref/possibleEvents) to resolve to existing artifacts."},
 	{ID: "graph-model-ref-resolves", Family: "graph", Severity: "error", Description: "Requires modelspec:// and HCL concept references to resolve per decisions 0007/0010/0011 (unknown module / unknown concept / kind mismatch / unavailable repository / bad grammar)."},
 	{ID: "graph-model-legacy-form", Family: "graph", Severity: "error", Description: "Rejects the legacy modelspec://x.Y reference form (authority present, empty path); carries the exact modelspec:///x.Y rewrite that `graph lint --fix` applies (decision 0010)."},
-	{ID: "graph-model-reserved-name", Family: "graph", Severity: "error", Description: "Rejects a ModelSpec concept named with a reserved kind token (entities, components, enums, collections, recordsets) (decision 0011)."},
+	{ID: "graph-model-reserved-name", Family: "graph", Severity: "error", Description: "Rejects a ModelSpec concept named with a reserved kind token (records, entities, components, enums, collections, recordsets) (decision 0011)."},
 	{ID: "graph-dependency-direction", Family: "graph", Severity: "error", Description: "Requires every cross-module reference (graph or model level) to target a module in the owning module's dependsOn."},
 	{ID: "graph-relationship-owner-covers-endpoints", Family: "graph", Severity: "error", Description: "Requires a relationship's owning module to cover both endpoint modules in its dependsOn closure."},
 	{ID: "graph-metadata-shape", Family: "graph", Severity: "error", Description: "Requires relationship metadata to be a flat map of scalar, qualified graph, or modelspec:// values."},
@@ -33,6 +33,7 @@ var graphCatalogRules = []Rule{
 	{ID: "graph-role-labels", Family: "graph", Severity: "error", Description: "Requires role-labeled endpoints and participants to be well-formed {ref, role} maps with kebab-case role tokens (decision 0012)."},
 	{ID: "graph-ambiguous-endpoints", Family: "graph", Severity: "warning", Description: "Warns on a self-referential relationship without endpoint role labels and on same-reference event participants lacking distinguishing roles (decision 0012)."},
 	{ID: "graph-unknown-key", Family: "graph", Severity: "warning", Description: "Warns on frontmatter keys the artifact's placement-derived kind does not define (silently ignored by tooling, e.g. lifecycle: on a relationship)."},
+	{ID: "graph-model-deprecated-spelling", Family: "graph", Severity: "info", Description: "Reports, once per file, a ModelSpec HCL file written in the earlier spelling (entity, property, entity =); it is read as record, field, record =, and `modelspec rewrite --write` rewrites it."},
 	{ID: "graph-event-reachability", Family: "graph", Severity: "info", Description: "Reports an event that is in no command's possibleEvents and declares no sources — nothing can produce it."},
 }
 
