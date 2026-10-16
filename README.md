@@ -18,6 +18,10 @@ We build with our own tooling:
 - **[DataTug](https://datatug.io)** — query & explore data
 <!-- /dev-approach -->
 
+## Used in DataTug development
+
+[DataTug](https://datatug.app) uses SpecScore contracts to shape product requirements, acceptance criteria, and plans; this CLI provides the linting and inspection tools for that specification workflow. [See the tools behind DataTug](https://datatug.app/en/under-the-hood/tools-we-built/#specify).
+
 ## Install
 
 ### macOS — Homebrew cask (recommended)
