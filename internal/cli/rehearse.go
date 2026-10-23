@@ -2,7 +2,7 @@ package cli
 
 // Feature implemented: cli/rehearse/run (REQ: scenario-discovery,
 // REQ: scenario-shape, REQ: bash-block, REQ: hurl-block, REQ: sql-block,
-// REQ: dtql-block, REQ: graphql-block, REQ: context-bag, REQ: run-report)
+// REQ: tugql-block, REQ: graphql-block, REQ: context-bag, REQ: run-report)
 // Feature: cli/rehearse/evidence (REQ: report-out, REQ: report-provenance)
 // Feature: cli/rehearse/new (REQ: scaffold-new)
 // Feature: cli/rehearse/run-filter (REQ: filter-flag-syntax, REQ: filter-matching-exact,
@@ -22,10 +22,10 @@ import (
 
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks"
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/bash"
-	"github.com/specscore/specscore-cli/internal/rehearse/blocks/dtqlblock"
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/graphql"
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/hurl"
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks/sqlblock"
+	"github.com/specscore/specscore-cli/internal/rehearse/blocks/tugqlblock"
 	"github.com/specscore/specscore-cli/internal/rehearse/runner"
 	"github.com/specscore/specscore-cli/internal/rehearse/scaffold"
 	"github.com/specscore/specscore-cli/internal/rehearse/scenario"
@@ -82,9 +82,9 @@ Running "specscore rehearse" with no subcommand prints this help and exits 0.`,
 }
 
 // rehearseRegistry returns the block-executor registry for rehearse run:
-// the five v0.3 block kinds (bash, hurl, sql, dtql, graphql).
+// the five v0.3 block kinds (bash, hurl, sql, tugql, graphql).
 func rehearseRegistry() blocks.Registry {
-	return blocks.NewRegistry(bash.New(), hurl.New(), sqlblock.New(), dtqlblock.New(), graphql.New())
+	return blocks.NewRegistry(bash.New(), hurl.New(), sqlblock.New(), tugqlblock.New(), graphql.New())
 }
 
 func rehearseRunCommand() *cobra.Command {

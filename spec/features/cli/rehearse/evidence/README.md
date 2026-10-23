@@ -84,7 +84,7 @@ Unit tests per package with fixtures: runner envelope/provenance (git seam stubb
 
 ## Not Doing / Out of Scope
 
-- **`file` assert block** — originally roadmapped for v0.4; parked to v0.5 (sql/dtql/captures were pulled forward into v0.3; keeping this release evidence-focused).
+- **`file` assert block** — originally roadmapped for v0.4; parked to v0.5 (sql/tugql/captures were pulled forward into v0.3; keeping this release evidence-focused).
 - **Standalone `rehearse` binary** — decided per the Idea's Open Question, from demand: skip. `specscore rehearse` with no spec tree already IS standalone mode; no separate binary or module revival.
 - **Report history/retention beyond `latest.json`** — run history is a Studio-hosted concern (later phase).
 - **Freshness dots, contradiction items, `studio ask` citations** — Studio-side consumers of these facts (post-v0.4 roadmap).

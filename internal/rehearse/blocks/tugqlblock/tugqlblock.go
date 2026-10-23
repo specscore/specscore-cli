@@ -1,11 +1,11 @@
-// Package dtqlblock implements the ```dtql rehearse step block: the block
-// body is a DTQL query document (deserialized by dalgo's dtql package)
+// Package tugqlblock implements the ```tugql rehearse step block: the block
+// body is a TugQL query document (deserialized by dalgo's tugql package)
 // executed against the SQLite store at `db=<path>` via the dalgo SQLite
 // adapter (dalgo2sqlite), with the same trailing `-- assert-rows:` /
 // `-- assert-row-json:` / `-- capture:` directives as the sql block
-// (REQ: dtql-block). This makes a Studio fact store (facts.db) directly
+// (REQ: tugql-block). This makes a Studio fact store (facts.db) directly
 // assertable by scenarios.
-package dtqlblock
+package tugqlblock
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 
 	"github.com/dal-go/dalgo/dal"
-	"github.com/dal-go/dalgo/dtql"
 	"github.com/dal-go/dalgo/recordset"
+	"github.com/dal-go/dalgo/tugql"
 	"github.com/dal-go/dalgo2sqlite"
 
 	"github.com/specscore/specscore-cli/internal/rehearse/blocks"
@@ -34,22 +34,22 @@ var (
 	getValueFn = func(col recordset.Column[any], row int) (any, error) { return col.GetValue(row) }
 )
 
-// Executor runs dtql step blocks.
+// Executor runs tugql step blocks.
 type Executor struct{}
 
-// New returns the dtql block executor.
+// New returns the tugql block executor.
 func New() *Executor { return &Executor{} }
 
-// Kind returns "dtql".
-func (*Executor) Kind() string { return "dtql" }
+// Kind returns "tugql".
+func (*Executor) Kind() string { return "tugql" }
 
-// Run deserializes the DTQL document, executes it against the `db=` SQLite
+// Run deserializes the TugQL document, executes it against the `db=` SQLite
 // store through the dalgo SQLite adapter, and applies the block's
 // assertion/capture directives to the result rows.
 func (*Executor) Run(ctx blocks.StepCtx) blocks.StepResult {
 	path := ctx.Params["db"]
 	if path == "" {
-		return fail("dtql block requires db=<sqlite-path> in its info string (e.g. ```dtql db=facts.db)")
+		return fail("tugql block requires db=<sqlite-path> in its info string (e.g. ```tugql db=facts.db)")
 	}
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(ctx.WorkDir, path)
@@ -65,9 +65,9 @@ func (*Executor) Run(ctx blocks.StepCtx) blocks.StepResult {
 	if err != nil {
 		return fail("%v", err)
 	}
-	query, err := dtql.Deserialize([]byte(doc))
+	query, err := tugql.Deserialize([]byte(doc))
 	if err != nil {
-		return fail("invalid DTQL document: %v", err)
+		return fail("invalid TugQL document: %v", err)
 	}
 
 	db, err := newDatabaseFn(path)
@@ -78,7 +78,7 @@ func (*Executor) Run(ctx blocks.StepCtx) blocks.StepResult {
 
 	rs, err := readAllFn(context.Background(), query, db)
 	if err != nil {
-		return fail("executing DTQL query against %s: %v", path, err)
+		return fail("executing TugQL query against %s: %v", path, err)
 	}
 	rows, err := recordsetRows(rs)
 	if err != nil {
@@ -116,5 +116,5 @@ func recordsetRows(rs recordset.Recordset) ([]directives.Row, error) {
 
 // fail builds a failing StepResult with a formatted diagnostic.
 func fail(format string, args ...any) blocks.StepResult {
-	return blocks.StepResult{Status: blocks.StatusFail, Detail: fmt.Sprintf("dtql step failed: "+format, args...)}
+	return blocks.StepResult{Status: blocks.StatusFail, Detail: fmt.Sprintf("tugql step failed: "+format, args...)}
 }

@@ -1,4 +1,4 @@
-package dtqlblock
+package tugqlblock
 
 import (
 	"context"
@@ -44,12 +44,12 @@ func run(t *testing.T, body, db string, workDir string) blocks.StepResult {
 const allFacts = "from:\n  name: facts\n"
 
 func TestKind(t *testing.T) {
-	if got := New().Kind(); got != "dtql" {
-		t.Fatalf("Kind() = %q, want dtql", got)
+	if got := New().Kind(); got != "tugql" {
+		t.Fatalf("Kind() = %q, want tugql", got)
 	}
 }
 
-// AC: dtql-counts-facts — a DTQL query over the fact store with
+// AC: tugql-counts-facts — a TugQL query over the fact store with
 // `-- assert-rows:` equal to the known fact count passes.
 func TestRun_AssertRowsPass(t *testing.T) {
 	res := run(t, allFacts+"-- assert-rows: 3", factStore(t), "")
@@ -123,9 +123,9 @@ func TestRun_BadDirectiveFails(t *testing.T) {
 	}
 }
 
-func TestRun_InvalidDTQLDocumentFails(t *testing.T) {
+func TestRun_InvalidTugQLDocumentFails(t *testing.T) {
 	res := run(t, "limit: 5\n-- assert-rows: 1", factStore(t), "")
-	if res.Status != blocks.StatusFail || !strings.Contains(res.Detail, "invalid DTQL document") {
+	if res.Status != blocks.StatusFail || !strings.Contains(res.Detail, "invalid TugQL document") {
 		t.Fatalf("res = %+v", res)
 	}
 }
@@ -142,10 +142,10 @@ func TestRun_OpenErrorFails(t *testing.T) {
 }
 
 func TestRun_QueryErrorFails(t *testing.T) {
-	// A DTQL document naming a table the store does not have fails at
+	// A TugQL document naming a table the store does not have fails at
 	// execution time through the real adapter.
 	res := run(t, "from:\n  name: no_such_table\n", factStore(t), "")
-	if res.Status != blocks.StatusFail || !strings.Contains(res.Detail, "executing DTQL query") {
+	if res.Status != blocks.StatusFail || !strings.Contains(res.Detail, "executing TugQL query") {
 		t.Fatalf("res = %+v", res)
 	}
 }

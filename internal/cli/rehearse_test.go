@@ -245,22 +245,22 @@ func TestRehearseRun_SQLBlockAssertRows(t *testing.T) {
 	}
 }
 
-// AC: dtql-counts-facts — a scenario whose dtql block selects facts with
+// AC: tugql-counts-facts — a scenario whose tugql block selects facts with
 // `-- assert-rows:` equal to the store's fact count exits 0 and is pass.
 // The store is shaped like a Studio fact store (table `facts`), built by a
 // preceding sql step in the same scenario working dir.
-func TestRehearseRun_DTQLBlockCountsFacts(t *testing.T) {
+func TestRehearseRun_TugQLBlockCountsFacts(t *testing.T) {
 	file := writeScenarioBlocks(t,
 		"```sql dsn=sqlite:facts.db\nCREATE TABLE facts (subject TEXT, predicate TEXT, object TEXT);\n"+
 			"INSERT INTO facts VALUES ('a', 'imports', 'b'), ('b', 'imports', 'c');\n```",
-		"```dtql db=facts.db\nfrom:\n  name: facts\n-- assert-rows: 2\n```")
+		"```tugql db=facts.db\nfrom:\n  name: facts\n-- assert-rows: 2\n```")
 
 	out, _, err := runRehearseCmd(t, "run", file)
 	if err != nil {
 		t.Fatalf("rehearse run: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "pass") || !strings.Contains(out, "1 pass") {
-		t.Errorf("report does not mark the dtql scenario pass:\n%s", out)
+		t.Errorf("report does not mark the tugql scenario pass:\n%s", out)
 	}
 }
 
@@ -337,7 +337,7 @@ func TestRehearseRun_JSONEncodeErrorExits10(t *testing.T) {
 // v0.3 executors, hurl-derived ones declaring their binary dependency.
 func TestRehearseRegistry_AllV03Kinds(t *testing.T) {
 	reg := rehearseRegistry()
-	for _, kind := range []string{"bash", "hurl", "sql", "dtql", "graphql"} {
+	for _, kind := range []string{"bash", "hurl", "sql", "tugql", "graphql"} {
 		if _, ok := reg[kind]; !ok {
 			t.Errorf("registry lacks the %q executor", kind)
 		}

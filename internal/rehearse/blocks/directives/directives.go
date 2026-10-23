@@ -1,7 +1,7 @@
 // Package directives parses the trailing directive comments shared by the
-// data-oriented rehearse blocks (`sql`, `dtql`): `-- assert-rows: <N>`,
+// data-oriented rehearse blocks (`sql`, `tugql`): `-- assert-rows: <N>`,
 // `-- assert-row-json: {...}` and `-- capture: <name> = <column>`
-// (REQ: sql-block, REQ: dtql-block, REQ: context-bag), and applies the
+// (REQ: sql-block, REQ: tugql-block, REQ: context-bag), and applies the
 // parsed assertions/captures to a query's result rows.
 package directives
 
@@ -55,7 +55,7 @@ type Capture struct {
 	Column string
 }
 
-// Asserts holds the parsed assertion/capture directives of one sql/dtql
+// Asserts holds the parsed assertion/capture directives of one sql/tugql
 // block.
 type Asserts struct {
 	// Rows is the expected result row count (`-- assert-rows:`); nil when
@@ -68,7 +68,7 @@ type Asserts struct {
 	Captures []Capture
 }
 
-// ParseAsserts interprets the directives of an sql/dtql block. Unknown
+// ParseAsserts interprets the directives of an sql/tugql block. Unknown
 // directive keys are an error so typos fail loudly instead of silently
 // skipping an assertion.
 func ParseAsserts(dirs []Directive) (Asserts, error) {
@@ -106,7 +106,7 @@ type Row map[string]any
 
 // Apply checks the assertions against the result rows and evaluates the
 // capture directives against the first row, returning the captured values
-// in directive order (REQ: sql-block, REQ: dtql-block, REQ: context-bag).
+// in directive order (REQ: sql-block, REQ: tugql-block, REQ: context-bag).
 func Apply(a Asserts, rows []Row) ([]blocks.Capture, error) {
 	if a.Rows != nil && len(rows) != *a.Rows {
 		return nil, fmt.Errorf("assert-rows: got %d row(s), want %d", len(rows), *a.Rows)
