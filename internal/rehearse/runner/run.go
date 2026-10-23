@@ -281,7 +281,7 @@ func runCheck(bag *Bag, workDir, scenarioDir string, use scenario.CheckUse) *Ste
 // dispatch (REQ: context-bag). Hurl-derived kinds (hurl, graphql) are
 // deliberately absent: Hurl owns the {{name}} syntax natively, so they
 // receive the bag through StepCtx.Vars and pass it on as --variable flags.
-var textInterpolatedKinds = map[string]bool{"bash": true, "sql": true, "dtql": true}
+var textInterpolatedKinds = map[string]bool{"bash": true, "sql": true, "tugql": true}
 
 // stepContext builds one step's StepCtx from the context bag: every kind
 // gets the ordered bag snapshot in Vars; text-interpolated kinds additionally

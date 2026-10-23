@@ -191,7 +191,7 @@ SELECT username FROM orders WHERE id = {{order_id}};
 -- capture: name = username
 ```
 
-```dtql db=.specscore-studio/facts.db
+```tugql db=.specscore-studio/facts.db
 from:
   name: facts
 -- assert-rows: 128
@@ -204,11 +204,11 @@ query { order(id: {{order_id}}) { ok } }
 ```
 ````
 
-`hurl` and `graphql` blocks delegate to the [hurl](https://hurl.dev) binary (`hurl --test`) — the runner ships no HTTP client of its own. When `hurl` is missing from PATH, scenarios containing hurl-derived blocks are reported `skipped` (with a warning naming the binary) rather than failed, and skips never affect the exit code. `sql` runs against a DSN (v0.3 driver: `sqlite:<path>`); `dtql` runs a [dalgo](https://github.com/dal-go/dalgo) DTQL query document against a SQLite store — which makes a Studio fact store (`facts.db`) directly assertable by scenarios.
+`hurl` and `graphql` blocks delegate to the [hurl](https://hurl.dev) binary (`hurl --test`) — the runner ships no HTTP client of its own. When `hurl` is missing from PATH, scenarios containing hurl-derived blocks are reported `skipped` (with a warning naming the binary) rather than failed, and skips never affect the exit code. `sql` runs against a DSN (v0.3 driver: `sqlite:<path>`); `tugql` runs a [dalgo](https://github.com/dal-go/dalgo) TugQL query document against a SQLite store — which makes a Studio fact store (`facts.db`) directly assertable by scenarios.
 
-**Directives** are trailing `-- name: value` comment lines inside declarative blocks: `-- assert-rows: <N>` and `-- assert-row-json: {...}` (sql/dtql), `-- capture: <name> = <column>` (sql/dtql), `-- variables: {...}` and `-- assert-jsonpath: <path> == <json-value>` (graphql), `-- capture-jsonpath: <name> = <path>` (graphql).
+**Directives** are trailing `-- name: value` comment lines inside declarative blocks: `-- assert-rows: <N>` and `-- assert-row-json: {...}` (sql/tugql), `-- capture: <name> = <column>` (sql/tugql), `-- variables: {...}` and `-- assert-jsonpath: <path> == <json-value>` (graphql), `-- capture-jsonpath: <name> = <path>` (graphql).
 
-**Context bag.** Each scenario owns an ordered map of string variables shared across its steps. Consumption is per block class: `bash`/`sql`/`dtql` bodies and info-string params have `{{name}}` placeholders textually interpolated before execution (an unknown variable fails the step); hurl-derived blocks (`hurl`, `graphql`) get the bag as `--variable name=value` flags instead — Hurl owns the `{{name}}` syntax natively, so multi-request hurl blocks stay verbatim-valid. Captures into the bag: `bash` appends `name=value` lines to `$REHEARSE_CAPTURES`; `hurl` uses native `[Captures]`; `sql`/`dtql`/`graphql` use the capture directives above.
+**Context bag.** Each scenario owns an ordered map of string variables shared across its steps. Consumption is per block class: `bash`/`sql`/`tugql` bodies and info-string params have `{{name}}` placeholders textually interpolated before execution (an unknown variable fails the step); hurl-derived blocks (`hurl`, `graphql`) get the bag as `--variable name=value` flags instead — Hurl owns the `{{name}}` syntax natively, so multi-request hurl blocks stay verbatim-valid. Captures into the bag: `bash` appends `name=value` lines to `$REHEARSE_CAPTURES`; `hurl` uses native `[Captures]`; `sql`/`tugql`/`graphql` use the capture directives above.
 
 **Reporting & exit codes.** The human report is one line per scenario (status, file, `Verifies:` AC ids, duration) plus totals; `--format json` emits `[{file, status, verifies[], duration_ms, bag{}, steps[{kind, status, detail}]}]`. Exit `0` when no scenario failed, `1` when any failed, `2` on usage/config errors — including when discovery matches zero scenario files.
 

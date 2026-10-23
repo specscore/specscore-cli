@@ -1,5 +1,5 @@
 // Package blocks defines the step-block executor contract shared by every
-// rehearse block kind (bash, hurl, sql, dtql, graphql) plus the registry the
+// rehearse block kind (bash, hurl, sql, tugql, graphql) plus the registry the
 // runner dispatches through. Executors live in one sub-package per kind.
 package blocks
 
@@ -24,7 +24,7 @@ type StepCtx struct {
 	// Params are the info-string key=value parameters (e.g. dsn=..., url=...).
 	Params map[string]string
 	// Vars is the scenario's context bag as ordered name/value pairs
-	// (REQ: context-bag). For bash/sql/dtql the runner has already textually
+	// (REQ: context-bag). For bash/sql/tugql the runner has already textually
 	// interpolated {{name}} into Body/Params before dispatch; hurl-derived
 	// executors (hurl, graphql) instead pass Vars to Hurl as
 	// `--variable name=value` flags — no textual interpolation for them.

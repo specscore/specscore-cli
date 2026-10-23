@@ -12,11 +12,11 @@ status: Implemented
 
 ## Summary
 
-Implements `specscore rehearse run`: scenario parsing/discovery, five step-block executors (bash, hurl-delegated HTTP, sql, dtql, graphql-on-hurl), the per-block-class context bag, human/JSON reporting, and the Studio-corpus CI gate. All new code in `internal/rehearse/*` + `internal/cli/rehearse.go`.
+Implements `specscore rehearse run`: scenario parsing/discovery, five step-block executors (bash, hurl-delegated HTTP, sql, tugql, graphql-on-hurl), the per-block-class context bag, human/JSON reporting, and the Studio-corpus CI gate. All new code in `internal/rehearse/*` + `internal/cli/rehearse.go`.
 
 ## Approach
 
-Runner core with the bash executor first (gives every later task a runnable surface), then reporting, then the sql/dtql pair (shared directive parser + dalgo/sqlite), then the context bag across the non-hurl classes, then the hurl-derived pair (delegation, upfront-scan skip, --variable passing, captures merge), and finally the corpus gate + CI + docs. Each task authors its ACs' Rehearse scenarios (self-hosting: the runner's own acceptance scenarios run through it) plus the reviewer-advisory unit coverage noted in its body. Commits carry Verifies: trailers.
+Runner core with the bash executor first (gives every later task a runnable surface), then reporting, then the sql/tugql pair (shared directive parser + dalgo/sqlite), then the context bag across the non-hurl classes, then the hurl-derived pair (delegation, upfront-scan skip, --variable passing, captures merge), and finally the corpus gate + CI + docs. Each task authors its ACs' Rehearse scenarios (self-hosting: the runner's own acceptance scenarios run through it) plus the reviewer-advisory unit coverage noted in its body. Commits carry Verifies: trailers.
 
 ## Tasks
 
@@ -36,13 +36,13 @@ Runner core with the bash executor first (gives every later task a runnable surf
 
 `--format json` emitting `{file, status, verifies[], duration_ms, bag:{}, steps:[{kind,status,detail}]}` (bag present, empty until Task 4).
 
-### Task 3: sql + dtql executors
+### Task 3: sql + tugql executors
 
-**Verifies:** cli/rehearse/run#ac:sql-assert-rows, cli/rehearse/run#ac:dtql-counts-facts
+**Verifies:** cli/rehearse/run#ac:sql-assert-rows, cli/rehearse/run#ac:tugql-counts-facts
 **Depends-On:** 1
 **Status:** complete
 
-Shared trailing-directive parser (`-- assert-rows:`, `-- assert-row-json:`, `-- capture:`); sql executor (sqlite DSN via the in-repo pure-Go driver); dtql executor (dalgo `dtql` package + SQLite adapter against `db=` stores, incl. a Studio `facts.db` fixture). Unit coverage includes `-- assert-row-json` (reviewer advisory).
+Shared trailing-directive parser (`-- assert-rows:`, `-- assert-row-json:`, `-- capture:`); sql executor (sqlite DSN via the in-repo pure-Go driver); tugql executor (dalgo `tugql` package + SQLite adapter against `db=` stores, incl. a Studio `facts.db` fixture). Unit coverage includes `-- assert-row-json` (reviewer advisory).
 
 ### Task 4: Context bag
 
@@ -50,7 +50,7 @@ Shared trailing-directive parser (`-- assert-rows:`, `-- assert-row-json:`, `-- 
 **Depends-On:** 2, 3
 **Status:** complete
 
-Bag in the runner: textual `{{name}}` interpolation for bash/sql/dtql bodies+params (unknown → step fail naming it), `$REHEARSE_CAPTURES` file for bash, `-- capture:` merge for sql/dtql, bag state in the JSON report. Unit coverage includes capture ordering and unknown-variable failure.
+Bag in the runner: textual `{{name}}` interpolation for bash/sql/tugql bodies+params (unknown → step fail naming it), `$REHEARSE_CAPTURES` file for bash, `-- capture:` merge for sql/tugql, bag state in the JSON report. Unit coverage includes capture ordering and unknown-variable failure.
 
 ### Task 5: hurl + graphql executors
 

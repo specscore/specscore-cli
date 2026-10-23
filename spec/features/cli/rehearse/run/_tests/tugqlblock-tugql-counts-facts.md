@@ -2,18 +2,18 @@
 format: https://specscore.md/scenario-specification
 ---
 
-# Rehearse: dtql-counts-facts
+# Rehearse: tugql-counts-facts
 
 **Status:** pending
-**Verifies:** cli/rehearse/run#ac:dtql-counts-facts (REQ: dtql-block)
+**Verifies:** cli/rehearse/run#ac:tugql-counts-facts (REQ: tugql-block)
 
-Scenario source: [../README.md](../README.md) → `### AC: dtql-counts-facts`.
+Scenario source: [../README.md](../README.md) → `### AC: tugql-counts-facts`.
 
-Given a SQLite fact store produced by `specscore studio index` on a fixture workspace and a scenario whose dtql block selects facts with `-- assert-rows:` equal to the store's known fact count, when I run `specscore rehearse run <that-file>`, then the command exits 0 and the scenario is `pass`.
+Given a SQLite fact store produced by `specscore studio index` on a fixture workspace and a scenario whose tugql block selects facts with `-- assert-rows:` equal to the store's known fact count, when I run `specscore rehearse run <that-file>`, then the command exits 0 and the scenario is `pass`.
 
 ```bash
 #!/usr/bin/env bash
-# Rehearse: cli/rehearse/run#ac:dtql-counts-facts
+# Rehearse: cli/rehearse/run#ac:tugql-counts-facts
 # Requires: specscore on PATH (override with $SPECSCORE).
 set -euo pipefail
 
@@ -67,18 +67,18 @@ store="${workdir}/.specscore-studio/facts.db"
 count="$("$SPECSCORE" studio facts --count)"
 [ "$count" -gt 0 ] || { echo "FAIL: fact store is empty"; exit 1; }
 
-# And a scenario whose dtql block selects facts with `-- assert-rows:` equal
-# to that count (the dtql block runs in a scenario-scoped temp dir, so db=
+# And a scenario whose tugql block selects facts with `-- assert-rows:` equal
+# to that count (the tugql block runs in a scenario-scoped temp dir, so db=
 # carries the store's absolute path; the inner fence is assembled via $fence
 # so this file stays parseable).
 fence='```'
 cat > scenario.md <<MD
-# Rehearse: dtql fixture
+# Rehearse: tugql fixture
 
 **Status:** pending
-**Verifies:** demo/fixture#ac:dtql-count
+**Verifies:** demo/fixture#ac:tugql-count
 
-${fence}dtql db=${store}
+${fence}tugql db=${store}
 from:
   name: facts
 -- assert-rows: ${count}
@@ -100,7 +100,7 @@ printf '%s\n' "$out" | grep -qE '^pass[[:space:]]+.*scenario\.md' \
 printf '%s\n' "$out" | grep -q '1 pass' \
   || { echo "FAIL: totals line does not count the pass: $out"; exit 1; }
 
-echo "PASS: dtql-counts-facts"
+echo "PASS: tugql-counts-facts"
 ```
 
 ---

@@ -17,7 +17,7 @@ Command group for Rehearse — SpecScore's acceptance-evidence layer. Rehearse e
 
 | Child | Description |
 |---|---|
-| [run](run/README.md) | Execute scenario files — ordered steps (bash/sql/dtql/hurl/graphql) in a sandboxed per-scenario workdir with a shared context bag — and report per-scenario pass/fail as human text or JSON |
+| [run](run/README.md) | Execute scenario files — ordered steps (bash/sql/tugql/hurl/graphql) in a sandboxed per-scenario workdir with a shared context bag — and report per-scenario pass/fail as human text or JSON |
 | [evidence](evidence/README.md) | Persist rehearse run JSON reports and ingest them at studio index time as verified-behavior facts |
 | [new](new/README.md) | Scaffold a Rehearse scenario file pre-populated with Given/When/Then structure and Verifies metadata from a feature's acceptance criterion |
 | [new-dry-run](new-dry-run/README.md) | Preview scaffold markdown without writing files or committing to git |
@@ -37,7 +37,7 @@ Documentation and acceptance criteria drift away from the software they describe
 
 ## Behavior
 
-A **scenario** is a Markdown file that links to an acceptance criterion (`**Verifies:** <feature>#ac:<slug>`) and contains fenced **step** blocks — real commands in `bash`, `sql`, `dtql`, `hurl`, or `graphql` — plus optional `### Assert: file` checks on the resulting filesystem.
+A **scenario** is a Markdown file that links to an acceptance criterion (`**Verifies:** <feature>#ac:<slug>`) and contains fenced **step** blocks — real commands in `bash`, `sql`, `tugql`, `hurl`, or `graphql` — plus optional `### Assert: file` checks on the resulting filesystem.
 
 `specscore rehearse run <files-or-dirs>` executes each scenario:
 

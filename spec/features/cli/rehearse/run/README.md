@@ -13,7 +13,7 @@ status: Implementing
 
 ## Summary
 
-`specscore rehearse run <paths...>` executes markdown acceptance scenarios: files with `Verifies:` AC identity in body metadata and fenced executable/declarative step blocks. v0.3 block kinds: `bash` (exec), `hurl` (HTTP — embedded Hurl syntax delegated to the hurl binary), `sql` (query + row asserts against a DSN), `dtql` (dalgo DTQL query against a SQLite store), `graphql` (query + JSONPath asserts, compiled onto the Hurl engine). Per-scenario/per-AC pass-fail reporting (human table + JSON), non-zero exit on failure. Folds the Rehearse runner into specscore-cli per `rehearse` repo `spec/ideas/rehearse-evidence-layer.md` (v0.3), so it rides the existing distribution channels. Success gate: the 11 committed Studio scenarios (`spec/features/cli/studio/index/_tests/`) run green through this runner.
+`specscore rehearse run <paths...>` executes markdown acceptance scenarios: files with `Verifies:` AC identity in body metadata and fenced executable/declarative step blocks. v0.3 block kinds: `bash` (exec), `hurl` (HTTP — embedded Hurl syntax delegated to the hurl binary), `sql` (query + row asserts against a DSN), `tugql` (dalgo TugQL query against a SQLite store), `graphql` (query + JSONPath asserts, compiled onto the Hurl engine). Per-scenario/per-AC pass-fail reporting (human table + JSON), non-zero exit on failure. Folds the Rehearse runner into specscore-cli per `rehearse` repo `spec/ideas/rehearse-evidence-layer.md` (v0.3), so it rides the existing distribution channels. Success gate: the 11 committed Studio scenarios (`spec/features/cli/studio/index/_tests/`) run green through this runner.
 
 ## Problem
 
@@ -45,9 +45,9 @@ A ```` ```hurl ```` block contains verbatim Hurl syntax and is executed by deleg
 
 A ```` ```sql dsn=<driver:path-or-dsn> ```` block executes its statement(s) against the DSN (v0.3 drivers: `sqlite:<path>` via the pure-Go driver already in go.mod). Assertions are declared as trailing directive comments inside the block: `-- assert-rows: <N>` (result row count) and/or `-- assert-row-json: {...}` (first row as JSON object equality). A failed assertion or query error fails the step.
 
-#### REQ: dtql-block
+#### REQ: tugql-block
 
-A ```` ```dtql db=<sqlite-path> ```` block contains a DTQL query document (dalgo's `dtql` package deserializes it) executed against the SQLite store at `db=` via the dalgo SQLite adapter. Same `-- assert-rows:` / `-- assert-row-json:` directives as `sql`. This makes a Studio fact store (`facts.db`) directly assertable by scenarios.
+A ```` ```tugql db=<sqlite-path> ```` block contains a TugQL query document (dalgo's `tugql` package deserializes it) executed against the SQLite store at `db=` via the dalgo SQLite adapter. Same `-- assert-rows:` / `-- assert-row-json:` directives as `sql`. This makes a Studio fact store (`facts.db`) directly assertable by scenarios.
 
 #### REQ: graphql-block
 
@@ -57,7 +57,7 @@ A ```` ```graphql url=<endpoint> ```` block contains a GraphQL query (optionally
 
 #### REQ: context-bag
 
-Each scenario run owns a **context bag** — an ordered map of string variables scoped to the scenario. Variable *consumption* is per block class: for `bash`/`sql`/`dtql` blocks, `{{name}}` placeholders in the block body and info-string params are textually interpolated before execution (unknown variable → step fail naming it). For **hurl-derived blocks** (`hurl`, `graphql`) there is NO textual pre-interpolation — Hurl owns the `{{name}}` syntax natively, so the bag is passed as `--variable name=value` flags and Hurl resolves references itself (its own error reporting covers unknowns); this keeps every valid multi-request hurl block (capturing and reusing its own variables) verbatim-valid. Captures into the bag: `bash` via appending `name=value` lines to the file at `$REHEARSE_CAPTURES`; `hurl` via Hurl's native `[Captures]`, exported from the run's JSON report and merged after the step; `sql`/`dtql` via `-- capture: <name> = <column>` (first row's column value); `graphql` via `-- capture-jsonpath: <name> = <path>`. The JSON report includes the bag's final state per scenario.
+Each scenario run owns a **context bag** — an ordered map of string variables scoped to the scenario. Variable *consumption* is per block class: for `bash`/`sql`/`tugql` blocks, `{{name}}` placeholders in the block body and info-string params are textually interpolated before execution (unknown variable → step fail naming it). For **hurl-derived blocks** (`hurl`, `graphql`) there is NO textual pre-interpolation — Hurl owns the `{{name}}` syntax natively, so the bag is passed as `--variable name=value` flags and Hurl resolves references itself (its own error reporting covers unknowns); this keeps every valid multi-request hurl block (capturing and reusing its own variables) verbatim-valid. Captures into the bag: `bash` via appending `name=value` lines to the file at `$REHEARSE_CAPTURES`; `hurl` via Hurl's native `[Captures]`, exported from the run's JSON report and merged after the step; `sql`/`tugql` via `-- capture: <name> = <column>` (first row's column value); `graphql` via `-- capture-jsonpath: <name> = <path>`. The JSON report includes the bag's final state per scenario.
 
 ### Reporting
 
@@ -74,10 +74,10 @@ The 11 committed Studio scenarios under `spec/features/cli/studio/index/_tests/`
 ## Architecture & Components
 
 - `internal/rehearse/scenario` — file parsing: body metadata (`Verifies:`/`Status:`), fenced-block extraction with info-string params. No execution.
-- `internal/rehearse/blocks/{bash,hurl,sqlblock,dtqlblock,graphql}` — one executor per kind implementing `Block{ Kind() string; Run(ctx StepCtx) StepResult }`; graphql composes onto hurl; dtql/sql share the assert-directive parser.
+- `internal/rehearse/blocks/{bash,hurl,sqlblock,tugqlblock,graphql}` — one executor per kind implementing `Block{ Kind() string; Run(ctx StepCtx) StepResult }`; graphql composes onto hurl; tugql/sql share the assert-directive parser.
 - `internal/rehearse/runner` — discovery, ordered execution, the context bag (consumption per block class, capture merge after each step), report model, JSON/human rendering.
 - `internal/cli/rehearse.go` — `rehearse` command group: `run` (flags: `--format`, paths...). Reuses house exit-code conventions.
-- Reuse: existing pure-Go sqlite driver (go.mod), `github.com/dal-go/dalgo` + its `dtql` package + SQLite adapter for dtql-block; NO new HTTP client (hurl delegation).
+- Reuse: existing pure-Go sqlite driver (go.mod), `github.com/dal-go/dalgo` + its `tugql` package + SQLite adapter for tugql-block; NO new HTTP client (hurl delegation).
 
 ## Error Handling & Failure Modes
 
@@ -85,7 +85,7 @@ Missing path → exit 2. Unparsable scenario file → reported `fail` with parse
 
 ## Testing Strategy
 
-Unit tests per package with fixture scenarios in `testdata/` (incl. failing, no-steps, unparsable, missing-hurl via PATH manipulation, sqlite fixture DB, DTQL against a fixture store, graphql against `httptest`). E2e: Rehearse scenarios for this feature's own ACs (self-hosting — the runner runs its own acceptance scenarios). Coverage gate 100% holds.
+Unit tests per package with fixture scenarios in `testdata/` (incl. failing, no-steps, unparsable, missing-hurl via PATH manipulation, sqlite fixture DB, TugQL against a fixture store, graphql against `httptest`). E2e: Rehearse scenarios for this feature's own ACs (self-hosting — the runner runs its own acceptance scenarios). Coverage gate 100% holds.
 
 ## Not Doing / Out of Scope
 
@@ -146,10 +146,10 @@ Given a sqlite fixture database with 3 rows in table `t` and a scenario whose sq
 When I run `specscore rehearse run <that-file>`
 Then the command exits 0 and the scenario is `pass`
 
-### AC: dtql-counts-facts
+### AC: tugql-counts-facts
 
-Scenario: dtql block queries a fact store
-Given a SQLite fact store produced by `specscore studio index` on a fixture workspace and a scenario whose dtql block selects facts with `-- assert-rows:` equal to the store's known fact count
+Scenario: tugql block queries a fact store
+Given a SQLite fact store produced by `specscore studio index` on a fixture workspace and a scenario whose tugql block selects facts with `-- assert-rows:` equal to the store's known fact count
 When I run `specscore rehearse run <that-file>`
 Then the command exits 0 and the scenario is `pass`
 

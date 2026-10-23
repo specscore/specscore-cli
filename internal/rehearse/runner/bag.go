@@ -9,7 +9,7 @@ import (
 
 // Bag is one scenario run's context bag (REQ: context-bag): an ordered map of
 // string variables. Steps feed it via their StepResult captures; consumption
-// is per block class — bash/sql/dtql get {{name}} textual interpolation
+// is per block class — bash/sql/tugql get {{name}} textual interpolation
 // before dispatch, hurl-derived blocks receive the ordered Snapshot through
 // StepCtx.Vars and hand it to Hurl as --variable flags.
 type Bag struct {

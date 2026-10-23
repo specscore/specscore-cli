@@ -5,9 +5,9 @@ go 1.27.0
 require (
 	charm.land/fang/v2 v2.0.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
-	github.com/dal-go/dalgo v0.64.4
+	github.com/dal-go/dalgo v0.95.2
 	github.com/dal-go/dalgo2sqlite v0.1.3
-	github.com/dal-go/record v0.1.2
+	github.com/dal-go/record v0.1.5
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/gofrs/flock v0.13.1
 	github.com/google/uuid v1.6.0
@@ -15,7 +15,7 @@ require (
 	github.com/ingitdb/dalgo2ingitdb v0.2.4
 	github.com/ingitdb/ingitdb-go/ingitdb v0.5.2
 	github.com/posthog/posthog-go v1.23.0
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/strongo/buildinfo v0.3.0
@@ -29,7 +29,7 @@ require (
 
 require (
 	charm.land/lipgloss/v2 v2.0.5 // indirect
-	github.com/RoaringBitmap/roaring/v2 v2.24.0 // indirect
+	github.com/RoaringBitmap/roaring/v2 v2.29.0 // indirect
 	github.com/agext/levenshtein v1.2.3 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
@@ -66,7 +66,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/strongo/random v0.0.1 // indirect
+	github.com/strongo/random v0.0.3 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.starlark.net v0.0.0-20260708150628-5395d018f003 // indirect
 	golang.org/x/sync v0.22.0 // indirect

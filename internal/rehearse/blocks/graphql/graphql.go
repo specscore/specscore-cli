@@ -126,7 +126,7 @@ func Compile(url, body string) (string, error) {
 
 // parseDirectives interprets the block's trailing directives. Unknown keys
 // are an error so typos fail loudly instead of silently skipping an
-// assertion (house rule shared with the sql/dtql directive parser).
+// assertion (house rule shared with the sql/tugql directive parser).
 func parseDirectives(dirs []directives.Directive) (blockSpec, error) {
 	var spec blockSpec
 	for _, d := range dirs {
