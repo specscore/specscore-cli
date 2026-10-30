@@ -103,6 +103,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Test Windows installer checksum contract
+        shell: pwsh
+        run: ./scripts/test-install.ps1
+
       # This is deliberately a runtime test, not a Windows cross-compile. It
       # proves both job-owned timeout cleanup and that normal success preserves
       # a background descendant after the Job Object handle is released.

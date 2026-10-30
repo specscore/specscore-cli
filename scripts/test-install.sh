@@ -17,8 +17,8 @@ while [ "$#" -gt 0 ]; do
   case "$1" in -o) out=$2; shift 2;; https:*) url=$1; shift;; *) shift;; esac
 done
 case "$url" in
-  *_checksums.txt) [ "${MISSING_MANIFEST:-}" != 1 ] || exit 22; cp "$FIXTURE/checksums.txt" "$out";;
-  *.tar.gz) cp "$FIXTURE/specscore_1.2.3_linux_amd64.tar.gz" "$out";;
+  https://github.com/specscore/specscore-cli/releases/download/v1.2.3/specscore_1.2.3_checksums.txt) [ "${MISSING_MANIFEST:-}" != 1 ] || exit 22; cp "$FIXTURE/checksums.txt" "$out";;
+  https://github.com/specscore/specscore-cli/releases/download/v1.2.3/specscore_1.2.3_linux_amd64.tar.gz) cp "$FIXTURE/specscore_1.2.3_linux_amd64.tar.gz" "$out";;
   *) exit 22;;
 esac
 MOCK
