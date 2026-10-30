@@ -94,24 +94,22 @@ try {
         Die "download failed: $archiveUrl ($_)"
     }
 
-    # Verify checksum if the manifest is available.
+    # Fail closed if the manifest or its exact archive entry is unavailable.
+    $checksumsPath = Join-Path $tmp 'checksums.txt'
     try {
-        $checksumsPath = Join-Path $tmp 'checksums.txt'
         Invoke-WebRequest -UseBasicParsing -Uri $checksumsUrl -OutFile $checksumsPath
-        $expectedLine = (Get-Content $checksumsPath) | Where-Object { $_ -match "\s$([regex]::Escape($archive))\s*$" }
-        if ($expectedLine) {
-            $expected = ($expectedLine -split '\s+')[0].ToLower()
-            $actual   = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash.ToLower()
-            if ($expected -ne $actual) {
-                Die "checksum mismatch for $archive (expected $expected, got $actual)"
-            }
-            Write-Info '  checksum: OK'
-        } else {
-            Write-Info '  checksum: skipped (entry not found in manifest)'
-        }
     } catch {
-        Write-Info '  checksum: skipped (manifest not available)'
+        Die "checksum manifest download failed: $checksumsUrl ($_)"
     }
+    $entries = @(Get-Content $checksumsPath | Where-Object { $_ -match "\s$([regex]::Escape($archive))\s*$" })
+    if ($entries.Count -ne 1) { Die "missing or duplicate checksum for $archive" }
+    $expected = ($entries[0] -split '\s+')[0].ToLowerInvariant()
+    if ($expected -notmatch '^[0-9a-f]{64}$') { Die "invalid checksum for $archive" }
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash.ToLowerInvariant()
+    if ($expected -ne $actual) {
+        Die "checksum mismatch for $archive (expected $expected, got $actual)"
+    }
+    Write-Info '  checksum: OK'
 
     Write-Info '  extracting...'
     $extractDir = Join-Path $tmp 'extract'

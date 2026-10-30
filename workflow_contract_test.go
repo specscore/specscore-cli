@@ -4,11 +4,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestInstallScriptRequiresValidChecksum(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fixture exercises the Linux installer")
+	}
+	if output, err := exec.Command("sh", "scripts/test-install.sh").CombinedOutput(); err != nil {
+		t.Fatalf("installer checksum contract: %v\n%s", err, output)
+	}
+}
 
 func TestPublishedArtifactCallerUsesReadOnlyReusableWorkflow(t *testing.T) {
 	workflow, err := os.ReadFile(".github/workflows/validate-published-artifact.yml")
