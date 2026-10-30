@@ -103,6 +103,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Test Windows installer checksum contract
+        shell: pwsh
+        run: ./scripts/test-install.ps1
+
       # This is deliberately a runtime test, not a Windows cross-compile. It
       # proves both job-owned timeout cleanup and that normal success preserves
       # a background descendant after the Job Object handle is released.
@@ -140,7 +144,8 @@ jobs:
     name: Rehearse corpus
     needs: classify
     if: ${{ needs.classify.outputs.go == 'true' }}
-    runs-on: ubuntu-latest
+    # Hurl 8's pinned Debian package requires libxml2, absent on Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6

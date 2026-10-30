@@ -105,27 +105,24 @@ log "  archive: ${ARCHIVE_URL}"
 curl -fsSL "$ARCHIVE_URL" -o "$TMP/$ARCHIVE" \
   || die "download failed: $ARCHIVE_URL"
 
-# Verify checksum if we can fetch the manifest and have a sha256 tool.
-if curl -fsSL "$CHECKSUMS_URL" -o "$TMP/checksums.txt" 2>/dev/null; then
-  EXPECTED="$(awk -v f="$ARCHIVE" '$2==f {print $1}' "$TMP/checksums.txt")"
-  if [ -n "$EXPECTED" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      ACTUAL="$(sha256sum "$TMP/$ARCHIVE" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-      ACTUAL="$(shasum -a 256 "$TMP/$ARCHIVE" | awk '{print $1}')"
-    else
-      ACTUAL=""
-      log "  checksum: skipped (no sha256sum or shasum available)"
-    fi
-    if [ -n "$ACTUAL" ]; then
-      [ "$ACTUAL" = "$EXPECTED" ] \
-        || die "checksum mismatch for $ARCHIVE (expected $EXPECTED, got $ACTUAL)"
-      log "  checksum: OK"
-    fi
-  fi
+# A missing manifest, missing entry, or unavailable hash tool must fail closed.
+curl -fsSL "$CHECKSUMS_URL" -o "$TMP/checksums.txt" \
+  || die "checksum manifest download failed: $CHECKSUMS_URL"
+EXPECTED="$(awk -v f="$ARCHIVE" '$2==f {print $1}' "$TMP/checksums.txt")"
+[ "$(printf '%s' "$EXPECTED" | wc -c | tr -d ' ')" = 64 ] \
+  || die "missing or invalid checksum for $ARCHIVE"
+case "$EXPECTED" in *[!0-9a-fA-F]*) die "invalid checksum for $ARCHIVE" ;; esac
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "$TMP/$ARCHIVE" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL="$(shasum -a 256 "$TMP/$ARCHIVE" | awk '{print $1}')"
 else
-  log "  checksum: skipped (manifest not available)"
+  die "sha256sum or shasum is required"
 fi
+EXPECTED="$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')"
+[ "$ACTUAL" = "$EXPECTED" ] \
+  || die "checksum mismatch for $ARCHIVE (expected $EXPECTED, got $ACTUAL)"
+log "  checksum: OK"
 
 log "  extracting..."
 if [ "$EXT" = "tar.gz" ]; then
