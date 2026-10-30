@@ -144,7 +144,8 @@ jobs:
     name: Rehearse corpus
     needs: classify
     if: ${{ needs.classify.outputs.go == 'true' }}
-    runs-on: ubuntu-latest
+    # Hurl 8's pinned Debian package requires libxml2, absent on Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
