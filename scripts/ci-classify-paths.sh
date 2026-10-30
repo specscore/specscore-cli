@@ -55,7 +55,7 @@ classify_path() {
     go=true
     dogfood=true
     ;;
-  .goreleaser.yml|go.mod|go.sum|scripts/coverage-gate.sh|*.go|spec/features/*/_tests/*)
+  .goreleaser.yml|go.mod|go.sum|scripts/coverage-gate.sh|scripts/install.sh|scripts/install.ps1|scripts/test-install.sh|scripts/test-install.ps1|*.go|spec/features/*/_tests/*)
     go=true
     ;;
   esac

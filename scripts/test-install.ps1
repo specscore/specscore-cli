@@ -21,6 +21,7 @@ if ($Child) {
 }
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("specscore-test-" + [guid]::NewGuid())
 New-Item -ItemType Directory $tmp | Out-Null
+$originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 try {
     Set-Content (Join-Path $tmp 'specscore.exe') 'fixture'
     Compress-Archive -Path (Join-Path $tmp 'specscore.exe') -DestinationPath (Join-Path $tmp 'archive.zip')
@@ -37,4 +38,7 @@ try {
     Set-Content (Join-Path $tmp 'checksums.txt') (('0' * 64) + '  other.zip')
     & pwsh -NoProfile -File $PSCommandPath -Child -Mode entry -Fixture $tmp
     if ($LASTEXITCODE -eq 0) { throw 'missing entry accepted' }
-} finally { Remove-Item -Recurse -Force $tmp }
+} finally {
+    [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
+    Remove-Item -Recurse -Force $tmp
+}

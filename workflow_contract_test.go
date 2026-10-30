@@ -355,6 +355,12 @@ func TestCIPathClassifierContract(t *testing.T) {
 			wantDogfood: "false",
 		},
 		{
+			name:        "installer changes run Go and installer gates",
+			changes:     map[string]string{"scripts/install.ps1": "# changed\n"},
+			wantGo:      "true",
+			wantDogfood: "false",
+		},
+		{
 			name:        "spec-only runs dogfood",
 			changes:     map[string]string{"spec/features/cli/README.md": "# changed\n"},
 			wantGo:      "false",
