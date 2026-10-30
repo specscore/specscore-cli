@@ -41,3 +41,5 @@ try {
 } finally {
     Remove-Item -Recurse -Force $tmp
 }
+
+exit 0
