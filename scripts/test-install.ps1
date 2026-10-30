@@ -15,13 +15,13 @@ if ($Child) {
     }
     $env:PROCESSOR_ARCHITECTURE = 'AMD64'
     $env:SPECSCORE_VERSION = 'v1.2.3'
+    $env:SPECSCORE_SKIP_USER_PATH = '1'
     $env:SPECSCORE_INSTALL_DIR = Join-Path $Fixture 'bin'
     . (Join-Path $PSScriptRoot 'install.ps1')
     exit 0
 }
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("specscore-test-" + [guid]::NewGuid())
 New-Item -ItemType Directory $tmp | Out-Null
-$originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 try {
     Set-Content (Join-Path $tmp 'specscore.exe') 'fixture'
     Compress-Archive -Path (Join-Path $tmp 'specscore.exe') -DestinationPath (Join-Path $tmp 'archive.zip')
@@ -39,6 +39,5 @@ try {
     & pwsh -NoProfile -File $PSCommandPath -Child -Mode entry -Fixture $tmp
     if ($LASTEXITCODE -eq 0) { throw 'missing entry accepted' }
 } finally {
-    [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
     Remove-Item -Recurse -Force $tmp
 }

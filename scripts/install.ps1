@@ -6,6 +6,7 @@
 # Environment variables:
 #   SPECSCORE_VERSION      Version tag to install (default: latest)
 #   SPECSCORE_INSTALL_DIR  Install location (default: %LOCALAPPDATA%\Programs\specscore\bin)
+#   SPECSCORE_SKIP_USER_PATH  Set to 1 to avoid changing the persistent user PATH
 
 $ErrorActionPreference = 'Stop'
 
@@ -130,6 +131,7 @@ finally {
 }
 
 # --- PATH advisory --------------------------------------------------------
+if ($env:SPECSCORE_SKIP_USER_PATH -ne '1') {
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $pathEntries = if ($userPath) { $userPath -split ';' } else { @() }
 $alreadyOnPath = $pathEntries | Where-Object {
@@ -145,4 +147,5 @@ if (-not $alreadyOnPath) {
 } else {
     Write-Info ''
     Write-Info "$installDir is already on your user PATH."
+}
 }
