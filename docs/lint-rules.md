@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 183
+Total rules: 186
 
 ## capability
 
@@ -94,6 +94,9 @@ Total rules: 183
 | --- | --- | --- |
 | ac-heading-format | error | Requires Acceptance Criteria headings to read `### AC: <id>` with one space after the colon and a kebab-case id; --fix repairs whitespace-only deviations. |
 | feature-source-ideas-required | error | Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel. |
+| feature-storage-layout | error | Opt-in (storage_layout.required in specscore.yaml): requires one ## Storage layout section that either says the Feature stores nothing (and nothing else) or lists its records with an **Approved by:** line naming who approved and a YYYY-MM-DD date; an unapproved value is an error unless the Feature is Draft, In Review or Amending; also reports a malformed storage_layout block and a misused existing-layout line. --fix=feature-storage-layout (opt-in) inserts a skeleton. |
+| feature-storage-layout-existing | info | Opt-in (storage_layout.required and storage_layout.existing_until in specscore.yaml): lists layouts recorded as `not reviewed — existing layout, recorded YYYY-MM-DD` on Features dated on or before existing_until, which pass but were never reviewed by a human. Advisory: shown at --severity info, never fails a run. |
+| feature-storage-layout-pending | warning | Opt-in (storage_layout.required in specscore.yaml): warns while a Draft, In Review or Amending Feature's storage layout is not yet approved (pending, a placeholder, a negative word, or no date). |
 
 ## feature-index
 

@@ -21,6 +21,11 @@ type NewOptions struct {
 	// the generated template (e.g. a template fetched from the gallery by the
 	// CLI's runtime-fetch). The caller is responsible for its validity.
 	Body string
+	// Finalize, when non-nil, is applied to the README content (generated or
+	// Body) just before it is written — e.g. the CLI adds the
+	// `## Storage layout` skeleton in a repository that requires it. It only
+	// ever touches the new Feature's own README.
+	Finalize func(readme string) string
 }
 
 // NewResult describes the outcome of creating a new feature.
@@ -109,6 +114,9 @@ func New(featuresDir string, opts NewOptions) (*NewResult, error) {
 	readme := opts.Body
 	if readme == "" {
 		readme = GenerateReadme(opts.Title, status, opts.Description, opts.DependsOn)
+	}
+	if opts.Finalize != nil {
+		readme = opts.Finalize(readme)
 	}
 	readmePath := filepath.Join(featureDir, "README.md")
 	if err := osWriteFile(readmePath, []byte(readme), 0o644); err != nil {

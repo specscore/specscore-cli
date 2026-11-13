@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,7 +51,11 @@ type SpecConfig struct {
 	Grade        *GradeConfig   `yaml:"grade,omitempty"`
 	Promote      *PromoteConfig `yaml:"promote,omitempty"`
 	Parked       *ParkedConfig  `yaml:"parked,omitempty"`
-	Extras       map[string]any `yaml:",inline"`
+	// StorageLayout is the optional `storage_layout:` block that turns on
+	// the opt-in feature-storage-layout lint rules
+	// (cli/spec/lint/storage-layout#req:opt-in).
+	StorageLayout *StorageLayoutConfig `yaml:"storage_layout,omitempty"`
+	Extras        map[string]any       `yaml:",inline"`
 
 	// studioExplicitNull is set to true when YAML contains
 	// `studio: null` (or `~`, or an empty value) — the opt-out form
@@ -179,6 +184,132 @@ func (c SpecConfig) EffectiveParkedStaleDays() int {
 		return c.Parked.StaleDays
 	}
 	return DefaultParkedStaleDays
+}
+
+// StorageLayoutConfig is the optional `storage_layout:` block. It opts a
+// repository into the feature-storage-layout lint rules, which require every
+// Feature README to state its data-storage layout (or that it stores
+// nothing) together with an approval line. Absent, or `required: false`,
+// leaves the rules off, so existing repositories are unaffected. See
+// spec/features/cli/spec/lint/storage-layout/README.md#req:opt-in.
+//
+// Shape problems (a non-mapping block, a non-boolean `required`, a
+// non-http(s) `guide_url`, a malformed `existing_until`, an unknown key) are
+// recorded in shapeErr rather than returned as an unmarshal error — the
+// GradeConfig pattern — so a malformed block never breaks every config read
+// and surfaces as one visible lint error instead of silently turning the
+// rules off (cli/spec/lint/storage-layout#req:config-shape).
+type StorageLayoutConfig struct {
+	// Required turns the rules on for this repository.
+	Required bool `yaml:"required,omitempty"`
+	// GuideURL, when set, is appended to every finding and to the section
+	// skeleton the fix inserts, pointing authors at the repository's own
+	// storage-design principles. Must be an http(s) URL.
+	GuideURL string `yaml:"guide_url,omitempty"`
+	// ExistingUntil (YYYY-MM-DD), when set, admits the honest
+	// `not reviewed — existing layout, recorded <date>` approval value for
+	// layouts recorded on or before this date
+	// (cli/spec/lint/storage-layout#req:existing-layouts).
+	ExistingUntil string         `yaml:"existing_until,omitempty"`
+	Extras        map[string]any `yaml:",inline"`
+
+	shapeErr string
+	// explicitlyOff is true when `required` is the YAML boolean false: the
+	// repository has said it is not opted in, so a shape problem elsewhere in
+	// the block is reported as a warning, not an error.
+	explicitlyOff bool
+}
+
+// storageLayoutDateLayout is the YYYY-MM-DD form `existing_until` uses.
+const storageLayoutDateLayout = "2006-01-02"
+
+// UnmarshalYAML parses the `storage_layout:` block, recording shape problems
+// in shapeErr instead of failing. Unknown keys are preserved in Extras (the
+// unknown-fields-preserved convention) and also reported, because a
+// misspelled key such as `requird` would otherwise leave the rules off.
+func (s *StorageLayoutConfig) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		s.shapeErr = "`storage_layout` must be a mapping such as `required: true`"
+		return nil
+	}
+	var problems []string
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, val := node.Content[i].Value, node.Content[i+1]
+		switch key {
+		case "required":
+			var b bool
+			if val.Kind != yaml.ScalarNode || val.Tag != "!!bool" || val.Decode(&b) != nil {
+				problems = append(problems, "`storage_layout.required` must be true or false")
+				continue
+			}
+			s.Required, s.explicitlyOff = b, !b
+		case "guide_url":
+			u := strings.TrimSpace(val.Value)
+			if val.Kind != yaml.ScalarNode || (!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://")) {
+				problems = append(problems, "`storage_layout.guide_url` must be an http(s) URL")
+				continue
+			}
+			s.GuideURL = u
+		case "existing_until":
+			d := strings.TrimSpace(val.Value)
+			if _, err := time.Parse(storageLayoutDateLayout, d); val.Kind != yaml.ScalarNode || err != nil {
+				problems = append(problems, "`storage_layout.existing_until` must be a YYYY-MM-DD date")
+				continue
+			}
+			s.ExistingUntil = d
+		default:
+			var v any
+			_ = val.Decode(&v)
+			if s.Extras == nil {
+				s.Extras = map[string]any{}
+			}
+			s.Extras[key] = v
+			problems = append(problems, "unknown key `storage_layout."+key+"` (known keys: required, guide_url, existing_until)")
+		}
+	}
+	s.shapeErr = strings.Join(problems, "; ")
+	return nil
+}
+
+// StorageLayoutRequired reports whether the repository opted into the
+// feature-storage-layout lint rules (`storage_layout.required: true`) with a
+// well-formed block.
+func (c SpecConfig) StorageLayoutRequired() bool {
+	return c.StorageLayout != nil && c.StorageLayout.Required && c.StorageLayout.shapeErr == ""
+}
+
+// StorageLayoutGuideURL returns the configured `storage_layout.guide_url`, or
+// "" when none is configured.
+func (c SpecConfig) StorageLayoutGuideURL() string {
+	if c.StorageLayout == nil {
+		return ""
+	}
+	return c.StorageLayout.GuideURL
+}
+
+// StorageLayoutExistingUntil returns the configured
+// `storage_layout.existing_until` date and true, or the zero time and false
+// when it is not configured.
+func (c SpecConfig) StorageLayoutExistingUntil() (time.Time, bool) {
+	if c.StorageLayout == nil || c.StorageLayout.ExistingUntil == "" {
+		return time.Time{}, false
+	}
+	t, _ := time.Parse(storageLayoutDateLayout, c.StorageLayout.ExistingUntil)
+	return t, true
+}
+
+// StorageLayoutExplicitlyOff reports whether the block sets `required: false`.
+func (c SpecConfig) StorageLayoutExplicitlyOff() bool {
+	return c.StorageLayout != nil && c.StorageLayout.explicitlyOff
+}
+
+// StorageLayoutShapeError returns the recorded `storage_layout` shape
+// problems, or "" when the block is absent or well-formed.
+func (c SpecConfig) StorageLayoutShapeError() string {
+	if c.StorageLayout == nil {
+		return ""
+	}
+	return c.StorageLayout.shapeErr
 }
 
 // DefaultGradeValues is the built-in grade value set applied when no

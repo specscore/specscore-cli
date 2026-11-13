@@ -973,3 +973,24 @@ func TestUpdateFeatureIndex_URLFromAdherenceFooter(t *testing.T) {
 		t.Errorf("URL not pulled from adherence footer.\ngot:\n%s", got)
 	}
 }
+
+// TestNew_FinalizeAppliedToOwnReadme verifies the Finalize hook rewrites the
+// new Feature's README content before it is written.
+func TestNew_FinalizeAppliedToOwnReadme(t *testing.T) {
+	featDir := t.TempDir()
+	result, err := New(featDir, NewOptions{
+		Title:       "Rooms",
+		Description: "Video rooms.",
+		Finalize:    func(readme string) string { return readme + "\nFINALIZED\n" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(result.ReadmePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(content), "\nFINALIZED\n") {
+		t.Fatalf("Finalize was not applied:\n%s", content)
+	}
+}

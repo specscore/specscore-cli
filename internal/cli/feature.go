@@ -810,6 +810,19 @@ func runFeatureNew(cmd *cobra.Command, _ []string) error {
 		DependsOn:   deps,
 	}
 
+	// cli/spec/lint/storage-layout#req:autofix-skeleton: in a repository that
+	// requires a storage layout, the new Feature's OWN README gets the
+	// section skeleton. The repository-wide fix is opt-in
+	// (--fix=feature-storage-layout) and is never run by this command, so no
+	// other Feature is touched.
+	if cfg, cfgErr := projectdef.ReadSpecConfig(filepath.Dir(filepath.Dir(featuresDir))); cfgErr == nil && cfg.StorageLayoutRequired() {
+		guide := cfg.StorageLayoutGuideURL()
+		opts.Finalize = func(readme string) string {
+			out, _ := lint.AddStorageLayoutSkeleton(readme, guide)
+			return out
+		}
+	}
+
 	// cli-template-runtime-fetch: a bare feature (no description, deps, parent,
 	// or non-default status) pulls the published template as its body; on any
 	// fetch failure feature.New falls back to the generated README.

@@ -92,7 +92,7 @@ invalid arguments, 10+ = unexpected error.`,
 	cmd.Flags().String("ignore", "", "disable specified rules (comma-separated)")
 	cmd.Flags().String("severity", "error", "minimum severity: error, warning, info")
 	cmd.Flags().String("format", "text", "output format: text, json, yaml")
-	cmd.Flags().String("fix", "", "explicitly apply standard autofixes, including `Outstanding Questions` → `Open Questions`; create/scaffold commands never perform this repository-wide migration. `--fix=<targets>` additionally enables opt-in targets such as `no-source`")
+	cmd.Flags().String("fix", "", "explicitly apply standard autofixes, including `Outstanding Questions` → `Open Questions`; create/scaffold commands never perform this repository-wide migration. `--fix=<targets>` additionally enables opt-in targets such as `no-source` and `feature-storage-layout`")
 	// NoOptDefVal lets bare `--fix` (no `=value`) mean "standard fixers only".
 	cmd.Flags().Lookup("fix").NoOptDefVal = fixStandardOnly
 	return cmd
@@ -347,8 +347,10 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(violations) > 0 {
-		return exitcode.ConflictErrorf("%d violation(s) found", len(violations))
+	// Advisory findings are reported but never fail a run (lint.Rule.Advisory);
+	// only the rest decide the exit status, as in `graph lint`.
+	if failing := lint.CountFailing(violations); failing > 0 {
+		return exitcode.ConflictErrorf("%d violation(s) found", failing)
 	}
 	return nil
 }
