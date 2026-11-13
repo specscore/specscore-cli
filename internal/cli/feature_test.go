@@ -1311,6 +1311,54 @@ func TestFeatureNew_LintClean(t *testing.T) {
 	}
 }
 
+// TestFeatureNew_StorageLayoutSkeletonWhenOptedIn verifies that a repository
+// with storage_layout.required: true gets the `## Storage layout` skeleton in a
+// freshly scaffolded Feature (via the scaffold's lint --fix pass), that the
+// scaffold then carries only the pending warning, and that a repository that
+// has not opted in gets no such section (cli/spec/lint/storage-layout#req:autofix-skeleton).
+func TestFeatureNew_StorageLayoutSkeletonWhenOptedIn(t *testing.T) {
+	for _, optedIn := range []bool{true, false} {
+		root := t.TempDir()
+		withCwd(t, root)
+		if _, errOut, err := runInitCmd(t, nil,
+			"--project", root, "--host", "github.com", "--org", "acme", "--repo", "widget",
+		); err != nil {
+			t.Fatalf("init failed: %v\nstderr=%s", err, errOut)
+		}
+		if optedIn {
+			cfgPath := filepath.Join(root, projectdef.SpecConfigFile)
+			cfg, err := os.ReadFile(cfgPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg = append(cfg, []byte("storage_layout:\n  required: true\n")...)
+			if err := os.WriteFile(cfgPath, cfg, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, errOut, err := runFeature(t, "new", "--title", "Rooms", "--description", "Video rooms"); err != nil {
+			t.Fatalf("feature new failed: %v\nstderr=%s", err, errOut)
+		}
+		body, err := os.ReadFile(filepath.Join(root, "spec", "features", "rooms", "README.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		has := strings.Contains(string(body), "## Storage layout") && strings.Contains(string(body), "**Approved by:** pending")
+		if has != optedIn {
+			t.Fatalf("optedIn=%v but skeleton present=%v:\n%s", optedIn, has, body)
+		}
+		violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec"), Severity: "warning"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v := range violations {
+			if v.Rule == "feature-storage-layout" {
+				t.Errorf("scaffold must not carry a storage-layout error: %+v", v)
+			}
+		}
+	}
+}
+
 // A post-scaffold lint-fix failure is surfaced as an Unexpected error instead
 // of reporting a successful feature creation.
 func TestFeatureNew_LintFixError(t *testing.T) {

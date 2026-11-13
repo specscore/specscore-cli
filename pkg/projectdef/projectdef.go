@@ -50,7 +50,11 @@ type SpecConfig struct {
 	Grade        *GradeConfig   `yaml:"grade,omitempty"`
 	Promote      *PromoteConfig `yaml:"promote,omitempty"`
 	Parked       *ParkedConfig  `yaml:"parked,omitempty"`
-	Extras       map[string]any `yaml:",inline"`
+	// StorageLayout is the optional `storage_layout:` block that turns on
+	// the opt-in feature-storage-layout lint rules
+	// (cli/spec/lint/storage-layout#req:opt-in).
+	StorageLayout *StorageLayoutConfig `yaml:"storage_layout,omitempty"`
+	Extras        map[string]any       `yaml:",inline"`
 
 	// studioExplicitNull is set to true when YAML contains
 	// `studio: null` (or `~`, or an empty value) — the opt-out form
@@ -179,6 +183,37 @@ func (c SpecConfig) EffectiveParkedStaleDays() int {
 		return c.Parked.StaleDays
 	}
 	return DefaultParkedStaleDays
+}
+
+// StorageLayoutConfig is the optional `storage_layout:` block. It opts a
+// repository into the feature-storage-layout lint rules, which require every
+// Feature README to state its data-storage layout (or that it stores
+// nothing) together with a human approval line. Absent, or `required: false`,
+// leaves the rules off, so existing repositories are unaffected. See
+// spec/features/cli/spec/lint/storage-layout/README.md#req:opt-in.
+type StorageLayoutConfig struct {
+	// Required turns the rules on for this repository.
+	Required bool `yaml:"required,omitempty"`
+	// GuideURL, when set, is appended to every finding and to the section
+	// skeleton --fix inserts, pointing authors at the repository's own
+	// storage-design principles.
+	GuideURL string         `yaml:"guide_url,omitempty"`
+	Extras   map[string]any `yaml:",inline"`
+}
+
+// StorageLayoutRequired reports whether the repository opted into the
+// feature-storage-layout lint rules (`storage_layout.required: true`).
+func (c SpecConfig) StorageLayoutRequired() bool {
+	return c.StorageLayout != nil && c.StorageLayout.Required
+}
+
+// StorageLayoutGuideURL returns the configured `storage_layout.guide_url`,
+// trimmed, or "" when none is configured.
+func (c SpecConfig) StorageLayoutGuideURL() string {
+	if c.StorageLayout == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.StorageLayout.GuideURL)
 }
 
 // DefaultGradeValues is the built-in grade value set applied when no

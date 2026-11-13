@@ -191,6 +191,16 @@ func newLinter(opts Options) *linter {
 	frc.autofix = opts.fixRequested("feature-source-ideas-required")
 	l.ruleSet["feature-source-ideas-required"] = frc
 
+	// Register the opt-in storage-layout checker under both rule IDs. It is
+	// off unless specscore.yaml sets storage_layout.required: true, or the
+	// caller names one of its rules in --rules.
+	slc := newStorageLayoutChecker(projectRoot, slices.ContainsFunc(opts.Rules, func(n string) bool {
+		return slices.Contains(storageLayoutRuleNames, n)
+	}))
+	for _, n := range storageLayoutRuleNames {
+		l.ruleSet[n] = slc
+	}
+
 	// Register the AC-heading-format checker.
 	l.registerChecker(newACHeadingFormatChecker())
 

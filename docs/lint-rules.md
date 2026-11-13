@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 183
+Total rules: 185
 
 ## capability
 
@@ -94,6 +94,8 @@ Total rules: 183
 | --- | --- | --- |
 | ac-heading-format | error | Requires Acceptance Criteria headings to read `### AC: <id>` with one space after the colon and a kebab-case id; --fix repairs whitespace-only deviations. |
 | feature-source-ideas-required | error | Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel. |
+| feature-storage-layout | error | Opt-in (storage_layout.required in specscore.yaml): requires a ## Storage layout section that states the Feature stores nothing or lists its records with an **Approved by:** line; pending is an error once the Feature is Approved, Implementing or Stable; --fix inserts a skeleton. |
+| feature-storage-layout-pending | warning | Opt-in (storage_layout.required in specscore.yaml): warns while a not-yet-approved Feature's storage layout carries **Approved by:** pending. |
 
 ## feature-index
 
