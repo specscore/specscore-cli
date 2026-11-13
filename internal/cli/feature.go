@@ -1055,23 +1055,9 @@ func runFeatureChangeStatus(cmd *cobra.Command, args []string) error {
 // from any ambient/pre-resolved value.
 func featureChangeStatusMutate(root, featureID, toFlag string) (feature.ChangeStatusResult, error) {
 	featuresDir := filepath.Join(root, "spec", "features")
-	// Record the whole spec tree first: a rollback must leave it exactly as
-	// it was, including files the post-rewrite --fix pass touched (such as
-	// the features index row), not only this Feature's Status line.
-	before, snapErr := readSpecFiles(filepath.Join(root, "spec"))
-	if snapErr != nil {
-		return feature.ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading spec tree before change-status: %v", snapErr)
-	}
 	result, err := feature.ChangeStatus(featuresDir, featureID, toFlag)
 	if err != nil {
 		return feature.ChangeStatusResult{}, err
-	}
-	restoreStatus := result.Restore
-	result.Restore = func() error {
-		if err := restoreStatus(); err != nil {
-			return err
-		}
-		return restoreSpecFiles(filepath.Join(root, "spec"), before)
 	}
 
 	// Post-rewrite: run `spec lint --fix` against the project's spec

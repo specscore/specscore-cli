@@ -214,6 +214,10 @@ type StorageLayoutConfig struct {
 	Extras        map[string]any `yaml:",inline"`
 
 	shapeErr string
+	// explicitlyOff is true when `required` is the YAML boolean false: the
+	// repository has said it is not opted in, so a shape problem elsewhere in
+	// the block is reported as a warning, not an error.
+	explicitlyOff bool
 }
 
 // storageLayoutDateLayout is the YYYY-MM-DD form `existing_until` uses.
@@ -238,7 +242,7 @@ func (s *StorageLayoutConfig) UnmarshalYAML(node *yaml.Node) error {
 				problems = append(problems, "`storage_layout.required` must be true or false")
 				continue
 			}
-			s.Required = b
+			s.Required, s.explicitlyOff = b, !b
 		case "guide_url":
 			u := strings.TrimSpace(val.Value)
 			if val.Kind != yaml.ScalarNode || (!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://")) {
@@ -292,6 +296,11 @@ func (c SpecConfig) StorageLayoutExistingUntil() (time.Time, bool) {
 	}
 	t, _ := time.Parse(storageLayoutDateLayout, c.StorageLayout.ExistingUntil)
 	return t, true
+}
+
+// StorageLayoutExplicitlyOff reports whether the block sets `required: false`.
+func (c SpecConfig) StorageLayoutExplicitlyOff() bool {
+	return c.StorageLayout != nil && c.StorageLayout.explicitlyOff
 }
 
 // StorageLayoutShapeError returns the recorded `storage_layout` shape

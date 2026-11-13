@@ -62,6 +62,16 @@ func TestStorageLayout_RequiredFalseIsOff(t *testing.T) {
 	if cfg.StorageLayoutShapeError() != "" {
 		t.Fatalf("well-formed block reported shape error %q", cfg.StorageLayoutShapeError())
 	}
+	if !cfg.StorageLayoutExplicitlyOff() {
+		t.Fatal("required: false must be recorded as explicitly off")
+	}
+	if on := readStorageLayoutConfig(t, "storage_layout:\n  required: true\n"); on.StorageLayoutExplicitlyOff() {
+		t.Fatal("required: true is not explicitly off")
+	}
+	var absent SpecConfig
+	if absent.StorageLayoutExplicitlyOff() {
+		t.Fatal("an absent block is not explicitly off")
+	}
 }
 
 func TestStorageLayout_ShapeErrorsRecordedNotFatal(t *testing.T) {

@@ -14,11 +14,22 @@ const slGuide = "https://example.com/storage-design"
 
 const slOptIn = "project:\n  title: T\nstorage_layout:\n  required: true\n  guide_url: " + slGuide + "\n"
 
-const slOptInExisting = slOptIn + "  existing_until: 2026-11-13\n"
+const slOptInExisting = slOptIn + "  existing_until: 2026-01-31\n"
 
 func slFeature(status, section string) string {
+	return slFeatureDated(status, "", section)
+}
+
+// slFeatureDated is slFeature with a `**Date:**` header line (none when date
+// is empty). The header replaces the Source Ideas line so line numbers of the
+// body stay the same as slFeature's.
+func slFeatureDated(status, date, section string) string {
+	meta := "**Source Ideas:** —"
+	if date != "" {
+		meta = "**Date:** " + date
+	}
 	return "---\nformat: https://specscore.md/feature-specification\nstatus: " + status + "\n---\n\n" +
-		"# Feature: X\n\n**Status:** " + status + "\n**Source Ideas:** —\n\n" +
+		"# Feature: X\n\n**Status:** " + status + "\n" + meta + "\n\n" +
 		"## Summary\n\nx\n\n## Behavior\n\nx\n\n" + section +
 		"## Acceptance Criteria\n\nNot defined yet.\n\n## Open Questions\n\nNone at this time.\n\n" +
 		"---\n*This document follows the https://specscore.md/feature-specification*\n"
@@ -129,15 +140,19 @@ func TestStorageLayout_NamedFixTargetIsExplicitSelection(t *testing.T) {
 // --- config shape -----------------------------------------------------------
 
 func TestStorageLayout_MalformedConfigIsVisibleError(t *testing.T) {
-	for _, block := range []string{
-		"storage_layout:\n  required: \"true\"\n",
-		"storage_layout: true\n",
-		"storage_layout:\n  requird: true\n",
-		"storage_layout:\n  required: true\n  guide_url: docs/storage.md\n",
-	} {
+	cases := map[string]string{
+		"storage_layout:\n  required: \"true\"\n":                           "error",
+		"storage_layout: true\n":                                            "error",
+		"storage_layout:\n  requird: true\n":                                "error",
+		"storage_layout:\n  required: true\n  guide_url: docs/storage.md\n": "error",
+		// The repository said it is not opted in: a stray key is a warning,
+		// so a default (--severity error) run is unchanged.
+		"storage_layout:\n  required: false\n  note: legacy\n": "warning",
+	}
+	for block, severity := range cases {
 		sr := gradeSpecRoot(t, "project:\n  title: T\n"+block)
 		p := writeMD(t, sr, "features/foo/README.md", slFeature("Draft", ""))
-		v := slOnly(t, slCheck(t, sr, false), "feature-storage-layout", "error", "invalid `storage_layout` block")
+		v := slOnly(t, slCheck(t, sr, false), "feature-storage-layout", severity, "invalid `storage_layout` block")
 		if v.File != "specscore.yaml" {
 			t.Fatalf("config error must cite specscore.yaml, got %s", v.File)
 		}
@@ -236,18 +251,30 @@ func TestStorageLayout_ApprovalWithoutLayout(t *testing.T) {
 	slOnly(t, slOne(t, slOptIn, "Draft", "## Storage layout\n\n**Approved by:** owner, 2026-11-13\n\n"), "feature-storage-layout", "error", "describes no layout")
 }
 
-// M1: placeholders count as not approved, in one closed set.
+// M1/M1': an approval needs a YYYY-MM-DD date and must not start with a
+// negative word; placeholders count as not approved.
 func TestStorageLayout_PlaceholdersAreNotApproval(t *testing.T) {
-	for _, value := range []string{"", "—", "–", "-", "N/A", "na", "none", "TBD", "tba", "todo", "self", "?", "unknown", "nobody", "TBD.", "pending", "Pending review", "not reviewed", "not reviewed — existing layout, recorded 2026-13-45"} {
+	for _, value := range []string{
+		"", "—", "–", "-", "N/A", "na", "none", "TBD", "tba", "todo", "self", "?", "unknown", "nobody", "TBD.",
+		"pending", "Pending review", "not reviewed",
+		"not approved", "Not approved, 2026-11-13", "not yet", "none yet", "no one", "No, 2026-11-13",
+		"awaiting review", "waiting for owner 2026-11-13", "TBD (owner to review) 2026-11-13", "todo: 2026-11-13",
+		"Ada", "Ada, yesterday", "Ada, 2026-02-30", "Ada, 13/11/2026",
+	} {
 		v := slOnly(t, slOne(t, slOptIn, "Approved", slLayout(value)), "feature-storage-layout", "error", "is Approved but its storage layout is not approved")
 		if v.Line != 23 {
 			t.Fatalf("%q: finding must cite the approval line, got %d", value, v.Line)
 		}
+		if !strings.Contains(v.Message, "who approved it and the date") {
+			t.Fatalf("%q: message must say what an approval looks like: %q", value, v.Message)
+		}
 		slOnly(t, slOne(t, slOptIn, "Draft", slLayout(value)), "feature-storage-layout-pending", "warning", "storage layout not yet approved")
 	}
-	// A real name is an approval.
-	if vs := slOne(t, slOptIn, "Approved", slLayout("Tbdavid, 2026-11-13")); len(vs) != 0 {
-		t.Fatalf("a real approver value must pass, got %v", vs)
+	// Real approvals: a name and a date, optionally quoted words.
+	for _, value := range []string{"Tbdavid, 2026-11-13", "Ada, 2026-11-13: \"yes, build it\"", "\"approved\" — owner (2026-11-13)", "Nora 2026-11-13"} {
+		if vs := slOne(t, slOptIn, "Approved", slLayout(value)); len(vs) != 0 {
+			t.Fatalf("approval %q must pass, got %v", value, vs)
+		}
 	}
 }
 
@@ -259,7 +286,7 @@ func TestStorageLayout_StatusesFailClosed(t *testing.T) {
 	for _, status := range []string{"Approved", "implementing", "Stable"} {
 		slOnly(t, slOne(t, slOptIn, status, slLayout("pending")), "feature-storage-layout", "error", "is "+status+" but its storage layout is not approved")
 	}
-	for _, status := range []string{"Aproved", "Planned", "Stable (since 2026-01)"} {
+	for _, status := range []string{"Aproved", "Stable (since 2026-01)"} {
 		slOnly(t, slOne(t, slOptIn, status, slLayout("pending")), "feature-storage-layout", "error", "`"+status+"` is not a recognized pre-approval status (treated as approved)")
 	}
 	sr := gradeSpecRoot(t, slOptIn)
@@ -270,7 +297,7 @@ func TestStorageLayout_StatusesFailClosed(t *testing.T) {
 // --- warning ----------------------------------------------------------------
 
 func TestStorageLayout_PendingOnDraftIsWarning(t *testing.T) {
-	for _, status := range []string{"Draft", "In Review", "amending"} {
+	for _, status := range []string{"Draft", "In Review", "amending", "Under Review", "Planned"} {
 		v := slOnly(t, slOne(t, slOptIn, status, "## Storage layout\n\n**Approved by:** Pending (asked 2026-11-13)\n\n"),
 			"feature-storage-layout-pending", "warning", "storage layout not yet approved (`**Approved by:** Pending (asked 2026-11-13)`)")
 		if v.Line != 21 {
@@ -293,40 +320,72 @@ func TestStorageLayout_PendingWarningHiddenAtDefaultSeverity(t *testing.T) {
 
 // --- existing layouts (storage_layout.existing_until) -----------------------
 
+func slOneDated(t *testing.T, cfg, status, date, section string) []Violation {
+	t.Helper()
+	sr := gradeSpecRoot(t, cfg)
+	writeMD(t, sr, "features/foo/README.md", slFeatureDated(status, date, section))
+	return slCheck(t, sr, false)
+}
+
 func TestStorageLayout_ExistingLayoutAdmittedWithCutoff(t *testing.T) {
 	for _, value := range []string{
-		"not reviewed — existing layout, recorded 2026-11-13",
-		"Not reviewed - existing layout, recorded 2026-11-01.",
-		"not reviewed -- existing layout, recorded 2026-01-01",
+		"not reviewed — existing layout, recorded 2026-01-31",
+		"Not reviewed - existing layout, recorded 2026-01-01.",
+		"not reviewed -- existing layout, recorded 2025-06-01",
 	} {
-		v := slOnly(t, slOne(t, slOptInExisting, "Stable", slLayout(value)), "feature-storage-layout-existing", "info",
-			"existing storage layout recorded, not reviewed by a human")
-		if !v.Advisory || CountFailing([]Violation{v}) != 0 {
-			t.Fatalf("existing-layout finding must be advisory and never fail a run: %+v", v)
+		for _, status := range []string{"Stable", "Draft"} {
+			v := slOnly(t, slOneDated(t, slOptInExisting, status, "2026-01-31", slLayout(value)), "feature-storage-layout-existing", "info",
+				"existing storage layout recorded, not reviewed by a human")
+			if !v.Advisory || CountFailing([]Violation{v}) != 0 {
+				t.Fatalf("existing-layout finding must be advisory and never fail a run: %+v", v)
+			}
 		}
 	}
 }
 
+// M2': the existing form is admitted only for Features that predate the
+// cutoff; a new Feature typing a past recorded date must fail, at any status.
 func TestStorageLayout_ExistingLayoutRejectedOtherwise(t *testing.T) {
-	value := "not reviewed — existing layout, recorded 2026-11-14"
-	// Date after the cutoff.
-	slOnly(t, slOne(t, slOptInExisting, "Stable", slLayout(value)), "feature-storage-layout", "error", "counts only when its date is on or before `storage_layout.existing_until`")
-	slOnly(t, slOne(t, slOptInExisting, "Draft", slLayout(value)), "feature-storage-layout-pending", "warning", "counts only when its date is on or before")
-	// No cutoff configured: inert.
-	slOnly(t, slOne(t, slOptIn, "Stable", slLayout("not reviewed — existing layout, recorded 2020-01-01")), "feature-storage-layout", "error", "is Stable but its storage layout is not approved")
+	old := slLayout("not reviewed — existing layout, recorded 2026-01-01")
+	cases := map[string]struct{ cfg, status, date, section string }{
+		"new feature back-dates the record": {slOptInExisting, "Approved", "2026-12-25", old},
+		"new draft back-dates the record":   {slOptInExisting, "Draft", "2026-12-25", old},
+		"feature without a Date header":     {slOptInExisting, "Stable", "", old},
+		"feature Date not a date":           {slOptInExisting, "Stable", "January", old},
+		"recorded after the cutoff":         {slOptInExisting, "Stable", "2026-01-15", slLayout("not reviewed — existing layout, recorded 2026-02-01")},
+		"impossible recorded date":          {slOptInExisting, "Stable", "2026-01-15", slLayout("not reviewed — existing layout, recorded 2026-02-30")},
+		"no cutoff configured":              {slOptIn, "Stable", "2025-01-01", old},
+		"wrong wording":                     {slOptInExisting, "Stable", "2026-01-15", slLayout("not reviewed — existing layouts recorded 2026-01-01")},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			slOnly(t, slOneDated(t, tc.cfg, tc.status, tc.date, tc.section), "feature-storage-layout", "error",
+				"only for layouts that predate this rule")
+		})
+	}
 	// The form still needs a described layout.
-	slOnly(t, slOne(t, slOptInExisting, "Stable", "## Storage layout\n\n**Approved by:** not reviewed — existing layout, recorded 2026-01-01\n\n"), "feature-storage-layout", "error", "describes no layout")
+	slOnly(t, slOneDated(t, slOptInExisting, "Stable", "2026-01-15", "## Storage layout\n\n**Approved by:** not reviewed — existing layout, recorded 2026-01-01\n\n"),
+		"feature-storage-layout", "error", "describes no layout")
+}
+
+func TestStorageLayout_FutureCutoffIsConfigError(t *testing.T) {
+	sr := gradeSpecRoot(t, slOptIn+"  existing_until: 2999-01-01\n")
+	writeMD(t, sr, "features/foo/README.md", slFeatureDated("Stable", "2026-01-15", slLayout("not reviewed — existing layout, recorded 2026-01-01")))
+	v := slOnly(t, slCheck(t, sr, false), "feature-storage-layout", "error", "`storage_layout.existing_until` (2999-01-01) is in the future")
+	if v.File != "specscore.yaml" {
+		t.Fatalf("config error must cite specscore.yaml, got %s", v.File)
+	}
 }
 
 func TestStorageLayout_ExistingListedAtInfoSeverity(t *testing.T) {
 	sr := gradeSpecRoot(t, slOptInExisting)
-	writeMD(t, sr, "features/foo/README.md", slFeature("Stable", slLayout("not reviewed — existing layout, recorded 2026-11-13")))
+	writeMD(t, sr, "features/foo/README.md", slFeatureDated("Stable", "2026-01-15", slLayout("not reviewed — existing layout, recorded 2026-01-15")))
 	vs, err := Lint(Options{SpecRoot: sr, Severity: "info", Rules: storageLayoutRuleNames})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vs) != 1 || vs[0].Rule != "feature-storage-layout-existing" {
-		t.Fatalf("--severity info must list the existing layout, got %+v", vs)
+	if len(vs) != 1 || vs[0].Rule != "feature-storage-layout-existing" || CountFailing(vs) != 0 {
+		t.Fatalf("--severity info must list the existing layout as advisory, got %+v", vs)
 	}
 	if vs, _ := Lint(Options{SpecRoot: sr, Severity: "error", Rules: storageLayoutRuleNames}); len(vs) != 0 {
 		t.Fatalf("default severity must not report it, got %+v", vs)
@@ -429,6 +488,9 @@ func TestStorageLayout_BareFixNeverInserts(t *testing.T) {
 
 func TestStorageLayout_FixPlacementFallbacks(t *testing.T) {
 	cases := map[string]struct{ body, before string }{
+		// CommonMark: a ``` line inside a ~~~ fence does not close it, and a
+		// shorter fence does not close a longer one.
+		"mixed-fences":   {"# Feature: X\n\n**Status:** Draft\n\n~~~md\n```\n## Acceptance Criteria\n~~~\n\n````\n```\n## Open Questions\n````\n\n## Acceptance Criteria\n\nx\n", "\n## Acceptance Criteria\n\nx"},
 		"open-questions": {"# Feature: X\n\n**Status:** Draft\n\n## Open Questions\n\nNone.\n", "## Open Questions"},
 		"footer":         {"# Feature: X\n\n**Status:** Draft\n\n## Behavior\n\nx\n\n---\n*This document follows the https://specscore.md/feature-specification*\n", "---\n*This document follows"},
 		"eof":            {"# Feature: X\n\n**Status:** Draft\n\n## Behavior\n\nx", ""},
@@ -458,6 +520,12 @@ func TestStorageLayout_SkeletonSkipsUnclosedFenceAndKeepsCRLF(t *testing.T) {
 	unclosed := "# Feature: X\n\n**Status:** Draft\n\n```go\nfunc x() {}\n\n## Acceptance Criteria\n\nx\n"
 	if got, changed := AddStorageLayoutSkeleton(unclosed, ""); changed || got != unclosed {
 		t.Fatal("an unclosed fence must leave the file unchanged (an insert inside it would repeat on every run)")
+	}
+	sr := gradeSpecRoot(t, slOptIn)
+	writeMD(t, sr, "features/foo/README.md", unclosed)
+	v := slOnly(t, slCheck(t, sr, false), "feature-storage-layout", "error", "a fenced code block is never closed")
+	if v.FixTarget != "" {
+		t.Fatal("a finding the fix cannot repair must not advertise the fix target")
 	}
 	crlf := "# Feature: X\r\n\r\n**Status:** Draft\r\n\r\n## Acceptance Criteria\r\n\r\nx\r\n"
 	got, changed := AddStorageLayoutSkeleton(crlf, "")
@@ -551,5 +619,19 @@ func TestStorageLayout_WalkErrorSurfaces(t *testing.T) {
 	defer func() { _ = os.Chmod(locked, 0o755) }()
 	if _, err := newStorageLayoutChecker("", false, false).check(sr); err == nil {
 		t.Fatal("an unreadable features subtree must fail the check, not pass silently")
+	}
+}
+
+// Minor 3: the skeleton lands after both mixed fences, before the real
+// Acceptance Criteria heading.
+func TestStorageLayout_SkeletonRespectsMixedFences(t *testing.T) {
+	body := "# Feature: X\n\n**Status:** Draft\n\n``not a fence``\n\n~~~md\n```\n## Acceptance Criteria\n~~~\n\n````\n```\n## Open Questions\n````\n\n## Acceptance Criteria\n\nx\n"
+	got, changed := AddStorageLayoutSkeleton(body, "")
+	if !changed {
+		t.Fatal("balanced mixed fences must not block the insert")
+	}
+	sl := strings.Index(got, "## Storage layout")
+	if sl < strings.LastIndex(got, "````") || sl > strings.LastIndex(got, "## Acceptance Criteria") {
+		t.Fatalf("skeleton must sit after the fences and before the real heading:\n%s", got)
 	}
 }

@@ -347,8 +347,10 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(violations) > 0 {
-		return exitcode.ConflictErrorf("%d violation(s) found", len(violations))
+	// Advisory findings are reported but never fail a run (lint.Rule.Advisory);
+	// only the rest decide the exit status, as in `graph lint`.
+	if failing := lint.CountFailing(violations); failing > 0 {
+		return exitcode.ConflictErrorf("%d violation(s) found", failing)
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
@@ -45,12 +46,13 @@ const (
 	storageLayoutApprovedKey  = "**approved by:**"
 )
 
-// storageLayoutPreApproval are the Feature statuses (feature.ValidStatuses)
-// at which an unapproved storage layout is a warning. Every other status —
-// Approved, Implementing, Stable, and any unknown, misspelled or missing value
-// — is treated as approved, so the rule fails closed
+// storageLayoutPreApproval are the Feature statuses at which an unapproved
+// storage layout is a warning: the pre-approval values of
+// feature.ValidStatuses plus the legacy `Under Review` and `Planned`. Every
+// other status — Approved, Implementing, Stable, and any unknown, misspelled
+// or missing value — is treated as approved, so the rule fails closed
 // (cli/spec/lint/storage-layout#req:pending).
-var storageLayoutPreApproval = []string{"draft", "in review", "amending"}
+var storageLayoutPreApproval = []string{"draft", "in review", "amending", "under review", "planned"}
 
 // storageLayoutKnownApproved are the statuses that are approved by name; any
 // other non-pre-approval, non-exempt status is reported as unrecognized.
@@ -63,9 +65,21 @@ var storageLayoutExempt = []string{"rejected", "deprecated"}
 // storageLayoutPlaceholders is THE closed set of `**Approved by:**` values
 // that mean "nobody has approved this yet". They are compared lower-cased,
 // trimmed and with one trailing period removed; the empty value is included.
-// A value beginning with `pending` is also unapproved. Documented in
-// cli/spec/lint/storage-layout#req:approval-line.
+// Documented in cli/spec/lint/storage-layout#req:approval-line.
 var storageLayoutPlaceholders = []string{"", "—", "–", "-", "none", "n/a", "na", "tbd", "tba", "todo", "self", "?", "unknown", "nobody"}
+
+// storageLayoutNegativeWords are first words that make an `**Approved by:**`
+// value unapproved whatever follows (`not approved`, `no one`, `awaiting
+// review`, `TBD (owner to review)`, ...). Compared as a whole lower-cased word.
+var storageLayoutNegativeWords = []string{"not", "no", "none", "awaiting", "waiting", "pending", "tbd", "tba", "todo"}
+
+// storageLayoutDateRe finds YYYY-MM-DD dates in an approval value; an approval
+// needs at least one real calendar date.
+var storageLayoutDateRe = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
+
+// storageLayoutApprovalShape is the one-line hint every not-approved message
+// carries.
+const storageLayoutApprovalShape = " An approval names who approved it and the date (YYYY-MM-DD), ideally with their words quoted, e.g. `**Approved by:** Ada Lovelace, 2026-11-13: \"yes, build it\"`."
 
 // storageLayoutDashRe normalizes a dash: an em dash, an en dash, or one or
 // more ASCII hyphens are all accepted.
@@ -103,6 +117,15 @@ type storageLayoutSettings struct {
 	existingUntil time.Time
 	hasExisting   bool
 	configErr     string
+	// configWarn is true when a malformed block also says `required: false`:
+	// the repository is not opted in, so the problem is a warning.
+	configWarn bool
+}
+
+// storageLayoutToday returns today's UTC date; a seam for tests.
+var storageLayoutToday = func() time.Time {
+	t, _ := time.Parse(dateLayout, time.Now().UTC().Format(dateLayout))
+	return t
 }
 
 func (c *storageLayoutChecker) settings(specRoot string) storageLayoutSettings {
@@ -115,21 +138,30 @@ func (c *storageLayoutChecker) settings(specRoot string) storageLayoutSettings {
 		return storageLayoutSettings{on: c.explicit}
 	}
 	until, hasUntil := cfg.StorageLayoutExistingUntil()
+	configErr := cfg.StorageLayoutShapeError()
+	if configErr == "" && hasUntil && until.After(storageLayoutToday()) {
+		configErr = "`storage_layout.existing_until` (" + until.Format(dateLayout) + ") is in the future; it must be on or before today, the day existing layouts were recorded"
+	}
 	return storageLayoutSettings{
 		on:            c.explicit || cfg.StorageLayoutRequired(),
 		guide:         cfg.StorageLayoutGuideURL(),
 		existingUntil: until,
 		hasExisting:   hasUntil,
-		configErr:     cfg.StorageLayoutShapeError(),
+		configErr:     configErr,
+		configWarn:    cfg.StorageLayoutExplicitlyOff(),
 	}
 }
 
 func (c *storageLayoutChecker) check(specRoot string) ([]Violation, error) {
 	s := c.settings(specRoot)
 	if s.configErr != "" {
-		// A malformed block fails closed and visibly, whether or not it
-		// would have turned the rules on (req:config-shape).
-		return []Violation{{File: projectdef.SpecConfigFile, Severity: "error", Rule: storageLayoutRule,
+		// A malformed block fails closed and visibly (req:config-shape); it is
+		// a warning only when the block itself says `required: false`.
+		severity := "error"
+		if s.configWarn {
+			severity = "warning"
+		}
+		return []Violation{{File: projectdef.SpecConfigFile, Severity: severity, Rule: storageLayoutRule,
 			Message: "invalid `storage_layout` block in specscore.yaml: " + s.configErr + "; fix the block (see `specscore rules`)."}}, nil
 	}
 	if !s.on {
@@ -169,7 +201,8 @@ func (c *storageLayoutChecker) fix(specRoot string) error {
 type storageLayoutDoc struct {
 	isFeature     bool
 	status        string
-	statusLine    int // 1-based; 0 when absent
+	statusLine    int    // 1-based; 0 when absent
+	date          string // the `**Date:**` header value; "" when absent
 	found         bool
 	headingLine   int // 1-based
 	duplicateLine int // 1-based line of a second `## Storage layout`; 0 when none
@@ -187,20 +220,55 @@ func (d storageLayoutDoc) exempt() bool {
 	return slices.Contains(storageLayoutExempt, strings.ToLower(d.status))
 }
 
-// isFenceLine reports whether line opens or closes a fenced code block.
-func isFenceLine(line string) bool {
+// mdFence tracks a CommonMark fenced code block: it opens on a line of three
+// or more backticks or tildes, and closes only on a line of the same
+// character, at least as long, with nothing after it.
+type mdFence struct {
+	ch byte
+	n  int
+}
+
+func (f *mdFence) open() bool { return f.n > 0 }
+
+// fenceRun returns the fence character and run length that t starts with, or
+// 0, 0 when t does not start with three or more backticks or tildes.
+func fenceRun(t string) (byte, int) {
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0, 0
+	}
+	n := len(t) - len(strings.TrimLeft(t, t[:1]))
+	if n < 3 {
+		return 0, 0
+	}
+	return t[0], n
+}
+
+// feed advances the fence state over one line and reports whether the line
+// was a fence line (opening or closing).
+func (f *mdFence) feed(line string) bool {
 	t := strings.TrimSpace(line)
-	return strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")
+	ch, n := fenceRun(t)
+	if !f.open() {
+		if n > 0 {
+			f.ch, f.n = ch, n
+			return true
+		}
+		return false
+	}
+	if ch == f.ch && n >= f.n && strings.TrimSpace(t[n:]) == "" {
+		f.ch, f.n = 0, 0
+		return true
+	}
+	return false
 }
 
 func parseStorageLayoutDoc(content string) storageLayoutDoc {
 	var d storageLayoutDoc
-	inFence, inSection, inComment := false, false, false
+	var fence mdFence
+	inSection, inComment := false, false
 	for i, line := range strings.Split(content, "\n") {
-		if inFence {
-			if isFenceLine(line) {
-				inFence = false
-			}
+		if fence.open() {
+			fence.feed(line)
 			if t := strings.TrimSpace(line); inSection && t != "" {
 				d.content = append(d.content, t)
 			}
@@ -212,8 +280,7 @@ func parseStorageLayoutDoc(content string) storageLayoutDoc {
 		if t == "" {
 			continue
 		}
-		if isFenceLine(t) {
-			inFence = true
+		if fence.feed(t) {
 			if inSection {
 				d.content = append(d.content, t)
 			}
@@ -225,6 +292,9 @@ func parseStorageLayoutDoc(content string) storageLayoutDoc {
 		if d.statusLine == 0 && strings.HasPrefix(t, "**Status:**") {
 			d.statusLine = i + 1
 			d.status = strings.TrimSpace(strings.TrimPrefix(t, "**Status:**"))
+		}
+		if d.date == "" && strings.HasPrefix(t, "**Date:**") {
+			d.date = strings.TrimSpace(strings.TrimPrefix(t, "**Date:**"))
 		}
 		if strings.HasPrefix(t, "# ") || strings.HasPrefix(t, "## ") || t == "---" {
 			inSection = false
@@ -253,7 +323,7 @@ func parseStorageLayoutDoc(content string) storageLayoutDoc {
 			d.approval = strings.TrimSpace(item[len(storageLayoutApprovedKey):])
 		}
 	}
-	d.unbalancedFence = inFence
+	d.unbalancedFence = fence.open()
 	return d
 }
 
@@ -294,22 +364,35 @@ func isStorageLayoutNone(s string) bool {
 	return normalizeStorageLayoutText(s) == "none - this feature stores nothing"
 }
 
-// storageLayoutUnapproved reports whether an approval value means nobody has
-// approved the layout: a placeholder from storageLayoutPlaceholders, or any
-// value beginning with `pending`.
-func storageLayoutUnapproved(value string) bool {
+// storageLayoutApproved reports whether an approval value is a real
+// approval: not a placeholder, not starting with a negative word, and
+// carrying at least one real YYYY-MM-DD date
+// (cli/spec/lint/storage-layout#req:approval-line).
+func storageLayoutApproved(value string) bool {
 	v := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
-	return slices.Contains(storageLayoutPlaceholders, v) || strings.HasPrefix(v, "pending")
+	if slices.Contains(storageLayoutPlaceholders, v) {
+		return false
+	}
+	words := strings.FieldsFunc(v, func(r rune) bool { return !unicode.IsLetter(r) })
+	if len(words) > 0 && slices.Contains(storageLayoutNegativeWords, words[0]) {
+		return false
+	}
+	for _, m := range storageLayoutDateRe.FindAllString(v, -1) {
+		if _, err := time.Parse(dateLayout, m); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // storageLayoutExisting classifies an approval value against the
 // existing-layout form. isExisting is true for any value beginning with
-// `not reviewed` — such a value is never a human approval. valid is true only
+// `not reviewed` that mentions `existing layout` — an attempt at the form. valid is true only
 // for the exact form `not reviewed — existing layout, recorded YYYY-MM-DD`
 // (any dash) with a real calendar date, returned as recorded.
 func storageLayoutExisting(value string) (recorded time.Time, isExisting, valid bool) {
 	v := strings.ToLower(strings.TrimSpace(value))
-	if !strings.HasPrefix(v, "not reviewed") {
+	if !strings.HasPrefix(v, "not reviewed") || !strings.Contains(v, "existing layout") {
 		return time.Time{}, false, false
 	}
 	m := storageLayoutExistingRe.FindStringSubmatch(v)
@@ -340,6 +423,9 @@ func checkStorageLayout(rel, content string, s storageLayoutSettings) []Violatio
 		if line == 0 {
 			line = 1
 		}
+		if d.unbalancedFence {
+			return errAt(line, "Feature has no `## Storage layout` section, and `--fix=feature-storage-layout` cannot insert one because a fenced code block is never closed; close the fence, then add a section that says `"+storageLayoutNone+"` or lists the stored records with an `**Approved by:**` line.")
+		}
 		v := errAt(line, "Feature has no `## Storage layout` section; add one that says `"+storageLayoutNone+
 			"` or lists the stored records with an `**Approved by:**` line (`specscore spec lint --fix=feature-storage-layout` inserts a skeleton).")
 		v[0].FixTarget = storageLayoutRule
@@ -360,8 +446,15 @@ func checkStorageLayout(rel, content string, s storageLayoutSettings) []Violatio
 		return errAt(d.headingLine, "`## Storage layout` has no `**Approved by:**` line; show the layout to a human and record who approved it and when (write `pending` until then).")
 	}
 	recorded, isExisting, validExisting := storageLayoutExisting(d.approval)
-	existingOK := validExisting && s.hasExisting && !recorded.After(s.existingUntil)
-	if existingOK || (!isExisting && !storageLayoutUnapproved(d.approval)) {
+	featureDate, dateErr := time.Parse(dateLayout, d.date)
+	existingOK := validExisting && s.hasExisting && !recorded.After(s.existingUntil) &&
+		dateErr == nil && !featureDate.After(s.existingUntil)
+	if isExisting && !existingOK {
+		// The grandfather line on a Feature it does not cover is never an
+		// approval, at any status (req:existing-layouts).
+		return errAt(d.approvedLine, "`**Approved by:** "+d.approval+"` is only for layouts that predate this rule: it counts when `storage_layout.existing_until` is set and both the recorded date and this Feature's `**Date:**` are on or before it; get a human's approval instead."+storageLayoutApprovalShape)
+	}
+	if existingOK || storageLayoutApproved(d.approval) {
 		if len(d.content) == 1 {
 			return errAt(d.headingLine, "`## Storage layout` records an approval but describes no layout; list the stored records with example paths, or write `"+storageLayoutNone+"`.")
 		}
@@ -375,20 +468,16 @@ func checkStorageLayout(rel, content string, s storageLayoutSettings) []Violatio
 	if d.approval == "" {
 		shown = "`**Approved by:**` is empty"
 	}
-	hint := ""
-	if isExisting {
-		hint = " A `not reviewed — existing layout, recorded YYYY-MM-DD` record counts only when its date is on or before `storage_layout.existing_until`."
-	}
 	status := strings.ToLower(d.status)
 	if slices.Contains(storageLayoutPreApproval, status) {
 		return []Violation{{File: rel, Line: d.approvedLine, Severity: "warning", Rule: storageLayoutPendingRule,
-			Message: "storage layout not yet approved (" + shown + "); show it to a human and record their approval before the Feature is Approved." + hint + see}}
+			Message: "storage layout not yet approved (" + shown + "); show it to a human and record their approval before the Feature is Approved." + storageLayoutApprovalShape + see}}
 	}
 	label := "Feature is " + d.status
 	if !slices.Contains(storageLayoutKnownApproved, status) {
 		label = "Feature status `" + d.status + "` is not a recognized pre-approval status (treated as approved)"
 	}
-	return errAt(d.approvedLine, label+" but its storage layout is not approved ("+shown+"); get a human's approval of the layout and record it."+hint)
+	return errAt(d.approvedLine, label+" but its storage layout is not approved ("+shown+"); get a human's approval of the layout and record it."+storageLayoutApprovalShape)
 }
 
 // storageLayoutSkeleton is the section the fix and `specscore feature new`
@@ -440,12 +529,12 @@ func insertStorageLayoutSkeleton(content, guide string) string {
 	lines := strings.Split(content, "\n")
 	at := -1
 	for _, target := range []string{"## Acceptance Criteria", "## Open Questions"} {
-		inFence := false
+		var fence mdFence
 		for i, l := range lines {
-			if isFenceLine(l) {
-				inFence = !inFence
+			if fence.feed(l) || fence.open() {
+				continue
 			}
-			if !inFence && strings.TrimSpace(l) == target {
+			if strings.TrimSpace(l) == target {
 				at = i
 				break
 			}

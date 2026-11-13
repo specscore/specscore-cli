@@ -27,7 +27,7 @@ Data-storage layouts are designed in Feature specifications, but nothing in a Fe
 
 #### REQ: rules-registered
 
-The rules MUST be registered in the lint rule registry under the family `feature`: `feature-storage-layout` at severity `error`, `feature-storage-layout-pending` at severity `warning`, and `feature-storage-layout-existing` at severity `info`, marked advisory (shown at `--severity info`, never fails a run). All MUST be accepted by `--rules`, `--ignore` and `lint.AllRuleNames()`.
+The rules MUST be registered in the lint rule registry under the family `feature`: `feature-storage-layout` at severity `error`, `feature-storage-layout-pending` at severity `warning`, and `feature-storage-layout-existing` at severity `info`, marked advisory: shown at `--severity info`, never fails a run — `specscore spec lint` exits `0` when every reported finding is advisory. All MUST be accepted by `--rules`, `--ignore` and `lint.AllRuleNames()`.
 
 #### REQ: opt-in
 
@@ -44,7 +44,7 @@ A missing block, `required: false`, or an unreadable `specscore.yaml` MUST leave
 
 #### REQ: config-shape
 
-A present `storage_layout` block that is malformed MUST be reported as one `feature-storage-layout` error citing `specscore.yaml`, whether or not it would have turned the rules on, and the rules and their fix MUST NOT run while it stands. Malformed means: not a mapping; `required` not a YAML boolean; `guide_url` not an `http://` or `https://` URL; `existing_until` not a `YYYY-MM-DD` date; or an unknown key (unknown keys are still preserved in the parsed config). A malformed block MUST NOT make the rest of `specscore.yaml` unreadable.
+A present `storage_layout` block that is malformed MUST be reported as one `feature-storage-layout` finding citing `specscore.yaml`, and the rules and their fix MUST NOT run while it stands. The finding is an error, except a warning when the block itself sets `required: false` (the repository is explicitly not opted in, so its default lint result does not change). Malformed means: not a mapping; `required` not a YAML boolean; `guide_url` not an `http://` or `https://` URL; `existing_until` not a `YYYY-MM-DD` date, or later than today; or an unknown key (unknown keys are still preserved in the parsed config). A malformed block MUST NOT make the rest of `specscore.yaml` unreadable.
 
 #### REQ: guide-url
 
@@ -54,11 +54,11 @@ When `storage_layout.guide_url` is set, every per-Feature finding's message MUST
 
 #### REQ: section-required
 
-Every Feature README (`spec/features/**/README.md` recognized by its `# Feature: <title>` H1, outside `_`-prefixed directories) whose `**Status:**` is not `Rejected` or `Deprecated` MUST contain exactly one level-2 heading `## Storage layout` (case-insensitive). Headings inside fenced code blocks or HTML comments do not count. The section runs to the next level-1 or level-2 heading or a `---` line. HTML comments and blank lines in the section are ignored; lines inside fenced code blocks count as content but never as an approval line. A missing section is a `feature-storage-layout` error citing the `**Status:**` line (line 1 when there is none), with the message:
+Every Feature README (`spec/features/**/README.md` recognized by its `# Feature: <title>` H1, outside `_`-prefixed directories) whose `**Status:**` is not `Rejected` or `Deprecated` MUST contain exactly one level-2 heading `## Storage layout` (case-insensitive). Headings inside fenced code blocks or HTML comments do not count. Fences follow CommonMark: a fence opened with backticks or tildes closes only on a line of the same character, at least as long. The section runs to the next level-1 or level-2 heading or a `---` line. HTML comments and blank lines in the section are ignored; lines inside fenced code blocks count as content but never as an approval line. A missing section is a `feature-storage-layout` error citing the `**Status:**` line (line 1 when there is none), with the message:
 
 > Feature has no `## Storage layout` section; add one that says `None — this feature stores nothing.` or lists the stored records with an `**Approved by:**` line (`specscore spec lint --fix=feature-storage-layout` inserts a skeleton).
 
-An empty section, and a second `## Storage layout` heading, are each a `feature-storage-layout` error.
+When the file ends inside an unclosed fence, the message instead says the fix cannot insert a section until the fence is closed, and carries no fix target. An empty section, and a second `## Storage layout` heading, are each a `feature-storage-layout` error.
 
 #### REQ: stores-nothing
 
@@ -68,11 +68,17 @@ A section whose ONLY content line is `None — this feature stores nothing.` sat
 
 Any other section MUST contain a line beginning `**Approved by:**` (case-insensitive; a leading `- `, `* ` or `+ ` list marker is allowed) followed by free text saying who approved the layout and when. A missing line, or a section whose only content is the approval line (no layout described), is a `feature-storage-layout` error.
 
-The value is **not an approval** when, lower-cased, trimmed and with one trailing period removed, it is one of the closed placeholder set `` (empty), `—`, `–`, `-`, `none`, `n/a`, `na`, `tbd`, `tba`, `todo`, `self`, `?`, `unknown`, `nobody`; or when it begins with `pending` (so `pending review` is pending); or when it begins with `not reviewed` and is not an admitted existing layout (req:existing-layouts). The set lives in one place in the code (`storageLayoutPlaceholders`). Whether the named approver is really a human cannot be linted; that stays with the process rule that requires the approval.
+The value **is an approval** only when all hold, after trimming and lower-casing:
+
+1. it is not one of the closed placeholder set `` (empty), `—`, `–`, `-`, `none`, `n/a`, `na`, `tbd`, `tba`, `todo`, `self`, `?`, `unknown`, `nobody` (one trailing period ignored);
+2. its first word is not one of `not`, `no`, `none`, `awaiting`, `waiting`, `pending`, `tbd`, `tba`, `todo` — whatever follows (`not approved`, `no one`, `awaiting review`, `TBD (owner to review) 2026-11-13` are all unapproved);
+3. it contains at least one real `YYYY-MM-DD` calendar date.
+
+So an approval names who approved and when, ideally with their words quoted: `**Approved by:** Ada Lovelace, 2026-11-13: "yes, build it"`. Every not-approved message says so. Both lists live in one place in the code (`storageLayoutPlaceholders`, `storageLayoutNegativeWords`). Whether the named approver is really a human cannot be linted; that stays with the process rule that requires the approval.
 
 #### REQ: pending
 
-A value that is not an approval is graded by the Feature's status. At `Draft`, `In Review` or `Amending` it MUST be a `feature-storage-layout-pending` warning citing the approval line, with the message:
+A value that is not an approval (and is not an attempt at the existing-layout form, req:existing-layouts) is graded by the Feature's status. At `Draft`, `In Review` or `Amending` — or the legacy `Under Review` and `Planned` — it MUST be a `feature-storage-layout-pending` warning citing the approval line, with the message:
 
 > storage layout not yet approved (`**Approved by:** pending`); show it to a human and record their approval before the Feature is Approved.
 
@@ -80,7 +86,13 @@ A value that is not an approval is graded by the Feature's status. At `Draft`, `
 
 #### REQ: existing-layouts
 
-When `storage_layout.existing_until: YYYY-MM-DD` is configured, an approval value of the form `not reviewed — existing layout, recorded YYYY-MM-DD` (em dash, en dash or ASCII hyphens; case-insensitive; optional trailing period) whose date is a real date on or before `existing_until` passes at any status, provided the section also describes the layout, and MUST be reported as a `feature-storage-layout-existing` info finding: `existing storage layout recorded, not reviewed by a human; …`. So `specscore spec lint --severity info` lists every such Feature. Without `existing_until`, or with a later date, the value is not an approval (req:pending), and the message says why. The skeleton and the fix MUST never write this form.
+When `storage_layout.existing_until: YYYY-MM-DD` is configured (on or before today), an approval value of the form `not reviewed — existing layout, recorded YYYY-MM-DD` (em dash, en dash or ASCII hyphens; case-insensitive; optional trailing period) is admitted only when ALL hold:
+
+1. the recorded date is a real date on or before `existing_until`;
+2. the Feature's own `**Date:**` header is a real date on or before `existing_until` (a Feature without a `**Date:**` header does not qualify);
+3. the section also describes the layout.
+
+An admitted value passes at any status and MUST be reported as a `feature-storage-layout-existing` advisory info finding: `existing storage layout recorded, not reviewed by a human; …`, so `specscore spec lint --severity info` lists every such Feature. Any other value that begins `not reviewed` and mentions `existing layout` — no `existing_until`, a later recorded date, a Feature dated after the cutoff (a new Feature back-dating the line), no `**Date:**` — MUST be a `feature-storage-layout` error at every status, saying the line is only for layouts that predate the rule. The skeleton and the fix MUST never write this form.
 
 ### Autofix and scaffold
 
@@ -90,9 +102,6 @@ The fix is opt-in, like `no-source`: only `specscore spec lint --fix=feature-sto
 
 In an opted-in repository, `specscore feature new` MUST add the same skeleton to the README it creates, and to no other file.
 
-#### REQ: change-status-rollback
-
-When `specscore feature change-status` rolls back because its post-rewrite lint fails, every regular file under `spec/` MUST be left exactly as it was before the command ran — including files the command's `--fix` pass rewrote, such as the features index row — not only the Feature's `**Status:**` line.
 
 ## Acceptance Criteria
 
@@ -116,9 +125,9 @@ When `specscore feature change-status` rolls back because its post-rewrite lint 
 
 **Requirements:** cli/spec/lint/storage-layout#req:config-shape
 
-**Given** a `storage_layout` block with `required: "true"`, or `storage_layout: true`, or `requird: true`, or a non-URL `guide_url`,
-**When** `specscore spec lint` runs,
-**Then** one `feature-storage-layout` error citing `specscore.yaml` is reported and the fix changes nothing.
+**Given** a `storage_layout` block with `required: "true"`, or `storage_layout: true`, or `requird: true`, or a non-URL `guide_url`, and separately `required: false` with a stray `note:` key,
+**When** `specscore spec lint --severity warning` runs,
+**Then** the first four each give one `feature-storage-layout` error citing `specscore.yaml`, the last gives a warning (so a default run is unchanged), and the fix changes nothing.
 
 ### AC: missing-section-flagged
 
@@ -140,25 +149,25 @@ When `specscore feature change-status` rolls back because its post-rewrite lint 
 
 **Requirements:** cli/spec/lint/storage-layout#req:approval-line, cli/spec/lint/storage-layout#req:pending
 
-**Given** an opted-in project and Features listing a record with `**Approved by:**` set to each placeholder (`—`, `n/a`, `TBD`, `todo`, `self`, `?`, empty, …) or `pending review`,
+**Given** an opted-in project and Features listing a record with `**Approved by:**` set to each placeholder (`—`, `n/a`, `TBD`, `todo`, `self`, `?`, empty, …), `pending review`, `not approved, 2026-11-13`, `no one`, `awaiting review`, or a name without a date,
 **When** `specscore spec lint --severity warning` runs,
-**Then** each is a `feature-storage-layout` error when the Feature is Approved and a `feature-storage-layout-pending` warning when it is a Draft, and a Feature listing records with `**Approved by:** "yes" — owner, 2026-11-13` is not reported.
+**Then** each is a `feature-storage-layout` error when the Feature is Approved and a `feature-storage-layout-pending` warning when it is a Draft, each message showing the expected shape, and a Feature listing records with `**Approved by:** Ada, 2026-11-13: "yes, build it"` is not reported.
 
 ### AC: status-fails-closed
 
 **Requirements:** cli/spec/lint/storage-layout#req:pending
 
-**Given** an opted-in project and Features carrying `**Approved by:** pending` with statuses Draft, In Review, Amending, Approved, Implementing, Stable, `Aproved` and no status,
+**Given** an opted-in project and Features carrying `**Approved by:** pending` with statuses Draft, In Review, Amending, Under Review, Planned, Approved, Implementing, Stable, `Aproved` and no status,
 **When** `specscore spec lint --severity warning` runs,
-**Then** the first three are warnings, and the rest are `feature-storage-layout` errors, the last two named as unrecognized statuses.
+**Then** the first five are warnings, and the rest are `feature-storage-layout` errors, the last two named as unrecognized statuses.
 
 ### AC: existing-layouts-gated
 
 **Requirements:** cli/spec/lint/storage-layout#req:existing-layouts
 
-**Given** an opted-in project with `existing_until: 2026-11-13` and a Stable Feature listing records with `**Approved by:** not reviewed — existing layout, recorded 2026-11-13`,
+**Given** an opted-in project with `existing_until: 2026-01-31` and a Stable Feature dated `**Date:** 2026-01-15` listing records with `**Approved by:** not reviewed — existing layout, recorded 2026-01-31`,
 **When** `specscore spec lint --severity info` runs,
-**Then** one advisory `feature-storage-layout-existing` info finding is listed and the run's exit status is not affected; with a recorded date of 2026-11-14, or without `existing_until`, the same Feature is a `feature-storage-layout` error.
+**Then** one advisory `feature-storage-layout-existing` info finding is listed and the command exits `0`; with a recorded date of 2026-02-01, a Feature dated 2026-12-25 (a new Feature back-dating the line), a Feature with no `**Date:**`, or without `existing_until`, the same Feature is a `feature-storage-layout` error at any status; and `existing_until: 2999-01-01` is a config error.
 
 ### AC: exempt-statuses
 
@@ -184,13 +193,13 @@ When `specscore feature change-status` rolls back because its post-rewrite lint 
 **When** `specscore feature new --title Rooms --description "Video rooms"` runs,
 **Then** the new README carries the skeleton and every other file except the features index (which gains the new row) is byte-identical.
 
-### AC: failed-change-status-restores-tree
+### AC: failed-change-status-leaves-no-skeletons
 
-**Requirements:** cli/spec/lint/storage-layout#req:change-status-rollback
+**Requirements:** cli/spec/lint/storage-layout#req:autofix-skeleton
 
 **Given** an opted-in project whose Implementing Feature lacks the section,
-**When** `specscore feature change-status <draft-feature> --to "In Review"` fails its post-fix lint,
-**Then** every file under `spec/`, including the features index, is byte-identical to before.
+**When** `specscore feature change-status <draft-feature> --to "In Review"` fails its post-fix lint and rolls back,
+**Then** no file gains a `## Storage layout` section and every Feature README is byte-identical to before.
 
 ## Open Questions
 
