@@ -92,7 +92,7 @@ invalid arguments, 10+ = unexpected error.`,
 	cmd.Flags().String("ignore", "", "disable specified rules (comma-separated)")
 	cmd.Flags().String("severity", "error", "minimum severity: error, warning, info")
 	cmd.Flags().String("format", "text", "output format: text, json, yaml")
-	cmd.Flags().String("fix", "", "explicitly apply standard autofixes, including `Outstanding Questions` → `Open Questions`; create/scaffold commands never perform this repository-wide migration. `--fix=<targets>` additionally enables opt-in targets such as `no-source`")
+	cmd.Flags().String("fix", "", "explicitly apply standard autofixes, including `Outstanding Questions` → `Open Questions`; create/scaffold commands never perform this repository-wide migration. `--fix=<targets>` additionally enables opt-in targets such as `no-source` and `feature-storage-layout`")
 	// NoOptDefVal lets bare `--fix` (no `=value`) mean "standard fixers only".
 	cmd.Flags().Lookup("fix").NoOptDefVal = fixStandardOnly
 	return cmd

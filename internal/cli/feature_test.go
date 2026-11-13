@@ -1311,50 +1311,104 @@ func TestFeatureNew_LintClean(t *testing.T) {
 	}
 }
 
-// TestFeatureNew_StorageLayoutSkeletonWhenOptedIn verifies that a repository
-// with storage_layout.required: true gets the `## Storage layout` skeleton in a
-// freshly scaffolded Feature (via the scaffold's lint --fix pass), that the
-// scaffold then carries only the pending warning, and that a repository that
-// has not opted in gets no such section (cli/spec/lint/storage-layout#req:autofix-skeleton).
-func TestFeatureNew_StorageLayoutSkeletonWhenOptedIn(t *testing.T) {
+// slSnapshot returns every file under dir (relative path -> bytes).
+func slSnapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		b, readErr := os.ReadFile(p)
+		rel, _ := filepath.Rel(dir, p)
+		out[rel] = string(b)
+		return readErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// slInitRepo creates a project with two pre-existing Features (one
+// Implementing, one Draft), neither carrying a `## Storage layout` section,
+// then — when optIn — turns on storage_layout.required.
+func slInitRepo(t *testing.T, optIn bool) string {
+	t.Helper()
+	root := t.TempDir()
+	withCwd(t, root)
+	if _, errOut, err := runInitCmd(t, nil,
+		"--project", root, "--host", "github.com", "--org", "acme", "--repo", "widget",
+	); err != nil {
+		t.Fatalf("init failed: %v\nstderr=%s", err, errOut)
+	}
+	for _, f := range [][]string{{"Billing", "Implementing"}, {"Search", "Draft"}} {
+		if _, errOut, err := runFeature(t, "new", "--title", f[0], "--description", f[0]+" feature", "--status", f[1]); err != nil {
+			t.Fatalf("feature new %s failed: %v\nstderr=%s", f[0], err, errOut)
+		}
+	}
+	if optIn {
+		cfgPath := filepath.Join(root, projectdef.SpecConfigFile)
+		cfg, err := os.ReadFile(cfgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg = append(cfg, []byte("storage_layout:\n  required: true\n")...)
+		if err := os.WriteFile(cfgPath, cfg, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// TestFeatureNew_StorageLayoutSkeletonOnlyInOwnReadme verifies that in a
+// repository with storage_layout.required: true, `feature new` writes the
+// `## Storage layout` skeleton into the new Feature's OWN README and leaves
+// every other Feature byte-identical; a repository that has not opted in gets
+// no such section (cli/spec/lint/storage-layout#req:autofix-skeleton).
+func TestFeatureNew_StorageLayoutSkeletonOnlyInOwnReadme(t *testing.T) {
 	for _, optedIn := range []bool{true, false} {
-		root := t.TempDir()
-		withCwd(t, root)
-		if _, errOut, err := runInitCmd(t, nil,
-			"--project", root, "--host", "github.com", "--org", "acme", "--repo", "widget",
-		); err != nil {
-			t.Fatalf("init failed: %v\nstderr=%s", err, errOut)
-		}
-		if optedIn {
-			cfgPath := filepath.Join(root, projectdef.SpecConfigFile)
-			cfg, err := os.ReadFile(cfgPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			cfg = append(cfg, []byte("storage_layout:\n  required: true\n")...)
-			if err := os.WriteFile(cfgPath, cfg, 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
+		root := slInitRepo(t, optedIn)
+		before := slSnapshot(t, filepath.Join(root, "spec"))
 		if _, errOut, err := runFeature(t, "new", "--title", "Rooms", "--description", "Video rooms"); err != nil {
 			t.Fatalf("feature new failed: %v\nstderr=%s", err, errOut)
 		}
-		body, err := os.ReadFile(filepath.Join(root, "spec", "features", "rooms", "README.md"))
-		if err != nil {
-			t.Fatal(err)
+		after := slSnapshot(t, filepath.Join(root, "spec"))
+		for rel, b := range before {
+			if rel == filepath.Join("features", "README.md") {
+				continue // the index gains the new Feature's row
+			}
+			if after[rel] != b {
+				t.Errorf("optedIn=%v: feature new modified another file %s", optedIn, rel)
+			}
 		}
-		has := strings.Contains(string(body), "## Storage layout") && strings.Contains(string(body), "**Approved by:** pending")
+		body := after[filepath.Join("features", "rooms", "README.md")]
+		has := strings.Contains(body, "## Storage layout") && strings.Contains(body, "**Approved by:** pending")
 		if has != optedIn {
 			t.Fatalf("optedIn=%v but skeleton present=%v:\n%s", optedIn, has, body)
 		}
-		violations, err := lint.Lint(lint.Options{SpecRoot: filepath.Join(root, "spec"), Severity: "warning"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, v := range violations {
-			if v.Rule == "feature-storage-layout" {
-				t.Errorf("scaffold must not carry a storage-layout error: %+v", v)
-			}
+	}
+}
+
+// TestFeatureChangeStatus_StorageLayoutFailureLeavesTreeUntouched reproduces
+// the review finding: in an opted-in repository whose Implementing Feature has
+// no storage layout, change-status fails the post-fix lint and rolls back. The
+// rollback must leave the whole spec tree exactly as it was — no skeleton may
+// be inserted into any README by the command's fix pass.
+func TestFeatureChangeStatus_StorageLayoutFailureLeavesTreeUntouched(t *testing.T) {
+	root := slInitRepo(t, true)
+	before := slSnapshot(t, filepath.Join(root, "spec"))
+	_, _, err := runFeature(t, "change-status", "search", "--to", "In Review")
+	if err == nil || !strings.Contains(err.Error(), "feature-storage-layout") {
+		t.Fatalf("change-status must fail on the missing storage layout, got %v", err)
+	}
+	after := slSnapshot(t, filepath.Join(root, "spec"))
+	if len(after) != len(before) {
+		t.Fatalf("file set changed: %d -> %d files", len(before), len(after))
+	}
+	for rel, b := range before {
+		if after[rel] != b {
+			t.Errorf("failed change-status left %s modified:\n%s", rel, after[rel])
 		}
 	}
 }

@@ -153,8 +153,9 @@ var builtinRules = []Rule{
 
 	// Feature lint rules.
 	{ID: "feature-source-ideas-required", Family: "feature", Severity: "error", Description: "Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel."},
-	{ID: "feature-storage-layout", Family: "feature", Severity: "error", Description: "Opt-in (storage_layout.required in specscore.yaml): requires a ## Storage layout section that states the Feature stores nothing or lists its records with an **Approved by:** line; pending is an error once the Feature is Approved, Implementing or Stable; --fix inserts a skeleton."},
-	{ID: "feature-storage-layout-pending", Family: "feature", Severity: "warning", Description: "Opt-in (storage_layout.required in specscore.yaml): warns while a not-yet-approved Feature's storage layout carries **Approved by:** pending."},
+	{ID: "feature-storage-layout", Family: "feature", Severity: "error", Description: "Opt-in (storage_layout.required in specscore.yaml): requires one ## Storage layout section that either says the Feature stores nothing (and nothing else) or lists its records with an **Approved by:** line; an unapproved value (pending or a placeholder) is an error unless the Feature is Draft, In Review or Amending; also reports a malformed storage_layout block. --fix=feature-storage-layout (opt-in) inserts a skeleton."},
+	{ID: "feature-storage-layout-pending", Family: "feature", Severity: "warning", Description: "Opt-in (storage_layout.required in specscore.yaml): warns while a Draft, In Review or Amending Feature's storage layout is not yet approved (**Approved by:** pending or a placeholder)."},
+	{ID: "feature-storage-layout-existing", Family: "feature", Severity: "info", Advisory: true, Description: "Opt-in (storage_layout.required and storage_layout.existing_until in specscore.yaml): lists layouts recorded as `not reviewed — existing layout, recorded YYYY-MM-DD` on or before existing_until, which pass but were never reviewed by a human. Advisory: shown at --severity info, never fails a run."},
 	{ID: "ac-heading-format", Family: "feature", Severity: "error", Description: "Requires Acceptance Criteria headings to read `### AC: <id>` with one space after the colon and a kebab-case id; --fix repairs whitespace-only deviations."},
 
 	// Decision lint rules.
