@@ -456,8 +456,8 @@ func TestPlanNew_TitleOwnerDefaults(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/plan/new#ac:scaffolded-plan-is-lint-clean
-// specscore:verifies feature/cli/plan/new#ac:ancestor-indexes-materialized — on a
+// specscore:verifies feature/cli/plan/new#ac:scaffolded-plan-is-lint-clean — also the lint clause of
+// ancestor-indexes-materialized (TestPlanNew_AncestorIndexesMaterialized covers the rest): on a
 // lint-clean project, plan new introduces no error-severity violations outside
 // the scaffolded plan file (the plan file itself may carry P-002 for an
 // unresolved source Feature, which the AC explicitly tolerates).

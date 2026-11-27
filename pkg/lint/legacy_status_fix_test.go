@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// specscore:verifies feature/cli/spec/lint/legacy-status-autofix#ac:plan-completed-rewrite
-// specscore:verifies feature/cli/spec/lint/legacy-status-autofix#ac:decision-legacy-rewrite — the core map lookup.
+// specscore:verifies feature/cli/spec/lint/legacy-status-autofix#ac:plan-completed-rewrite — the core map lookup.
 func TestRewriteLegacyBodyStatus(t *testing.T) {
 	in := "# Plan: x\n\n**Status:** Completed\n**Source:** none\n"
 	out, changed := rewriteLegacyBodyStatus([]byte(in), legacyPlanStatusMap)

@@ -26,7 +26,6 @@ func readACTestCoverageConfig(t *testing.T, block string) SpecConfig {
 }
 
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:off-without-opt-in
-// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:off-without-opt-in
 func TestACTestCoverage_AbsentIsOffWithDefaults(t *testing.T) {
 	var cfg SpecConfig
 	if cfg.ACTestCoverageRequired() || cfg.ACTestCoverageExplicitlyOff() || cfg.ACTestCoverageShapeError() != "" {
@@ -62,7 +61,6 @@ func TestACTestCoverage_RequiredFalseIsExplicitlyOff(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:malformed-config-visible
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:malformed-config-visible
 func TestACTestCoverage_ShapeErrors(t *testing.T) {
 	cases := map[string]struct{ block, want string }{
