@@ -85,7 +85,7 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 | Code | Condition |
 |---|---|
 | `0` | Transition succeeded; file rewritten; lessons index synced. |
-| `1` | A SpecScore-managed file carries unresolved git merge-conflict markers; nothing was modified. |
+| `1` | The Lessons index (`spec/lessons/README.md`) carries unresolved git merge-conflict markers; nothing was modified. |
 | `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition or on `--to=recorded`; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No canonical or compatibility Lesson for the slug. |
 | `4` | `(current_status, --to)` is not a legal transition, or a demotion to `Recorded` whose `**Control:**` would fail L-010. |

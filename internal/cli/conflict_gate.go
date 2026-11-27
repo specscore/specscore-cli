@@ -11,7 +11,7 @@ import (
 
 // refuseConflictedTables is the pre-write precondition of the verbs that
 // rewrite a source-of-truth table — the Lessons index (`lesson
-// change-status`) and the Rules index (`rule new/update/delete/promote`),
+// change-status`) and the Rules index (`rule new/update/delete/promote/expand`),
 // the only copy of an inline rule. If any of paths still carries git
 // merge-conflict markers, the verb exits 1 (Conflict) naming the files before
 // it writes anything or prepares any event, because rewriting the table would

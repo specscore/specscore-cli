@@ -100,6 +100,7 @@ func TestRuleWriterVerbs_RefuseConflictedIndexBeforeAnyWrite(t *testing.T) {
 		{"rule", "new", "second-rule"},
 		{"rule", "update", "fresh-rule", "--title", "Fresh"},
 		{"rule", "delete", "fresh-rule"},
+		{"rule", "expand", "fresh-rule"},
 		{"rule", "promote", "promoted-rule", "--from-lesson", "kinder-fake"},
 	} {
 		t.Run(args[1], func(t *testing.T) {

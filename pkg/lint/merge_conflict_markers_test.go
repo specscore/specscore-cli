@@ -310,6 +310,20 @@ func TestMergeConflictMarkers_ErrorPathsFailClosed(t *testing.T) {
 			t.Fatalf("err = %v, want the config permission error", err)
 		}
 	})
+	t.Run("skills-dir-read-error", func(t *testing.T) {
+		project := t.TempDir()
+		specRoot := filepath.Join(project, "spec")
+		writeTreeFile(t, specRoot, "rules/README.md", "# Rules\n")
+		writeTreeFile(t, project, "ai/skills/demo/SKILL.md", "# Skill\n")
+		skills := filepath.Join(project, "ai", "skills")
+		if err := os.Chmod(skills, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(skills, 0o755) })
+		if _, err := newMergeConflictMarkerChecker(project, "", false).check(specRoot); !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("err = %v, want the skills-directory permission error", err)
+		}
+	})
 	t.Run("symlink-loop-root", func(t *testing.T) {
 		project := t.TempDir()
 		specRoot := filepath.Join(project, "spec")

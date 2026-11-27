@@ -149,7 +149,10 @@ func (c *mergeConflictMarkerChecker) check(specRoot string) ([]Violation, error)
 	files := []string{filepath.Join(projectRoot, projectdef.SpecConfigFile)}
 	if isDir(filepath.Join(specRoot, "rules")) {
 		skillsDir := rule.SkillsDir(projectRoot, configuredSkillsPath(projectRoot))
-		entries, _ := os.ReadDir(skillsDir) // a missing skills directory has no pairs
+		entries, err := os.ReadDir(skillsDir)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err // unreadable skills directory: fail closed
+		}
 		for _, e := range entries {
 			files = append(files, filepath.Join(skillsDir, e.Name(), "SKILL.md"))
 		}
