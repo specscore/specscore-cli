@@ -60,11 +60,12 @@ classify_path() {
     ;;
   esac
 
-  case "$path" in
-  spec/*|cmd/*|internal/*|pkg/*|docs/lint-rules.md|go.mod|go.sum)
-    dogfood=true
-    ;;
-  esac
+  # The dogfood job runs `specscore code deps --check`, which scans every
+  # file in the checkout (its default --path is **/*): a `specscore:` citation
+  # in a comment line of any file -- Go anywhere, specscore.yaml, docs/,
+  # ai/skills/, scripts/, README.md, YAML -- must resolve. So every changed
+  # path makes dogfood applicable; only the Go gates stay path-selective.
+  dogfood=true
 }
 
 # --name-status -z emits status, then one path for ordinary changes and both

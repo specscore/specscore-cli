@@ -115,12 +115,20 @@ func TestFeatureAnchorExistsAcceptsLintACHeadingForms(t *testing.T) {
 		"### AC: links-work  (verifies REQ:links)",
 		"#### AC: links-work",
 		"```\n### AC: links-work\n```",
+		"    ### AC: links-work", // indented code block, not a heading
+		"\t### AC: links-work",
 	}
 	for _, heading := range rejected {
 		content := "## Acceptance Criteria\n\n" + heading + "\n"
 		if err := featureAnchorExists(content, "ac:links-work"); err == nil || !strings.Contains(err.Error(), "missing exact heading") {
 			t.Errorf("heading %q is rejected by spec lint (or fenced) but resolved: %v", heading, err)
 		}
+	}
+	if err := featureAnchorExists("### AC: Links-Work\n", "ac:Links-Work"); err == nil || !strings.Contains(err.Error(), "missing exact heading") {
+		t.Errorf("a non-kebab AC id is rejected by spec lint, so it must not resolve: %v", err)
+	}
+	if err := featureAnchorExists("### AC: links-work\n\n    ### AC: links-work\n", "ac:links-work"); err != nil {
+		t.Errorf("an indented code example must not make a real heading ambiguous: %v", err)
 	}
 	both := "### AC: links-work\n\n### AC: links-work (verifies REQ:links)\n"
 	if err := featureAnchorExists(both, "ac:links-work"); err == nil || !strings.Contains(err.Error(), "found 2 exact headings") {

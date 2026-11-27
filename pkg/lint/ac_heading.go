@@ -87,7 +87,9 @@ func (c *acHeadingChecker) check(specRoot string) ([]Violation, error) {
 		lines := strings.Split(string(content), "\n")
 		for i, raw := range lines {
 			trimmed := strings.TrimSpace(raw)
-			if !acHeadingTriggerRe.MatchString(trimmed) || isCanonicalACHeading(trimmed) {
+			// An indented code block is code, not an attempted heading
+			// (cli/spec/lint/ac-heading-format#req:trigger-scope).
+			if feature.IsIndentedCodeLine(raw) || !acHeadingTriggerRe.MatchString(trimmed) || isCanonicalACHeading(trimmed) {
 				continue
 			}
 			msg, _, _ := classifyACHeading(trimmed)
@@ -122,7 +124,9 @@ func (c *acHeadingChecker) fix(specRoot string) error {
 		changed := false
 		for i, raw := range lines {
 			trimmed := strings.TrimSpace(raw)
-			if !acHeadingTriggerRe.MatchString(trimmed) || isCanonicalACHeading(trimmed) {
+			// An indented code block is code, not an attempted heading
+			// (cli/spec/lint/ac-heading-format#req:trigger-scope).
+			if feature.IsIndentedCodeLine(raw) || !acHeadingTriggerRe.MatchString(trimmed) || isCanonicalACHeading(trimmed) {
 				continue
 			}
 			_, fixable, canonical := classifyACHeading(trimmed)

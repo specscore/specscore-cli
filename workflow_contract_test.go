@@ -352,28 +352,46 @@ func TestCIPathClassifierContract(t *testing.T) {
 		wantDogfood string
 	}{
 		{
-			name:        "docs-only skips heavy gates while CI still runs",
+			name:        "docs-only skips Go gates but runs dogfood, which scans docs for citations",
 			changes:     map[string]string{"docs/guide.md": "guide\n"},
 			wantGo:      "false",
-			wantDogfood: "false",
+			wantDogfood: "true",
 		},
 		{
 			name:        "Go-only runs every Go gate",
 			changes:     map[string]string{"workflow_contract.go": "package specscore_cli\n"},
 			wantGo:      "true",
-			wantDogfood: "false",
+			wantDogfood: "true",
 		},
 		{
 			name:        "coverage gate changes run every Go gate",
 			changes:     map[string]string{"scripts/coverage-gate.sh": "#!/usr/bin/env bash\n"},
 			wantGo:      "true",
-			wantDogfood: "false",
+			wantDogfood: "true",
 		},
 		{
 			name:        "installer changes run Go and installer gates",
 			changes:     map[string]string{"scripts/install.ps1": "# changed\n"},
 			wantGo:      "true",
-			wantDogfood: "false",
+			wantDogfood: "true",
+		},
+		{
+			name:        "specscore.yaml runs dogfood: code deps --check reads it for project identity and mirrors",
+			changes:     map[string]string{"specscore.yaml": "# changed\n"},
+			wantGo:      "false",
+			wantDogfood: "true",
+		},
+		{
+			name:        "agent skills run dogfood: code deps --check scans them",
+			changes:     map[string]string{"ai/skills/specscore/SKILL.md": "# changed\n"},
+			wantGo:      "false",
+			wantDogfood: "true",
+		},
+		{
+			name:        "root README runs dogfood: code deps --check scans every file",
+			changes:     map[string]string{"README.md": "# changed\n"},
+			wantGo:      "false",
+			wantDogfood: "true",
 		},
 		{
 			name:        "spec-only runs dogfood",
@@ -435,7 +453,7 @@ func TestCIPathClassifierFailsClosedOnMalformedStatusStream(t *testing.T) {
 }
 
 func TestCIPathClassifierUsesBothRenameAndCopyPathsAndDeletedPaths(t *testing.T) {
-	t.Run("rename from Go into docs still runs the source-path Go gate", func(t *testing.T) {
+	t.Run("rename from Go into docs runs the source-path Go gate and dogfood", func(t *testing.T) {
 		repo, base, head := classifierFixtureWithMutation(t,
 			map[string]string{"source\nname.go": "package specscore_cli\n"},
 			func(repo string) {
@@ -449,12 +467,12 @@ func TestCIPathClassifierUsesBothRenameAndCopyPathsAndDeletedPaths(t *testing.T)
 			},
 		)
 		got := runClassifier(t, repo, base, head)
-		if got["go"] != "true" || got["dogfood"] != "false" {
-			t.Fatalf("rename classifier = %#v, want source-path Go gate only", got)
+		if got["go"] != "true" || got["dogfood"] != "true" {
+			t.Fatalf("rename classifier = %#v, want the source-path Go gate plus dogfood", got)
 		}
 	})
 
-	t.Run("copy from Go into docs still runs Go gates", func(t *testing.T) {
+	t.Run("copy from Go into docs runs Go gates and dogfood", func(t *testing.T) {
 		repo, base, head := classifierFixtureWithMutation(t,
 			map[string]string{"tool.go": "package specscore_cli\n"},
 			func(repo string) {
@@ -466,8 +484,8 @@ func TestCIPathClassifierUsesBothRenameAndCopyPathsAndDeletedPaths(t *testing.T)
 			},
 		)
 		got := runClassifier(t, repo, base, head)
-		if got["go"] != "true" || got["dogfood"] != "false" {
-			t.Fatalf("copy classifier = %#v, want source-path Go gate only", got)
+		if got["go"] != "true" || got["dogfood"] != "true" {
+			t.Fatalf("copy classifier = %#v, want the source-path Go gate plus dogfood", got)
 		}
 	})
 
@@ -481,8 +499,8 @@ func TestCIPathClassifierUsesBothRenameAndCopyPathsAndDeletedPaths(t *testing.T)
 			},
 		)
 		got := runClassifier(t, repo, base, head)
-		if got["go"] != "true" || got["dogfood"] != "false" {
-			t.Fatalf("deletion classifier = %#v, want deleted-path Go gate only", got)
+		if got["go"] != "true" || got["dogfood"] != "true" {
+			t.Fatalf("deletion classifier = %#v, want the deleted-path Go gate plus dogfood", got)
 		}
 	})
 }

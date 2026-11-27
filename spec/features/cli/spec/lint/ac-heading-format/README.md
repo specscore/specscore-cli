@@ -31,7 +31,7 @@ The rule MUST be registered in the lint rule registry under the name `ac-heading
 
 #### REQ: trigger-scope
 
-The rule MUST examine every line of every Feature README (`spec/features/**/README.md` recognized by its `# Feature: <title>` H1) that matches `^###\s*AC\s*:` (three hashes, optional whitespace, the literal `AC`, optional whitespace, a colon) — however malformed — as an attempted AC heading.
+The rule MUST examine every line of every Feature README (`spec/features/**/README.md` recognized by its `# Feature: <title>` H1) that matches `^###\s*AC\s*:` (three hashes, optional whitespace, the literal `AC`, optional whitespace, a colon) — however malformed — as an attempted AC heading. Surrounding whitespace is ignored, except that a line whose leading whitespace reaches four columns (a tab advancing to the next multiple of four) is a Markdown indented code block, not an attempted heading, and MUST be skipped.
 
 #### REQ: canonical-form
 

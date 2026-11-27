@@ -11,7 +11,11 @@ func TestACHeadingID(t *testing.T) {
 		{"### AC: total-visible", "total-visible", true},
 		{"### AC: total-visible (verifies REQ:totals)", "total-visible", true},
 		{"### AC: a1-b2 (verifies cli/init#req:plan-routing-hint-appended)", "a1-b2", true},
-		{"  ### AC: indented  ", "indented", true}, // surrounding whitespace ignored, as lint ignores it
+		{"  ### AC: indented  ", "indented", true}, // up to three spaces of indentation is still a heading
+		{"   ### AC: three-spaces", "three-spaces", true},
+		{"    ### AC: indented-code", "", false}, // four spaces: Markdown indented code, not a heading
+		{"\t### AC: tab-indented", "", false},
+		{"  \t### AC: tab-after-spaces", "", false},
 		{"### AC: total-visible\r", "total-visible", true},
 		{"###  AC: doubled-space", "", false},
 		{"### AC:  doubled-space", "", false},
@@ -29,6 +33,24 @@ func TestACHeadingID(t *testing.T) {
 		gotID, gotOK := ACHeadingID(tt.line)
 		if gotID != tt.wantID || gotOK != tt.wantOK {
 			t.Errorf("ACHeadingID(%q) = (%q, %v), want (%q, %v)", tt.line, gotID, gotOK, tt.wantID, tt.wantOK)
+		}
+	}
+}
+
+func TestIsIndentedCodeLine(t *testing.T) {
+	for line, want := range map[string]bool{
+		"":            false,
+		"   ":         false,
+		"   x":        false,
+		"    x":       true,
+		"\tx":         true,
+		" \tx":        true,
+		"### AC: x":   false,
+		"\t":          true,
+		"  ### AC: x": false,
+	} {
+		if got := IsIndentedCodeLine(line); got != want {
+			t.Errorf("IsIndentedCodeLine(%q) = %v, want %v", line, got, want)
 		}
 	}
 }
