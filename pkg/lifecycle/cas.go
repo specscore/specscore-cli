@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -282,6 +283,15 @@ func lifecycleProcessGate() chan struct{} {
 // independent while live-project writers still coordinate through the same
 // .specscore-lifecycle.lock pathname.
 func lifecycleLockRoot(path string) string {
+	return lifecycleLockRootWithin(path, "")
+}
+
+// lifecycleLockRootWithin is lifecycleLockRoot with an optional ceiling: when
+// stopAt is a non-empty absolute directory, the upward walk checks stopAt
+// itself and then falls back to the artifact's directory instead of looking
+// at any ancestor above it. Tests pass their temp root so nothing outside it
+// can change the result.
+func lifecycleLockRootWithin(path, stopAt string) string {
 	abs, err := lifecycleLockAbs(path)
 	if err != nil {
 		return dirOf(path)
@@ -298,11 +308,11 @@ func lifecycleLockRoot(path string) string {
 		if base == "spec" {
 			return filepath.Dir(dir)
 		}
-		if lifecycleLockRootMarker(dir) {
+		if fileOrDirExists(filepath.Join(dir, "specscore.yaml")) || isGitMarker(filepath.Join(dir, ".git")) {
 			return dir
 		}
 		parent := filepath.Dir(dir)
-		if parent == dir {
+		if dir == stopAt || parent == dir {
 			return filepath.Dir(abs)
 		}
 		dir = parent
@@ -311,17 +321,16 @@ func lifecycleLockRoot(path string) string {
 
 var lifecycleLockAbs = filepath.Abs
 
-// lifecycleLockRootMarker reports whether dir is a project root: it holds a
-// specscore.yaml or a real git marker. It is a variable so tests can keep the
-// upward walk hermetic, independent of what sits above their temp directory.
-var lifecycleLockRootMarker = func(dir string) bool {
-	return fileOrDirExists(filepath.Join(dir, "specscore.yaml")) || isGitMarker(filepath.Join(dir, ".git"))
-}
+// gitdirPrefix starts the .git file git writes for linked worktrees and
+// submodules.
+const gitdirPrefix = "gitdir:"
 
 // isGitMarker reports whether path is a genuine git marker: a git directory
-// containing HEAD, or a .git file whose content starts with "gitdir:" (linked
-// worktrees and submodules). An empty or unrelated .git entry does not count,
-// so a stray /tmp/.git cannot fence every temp-directory project at /tmp.
+// containing HEAD, or a regular .git file whose content starts with "gitdir:"
+// (linked worktrees and submodules). An empty or unrelated .git entry does
+// not count, so a stray /tmp/.git cannot fence every temp-directory project
+// at /tmp. Non-regular entries (FIFOs, devices) are never opened, and only
+// the prefix is read, so a hostile .git cannot block or exhaust memory.
 func isGitMarker(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -330,11 +339,19 @@ func isGitMarker(path string) bool {
 	if info.IsDir() {
 		return fileOrDirExists(filepath.Join(path, "HEAD"))
 	}
-	content, err := os.ReadFile(path)
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
-	return strings.HasPrefix(string(content), "gitdir:")
+	defer func() { _ = f.Close() }()
+	var buf [len(gitdirPrefix)]byte
+	if _, err := io.ReadFull(f, buf[:]); err != nil {
+		return false
+	}
+	return string(buf[:]) == gitdirPrefix
 }
 
 func fileOrDirExists(path string) bool {

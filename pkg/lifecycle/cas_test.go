@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +131,9 @@ func TestLifecycleLockRoot_RecognizesProjectAndStagedRoots(t *testing.T) {
 		{name: "empty git directory ignored", prep: func(t *testing.T, root string) {
 			mkdirTest(t, filepath.Join(root, ".git"))
 		}, want: func(root string) string { return filepath.Join(root, "docs") }},
+		{name: "short git file ignored", prep: func(t *testing.T, root string) {
+			writeTestFile(t, filepath.Join(root, ".git"), "gitdi")
+		}, want: func(root string) string { return filepath.Join(root, "docs") }},
 		{name: "unrelated git file ignored", prep: func(t *testing.T, root string) {
 			writeTestFile(t, filepath.Join(root, ".git"), "not a pointer\n")
 		}, want: func(root string) string { return filepath.Join(root, "docs") }},
@@ -137,8 +141,10 @@ func TestLifecycleLockRoot_RecognizesProjectAndStagedRoots(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
-			hermeticLockRootMarker(t, root)
+			root, err := filepath.Abs(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			if tt.prep != nil {
 				tt.prep(t, root)
 			}
@@ -150,28 +156,41 @@ func TestLifecycleLockRoot_RecognizesProjectAndStagedRoots(t *testing.T) {
 			if tt.want != nil {
 				want = tt.want(root)
 			}
-			if got := lifecycleLockRoot(path); got != want {
+			// The ceiling stops the walk at root, so nothing above
+			// t.TempDir() (a spec/ or .specscore-txn- ancestor, a stray
+			// .git or specscore.yaml) can change the result.
+			if got := lifecycleLockRootWithin(path, root); got != want {
 				t.Fatalf("root = %q, want %q", got, want)
 			}
 		})
 	}
 }
 
-// hermeticLockRootMarker confines marker detection to root so the upward walk
-// never observes markers that happen to exist above t.TempDir().
-func hermeticLockRootMarker(t *testing.T, root string) {
-	t.Helper()
-	original := lifecycleLockRootMarker
-	lifecycleLockRootMarker = func(dir string) bool {
-		if dir != root && !strings.HasPrefix(dir, root+string(filepath.Separator)) {
-			return false
-		}
-		return original(dir)
+// The ceiling keeps markers above it out of the walk: a spec/ or
+// .specscore-txn- ancestor, or a stray specscore.yaml, would otherwise fence
+// the lock above the test's own root.
+func TestLifecycleLockRootWithin_IgnoresAncestorsAboveCeiling(t *testing.T) {
+	for _, ancestor := range []string{"spec", ".specscore-txn-host", "plain"} {
+		t.Run(ancestor, func(t *testing.T) {
+			outer, err := filepath.Abs(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, filepath.Join(outer, "specscore.yaml"), "")
+			root := filepath.Join(outer, ancestor, "inner")
+			mkdirTest(t, root)
+			path := filepath.Join(root, "docs", "artifact.md")
+			if got, want := lifecycleLockRootWithin(path, root), filepath.Join(root, "docs"); got != want {
+				t.Fatalf("root = %q, want %q", got, want)
+			}
+		})
 	}
-	t.Cleanup(func() { lifecycleLockRootMarker = original })
 }
 
 func TestIsGitMarker_UnreadableFileIsNotAMarker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0 does not revoke read permission on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root can read mode-000 files")
 	}
