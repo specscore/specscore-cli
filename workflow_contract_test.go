@@ -223,6 +223,21 @@ func TestCIAggregateWorkflowContract(t *testing.T) {
 		}
 	}
 
+	// The dogfood job must keep validating source citations, or
+	// `code deps --check` silently rots again (it failed on main unnoticed
+	// because nothing ran it).
+	citationCheck := false
+	for _, step := range mappingValue(t, mappingValue(t, jobs, "dogfood"), "steps").Content {
+		for i := 0; i+1 < len(step.Content); i += 2 {
+			if step.Content[i].Value == "run" && step.Content[i+1].Value == "/tmp/specscore code deps --check > /dev/null" {
+				citationCheck = true
+			}
+		}
+	}
+	if !citationCheck {
+		t.Fatal("dogfood job must run `specscore code deps --check`")
+	}
+
 	if _, err := os.Stat(".github/workflows/dogfood.yml"); !os.IsNotExist(err) {
 		t.Fatalf("standalone dogfood workflow must be removed after consolidation, stat error: %v", err)
 	}

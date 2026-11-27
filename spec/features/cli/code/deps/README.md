@@ -46,7 +46,7 @@ The command operates on the working tree under the project root. It reads files 
 
 #### REQ: offline-typed-source-link-check
 
-`--check` MUST parse typed `implements`, `verifies`, and `references` directives before validating their targets. `implements` MUST target a Feature REQ. `verifies` MUST target a Feature AC or REQ. Feature `#req:<id>` and `#ac:<id>` fragments MUST resolve to exactly one non-fenced `#### REQ: <id>` or `### AC: <id>` heading in the current project or an explicit local mirror. Fragment kind matching is case-insensitive so canonical lowercase typed links and legacy uppercase links resolve identically. Invalid relation/target pairs and missing, renamed, duplicate, malformed, unavailable, or identity-mismatched anchors fail deterministically without a network request. Plan and doc citations remain listing-only.
+`--check` MUST parse typed `implements`, `verifies`, and `references` directives before validating their targets. `implements` MUST target a Feature REQ. `verifies` MUST target a Feature AC or REQ. Feature `#req:<id>` fragments MUST resolve to exactly one non-fenced `#### REQ: <id>` heading, and `#ac:<id>` fragments to exactly one non-fenced Acceptance Criteria heading for `<id>` in any form `spec lint` accepts ([cli/spec/lint/ac-heading-format#req:canonical-form](../../spec/lint/ac-heading-format/README.md#req-canonical-form): `### AC: <id>`, or `### AC: <id> (verifies ...)`), in the current project or an explicit local mirror. The checker MUST use the same heading definition as that lint rule, not a second copy, so a heading lint accepts is never an unresolvable citation target and a heading lint rejects never resolves. Fragment kind matching is case-insensitive so canonical lowercase typed links and legacy uppercase links resolve identically. Invalid relation/target pairs and missing, renamed, duplicate, malformed, unavailable, or identity-mismatched anchors fail deterministically without a network request. Plan and doc citations remain listing-only.
 
 ### Sources matched
 
@@ -138,6 +138,16 @@ A comment `// specscore: feature/column-validation` (a space between the colon a
 **When** `specscore code deps --check` scans the changed source and test scope
 
 **Then** it lists both Feature targets, accepts each exact live REQ and AC, and rejects a missing anchor or an invalid relation/target pair with a deterministic source diagnostic, without fetching or scanning unrelated repositories.
+
+### AC: ac-citations-accept-lint-heading-forms
+
+**Requirements:** cli/code/deps#req:offline-typed-source-link-check
+
+**Given** a Feature whose Acceptance Criteria headings use each form `spec lint` accepts (`### AC: <id>` and `### AC: <id> (verifies REQ:<req>)`) and forms it rejects (for example a doubled space, an uppercase id, or trailing text), and a test citing each with `specscore:verifies ...#ac:<id>`
+
+**When** `specscore code deps --check` and `specscore spec lint --rules=ac-heading-format` run on the same tree
+
+**Then** for every heading the two agree: a heading lint accepts resolves and `--check` exits `0`, and a heading lint rejects does not resolve and `--check` exits `4` naming the citation.
 
 ## Open Questions
 

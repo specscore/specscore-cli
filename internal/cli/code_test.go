@@ -190,11 +190,7 @@ func TestCodeDeps_WithAnnotations(t *testing.T) {
 	tmp := t.TempDir()
 	// Create a Go file with a specscore: annotation.
 	goFile := filepath.Join(tmp, "main.go")
-	content := `package main
-
-// specscore:feature/auth
-func main() {}
-`
+	content := "package main\n\n// specscore:feature/auth\nfunc main() {}\n"
 	if err := os.WriteFile(goFile, []byte(content), 0o644); err != nil {
 		t.Fatalf("write go file: %v", err)
 	}
@@ -214,11 +210,7 @@ func main() {}
 func TestCodeDeps_SpaceAfterColon(t *testing.T) {
 	tmp := t.TempDir()
 	goFile := filepath.Join(tmp, "foreign_key.go")
-	content := `package ingitdb
-
-// specscore: feature/column-validation
-type ForeignKey struct{}
-`
+	content := "package ingitdb\n\n// specscore: feature/column-validation\ntype ForeignKey struct{}\n"
 	if err := os.WriteFile(goFile, []byte(content), 0o644); err != nil {
 		t.Fatalf("write go file: %v", err)
 	}
@@ -267,12 +259,7 @@ func TestCodeDeps_RecursiveGlobMatchesDirectChildren(t *testing.T) {
 func TestCodeDeps_TypeFilter(t *testing.T) {
 	tmp := t.TempDir()
 	goFile := filepath.Join(tmp, "svc.go")
-	content := `package svc
-
-// specscore:feature/payments
-// specscore:plan/rollout
-func process() {}
-`
+	content := "package svc\n\n// specscore:feature/payments\n// specscore:plan/rollout\nfunc process() {}\n"
 	if err := os.WriteFile(goFile, []byte(content), 0o644); err != nil {
 		t.Fatalf("write go file: %v", err)
 	}

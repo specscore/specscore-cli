@@ -12,6 +12,7 @@ Go CLI that implements `specscore` — lint, query, scaffold, and lifecycle-tran
 - `go test ./...` — full test suite (≈10–15s).
 - `gofmt -l .` — every commit MUST be gofmt-clean (Go CI gates on this).
 - `go build -o /tmp/specscore ./cmd/specscore && /tmp/specscore spec lint` — dogfood against the repo's own spec tree.
+- `/tmp/specscore code deps --check > /dev/null` — every `specscore:` citation in source and tests must resolve against this tree (CI's dogfood job runs it). Test fixtures that contain annotation text must not put `// specscore:` at the start of a source line (build the fixture as a one-line string or by concatenation), or the check reads them as real citations.
 
 ## Release workflow
 

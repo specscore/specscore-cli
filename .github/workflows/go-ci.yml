@@ -244,6 +244,11 @@ jobs:
         run: /tmp/specscore spec lint
       - name: Check lint-rule catalog is in sync
         run: /tmp/specscore rules --check
+      # Every Feature/REQ/AC citation in source and tests must resolve against
+      # this tree (cli/code/deps#req:offline-typed-source-link-check). The
+      # listing goes to /dev/null; diagnostics go to stderr and fail the job.
+      - name: Check source citations resolve
+        run: /tmp/specscore code deps --check > /dev/null
 
   ci:
     # This exact job name is the one stable GitHub Actions check context that

@@ -567,10 +567,7 @@ func TestFormatOutput_SingleFileMode(t *testing.T) {
 func TestScanFile_DeduplicatesReferences(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dup.go")
-	content := `// specscore:feature/auth
-// specscore:feature/auth
-// specscore:plan/v2
-`
+	content := "// specscore:feature/auth\n// specscore:feature/auth\n// specscore:plan/v2\n"
 	_ = os.WriteFile(path, []byte(content), 0o644)
 
 	refs, err := scanFile(path)

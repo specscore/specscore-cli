@@ -157,20 +157,11 @@ func TestScanFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create files with annotations
-	file1Content := `package main
-
-// specscore:feature/auth
-func Login() {}
-
-// specscore:plan/rollout
-func Deploy() {}
-`
-	file2Content := `package handlers
-
-// specscore:feature/auth
-// specscore:feature/dashboard
-func Handle() {}
-`
+	// Fixture annotations are single-line interpreted strings, never raw-string
+	// lines that start with a comment marker: `specscore code deps --check`
+	// scans this file too and must not read fixture text as real citations.
+	file1Content := "package main\n\n// specscore:feature/auth\nfunc Login() {}\n\n// specscore:plan/rollout\nfunc Deploy() {}\n"
+	file2Content := "package handlers\n\n// specscore:feature/auth\n// specscore:feature/dashboard\nfunc Handle() {}\n"
 	file3Content := `package plain
 // no annotations here
 func Foo() {}
@@ -234,11 +225,7 @@ func Foo() {}
 	})
 
 	t.Run("deduplicates within a file", func(t *testing.T) {
-		dupeContent := `package x
-// specscore:feature/auth
-// specscore:feature/auth
-func A() {}
-`
+		dupeContent := "package x\n// specscore:feature/auth\n// specscore:feature/auth\nfunc A() {}\n"
 		dupeFile := filepath.Join(tmpDir, "dupe.go")
 		must(os.WriteFile(dupeFile, []byte(dupeContent), 0o644))
 
@@ -256,11 +243,7 @@ func A() {}
 func TestScanFilesWithExpandedURL(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	content := `package main
-
-// https://specscore.org/github.com/acme/project/spec/features/cli/task
-func TaskClaim() {}
-`
+	content := "package main\n\n// https://specscore.org/github.com/acme/project/spec/features/cli/task\nfunc TaskClaim() {}\n"
 	file := filepath.Join(tmpDir, "task.go")
 	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
