@@ -773,7 +773,7 @@ func TestSelfUpdate_CheckStatesNextStep(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/self-update#ac:canonical-and-alias — `update --check` (the alias)
+// cli/self-update#ac:canonical-and-alias (related; not verified here) — `update --check` (the alias)
 // produces byte-identical output/exit-code to `self-update --check`, driven
 // through the real command since both names resolve to the same *cobra.
 // Command object built by selfUpdateCommand.

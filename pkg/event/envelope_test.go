@@ -76,7 +76,7 @@ func TestValidate_RejectsBadActorKind(t *testing.T) {
 }
 
 // TestValidate_PayloadOpaque verifies the validator's contribution to
-// specscore:verifies feature/cli/event#ac:payload-is-opaque-passthrough Arbitrary, unknown payload fields MUST
+// cli/event#ac:payload-is-opaque-passthrough (related; not verified here) Arbitrary, unknown payload fields MUST
 // NOT be rejected; the validator confirms only that the bytes parse as a
 // JSON object.
 func TestValidate_PayloadOpaque(t *testing.T) {

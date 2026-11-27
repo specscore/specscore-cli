@@ -42,7 +42,7 @@ func runPlan(t *testing.T, args ...string) (string, string, error) {
 	return out.String(), errOut.String(), err
 }
 
-// specscore:verifies feature/cli/plan#ac:group-exposes-subcommands
+// cli/plan#ac:group-exposes-subcommands (related; not verified here)
 func TestPlanGroup_NoSubcommand_PrintsHelpExitsZero(t *testing.T) {
 	out, _, err := runPlan(t)
 	if err != nil {

@@ -316,7 +316,7 @@ func TestStudioContradictions_DBFlagBypassesWorkspace(t *testing.T) {
 
 // --- Task 2 ACs ---
 
-// specscore:verifies feature/cli/studio/answers#ac:agreement-not-flagged — two declared facts with the same subject,
+// cli/studio/answers#ac:agreement-not-flagged (related; not verified here) — two declared facts with the same subject,
 // predicate, and object from different evidence pointers are not a
 // contradiction; the command exits 0 and returns an empty JSON array.
 func TestStudioContradictions_AgreementNotFlagged(t *testing.T) {
@@ -422,7 +422,7 @@ func TestStudioContradictions_ContradictsFactWritten(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/studio/answers#ac:contradicts-fact-written (--no-write) — with --no-write, the verb
+// cli/studio/answers#ac:contradicts-fact-written (related; not verified here) (--no-write) — with --no-write, the verb
 // detects and prints items but does not write any contradicts fact.
 func TestStudioContradictions_NoWriteSkipsWriteBack(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")

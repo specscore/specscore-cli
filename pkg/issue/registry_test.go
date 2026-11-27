@@ -18,7 +18,7 @@ func TestPathPatterns(t *testing.T) {
 }
 
 // TestRuleFamilyPrefix pins the canonical rule-ID prefix. Verifies
-// specscore:verifies feature/cli/spec/lint/issue-rules#ac:type-registered (the rule-family half).
+// cli/spec/lint/issue-rules#ac:type-registered (related; not verified here) (the rule-family half).
 func TestRuleFamilyPrefix(t *testing.T) {
 	if RuleFamilyPrefix != "I-" {
 		t.Fatalf("RuleFamilyPrefix = %q; want %q", RuleFamilyPrefix, "I-")

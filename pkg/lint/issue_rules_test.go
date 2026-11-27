@@ -41,7 +41,7 @@ func TestIssueRules_DefaultSuiteIncludesIRules(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/spec/lint/issue-rules#ac:rules-filter-by-id When --rules I-009 is set, only I-009
+// cli/spec/lint/issue-rules#ac:rules-filter-by-id (related; not verified here) When --rules I-009 is set, only I-009
 // violations surface (other I-rules whose stubs would emit nothing
 // anyway are filtered too, but the key invariant is: a non-I-009
 // violation that would otherwise fire is suppressed).
@@ -536,7 +536,7 @@ func TestIssueRules_I012_AffectedComponentRefViolation(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/spec/lint/issue-rules#ac:affected-component-ref-violation (positive case). When
+// cli/spec/lint/issue-rules#ac:affected-component-ref-violation (related; not verified here) (positive case). When
 // `affected_component` resolves to an existing
 // `spec/features/<slug>/README.md`, I-012 stays silent.
 func TestIssueRules_I012_AffectedComponentRefResolves(t *testing.T) {

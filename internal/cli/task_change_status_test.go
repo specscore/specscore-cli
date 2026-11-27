@@ -57,7 +57,7 @@ func taskFileStatus(t *testing.T, path string) string {
 	return ""
 }
 
-// specscore:verifies feature/cli/task/change-status#ac:single-actor-no-coordination (happy path) + success-line output.
+// cli/task/change-status#ac:single-actor-no-coordination (related; not verified here) (happy path) + success-line output.
 func TestTaskChangeStatus_LegalTransitions(t *testing.T) {
 	cases := []struct {
 		from, to string

@@ -177,7 +177,7 @@ func TestResolve_AmbiguousEntityIDAndAlias(t *testing.T) {
 
 // --- not found ---
 
-// specscore:verifies feature/cli/studio/answers#ac:resolve-unknown-guides — a name with no matching alias or entity id
+// cli/studio/answers#ac:resolve-unknown-guides (related; not verified here) — a name with no matching alias or entity id
 // returns NotFound.
 func TestResolve_NotFound(t *testing.T) {
 	facts := []fact.Fact{

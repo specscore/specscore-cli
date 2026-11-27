@@ -147,7 +147,7 @@ func TestRefuseConflictedTables_ReadErrorIsUnexpected(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — `rule lint --fix`
+// cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical (related; not verified here) — `rule lint --fix`
 // maps a refused pass onto the shared exit-1 refusal.
 func TestRuleLintFix_RefusesConflictedTree(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Recorded")

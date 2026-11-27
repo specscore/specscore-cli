@@ -714,7 +714,7 @@ func TestSkip_NonPlanAndDirectoryPlans(t *testing.T) {
 	}
 }
 
-// specscore:verifies feature/cli/spec/lint/plan-rules#ac:rules-in-default-suite (rule names + filter behavior)
+// cli/spec/lint/plan-rules#ac:rules-in-default-suite (related; not verified here) (rule names + filter behavior)
 func TestRulesRegisteredInAllRuleNames(t *testing.T) {
 	all := AllRuleNames()
 	for _, n := range []string{"P-001", "P-002", "P-003", "P-004"} {

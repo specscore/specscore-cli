@@ -74,7 +74,7 @@ func runTemplate(t *testing.T, facts []fact.Fact, question string) (id string, a
 
 // --- registry ---
 
-// specscore:verifies feature/cli/studio/answers#ac:ask-unroutable-lists-templates (the same content as --list) — the router
+// cli/studio/answers#ac:ask-unroutable-lists-templates (related; not verified here) (the same content as --list) — the router
 // exposes exactly the 13 documented templates, each with a stable id and at
 // least one human-readable form.
 func TestTemplates_ThirteenWithIDsAndForms(t *testing.T) {
@@ -527,7 +527,7 @@ func TestAliasesResolve(t *testing.T) {
 
 // --- unroutable ---
 
-// specscore:verifies feature/cli/studio/answers#ac:ask-unroutable-lists-templates — a question matching no template does not
+// cli/studio/answers#ac:ask-unroutable-lists-templates (related; not verified here) — a question matching no template does not
 // route (the caller then exits 1 and lists the templates).
 func TestRoute_Unroutable(t *testing.T) {
 	for _, q := range []string{
