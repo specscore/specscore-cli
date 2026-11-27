@@ -2,7 +2,7 @@
 
 Generated from the lint rule registry. Do not edit by hand.
 
-Total rules: 187
+Total rules: 188
 
 ## capability
 
@@ -94,6 +94,7 @@ Total rules: 187
 | Rule | Severity | Description |
 | --- | --- | --- |
 | ac-heading-format | error | Requires Acceptance Criteria headings to read `### AC: <id>` with one space after the colon and a kebab-case id; --fix repairs whitespace-only deviations. |
+| feature-ac-test-coverage | error | Opt-in (ac_test_coverage.required in specscore.yaml): every acceptance criterion of an Implementing or Stable Feature must be named by a `specscore:` annotation (or specscore URL) in a test file matching ac_test_coverage.test_files, or be deferred by a `**Deferred:** <reason>` line under the AC or a Plan's `## Deferred AC Coverage` entry. Comment-based: tests are not run. Also reports a malformed ac_test_coverage block. |
 | feature-source-ideas-required | error | Requires every Feature README to carry a **Source Ideas:** line with an explicit sentinel (— / none) or a slug list; --fix backfills the sentinel. |
 | feature-storage-layout | error | Opt-in (storage_layout.required in specscore.yaml): requires one ## Storage layout section that either says the Feature stores nothing (and nothing else) or lists its records with an **Approved by:** line naming who approved and a YYYY-MM-DD date; an unapproved value is an error unless the Feature is Draft, In Review or Amending; also reports a malformed storage_layout block and a misused existing-layout line. --fix=feature-storage-layout (opt-in) inserts a skeleton. |
 | feature-storage-layout-existing | info | Opt-in (storage_layout.required and storage_layout.existing_until in specscore.yaml): lists layouts recorded as `not reviewed — existing layout, recorded YYYY-MM-DD` on Features dated on or before existing_until, which pass but were never reviewed by a human. Advisory: shown at --severity info, never fails a run. |
