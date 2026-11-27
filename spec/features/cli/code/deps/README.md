@@ -143,11 +143,11 @@ A comment `// specscore: feature/column-validation` (a space between the colon a
 
 **Requirements:** cli/code/deps#req:offline-typed-source-link-check
 
-**Given** a Feature whose Acceptance Criteria headings use each form `spec lint` accepts (`### AC: <id>` and `### AC: <id> (verifies REQ:<req>)`) and forms it rejects (for example a doubled space, an uppercase id such as `### AC: Total-Visible` cited as `#ac:Total-Visible`, trailing text, or a heading indented four spaces as a code block), and a test citing each with `specscore:verifies ...#ac:<id>`
+**Given** a Feature whose Acceptance Criteria headings use each form `spec lint` accepts (`### AC: <id>` and `### AC: <id> (verifies REQ:<req>)`) and forms it rejects (for example a doubled space, an uppercase id such as `### AC: Total-Visible` cited as `#ac:Total-Visible`, or trailing text), plus an AC heading line indented as a Markdown code block (four or more columns, or a tab), and a test citing each with `specscore:verifies ...#ac:<id>`
 
 **When** `specscore code deps --check` and `specscore spec lint --rules=ac-heading-format` run on the same tree
 
-**Then** for every heading the two agree: a heading lint accepts resolves and `--check` exits `0`, and a heading lint rejects does not resolve and `--check` exits `4` naming the citation.
+**Then** for every heading the two agree: a heading lint accepts resolves and `--check` exits `0`, and a heading lint rejects does not resolve and `--check` exits `4` naming the citation. A line indented as a code block is not a heading for either tool: `spec lint` neither flags nor rewrites it, and `--check` does not resolve it (exit `4` naming the citation).
 
 ## Open Questions
 
