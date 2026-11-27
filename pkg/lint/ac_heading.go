@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/specscore/specscore-cli/pkg/feature"
 )
 
 // acHeadingChecker enforces the canonical Acceptance Criteria heading format
@@ -49,13 +51,19 @@ func (c *acHeadingChecker) severity() string { return "error" }
 // heading, however malformed: three hashes, optional whitespace, the literal
 // "AC", optional whitespace, and a colon. Intentionally loose so every
 // malformed variant in scope is caught; a matching line is then checked
-// against acHeadingCanonicalRe to see whether it is already well-formed.
+// against isCanonicalACHeading to see whether it is already well-formed.
 var acHeadingTriggerRe = regexp.MustCompile(`^###\s*AC\s*:`)
 
-// acHeadingCanonicalRe is the accepted form: exactly "### AC: " followed by a
-// kebab-case id, optionally followed by exactly one space and a grandfathered
-// `(verifies ...)` annotation (see type doc), and nothing else.
-var acHeadingCanonicalRe = regexp.MustCompile(`^### AC: [a-z0-9]+(?:-[a-z0-9]+)*(?: \(verifies\b[^()]*\))?$`)
+// isCanonicalACHeading reports whether a trimmed line is already in an
+// accepted form: exactly "### AC: " followed by a kebab-case id, optionally
+// followed by exactly one space and a grandfathered `(verifies ...)`
+// annotation (see type doc), and nothing else. The definition lives in
+// feature.ACHeadingID so `code deps --check` resolves AC citations against
+// exactly the headings this rule accepts.
+func isCanonicalACHeading(trimmed string) bool {
+	_, ok := feature.ACHeadingID(trimmed)
+	return ok
+}
 
 // acHeadingParseRe captures everything after the (loosely-matched) "AC:"
 // marker, with any leading whitespace already stripped, for classifying
@@ -79,7 +87,9 @@ func (c *acHeadingChecker) check(specRoot string) ([]Violation, error) {
 		lines := strings.Split(string(content), "\n")
 		for i, raw := range lines {
 			trimmed := strings.TrimSpace(raw)
-			if !acHeadingTriggerRe.MatchString(trimmed) || acHeadingCanonicalRe.MatchString(trimmed) {
+			// An indented code block is code, not an attempted heading
+			// (cli/spec/lint/ac-heading-format#req:trigger-scope).
+			if feature.IsIndentedCodeLine(raw) || !acHeadingTriggerRe.MatchString(trimmed) || isCanonicalACHeading(trimmed) {
 				continue
 			}
 			msg, _, _ := classifyACHeading(trimmed)
@@ -114,7 +124,9 @@ func (c *acHeadingChecker) fix(specRoot string) error {
 		changed := false
 		for i, raw := range lines {
 			trimmed := strings.TrimSpace(raw)
-			if !acHeadingTriggerRe.MatchString(trimmed) || acHeadingCanonicalRe.MatchString(trimmed) {
+			// An indented code block is code, not an attempted heading
+			// (cli/spec/lint/ac-heading-format#req:trigger-scope).
+			if feature.IsIndentedCodeLine(raw) || !acHeadingTriggerRe.MatchString(trimmed) || isCanonicalACHeading(trimmed) {
 				continue
 			}
 			_, fixable, canonical := classifyACHeading(trimmed)
@@ -132,7 +144,7 @@ func (c *acHeadingChecker) fix(specRoot string) error {
 }
 
 // classifyACHeading explains why a trimmed line matching acHeadingTriggerRe
-// (but not acHeadingCanonicalRe) is malformed, whether the defect is
+// (but not isCanonicalACHeading) is malformed, whether the defect is
 // whitespace-only (and therefore safe for `--fix` to repair), and — when
 // fixable — the exact canonical replacement line.
 func classifyACHeading(trimmed string) (message string, fixable bool, canonical string) {
