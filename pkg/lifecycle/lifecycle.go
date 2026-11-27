@@ -361,17 +361,19 @@ var transitionMatrix = map[Kind][]transitionRow{
 	// dispositions (Withdrawn, Superseded) are reachable from every rung —
 	// mirroring how Plan's dispositions are reachable from every one of its
 	// active statuses — so a lesson can be retired regardless of how far up
-	// the ladder it climbed. Stated -> Recorded is the single audited
-	// correction path: a reviewer who finds a Stated lesson's Enforcement
-	// section names no binding control demotes it back to Recorded with a
-	// required --note explaining the correction, rather than leaving it
-	// stranded mid-ladder or retiring it outright
+	// the ladder it climbed. Stated -> Recorded and Enforced -> Recorded
+	// are the audited correction paths: a reviewer who finds a Stated or
+	// Enforced lesson's Enforcement section names no binding control demotes
+	// it back to Recorded (the not-enforced queue) with a required --note
+	// explaining the correction, rather than leaving it stranded on a rung
+	// it never earned or retiring it outright. No other downward arc exists
 	// (lesson: an-enforcement-ladder-needs-an-audited-correction-path).
 	KindLesson: {
 		{From: LessonRecorded, To: LessonStated},
 		{From: LessonRecorded, To: LessonEnforced},
 		{From: LessonStated, To: LessonEnforced},
 		{From: LessonStated, To: LessonRecorded},
+		{From: LessonEnforced, To: LessonRecorded},
 
 		{From: LessonRecorded, To: LessonWithdrawn},
 		{From: LessonStated, To: LessonWithdrawn},

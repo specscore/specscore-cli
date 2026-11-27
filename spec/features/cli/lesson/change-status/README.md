@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`), into `Withdrawn`/`Superseded`, or back down via the single audited correction `Stated` → `Recorded`. It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
+`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`), into `Withdrawn`/`Superseded`, or back down via an audited correction (`Stated` → `Recorded` or `Enforced` → `Recorded`). It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
 
 ## Synopsis
 
@@ -41,6 +41,7 @@ This verb inherits the strict state machine (exit `4`), `--to` parsing, slug res
 | `Stated` | `Superseded` | disposition — **reason + successor required** |
 | `Enforced` | `Superseded` | disposition — **reason + successor required** |
 | `Stated` | `Recorded` | audited correction — **reason required** — demotes a Stated lesson whose Enforcement section names no binding control |
+| `Enforced` | `Recorded` | audited correction — **reason required** — demotes an Enforced lesson whose claimed control turns out not to bind; the lesson returns to the not-enforced queue |
 
 #### REQ: legal-transition-matrix
 
@@ -48,7 +49,7 @@ The verb MUST accept only the `(from, to)` pairs in the matrix above; any other 
 
 #### REQ: target-status-flag
 
-The verb MUST accept the target status via a required `--to=<status>` flag: `Stated`, `Enforced`, `Withdrawn`, `Superseded`, or `Recorded` (case-insensitive). `Recorded` is the initial state a freshly scaffolded lesson starts in, and is also reachable as the single audited correction target from `Stated` (see REQ: audited-correction-requires-reason). A missing `--to` exits `2`. An unrecognized value exits `2` naming the offending value.
+The verb MUST accept the target status via a required `--to=<status>` flag: `Stated`, `Enforced`, `Withdrawn`, `Superseded`, or `Recorded` (case-insensitive). `Recorded` is the initial state a freshly scaffolded lesson starts in, and is also reachable as the audited correction target from `Stated` or `Enforced` (see REQ: audited-correction-requires-reason). A missing `--to` exits `2`. An unrecognized value exits `2` naming the offending value.
 
 #### REQ: lesson-slug-resolution
 
@@ -60,7 +61,7 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: audited-correction-requires-reason
 
-The audited correction `Stated` → `Recorded` is also reason-required: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). On success the note is written per the shared `## Resolution` mechanism, exactly like every other transition note.
+The audited corrections `Stated` → `Recorded` and `Enforced` → `Recorded` are reason-required under one identical audit: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). On success the note is written per the shared `## Resolution` mechanism, exactly like every other transition note; every earlier section and Resolution entry is kept, and the demoted lesson is again matched by `lesson list --not-enforced`. No other downward arc is legal (`Enforced` → `Stated` stays illegal).
 
 #### REQ: superseded-requires-successor
 
@@ -146,6 +147,18 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 **When** the user runs `specscore lesson change-status kinder-fake --to=recorded --note "Enforcement section named no binding control"`
 **Then** the command exits `0`, rewrites the Status line to `Recorded`, and appends a `## Resolution` section including the note text.
 
+### AC: enforced-to-recorded-requires-reason (verifies REQ:audited-correction-requires-reason)
+
+**Given** `spec/lessons/kinder-fake.md` in `**Status:** Enforced`
+**When** the user runs `specscore lesson change-status kinder-fake --to=recorded` with no `--note`
+**Then** the command exits `2`, naming the audited correction and stating a reason is required. The lesson is unchanged.
+
+### AC: enforced-to-recorded-with-reason-demotes (verifies REQ:audited-correction-requires-reason, REQ:legal-transition-matrix)
+
+**Given** `spec/lessons/kinder-fake.md` in `**Status:** Enforced` with an existing `## Resolution` entry
+**When** the user runs `specscore lesson change-status kinder-fake --to=recorded --note "claimed control does not bind"`
+**Then** the command exits `0` with stdout `kinder-fake: Enforced → Recorded\n`, rewrites the Status line to `Recorded`, appends a `## Resolution` section including the note text while keeping the earlier entry, updates the lessons index row, and `specscore lesson list --not-enforced` lists the lesson.
+
 ### AC: illegal-transition-rejected (verifies REQ:legal-transition-matrix)
 
 **Given** `spec/lessons/kinder-fake.md` in `**Status:** Enforced`
@@ -172,7 +185,7 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 
 ## Open Questions
 
-- The canonical lifecycle has no resurrection from a disposition status — re-pursuing a withdrawn or superseded lesson means recording a new one. Whether to relax this (e.g., an explicit `Withdrawn → Recorded` "reopen" arc) is deferred until real usage shows the need. (This is distinct from the `Stated → Recorded` audited correction added above, which addresses a Stated lesson found to lack a binding control — not a retired disposition.)
+- The canonical lifecycle has no resurrection from a disposition status — re-pursuing a withdrawn or superseded lesson means recording a new one. Whether to relax this (e.g., an explicit `Withdrawn → Recorded` "reopen" arc) is deferred until real usage shows the need. (This is distinct from the `Stated → Recorded` and `Enforced → Recorded` audited corrections added above, which address a lesson found to lack a binding control — not a retired disposition.)
 
 ---
 *This document follows the https://specscore.md/feature-specification*

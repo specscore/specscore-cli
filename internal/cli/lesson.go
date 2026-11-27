@@ -390,8 +390,9 @@ func unwrapPathError(err error) error {
 // lessonChangeStatusCommand transitions a Lesson's **Status:** field via the
 // shared lifecycle state-machine contract — climbing the enforcement ladder
 // (Recorded -> Stated -> Enforced), retiring the lesson (Withdrawn,
-// Superseded), or making the single audited correction (Stated -> Recorded)
-// for a Stated lesson whose Enforcement section names no binding control.
+// Superseded), or making an audited correction (Stated -> Recorded or
+// Enforced -> Recorded) for a lesson whose Enforcement section names no
+// binding control.
 // See spec/features/cli/lesson/change-status/README.md.
 func lessonChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -408,9 +409,11 @@ exclusive to an explicit ` + "`specscore spec lint --fix`" + ` command.
 Both dispositions require a reason: --to=withdrawn and --to=superseded
 require --note. --to=superseded additionally requires --successor naming the
 lesson that replaces this one; it is written as a **Superseded By:**
-reference. The audited correction --to=recorded (legal only from Stated)
-also requires --note documenting why the lesson is being demoted — e.g. its
-Enforcement section named no binding control. If anything fails after the
+reference. The audited correction --to=recorded (legal only from Stated or
+Enforced) also requires --note documenting why the lesson is being demoted —
+e.g. its Enforcement section named no binding control. The note is appended
+as ## Resolution, earlier history is kept, and the lesson returns to the
+--not-enforced queue. If anything fails after the
 status rewrite (lint, I/O, or durability fence), the command exits
 recovery-required with its prepared event and visible state retained; it
 never restores a whole snapshot over concurrent work.

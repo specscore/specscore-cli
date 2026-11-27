@@ -472,8 +472,8 @@ func TestLegalChangeStatusTargets(t *testing.T) {
 			t.Errorf("unexpected target %q", n)
 		}
 	}
-	// "Recorded" is now also a target: the single audited correction from
-	// Stated. It is no longer *only* the initial state.
+	// "Recorded" is now also a target: the audited correction from Stated
+	// or Enforced. It is no longer *only* the initial state.
 	found := false
 	for _, n := range names {
 		if n == "Recorded" {
@@ -481,7 +481,7 @@ func TestLegalChangeStatusTargets(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("Recorded must be a legal change-status target (the Stated -> Recorded audited correction)")
+		t.Error("Recorded must be a legal change-status target (the audited correction to Recorded)")
 	}
 	// Sorted alphabetically.
 	for i := 1; i < len(names); i++ {
