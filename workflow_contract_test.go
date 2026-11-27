@@ -59,7 +59,7 @@ func TestReleaseCallerEnforcesNotarizedMacOSRelease(t *testing.T) {
 	for _, required := range []string{
 		// Bumped with the pin itself. This assertion is what makes a pin change
 		// a deliberate edit rather than a drift; keep them in the same commit.
-		"uses: strongo/cicd/.github/workflows/release.yml@v1.18.0",
+		"uses: strongo/cicd/.github/workflows/release.yml@v1.25.6",
 		"release-artifact-smoke-darwin-arm64:",
 		"require_notarized_macos: true",
 		"artifact_smoke_test_homebrew_cask: true",
