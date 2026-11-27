@@ -122,16 +122,8 @@ type Lesson struct {
 	EvidenceLine          int
 	FrontmatterStatus     string
 	FrontmatterStatusLine int
-
-	// CorrectionReceipt is the digest on the last correction-receipt line
-	// (CorrectionReceiptPrefix) inside a `## Resolution` section: the
-	// EnforcementReceipt the most recent audited correction to Recorded
-	// judged not to bind. Empty when the Lesson was never demoted, or was
-	// demoted before corrections recorded a receipt.
-	CorrectionReceipt string
-
-	FieldCounts     map[string]int
-	SectionSequence []string
+	FieldCounts           map[string]int
+	SectionSequence       []string
 
 	// SectionLines maps a present H2 section title to its 1-based heading
 	// line. Only sections found in the body appear here; callers check
@@ -255,16 +247,9 @@ func Parse(path string) (*Lesson, error) {
 		return nil, err
 	}
 
-	inResolution := false
 	for i := 0; i < len(lines); i++ {
 		raw := lines[i]
 		trimmed := strings.TrimSpace(raw)
-		if inResolution {
-			if digest := parseCorrectionReceipt(trimmed); digest != "" {
-				l.CorrectionReceipt = digest
-				continue
-			}
-		}
 		if strings.HasPrefix(trimmed, "status:") && l.FrontmatterStatusLine == 0 {
 			l.FrontmatterStatus = strings.TrimSpace(strings.TrimPrefix(trimmed, "status:"))
 			l.FrontmatterStatusLine = i + 1
@@ -279,7 +264,6 @@ func Parse(path string) (*Lesson, error) {
 		}
 		if title, ok := strings.CutPrefix(trimmed, "## "); ok {
 			t := strings.TrimSpace(title)
-			inResolution = t == "Resolution"
 			l.SectionSequence = append(l.SectionSequence, t)
 			if _, seen := l.SectionLines[t]; !seen {
 				l.SectionLines[t] = i + 1

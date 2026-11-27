@@ -103,6 +103,9 @@ func ChangeStatus(opts ChangeStatusOptions) (ChangeStatusResult, error) {
 	if opts.PostMutation == nil {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("ChangeStatus: PostMutation hook required")
 	}
+	if err := ValidateTransitionNote(opts.Note); err != nil {
+		return ChangeStatusResult{}, exitcode.InvalidArgsErrorf("ChangeStatus: %v", err)
+	}
 	var result ChangeStatusResult
 	err := withLessonMutationLock(opts.SpecRoot, opts.Slug, defaultLessonMutationLockDeps(), func() error {
 		var err error
@@ -152,6 +155,25 @@ func changeStatusUnlocked(opts ChangeStatusOptions) (ChangeStatusResult, error) 
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading lesson status: %v", err)
 	}
 
+	// Receipt state is read under the per-Lesson lock, so a concurrent
+	// demotion or Enforcement edit cannot slip between check and write
+	// (cli/lesson/change-status#req:re-enforcement-requires-fresh-receipt).
+	note := opts.Note
+	switch opts.To {
+	case lifecycle.LessonEnforced:
+		if err := CheckReEnforcement(opts.Slug, path); err != nil {
+			return ChangeStatusResult{}, mutationFailure(MutationPrePublication, err)
+		}
+	case lifecycle.LessonRecorded:
+		content, err := readLessonFn(path)
+		if err != nil {
+			return ChangeStatusResult{}, mutationFailure(MutationPrePublication, exitcode.UnexpectedErrorf("reading lesson receipt: %v", err))
+		}
+		if digest := ReadReceiptState(content).Current; digest != "" {
+			note = WithCorrectionReceipt(note, digest)
+		}
+	}
+
 	_, err = lifecycle.Rewrite(path, opts.To)
 	if err != nil {
 		return ChangeStatusResult{}, exitcode.UnexpectedErrorf("rewriting status line: %v", err)
@@ -162,7 +184,7 @@ func changeStatusUnlocked(opts ChangeStatusOptions) (ChangeStatusResult, error) 
 		return ChangeStatusResult{}, mutationFailure(MutationUncertain, exitcode.UnexpectedErrorf("writing successor reference: %v", err))
 	}
 
-	_, _, err = appendNoteFn(path, opts.Note)
+	_, _, err = appendNoteFn(path, note)
 	if err != nil {
 		return ChangeStatusResult{}, mutationFailure(MutationUncertain, exitcode.UnexpectedErrorf("writing transition note: %v", err))
 	}
