@@ -112,19 +112,20 @@ The eight paths `merge-driver install` attributes to this driver:
 | `spec/decisions/README.md`           | every `spec/decisions/<NNN>-<slug>.md`     |
 | `spec/decisions/archived/README.md`  | every `spec/decisions/archived/<NNN>-<slug>.md` |
 
-**Known limitation.** Regeneration reads sibling artifact files as they exist
-on disk at the moment git invokes the driver. If one of those sibling files
-is *itself* still conflict-marked from the same merge (git resolves
-conflicted files one at a time, in no particular order), the regenerated
-index may be built from a momentarily inconsistent tree. This driver does
-not attempt to detect that case — it only fails closed (leaves `<ours>`
-untouched, exits non-zero, so git still reports a conflict) when
-regeneration itself errors, e.g. a source file fails to parse. When a merge
-has conflicts on both an index and one of its source files, resolve the
-source file first, then re-run `specscore spec lint --fix` by hand — it is
-idempotent, so a redundant run changes nothing.
+**Conflicted sibling files fail closed.** Regeneration reads sibling artifact
+files as they exist on disk at the moment git invokes the driver. If any
+SpecScore-managed file is *itself* still conflict-marked from the same merge
+(git resolves conflicted files one at a time, in no particular order),
+`spec lint --fix` refuses to run (the `merge-conflict-markers` rule — see
+[lint-rules.md](lint-rules.md)), so the driver fails closed: it leaves
+`<ours>` untouched, exits non-zero naming the conflicted files, and git
+reports the index as conflicted. It also fails closed when regeneration
+itself errors, e.g. a source file fails to parse. When a merge has conflicts
+on both an index and one of its source files, resolve the source file first,
+then re-run `specscore spec lint --fix` by hand — it is idempotent, so a
+redundant run changes nothing.
 
-This is a deliberate scope decision, not an oversight: making the driver
-merge-order-aware would require it to coordinate across multiple git-invoked
+Making the driver merge-order-aware (waiting for the other files instead of
+failing) is deliberately out of scope: it would require the driver to coordinate across multiple git-invoked
 subprocesses that don't otherwise know about each other, which git's merge
 driver contract does not provide a hook for.

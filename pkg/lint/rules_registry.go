@@ -82,6 +82,7 @@ var builtinRules = []Rule{
 	{ID: "dogfood-version-bump", Family: "core", Severity: "warning", Description: "Warns when a workflow pins a stale specscore CLI version."},
 	{ID: "config-user-scoped-key", Family: "core", Severity: "error", Description: "Rejects user-scoped keys in the project-scoped config file."},
 	{ID: "lifecycle-lock-committed", Family: "core", Severity: "error", Description: "Rejects a committed per-artifact lifecycle-transaction lock file; these are zero-byte flock identities that must stay untracked."},
+	{ID: "merge-conflict-markers", Family: "core", Severity: "error", Description: "Rejects unresolved git merge-conflict markers in any SpecScore-managed file; checked before every other rule, and --fix modifies nothing while any remain."},
 
 	// Idea lint rules.
 	{ID: "idea-location", Family: "idea", Severity: "error", Description: "Requires idea files to live under spec/ideas/."},

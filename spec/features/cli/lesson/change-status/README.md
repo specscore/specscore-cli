@@ -177,6 +177,12 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 **When** read-only lint fails after a successful Status rewrite and exact index-row upsert
 **Then** the command exits `10`, retains the rewritten Lesson, its row, every concurrent foreign row, and the prepared lifecycle event for explicit recovery; it does not restore a whole-file snapshot. (The AC identifier is retained for traceability to the superseded rollback behavior.)
 
+### AC: conflicted-lessons-index-fails-closed (verifies REQ:lessons-index-sync)
+
+**Given** `spec/lessons/README.md` carries unresolved git merge-conflict markers, either around this Lesson's own row or elsewhere in the index
+**When** the user runs `specscore lesson change-status kinder-fake --to=stated`
+**Then** the command does not exit `0`: the narrow index upsert refuses the duplicated row, or the read-only post-write lint reports the `merge-conflict-markers` findings ([cli/spec/lint](../../spec/lint/README.md#req-merge-conflict-markers-gate-precedes-rules)); it exits `10` and every marker line stays in the index for the operator to resolve.
+
 ### AC: unrelated-files-remain-byte-identical
 
 **Given** an unrelated Markdown file containing `## Outstanding Questions`

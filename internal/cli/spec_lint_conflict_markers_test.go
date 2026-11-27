@@ -1,0 +1,233 @@
+package cli
+
+import (
+	"crypto/sha256"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/specscore/specscore-cli/pkg/exitcode"
+	"github.com/specscore/specscore-cli/pkg/lint"
+)
+
+const conflictedLessonRows = "<<<<<<< HEAD\n| [kinder-fake](kinder-fake/README.md) | Stated |\n=======\n| [kinder-fake](kinder-fake/README.md) | Withdrawn |\n>>>>>>> topic\n"
+
+// treeDigest hashes every regular file under root, keyed by its path.
+func treeDigest(t *testing.T, root string) map[string][32]byte {
+	t.Helper()
+	out := map[string][32]byte{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		out[p] = sha256.Sum256(b)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// AC: merge-conflict-markers-fix-refused-byte-identical — `spec lint --fix`
+// over a tree with a conflicted file modifies nothing (not even the unrelated
+// autofixable file), names the conflicted file on stderr, and exits non-zero.
+func TestSpecLint_FixRefusedWhileConflictMarkersRemain(t *testing.T) {
+	root := setupAutofixProject(t)
+	conflicted := filepath.Join(root, "spec", "features", "README.md")
+	if err := os.WriteFile(conflicted, []byte("# Features\n\n| Feature | Status |\n|---|---|\n"+strings.ReplaceAll(conflictedLessonRows, "kinder-fake", "needsfix")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := treeDigest(t, root)
+
+	stdout, stderr, err := runSpec(t, "lint", "--project", root, "--fix")
+	if got := exitCodeOf(err); got != exitcode.Conflict {
+		t.Fatalf("exit = %d, want %d (violations); err=%v", got, exitcode.Conflict, err)
+	}
+	if !reflect.DeepEqual(treeDigest(t, root), before) {
+		t.Fatal("spec lint --fix modified files while merge-conflict markers were present")
+	}
+	if !strings.Contains(stderr, "spec lint --fix refused") || !strings.Contains(stderr, "spec/features/README.md") {
+		t.Fatalf("stderr must name the refusal and the conflicted file, got: %q", stderr)
+	}
+	if strings.Contains(stderr, "Fixed") {
+		t.Fatalf("no Fixed summary may be printed, got: %q", stderr)
+	}
+	if !strings.Contains(stdout, "merge-conflict-markers") || strings.Contains(stdout, "adherence-footer") {
+		t.Fatalf("stdout must report only the marker findings, got: %q", stdout)
+	}
+
+	// Read-only lint reports the same findings, exits non-zero, and prints
+	// no --fix refusal line.
+	stdout, stderr, err = runSpec(t, "lint", "--project", root)
+	if got := exitCodeOf(err); got != exitcode.Conflict {
+		t.Fatalf("read-only exit = %d, want %d; err=%v", got, exitcode.Conflict, err)
+	}
+	if !strings.Contains(stdout, "features/README.md:5") || strings.Contains(stderr, "refused") {
+		t.Fatalf("read-only lint: stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+// AC: conflicted-lessons-index-fails-closed — a status transition over a
+// conflicted Lessons index never reports success. A conflict on the Lesson's
+// own row is refused by the narrow index upsert (duplicate row); a conflict
+// anywhere else in the index is caught by the read-only post-write lint the
+// verb already runs. Either way the command exits non-zero and the markers
+// are left in place for the operator to resolve.
+func TestLessonChangeStatus_ConflictedIndexFailsClosed_CLI(t *testing.T) {
+	cases := []struct {
+		name     string
+		conflict func(index string) (string, bool)
+		wantErr  string
+	}{
+		{"own-row", func(index string) (string, bool) {
+			var b strings.Builder
+			replaced := false
+			for _, line := range strings.SplitAfter(index, "\n") {
+				if !replaced && strings.HasPrefix(line, "| ") && strings.Contains(line, "kinder-fake") {
+					b.WriteString(conflictedLessonRows)
+					replaced = true
+					continue
+				}
+				b.WriteString(line)
+			}
+			return b.String(), replaced
+		}, "duplicate row"},
+		{"elsewhere-in-index", func(index string) (string, bool) {
+			const oq = "## Open Questions\n"
+			i := strings.Index(index, oq)
+			if i < 0 {
+				return index, false
+			}
+			return index[:i+len(oq)] + "\n<<<<<<< HEAD\nNone yet.\n=======\nOne from topic.\n>>>>>>> topic\n" + index[i+len(oq):], true
+		}, "merge-conflict-markers"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := stageLesson(t, "kinder-fake", "Recorded")
+			indexPath := filepath.Join(root, "spec", "lessons", "README.md")
+			raw, err := os.ReadFile(indexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conflicted, ok := tc.conflict(string(raw))
+			if !ok {
+				t.Fatalf("fixture index lacks the region to conflict:\n%s", raw)
+			}
+			if err := os.WriteFile(indexPath, []byte(conflicted), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			stdout, _, err := runLesson(t, "change-status", "kinder-fake", "--to=stated")
+			if err == nil {
+				t.Fatalf("change-status succeeded over a conflicted index; stdout=%q", stdout)
+			}
+			if got := exitCodeOfErr(err); got != exitcode.Unexpected {
+				t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error must mention %q: %v", tc.wantErr, err)
+			}
+			after, err := os.ReadFile(indexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, marker := range []string{"<<<<<<< HEAD\n", "=======\n", ">>>>>>> topic\n"} {
+				if !strings.Contains(string(after), marker) {
+					t.Errorf("conflict marker %q was concealed:\n%s", marker, after)
+				}
+			}
+		})
+	}
+}
+
+// AC: producer-output-round-trips-through-fix — output written by the
+// producer verbs passes the validator unchanged: lint reports no error and a
+// following `spec lint --fix` modifies zero bytes.
+func TestProducerOutput_LintThenFixIsByteIdentical(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Recorded")
+	steps := [][]string{
+		{"new", "second-lesson", "--owner", "tester"},
+		{"change-status", "kinder-fake", "--to=stated"},
+		{"change-status", "kinder-fake", "--to=recorded", "--note", "Enforcement section named no binding control"},
+	}
+	for _, step := range steps {
+		if _, stderr, err := runLesson(t, step...); err != nil {
+			t.Fatalf("lesson %v: %v (stderr=%s)", step, err, stderr)
+		}
+	}
+	if _, stderr, err := runIdea(t, "new", "round-trip-idea"); err != nil {
+		t.Fatalf("idea new: %v (stderr=%s)", err, stderr)
+	}
+
+	specRoot := filepath.Join(root, "spec")
+	vs, err := lint.Lint(lint.Options{SpecRoot: specRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range vs {
+		if v.Severity == "error" {
+			t.Errorf("producer output fails lint: %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message)
+		}
+	}
+	before := treeDigest(t, root)
+	res, err := lint.LintWithResult(lint.Options{SpecRoot: specRoot, Fix: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Fixed) != 0 || len(res.FixRefused) != 0 {
+		t.Errorf("--fix after producers: Fixed=%v FixRefused=%v, want both empty", res.Fixed, res.FixRefused)
+	}
+	if !reflect.DeepEqual(treeDigest(t, root), before) {
+		t.Error("--fix changed bytes the producers wrote")
+	}
+}
+
+// AC: merge-conflict-markers-fix-refused-byte-identical — the index merge
+// driver relies on the --fix pass; when that pass is refused because a
+// sibling file is still conflict-marked, the driver fails closed (leaves
+// <ours> untouched, exits non-zero naming the file) instead of copying the
+// unregenerated index over <ours> and reporting a resolution.
+func TestMergeDriverIndex_FailsClosedWhenFixRefusedOverConflictMarkers(t *testing.T) {
+	root := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	writeSpecscoreYAML(t, root, "")
+	withCwd(t, root)
+	source := filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("# Lesson: Kinder Fake\n<<<<<<< HEAD\n**Status:** Stated\n=======\n**Status:** Recorded\n>>>>>>> topic\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ours := filepath.Join(t.TempDir(), "git-temp-a")
+	oursBefore := []byte("ours index before the merge\n")
+	if err := os.WriteFile(ours, oursBefore, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(t.TempDir(), "git-temp-o")
+	theirs := filepath.Join(t.TempDir(), "git-temp-b")
+	_ = os.WriteFile(base, nil, 0o644)
+	_ = os.WriteFile(theirs, nil, 0o644)
+
+	stdout, errOut, err := runMergeDriver(t, "index", base, ours, theirs, "spec/lessons/README.md")
+	if got := exitCodeOf(err); got != exitcode.Conflict {
+		t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.Conflict, err)
+	}
+	if !strings.Contains(errOut, "lessons/kinder-fake/README.md") || strings.Contains(stdout, "regenerated=") {
+		t.Fatalf("stdout=%q stderr=%q, want a refusal naming the conflicted file and no regenerated= line", stdout, errOut)
+	}
+	got, err := os.ReadFile(ours)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(oursBefore) {
+		t.Fatalf("<ours> was rewritten: %q", got)
+	}
+}

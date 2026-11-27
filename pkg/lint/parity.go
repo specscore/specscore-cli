@@ -9,7 +9,8 @@ import (
 // CheckRegistryParity verifies that the rule registry and the set of rule IDs a
 // checker can emit are in full parity. It compares the registry ID set (keys of
 // the canonical registry, as returned by AllRuleNames) against the emittable ID
-// set (the rule names a freshly built default linter registers checkers under).
+// set (the rule names a freshly built default linter registers checkers under,
+// plus its merge-conflict-marker precondition gate).
 //
 // A default linter (newLinter(Options{})) registers no custom checkers, so the
 // emittable set is the built-in surface only.
@@ -21,10 +22,14 @@ import (
 func CheckRegistryParity() error {
 	registryIDs := AllRuleNames()
 
+	l := newLinter(Options{})
 	emittableIDs := make(map[string]bool)
-	for id := range newLinter(Options{}).ruleSet {
+	for id := range l.ruleSet {
 		emittableIDs[id] = true
 	}
+	// The merge-conflict-marker gate emits too, though it lives outside
+	// ruleSet because it runs before (and independently of) the rule suite.
+	emittableIDs[l.markers.name()] = true
 
 	return checkParity(registryIDs, emittableIDs)
 }

@@ -296,11 +296,19 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// lint.Result.Fixed is relative to the spec tree; render it relative to
 	// the project root (where specscore.yaml lives) so consumers can `git add`
 	// the reported paths directly. cli/spec/lint#req:fix-reports-modified-files.
-	fixedRel := res.Fixed
-	if prefix, perr := filepath.Rel(filepath.Dir(specRoot), specRoot); perr == nil && prefix != "." {
-		fixedRel = make([]string, len(res.Fixed))
-		for i, f := range res.Fixed {
-			fixedRel[i] = filepath.ToSlash(filepath.Join(prefix, f))
+	fixedRel := projectRelativeSpecPaths(specRoot, res.Fixed)
+
+	// A --fix pass refused because files still carry git merge-conflict
+	// markers: nothing was modified. Say so on stderr, naming each file
+	// project-relative, so the operator resolves intent before any rewrite
+	// (cli/spec/lint#req:merge-conflict-markers-block-fix). The violations
+	// themselves still decide the (non-zero) exit status below.
+	refusedRel := projectRelativeSpecPaths(specRoot, res.FixRefused)
+	if fix && len(refusedRel) > 0 {
+		ew := cmd.ErrOrStderr()
+		_, _ = fmt.Fprintf(ew, "spec lint --fix refused: %d file(s) contain unresolved git merge-conflict markers; no file was modified. Resolve each conflict, then re-run:\n", len(refusedRel))
+		for _, f := range refusedRel {
+			_, _ = fmt.Fprintf(ew, "  %s\n", f)
 		}
 	}
 
@@ -353,6 +361,20 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 		return exitcode.ConflictErrorf("%d violation(s) found", failing)
 	}
 	return nil
+}
+
+// projectRelativeSpecPaths renders specRoot-relative paths relative to the
+// project root (where specscore.yaml lives) so consumers can `git add` the
+// reported paths directly.
+func projectRelativeSpecPaths(specRoot string, paths []string) []string {
+	out := paths
+	if prefix, perr := filepath.Rel(filepath.Dir(specRoot), specRoot); perr == nil && prefix != "." {
+		out = make([]string, len(paths))
+		for i, f := range paths {
+			out[i] = filepath.ToSlash(filepath.Join(prefix, f))
+		}
+	}
+	return out
 }
 
 // writeHowToFix prints a "How to fix" section to w listing, once per distinct
