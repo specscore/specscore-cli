@@ -75,9 +75,6 @@ func runLessonMigrateFlatWithDeps(cmd *cobra.Command, args []string, deps lesson
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(root); err != nil {
-		return err
-	}
 	cfg, err := deps.readConfig(root)
 	if err != nil {
 		return exitcode.InvalidStateErrorf("migrate-flat requires a valid specscore.yaml: %v", err)

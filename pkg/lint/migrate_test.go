@@ -308,7 +308,6 @@ func TestInsertTaskBodyStatus_NoTrailingNewlineIsRejected(t *testing.T) {
 // branches via permission changes, matching TestMigrate_WalkError/
 // TestMigrate_WriteError's existing convention in this file.
 func TestMigrate_TaskBoardReadDirErrorIsReturned(t *testing.T) {
-	bypassMigrateGate(t)
 	specRoot := writeSpec(t, map[string]string{})
 	projectRoot := writeTaskBoard(t, specRoot, map[string]string{
 		"README.md": taskBoard([2]string{"auth", "queued"}),
@@ -391,7 +390,6 @@ func TestMigrate_PlanStatusParserErrorIsReturned(t *testing.T) {
 }
 
 func TestMigrate_WalkError(t *testing.T) {
-	bypassMigrateGate(t)
 	specRoot := writeSpec(t, map[string]string{
 		"ideas/ok.md": "# Idea: OK\n",
 	})
@@ -465,14 +463,4 @@ func TestHasClosingFence(t *testing.T) {
 	if hasClosingFence([]string{"---", "k: v"}) {
 		t.Error("expected false without closing fence")
 	}
-}
-
-// bypassMigrateGate disables the merge-conflict-marker gate for a test that
-// drives one of the migration's own unreadable-path branches, which the
-// gate's scan would otherwise report first.
-func bypassMigrateGate(t *testing.T) {
-	t.Helper()
-	prev := migrateConflictMarkersFn
-	migrateConflictMarkersFn = func(Options) ([]Violation, error) { return nil, nil }
-	t.Cleanup(func() { migrateConflictMarkersFn = prev })
 }

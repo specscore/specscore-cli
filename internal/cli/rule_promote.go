@@ -90,12 +90,12 @@ func runRulePromote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(root); err != nil {
-		return err
-	}
 	lessonsDir := filepath.Join(root, "spec", "lessons")
 	lessonPath, err := lessonResolveLessonFileFn(lessonsDir, lessonSlug)
 	if err != nil {
+		return err
+	}
+	if err := refuseConflictedTables(root, rule.IndexPath(rule.RulesDir(root)), lessonPath); err != nil {
 		return err
 	}
 	l, err := lesson.Parse(lessonPath)

@@ -57,9 +57,6 @@ func runSpecMigrate(cmd *cobra.Command, _ []string) error {
 	}
 
 	changed, err := lintMigrateFn(specRoot)
-	if refusal := fixRefusal(specRoot, err); refusal != nil {
-		return refusal
-	}
 	if err != nil {
 		return exitcode.UnexpectedErrorf("migrating frontmatter: %v", err)
 	}

@@ -206,7 +206,7 @@ func LintWithResult(opts Options) (Result, error) {
 	if len(markers) > 0 {
 		res := Result{Violations: markers}
 		if opts.Fix {
-			res.FixRefused = ConflictMarkerFiles(markers)
+			res.FixRefused = conflictMarkerFiles(markers)
 		}
 		return res, nil
 	}

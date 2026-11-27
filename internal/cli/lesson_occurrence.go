@@ -52,9 +52,6 @@ func runLessonOccurrenceAddWithDeps(cmd *cobra.Command, args []string, deps less
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(root); err != nil {
-		return err
-	}
 	lessonsDir := filepath.Join(root, "spec", "lessons")
 	path, err := lesson.ResolveLessonFile(lessonsDir, slug)
 	if err != nil {

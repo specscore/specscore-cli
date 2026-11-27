@@ -47,9 +47,6 @@ func runLessonRelationAddWithDeps(cmd *cobra.Command, args []string, deps lesson
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(root); err != nil {
-		return err
-	}
 	dir := filepath.Join(root, "spec", "lessons")
 	postMutation, err := prepareRelationPostMutationWithDeps(root, from, typ, to, deps)
 	if err != nil {

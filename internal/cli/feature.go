@@ -800,9 +800,6 @@ func runFeatureNew(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(filepath.Dir(filepath.Dir(featuresDir))); err != nil {
-		return err
-	}
 
 	opts := feature.NewOptions{
 		Title:       title,

@@ -31,25 +31,9 @@ func Migrate(specRoot string) ([]string, error) {
 	return MigrateWithProjectRoot(lintProjectRoot("", specRoot), specRoot)
 }
 
-// migrateConflictMarkersFn is the gate seam, swapped by the tests that drive
-// the migration's own unreadable-directory branches (which the gate's scan
-// would otherwise report first).
-var migrateConflictMarkersFn = ConflictMarkers
-
 // MigrateWithProjectRoot performs Migrate with explicit project context so
 // staged callers never derive a live project path from their spec root.
-//
-// It refuses, before touching any file, while a managed file still carries
-// git merge-conflict markers, returning a *FixRefusedError
-// (cli/spec/lint#req:writers-refuse-conflicted-files).
 func MigrateWithProjectRoot(projectRoot, specRoot string) ([]string, error) {
-	markers, err := migrateConflictMarkersFn(Options{SpecRoot: specRoot, ProjectRoot: projectRoot})
-	if err != nil {
-		return nil, err
-	}
-	if len(markers) > 0 {
-		return nil, &FixRefusedError{Files: ConflictMarkerFiles(markers)}
-	}
 	var changed []string
 	for _, t := range docTypeTargets {
 		target := t

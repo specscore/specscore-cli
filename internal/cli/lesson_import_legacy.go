@@ -63,9 +63,6 @@ func runLessonImportLegacyWithDeps(cmd *cobra.Command, deps lessonCLIDeps) error
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(root); err != nil {
-		return err
-	}
 	if !filepath.IsAbs(source) {
 		source = filepath.Join(root, source)
 	}

@@ -132,9 +132,6 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(root); err != nil {
-		return err
-	}
 
 	// Creation is deliberately config-gated.  A mutating scaffolder must not
 	// turn a legacy tree into a half-migrated tree merely because it happened
@@ -503,9 +500,6 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(specRoot); err != nil {
-		return err
-	}
 
 	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (lesson.ChangeStatusResult, error) {
@@ -591,6 +585,12 @@ func lessonChangeStatusMutateWithDeps(ctx context.Context, root, slug string, to
 	}
 	path, err := lesson.ResolveLessonFile(filepath.Join(root, "spec", "lessons"), slug)
 	if err != nil {
+		return lesson.ChangeStatusResult{}, err
+	}
+	// Rewriting the Lessons index over a conflict would drop one side of it,
+	// so refuse before any write or event
+	// (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := refuseConflictedTables(root, filepath.Join(root, "spec", "lessons", "README.md")); err != nil {
 		return lesson.ChangeStatusResult{}, err
 	}
 	if _, err := lifecycle.Validate(lifecycle.KindLesson, path, to); err != nil {

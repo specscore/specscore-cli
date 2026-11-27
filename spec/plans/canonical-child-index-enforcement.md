@@ -77,7 +77,7 @@ single-write composition used for phantom deletion and orphan insertion.
 - cli/spec/lint#ac:merge-conflict-markers-diff3-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
 - cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
 - cli/spec/lint#ac:producer-output-round-trips-through-fix — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
-- cli/spec/lint#ac:merge-conflict-markers-fenced-example-not-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:merge-conflict-markers-in-code-fence-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
 - cli/spec/lint#ac:writers-refuse-conflicted-files — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
 - cli/spec/lint#ac:writers-refuse-conflicted-index — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
 

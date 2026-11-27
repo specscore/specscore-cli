@@ -190,9 +190,6 @@ func runIssueNew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(specRoot); err != nil {
-		return err
-	}
 
 	// Determine target path.
 	var target string
@@ -369,9 +366,6 @@ func runIssueChangeStatus(cmd *cobra.Command, args []string) error {
 
 	specRoot, err := resolveSpecRoot(projectFlag)
 	if err != nil {
-		return err
-	}
-	if err := refuseConflictedProject(specRoot); err != nil {
 		return err
 	}
 

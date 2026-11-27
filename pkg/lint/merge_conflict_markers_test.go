@@ -11,6 +11,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 	"github.com/specscore/specscore-cli/pkg/lesson"
+	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
 // conflictedIndex is a generated Features index whose rows were edited on two
@@ -269,61 +270,89 @@ func TestMergeConflictMarkers_RegisteredInCoreFamily(t *testing.T) {
 	}
 }
 
-func swapConflictMarkerSeams(t *testing.T, walk func(string, fs.WalkDirFunc) error, read func(string) ([]byte, error), rel func(string, string) (string, error)) {
-	t.Helper()
-	prevWalk, prevRead, prevRel, prevEval := conflictMarkerWalkDir, conflictMarkerReadFile, conflictMarkerRel, conflictMarkerEvalSymlinks
-	t.Cleanup(func() {
-		conflictMarkerWalkDir, conflictMarkerReadFile, conflictMarkerRel, conflictMarkerEvalSymlinks = prevWalk, prevRead, prevRel, prevEval
-	})
-	if walk != nil {
-		conflictMarkerWalkDir = walk
-	}
-	if read != nil {
-		conflictMarkerReadFile = read
-	}
-	if rel != nil {
-		conflictMarkerRel = rel
-	}
-}
-
+// The gate fails closed on every I/O error. Each fixture reaches its error
+// branch through real filesystem state, not a swapped function.
 func TestMergeConflictMarkers_ErrorPathsFailClosed(t *testing.T) {
-	specRoot := t.TempDir()
-	writeTreeFile(t, specRoot, "README.md", "<<<<<<< HEAD\n")
-
 	t.Run("walk-error", func(t *testing.T) {
-		swapConflictMarkerSeams(t, func(root string, fn fs.WalkDirFunc) error {
-			return fn(root, nil, errors.New("unreadable dir"))
-		}, nil, nil)
-		if _, err := newMergeConflictMarkerChecker("", "", false).check(specRoot); err == nil || !strings.Contains(err.Error(), "unreadable dir") {
-			t.Fatalf("err = %v, want walk error", err)
+		specRoot := t.TempDir()
+		locked := filepath.Join(specRoot, "locked")
+		writeTreeFile(t, specRoot, "locked/README.md", "# x\n")
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+		if _, err := newMergeConflictMarkerChecker("", "", false).check(specRoot); err == nil {
+			t.Fatal("want the unreadable-directory error")
 		}
 		if _, err := LintWithResult(Options{SpecRoot: specRoot, Fix: true}); err == nil || !strings.Contains(err.Error(), mergeConflictMarkersRule) {
 			t.Fatalf("LintWithResult err = %v, want the gate error naming the rule", err)
 		}
 	})
 	t.Run("read-error", func(t *testing.T) {
-		swapConflictMarkerSeams(t, nil, func(string) ([]byte, error) { return nil, errors.New("unreadable file") }, nil)
-		if _, err := newMergeConflictMarkerChecker("", "", false).check(specRoot); err == nil || !strings.Contains(err.Error(), "unreadable file") {
-			t.Fatalf("err = %v, want read error", err)
+		specRoot := t.TempDir()
+		p := writeTreeFile(t, specRoot, "README.md", "# x\n")
+		if err := os.Chmod(p, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := newMergeConflictMarkerChecker("", "", false).check(specRoot); !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("err = %v, want the permission error", err)
+		}
+	})
+	t.Run("config-read-error", func(t *testing.T) {
+		project := t.TempDir()
+		specRoot := filepath.Join(project, "spec")
+		writeTreeFile(t, specRoot, "README.md", "# Spec\n")
+		cfg := writeTreeFile(t, project, "specscore.yaml", "project: {}\n")
+		if err := os.Chmod(cfg, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := newMergeConflictMarkerChecker(project, "", false).check(specRoot); !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("err = %v, want the config permission error", err)
+		}
+	})
+	t.Run("symlink-loop-root", func(t *testing.T) {
+		project := t.TempDir()
+		specRoot := filepath.Join(project, "spec")
+		writeTreeFile(t, specRoot, "README.md", "# Spec\n")
+		if err := os.Symlink("tasks", filepath.Join(project, "tasks")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := newMergeConflictMarkerChecker(project, "", false).check(specRoot); err == nil {
+			t.Fatal("want the symlink-loop error for tasks/")
 		}
 	})
 	t.Run("rel-error-falls-back-to-path", func(t *testing.T) {
-		swapConflictMarkerSeams(t, nil, nil, func(string, string) (string, error) { return "", errors.New("no rel") })
-		vs, err := newMergeConflictMarkerChecker("", "", false).check(specRoot)
+		// A relative spec root beside an absolute project root: the tasks/
+		// board cannot be expressed relative to the spec root, so the
+		// finding names its absolute path.
+		project := t.TempDir()
+		writeTreeFile(t, project, "spec/README.md", "# Spec\n")
+		board := writeTreeFile(t, project, "tasks/README.md", "<<<<<<< HEAD\n")
+		t.Chdir(project)
+		vs, err := newMergeConflictMarkerChecker(project, "", false).check("spec")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(vs) != 1 || vs[0].File != filepath.ToSlash(filepath.Join(specRoot, "README.md")) {
+		if len(vs) != 1 || vs[0].File != filepath.ToSlash(board) {
 			t.Fatalf("violations = %+v, want the absolute path fallback", vs)
 		}
 	})
 }
 
 func TestConflictMarkerFiles_SortedUnique(t *testing.T) {
-	got := ConflictMarkerFiles([]Violation{{File: "b.md"}, {File: "a.md"}, {File: "b.md"}})
+	got := conflictMarkerFiles([]Violation{{File: "b.md"}, {File: "a.md"}, {File: "b.md"}})
 	if want := []string{"a.md", "b.md"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("conflictMarkerFiles = %v, want %v", got, want)
 	}
+}
+
+func checkerFiles(t *testing.T, c *mergeConflictMarkerChecker, specRoot string) []string {
+	t.Helper()
+	vs, err := c.check(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conflictMarkerFiles(vs)
 }
 
 // AC: merge-conflict-markers-detected — a symlinked spec root (and a
@@ -344,69 +373,70 @@ func TestMergeConflictMarkers_SymlinkedRootsAndConfig(t *testing.T) {
 	}
 	writeTreeFile(t, project, "specscore.yaml", "project:\n<<<<<<< HEAD\n  repo: a\n=======\n  repo: b\n>>>>>>> t\n")
 
-	vs, err := ConflictMarkers(Options{SpecRoot: filepath.Join(project, "spec")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := ConflictMarkerFiles(vs), []string{"../specscore.yaml", "../tasks/README.md", "features/README.md"}; !reflect.DeepEqual(got, want) {
+	got := checkerFiles(t, newMergeConflictMarkerChecker("", "", false), filepath.Join(project, "spec"))
+	if want := []string{"../specscore.yaml", "../tasks/README.md", "features/README.md"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("files = %v, want %v", got, want)
 	}
 }
 
-func TestMergeConflictMarkers_EvalAndConfigErrorsFailClosed(t *testing.T) {
+// AC: merge-conflict-markers-detected — the paired skill files the rule
+// rules read (<skills_path>/<name>/SKILL.md) are scanned when the project
+// has a Rules tree; specscore.yaml is scanned once even when the project
+// root is the spec root.
+func TestMergeConflictMarkers_SkillsAndConfigScannedOnce(t *testing.T) {
+	marked := "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> t\n"
 	project := t.TempDir()
 	specRoot := filepath.Join(project, "spec")
 	writeTreeFile(t, specRoot, "README.md", "# Spec\n")
-	writeTreeFile(t, project, "specscore.yaml", "project: {}\n")
-	for _, failAt := range []int{1} {
-		t.Run("eval-call-"+string(rune('0'+failAt)), func(t *testing.T) {
-			calls := 0
-			swapConflictMarkerSeams(t, nil, nil, nil)
-			conflictMarkerEvalSymlinks = func(p string) (string, error) {
-				calls++
-				if calls == failAt {
-					return "", errors.New("eval failed")
-				}
-				return filepath.EvalSymlinks(p)
-			}
-			if _, err := newMergeConflictMarkerChecker(project, "", false).check(specRoot); err == nil || !strings.Contains(err.Error(), "eval failed") {
-				t.Fatalf("err = %v, want eval failure at call %d", err, failAt)
-			}
-		})
+	writeTreeFile(t, project, "ai/skills/demo/SKILL.md", marked)
+	writeTreeFile(t, project, "ai/skills/demo/notes.md", marked) // not read by lint
+	writeTreeFile(t, project, "ai/skills/README.md", marked)     // not a skill pair
+	writeTreeFile(t, project, "tasks", marked)                   // not a board directory
+	if got := checkerFiles(t, newMergeConflictMarkerChecker(project, "", false), specRoot); len(got) != 0 {
+		t.Fatalf("no Rules tree: files = %v, want none", got)
 	}
-	t.Run("config-read-error", func(t *testing.T) {
-		swapConflictMarkerSeams(t, nil, func(p string) ([]byte, error) {
-			if filepath.Base(p) == "specscore.yaml" {
-				return nil, errors.New("config unreadable")
-			}
-			return os.ReadFile(p)
-		}, nil)
-		if _, err := newMergeConflictMarkerChecker(project, "", false).check(specRoot); err == nil || !strings.Contains(err.Error(), "config unreadable") {
-			t.Fatalf("err = %v, want config read error", err)
-		}
-	})
+	writeTreeFile(t, specRoot, "rules/README.md", "# Rules\n")
+	if got, want := checkerFiles(t, newMergeConflictMarkerChecker(project, "", false), specRoot), []string{"../ai/skills/demo/SKILL.md"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+	writeTreeFile(t, project, "specscore.yaml", projectdef.SchemaHeader+"\nrules:\n  skills_path: custom\n")
+	writeTreeFile(t, project, "custom/other/SKILL.md", marked)
+	if got, want := checkerFiles(t, newMergeConflictMarkerChecker(project, "", false), specRoot), []string{"../custom/other/SKILL.md"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("configured skills_path: files = %v, want %v", got, want)
+	}
+
+	flat := t.TempDir()
+	writeTreeFile(t, flat, "specscore.yaml", marked)
+	vs, err := newMergeConflictMarkerChecker(flat, "", false).check(flat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 3 {
+		t.Fatalf("violations = %+v, want specscore.yaml's 3 markers reported once", vs)
+	}
 }
 
-// AC: merge-conflict-markers-fenced-example-not-flagged — markers quoted in
-// a balanced fenced code block of a Markdown file are documentation, not a
-// conflict; the same lines in a non-Markdown file are still flagged.
-func TestMergeConflictMarkers_FencedExampleInMarkdownNotFlagged(t *testing.T) {
+// AC: merge-conflict-markers-in-code-fence-flagged — Markdown code fences are
+// not special: a conflict inside a fenced block, or straddling a fence
+// boundary, is flagged; only a marker indented off column 0 (the documented
+// way to quote one) is not.
+func TestMergeConflictMarkers_CodeFenceConflictFlagged(t *testing.T) {
 	specRoot := t.TempDir()
-	example := "# Resolving conflicts\n\n```text\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> topic\n```\n"
-	writeTreeFile(t, specRoot, "research/README.md", example)
-	writeTreeFile(t, specRoot, "research/example.txt", example)
+	writeTreeFile(t, specRoot, "features/a/README.md", "# A\n\n```bash\n<<<<<<< HEAD\nrun a\n=======\nrun b\n>>>>>>> topic\n```\n")
+	writeTreeFile(t, specRoot, "features/b/README.md", "# B\n\n```go\n<<<<<<< HEAD\nx()\n```\nprose\n=======\n```\n>>>>>>> topic\n```\n")
+	writeTreeFile(t, specRoot, "research/README.md", "# Resolving conflicts\n\n    <<<<<<< HEAD\n    ours\n    =======\n    theirs\n    >>>>>>> topic\n")
 	vs, err := newMergeConflictMarkerChecker("", "", false).check(specRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ConflictMarkerFiles(vs); !reflect.DeepEqual(got, []string{"research/example.txt"}) {
-		t.Fatalf("files = %v, want only the non-Markdown copy", got)
+	if got, want := conflictMarkerFiles(vs), []string{"features/a/README.md", "features/b/README.md"}; !reflect.DeepEqual(got, want) || len(vs) != 6 {
+		t.Fatalf("files = %v (%d findings), want %v with 6 findings", got, len(vs), want)
 	}
 }
 
 // AC: merge-conflict-markers-fix-refused-byte-identical — Lint (the API every
 // in-process Fix: true caller uses) returns *FixRefusedError rather than an
-// empty, success-shaped violation list; spec migrate refuses the same way.
+// empty, success-shaped violation list.
 func TestLint_FixRefusedIsAnError(t *testing.T) {
 	project := t.TempDir()
 	specRoot := filepath.Join(project, "spec")
@@ -421,15 +451,8 @@ func TestLint_FixRefusedIsAnError(t *testing.T) {
 	if vs, err := Lint(Options{SpecRoot: specRoot}); err != nil || len(vs) != 3 {
 		t.Fatalf("read-only Lint = %v, %v; want the 3 marker findings and no error", vs, err)
 	}
-	if _, err := MigrateWithProjectRoot(project, specRoot); !errors.As(err, &refused) {
-		t.Fatalf("migrate err = %v, want *FixRefusedError", err)
-	}
 	if !reflect.DeepEqual(snapshotBytes(t, project), before) {
-		t.Fatal("a refused fix or migration modified the tree")
-	}
-	swapConflictMarkerSeams(t, func(root string, fn fs.WalkDirFunc) error { return errors.New("walk failed") }, nil, nil)
-	if _, err := MigrateWithProjectRoot(project, specRoot); err == nil || !strings.Contains(err.Error(), "walk failed") {
-		t.Fatalf("migrate err = %v, want the gate scan error", err)
+		t.Fatal("a refused fix modified the tree")
 	}
 }
 

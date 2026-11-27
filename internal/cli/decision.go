@@ -282,9 +282,6 @@ func runDecisionNew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(specRoot); err != nil {
-		return err
-	}
 
 	specSub := filepath.Join(specRoot, "spec")
 

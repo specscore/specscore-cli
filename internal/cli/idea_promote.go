@@ -78,9 +78,6 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseConflictedProject(specRoot); err != nil {
-		return err
-	}
 
 	// Guard 1: seed must exist (exit 3, no mutation).
 	seedPath, err := ideapromote.ResolveSeed(specRoot, slug)

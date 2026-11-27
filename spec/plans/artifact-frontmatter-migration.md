@@ -45,10 +45,6 @@ Run `specscore migrate` against this repo to backfill every existing artifact (f
 
 Closes a 2026-08-27 gap: `task change-status` requires an existing body `**Status:**` line and has no path that initializes an absent one, so any task board created before `task new` scaffolded that line (every board that existed before this task) is permanently unable to transition through the sanctioned CLI. Add `migrateTaskBoardStatus` (`pkg/lint/task_board_migrate.go`), invoked from `MigrateWithProjectRoot`: for the flat project-root `tasks/` board (outside `spec/`, so not covered by the existing `docTypeTargets` walk), insert a `**Status:**` line into any `tasks/<slug>/README.md` that lacks one, sourced from that slug's `tasks/README.md` row — a one-time bootstrap, never overwriting an existing line and never inventing a value for a slug with no board row. Companion changes landed in the same effort (tracked by their own Features, not this plan): `cli/task/new#req:status-scaffolded` scaffolds the line on every new task, and a new `task-index-row-sync` lint rule reconciles the board's Status cell from the file after a transition — the file remains authoritative per the `specscore` meta-spec's Index feature `REQ: file-authoritative-over-index`.
 
-## Deferred AC Coverage
-
-- cli/spec/migrate#ac:conflicted-tree-refused-unchanged — Added by the later merge-conflict-marker gate increment; outside this plan's frontmatter-migration scope.
-
 ## Open Questions
 
 None at this time.

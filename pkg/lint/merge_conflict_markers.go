@@ -2,6 +2,7 @@ package lint
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
+	"github.com/specscore/specscore-cli/pkg/rule"
 )
 
 // MergeConflictMarkersRule is the rule ID of the repository-wide git
@@ -20,21 +22,12 @@ const MergeConflictMarkersRule = "merge-conflict-markers"
 // mergeConflictMarkersRule is the package-internal alias kept for brevity.
 const mergeConflictMarkersRule = MergeConflictMarkersRule
 
-// Package-level seams, swapped in tests to drive the defensive error branches
-// (unreadable directory or file, unresolvable root) that real filesystem
-// state cannot reliably reproduce on every host. Same convention as
-// lifecycle_lock_litter.go.
-var (
-	conflictMarkerWalkDir      = filepath.WalkDir
-	conflictMarkerReadFile     = os.ReadFile
-	conflictMarkerRel          = filepath.Rel
-	conflictMarkerEvalSymlinks = filepath.EvalSymlinks
-)
-
 // mergeConflictMarkerChecker scans every text file SpecScore manages for git
 // merge-conflict markers left behind by an unresolved merge: the spec tree,
-// an externally routed Plans directory, the project-root tasks/ board, and
-// specscore.yaml.
+// an externally routed Plans directory, the project-root tasks/ board,
+// specscore.yaml, and the paired skill files the rule rules read — exactly
+// the files `spec lint` reads, honouring Plans routing the same way the
+// Plan-owned rules do.
 //
 // It is a precondition gate rather than an ordinary rule. When two branches
 // edit a generated index (e.g. spec/lessons/README.md) git leaves
@@ -62,30 +55,16 @@ func newMergeConflictMarkerChecker(projectRoot, plansDir string, routeBroken boo
 func (c *mergeConflictMarkerChecker) name() string     { return mergeConflictMarkersRule }
 func (c *mergeConflictMarkerChecker) severity() string { return "error" }
 
-// ConflictMarkers runs the merge-conflict-marker gate alone, with exactly the
-// scope LintWithResult uses for opts, and returns its findings (empty when the
-// managed files are clean). Producer verbs call it before mutating any file
-// or preparing any event (cli/spec/lint#req:writers-refuse-conflicted-files).
-func ConflictMarkers(opts Options) ([]Violation, error) {
-	c := newMergeConflictMarkerChecker(opts.effectiveProjectRoot(), opts.PlansDir, opts.PlanRouteError != "")
-	return checkWithTransientRemovalRetry(c, opts.SpecRoot)
-}
-
 func (c *mergeConflictMarkerChecker) check(specRoot string) ([]Violation, error) {
 	localPlans := filepath.Join(specRoot, "plans")
 	skipLocalPlans := c.skipLocalPlans
-	var roots []string
-	if isDir(specRoot) { // a migration may run before spec/ exists
-		roots = append(roots, specRoot)
-	}
+	roots := []string{specRoot}
 	if c.plansDir != "" && filepath.Clean(c.plansDir) != filepath.Clean(localPlans) {
 		skipLocalPlans = true
-		if isDir(c.plansDir) {
-			roots = append(roots, c.plansDir)
-		}
+		roots = append(roots, c.plansDir)
 	}
 	projectRoot := lintProjectRoot(c.projectRoot, specRoot)
-	if tasksDir := filepath.Join(projectRoot, "tasks"); isDir(tasksDir) && !isWithin(specRoot, tasksDir) {
+	if tasksDir := filepath.Join(projectRoot, "tasks"); !isWithin(specRoot, tasksDir) {
 		roots = append(roots, tasksDir)
 	}
 
@@ -97,11 +76,11 @@ func (c *mergeConflictMarkerChecker) check(specRoot string) ([]Violation, error)
 	// relative to specRoot, exactly as every other rule reports them.
 	var violations []Violation
 	report := func(path string, data []byte) {
-		rel, relErr := conflictMarkerRel(specRoot, path)
+		rel, relErr := filepath.Rel(specRoot, path)
 		if relErr != nil {
 			rel = path
 		}
-		for _, m := range conflictmarker.Scan(data, conflictmarker.IsMarkdown(path)) {
+		for _, m := range conflictmarker.Scan(data) {
 			violations = append(violations, Violation{
 				File:     filepath.ToSlash(rel),
 				Line:     m.Line,
@@ -114,15 +93,21 @@ func (c *mergeConflictMarkerChecker) check(specRoot string) ([]Violation, error)
 		}
 	}
 	for _, root := range roots {
-		resolvedRoot, err := conflictMarkerEvalSymlinks(root)
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // no routed Plans checkout, no tasks/ board
+		}
 		if err != nil {
-			return nil, err
+			return nil, err // e.g. a symlink loop: fail closed
+		}
+		if !isDir(resolvedRoot) {
+			continue
 		}
 		resolvedLocalPlans := ""
 		if root == specRoot {
 			resolvedLocalPlans = filepath.Join(resolvedRoot, "plans")
 		}
-		err = conflictMarkerWalkDir(resolvedRoot, func(path string, d fs.DirEntry, err error) error {
+		err = filepath.WalkDir(resolvedRoot, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -138,7 +123,7 @@ func (c *mergeConflictMarkerChecker) check(specRoot string) ([]Violation, error)
 			if !d.Type().IsRegular() {
 				return nil
 			}
-			data, err := conflictMarkerReadFile(path)
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
@@ -156,16 +141,40 @@ func (c *mergeConflictMarkerChecker) check(specRoot string) ([]Violation, error)
 		}
 	}
 
-	// specscore.yaml is read by several rules that treat a parse error as a
-	// soft default, so a conflicted config would otherwise lint clean.
-	if cfg := filepath.Join(projectRoot, projectdef.SpecConfigFile); isRegularFile(cfg) {
-		data, err := conflictMarkerReadFile(cfg)
+	// Single files lint reads outside the walked roots: specscore.yaml (read
+	// by several rules that treat a parse error as a soft default, so a
+	// conflicted config would otherwise lint clean) and, when the project
+	// has a Rules tree, each paired <skills_path>/<name>/SKILL.md the rule
+	// rules read.
+	files := []string{filepath.Join(projectRoot, projectdef.SpecConfigFile)}
+	if isDir(filepath.Join(specRoot, "rules")) {
+		skillsDir := rule.SkillsDir(projectRoot, configuredSkillsPath(projectRoot))
+		entries, _ := os.ReadDir(skillsDir) // a missing skills directory has no pairs
+		for _, e := range entries {
+			files = append(files, filepath.Join(skillsDir, e.Name(), "SKILL.md"))
+		}
+	}
+	for _, file := range files {
+		if !isRegularFile(file) || isWithinAny(file, roots) {
+			continue // absent, or already scanned by a root walk
+		}
+		data, err := os.ReadFile(file)
 		if err != nil {
 			return nil, err
 		}
-		report(cfg, data)
+		report(file, data)
 	}
 	return violations, nil
+}
+
+// isWithinAny reports whether path lies inside any of roots, lexically.
+func isWithinAny(path string, roots []string) bool {
+	for _, root := range roots {
+		if isWithin(root, path) {
+			return true
+		}
+	}
+	return false
 }
 
 // skipConflictScanDir reports whether a directory below a scan root is
@@ -179,9 +188,9 @@ func skipConflictScanDir(name string) bool {
 	return name == ".git" || name == reservedFeatureSubtree
 }
 
-// ConflictMarkerFiles returns the sorted, de-duplicated files named by
+// conflictMarkerFiles returns the sorted, de-duplicated files named by
 // marker violations — the set `spec lint --fix` reports as refused.
-func ConflictMarkerFiles(violations []Violation) []string {
+func conflictMarkerFiles(violations []Violation) []string {
 	seen := map[string]bool{}
 	var files []string
 	for _, v := range violations {

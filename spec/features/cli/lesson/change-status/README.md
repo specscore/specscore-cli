@@ -182,7 +182,7 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 
 **Given** `spec/lessons/README.md` carries unresolved git merge-conflict markers — around this Lesson's own row, elsewhere in the index, as a one-sided block, or inside a legacy five-column table
 **When** the user runs `specscore lesson change-status kinder-fake --to=stated`
-**Then** the shared precondition ([cli/spec/lint](../../spec/lint/README.md#req-writers-refuse-conflicted-files)) refuses before the Lesson file is rewritten or any event is prepared: the command exits `1` naming the index, and the Lesson file, the index, and the event ledger are byte-identical afterwards.
+**Then** the Lessons-index pre-write check ([cli/spec/lint](../../spec/lint/README.md#req-writers-refuse-conflicted-files)) refuses before the Lesson file is rewritten or any event is prepared: the command exits `1` naming the index, and the Lesson file, the index, and the event ledger are byte-identical afterwards.
 
 ### AC: enforced-to-recorded-requires-mechanism-control (verifies REQ:audited-correction-requires-reason)
 

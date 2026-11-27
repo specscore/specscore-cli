@@ -11,6 +11,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/lesson"
 	"github.com/specscore/specscore-cli/pkg/lint"
+	"github.com/specscore/specscore-cli/pkg/rule"
 )
 
 // oneSidedLessonConflict injects a one-sided conflict block (one branch added
@@ -32,33 +33,16 @@ func oneSidedLessonConflict(t *testing.T, root string) {
 	}
 }
 
-// AC: writers-refuse-conflicted-files — every producer verb and index writer
-// runs the shared conflict-marker precondition before it mutates any file or
-// prepares any event: over a conflicted tree it exits 1 naming the file and
-// leaves the whole tree (Lesson file, index, events, everything) byte-identical.
-func TestProducerVerbs_RefuseConflictedTreeBeforeAnyWrite(t *testing.T) {
-	verbs := [][]string{
-		{"lesson", "new", "fresh-lesson", "--owner", "tester"},
+// AC: writers-refuse-conflicted-files — `lesson change-status` rewrites the
+// Lessons index, so over a conflicted index it exits 1 naming the file before
+// any write or event and leaves the whole tree byte-identical. Its --dry-run
+// runs the same transaction in a sandbox and so reports the same refusal.
+func TestLessonChangeStatus_RefusesConflictedIndexBeforeAnyWrite(t *testing.T) {
+	for _, args := range [][]string{
 		{"lesson", "change-status", "kinder-fake", "--to=stated"},
 		{"lesson", "change-status", "kinder-fake", "--to=stated", "--dry-run"},
-		{"lesson", "relation", "add", "kinder-fake", "other", "--type", "related", "--confirm", lesson.RelationToken("kinder-fake", "related", "other")},
-		{"lesson", "occurrence", "add", "kinder-fake"},
-		{"lesson", "recur", "kinder-fake"},
-		{"lesson", "migrate-flat", "kinder-fake", "--classification", "process"},
-		{"lesson", "import-legacy", "--source", "LESSONS-LEARNED.md", "--dry-run"},
-		{"feature", "new", "--title=Fresh Feature"},
-		{"idea", "new", "fresh-idea"},
-		{"idea", "promote", "fresh-idea"},
-		{"decision", "new", "fresh-decision"},
-		{"issue", "new", "fresh-issue"},
-		{"issue", "change-status", "fresh-issue", "--to=resolved"},
-		{"rule", "new", "fresh-rule"},
-		{"rule", "update", "fresh-rule", "--title", "Fresh"},
-		{"rule", "delete", "fresh-rule"},
-		{"rule", "promote", "fresh-rule", "--from-lesson", "kinder-fake"},
-	}
-	for _, args := range verbs {
-		t.Run(strings.Join(args[:2], "-"), func(t *testing.T) {
+	} {
+		t.Run(strings.Join(args[2:], " "), func(t *testing.T) {
 			root := stageLesson(t, "kinder-fake", "Recorded")
 			oneSidedLessonConflict(t, root)
 			before := treeDigest(t, root)
@@ -76,37 +60,104 @@ func TestProducerVerbs_RefuseConflictedTreeBeforeAnyWrite(t *testing.T) {
 	}
 }
 
-func TestRefuseConflictedProject_ScanErrorIsUnexpected(t *testing.T) {
-	prev := conflictMarkersFn
-	t.Cleanup(func() { conflictMarkersFn = prev })
-	conflictMarkersFn = func(lint.Options) ([]lint.Violation, error) { return nil, errors.New("scan failed") }
-	err := refuseConflictedProject(t.TempDir())
-	if got := exitCodeOf(err); got != exitcode.Unexpected || !strings.Contains(err.Error(), "scan failed") {
-		t.Fatalf("exit = %d err = %v, want Unexpected scan failure", got, err)
+// conflictedRulesProject creates rule fresh-rule on a clean project, then
+// injects a one-sided conflict block after its row in the Rules index.
+func conflictedRulesProject(t *testing.T) string {
+	t.Helper()
+	root := stageLesson(t, "kinder-fake", "Recorded")
+	if _, _, err := runRoot(t, "rule", "new", "fresh-rule", "--project", root); err != nil {
+		t.Fatalf("rule new on a clean tree: %v", err)
+	}
+	path := rule.IndexPath(rule.RulesDir(root))
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.SplitAfter(string(raw), "\n")
+	var b strings.Builder
+	injected := false
+	for _, line := range lines {
+		b.WriteString(line)
+		if !injected && strings.Contains(line, "fresh-rule") {
+			b.WriteString("<<<<<<< HEAD\n| [other-rule](other-rule/README.md) | Stated | x | — | — | — | — |\n=======\n>>>>>>> topic\n")
+			injected = true
+		}
+	}
+	if !injected {
+		t.Fatalf("rules index has no fresh-rule row:\n%s", raw)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// AC: writers-refuse-conflicted-files — the Rules index is the only copy of
+// an inline rule, so every rule writer verb refuses a conflicted index before
+// any write, byte-identically.
+func TestRuleWriterVerbs_RefuseConflictedIndexBeforeAnyWrite(t *testing.T) {
+	for _, args := range [][]string{
+		{"rule", "new", "second-rule"},
+		{"rule", "update", "fresh-rule", "--title", "Fresh"},
+		{"rule", "delete", "fresh-rule"},
+		{"rule", "promote", "promoted-rule", "--from-lesson", "kinder-fake"},
+	} {
+		t.Run(args[1], func(t *testing.T) {
+			root := conflictedRulesProject(t)
+			before := treeDigest(t, root)
+			_, _, err := runRoot(t, append(args, "--project", root)...)
+			if got := exitCodeOf(err); got != exitcode.Conflict {
+				t.Fatalf("exit = %d, want %d; err=%v", got, exitcode.Conflict, err)
+			}
+			if !strings.Contains(err.Error(), "spec/rules/README.md") {
+				t.Fatalf("err = %v, want the refusal naming spec/rules/README.md", err)
+			}
+			if !reflect.DeepEqual(treeDigest(t, root), before) {
+				t.Fatal("the tree changed before the refusal")
+			}
+		})
+	}
+}
+
+// AC: writers-refuse-conflicted-files — reading stays allowed: `rule list`
+// and `rule show` work over a conflicted Rules index exactly as before.
+func TestRuleReadVerbs_WorkOverConflictedIndex(t *testing.T) {
+	root := conflictedRulesProject(t)
+	before := treeDigest(t, root)
+	for _, args := range [][]string{{"rule", "list"}, {"rule", "show", "fresh-rule"}} {
+		out, _, err := runRoot(t, append(args, "--project", root)...)
+		if err != nil || !strings.Contains(out, "fresh-rule") {
+			t.Fatalf("%v: out=%q err=%v, want a normal read", args, out, err)
+		}
+	}
+	if !reflect.DeepEqual(treeDigest(t, root), before) {
+		t.Fatal("a read-only verb changed the tree")
+	}
+}
+
+func TestRefuseConflictedTables_ReadErrorIsUnexpected(t *testing.T) {
+	root := t.TempDir()
+	err := refuseConflictedTables(root, root) // a directory cannot be read as a file
+	if got := exitCodeOf(err); got != exitcode.Unexpected || !strings.Contains(err.Error(), "merge-conflict markers") {
+		t.Fatalf("exit = %d err = %v, want Unexpected read failure", got, err)
 	}
 	if fixRefusal("spec", errors.New("other")) != nil || fixRefusal("spec", nil) != nil {
 		t.Fatal("fixRefusal must ignore errors that are not *lint.FixRefusedError")
 	}
 }
 
-// AC: conflicted-tree-refused-unchanged (cli/spec/migrate) and
-// merge-conflict-markers-fix-refused-byte-identical — `spec migrate` and
-// `rule lint --fix` map a refused pass onto the shared exit-1 refusal.
-func TestSpecMigrateAndRuleLintFix_RefuseConflictedTree(t *testing.T) {
+// AC: merge-conflict-markers-fix-refused-byte-identical — `rule lint --fix`
+// maps a refused pass onto the shared exit-1 refusal.
+func TestRuleLintFix_RefusesConflictedTree(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Recorded")
 	oneSidedLessonConflict(t, root)
 	before := treeDigest(t, root)
-	for _, args := range [][]string{
-		{"spec", "migrate", "--project", root},
-		{"rule", "lint", "--fix", "--project", root},
-	} {
-		_, _, err := runRoot(t, args...)
-		if got := exitCodeOf(err); got != exitcode.Conflict || !strings.Contains(err.Error(), "spec/lessons/README.md") {
-			t.Fatalf("%v: exit = %d err = %v, want the exit-1 refusal naming the index", args, got, err)
-		}
+	_, _, err := runRoot(t, "rule", "lint", "--fix", "--project", root)
+	if got := exitCodeOf(err); got != exitcode.Conflict || !strings.Contains(err.Error(), "spec/lessons/README.md") {
+		t.Fatalf("exit = %d err = %v, want the exit-1 refusal naming the index", got, err)
 	}
 	if !reflect.DeepEqual(treeDigest(t, root), before) {
-		t.Fatal("a refused migration or fix changed the tree")
+		t.Fatal("a refused fix changed the tree")
 	}
 }
 
@@ -166,13 +217,4 @@ func TestLessonChangeStatus_EnforcedToRecordedFreeTextControlRefusedBeforeWrite_
 	if got := exitCodeOfErr(err); got != exitcode.Unexpected || !strings.Contains(err.Error(), "parse failed") {
 		t.Fatalf("exit = %d err = %v, want Unexpected parse failure", got, err)
 	}
-}
-
-// bypassConflictGate disables the producer precondition for a test that
-// drives a later unreadable-file branch the gate's scan would report first.
-func bypassConflictGate(t *testing.T) {
-	t.Helper()
-	prev := conflictMarkersFn
-	conflictMarkersFn = func(lint.Options) ([]lint.Violation, error) { return nil, nil }
-	t.Cleanup(func() { conflictMarkersFn = prev })
 }

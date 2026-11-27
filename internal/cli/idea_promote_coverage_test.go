@@ -80,9 +80,6 @@ func TestIdeaPromote_DiscoverBackLinksError(t *testing.T) {
 }
 
 func TestIdeaPromote_ReadSeedError(t *testing.T) {
-	// The unreadable seed would otherwise be reported by the conflict-marker
-	// precondition's scan before the seed read this test drives.
-	bypassConflictGate(t)
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")
 	writePromoteSeed(t, source, "foo", "Foo", false)
