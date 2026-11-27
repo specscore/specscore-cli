@@ -161,7 +161,7 @@ func TestACTestCoverage_NoInScopeFeaturesSkipsTestScan(t *testing.T) {
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:test-annotation-covers
 func TestACTestCoverage_TestAnnotationCovers(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
-	writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable", "a", "b", "c", "d", "e", "f", "g"))
+	writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"))
 	writeRootFile(t, sr, "orders_test.go", "package orders\n\n// specscore:verifies feature/orders#ac:a\n")
 	writeRootFile(t, sr, "tests/test_orders.py", "# specscore:feature/orders#AC:b\n")
 	writeRootFile(t, sr, "web/orders.spec.ts", "// specscore:verifies https://specscore.org/github.com/acme/orders/spec/features/orders#ac:c\n"+
@@ -169,7 +169,12 @@ func TestACTestCoverage_TestAnnotationCovers(t *testing.T) {
 	writeRootFile(t, sr, "orders.go", "// specscore:verifies feature/orders#ac:e\n")
 	writeRootFile(t, sr, "x_test.go", "// specscore:implements feature/orders#ac:f\n// specscore:verifies plan/orders#ac:g\n// specscore:plan/orders#ac:g\n// specscore:verifies feature/orders#req:g\n"+
 		"// specscore:feature/orders#ac:\n// specscore:feature/orders#g\n// specscore:bogus feature/orders#ac:g\n")
-	acWant(t, acCheck(t, sr, false), "orders#ac:d", "orders#ac:e", "orders#ac:f", "orders#ac:g")
+	// Bare canonical URL, cross-repo authority form, and typed references.
+	writeRootFile(t, sr, "forms_test.go", "// https://specscore.org/github.com/acme/orders/spec/features/orders#ac:h\n"+
+		"// specscore:verifies specscore://github.com/acme/orders/feature/orders#ac:i\n"+
+		"// specscore:references feature/orders#ac:j\n"+
+		"// specscore:verifies specscore://github.com/other/repo/feature/orders#ac:k\n")
+	acWant(t, acCheck(t, sr, false), "orders#ac:d", "orders#ac:e", "orders#ac:f", "orders#ac:g", "orders#ac:k")
 }
 
 func TestACTestCoverage_CrossRepoNeedsConfiguredIdentity(t *testing.T) {
@@ -184,15 +189,18 @@ func TestACTestCoverage_CrossRepoNeedsConfiguredIdentity(t *testing.T) {
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:custom-test-globs
 func TestACTestCoverage_CustomTestGlobs(t *testing.T) {
 	sr := gradeSpecRoot(t, "project:\n  title: T\nac_test_coverage:\n  required: true\n  test_files: [\"e2e/**/*.feature\", \"**/*.test.js\"]\n")
-	writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable", "one", "two", "three"))
+	writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable", "one", "two", "three", "four"))
 	writeRootFile(t, sr, "e2e/checkout/x.feature", "# specscore:verifies feature/orders#ac:one\n")
 	writeRootFile(t, sr, "y_test.go", "// specscore:verifies feature/orders#ac:two\n")
 	writeRootFile(t, sr, "node_modules/pkg/z.test.js", "// specscore:verifies feature/orders#ac:three\n")
 	writeRootFile(t, sr, ".git/z.test.js", "// specscore:verifies feature/orders#ac:three\n")
-	if err := os.Symlink(filepath.Join(filepath.Dir(sr), "e2e", "checkout", "x.feature"), filepath.Join(filepath.Dir(sr), "e2e", "link.feature")); err != nil {
+	// A symlinked test file is not followed: the target is outside
+	// test_files and names an AC nothing else names.
+	writeRootFile(t, sr, "notes/four.txt", "# specscore:verifies feature/orders#ac:four\n")
+	if err := os.Symlink(filepath.Join(filepath.Dir(sr), "notes", "four.txt"), filepath.Join(filepath.Dir(sr), "e2e", "link.feature")); err != nil {
 		t.Fatal(err)
 	}
-	acWant(t, acCheck(t, sr, false), "orders#ac:two", "orders#ac:three")
+	acWant(t, acCheck(t, sr, false), "orders#ac:two", "orders#ac:three", "orders#ac:four")
 }
 
 // AC: deferral-counts
@@ -200,11 +208,17 @@ func TestACTestCoverage_CustomTestGlobs(t *testing.T) {
 func TestACTestCoverage_DeferralCounts(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
 	writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable",
-		"x", "y\n**Deferred:** needs a staging account", "z\n**Deferred:** —", "w\n#### Later\n\n**Deferred:** below another heading"))
+		"x", "y\n**Deferred:** needs a staging account", "z\n**Deferred:** —", "w\n#### Later\n\n**Deferred:** below another heading",
+		"v", "u", "r", "s"))
 	writeMD(t, sr, "plans/ship-orders/README.md", "# Plan: Ship orders\n\n**Status:** Draft\n**Source Feature:** orders\n\n## Tasks\n\n### Task 1: Do\n\n**Verifies:** orders#ac:y\n**Status:** planning\n\n"+
-		"## Deferred AC Coverage\n\n- orders#ac:x — post-MVP scope\n\n## Open Questions\n\nNone at this time.\n")
+		"## Deferred AC Coverage\n\n- orders#ac:x — post-MVP scope\n- orders#ac:v\n- orders#ac:u —\n\n## Open Questions\n\nNone at this time.\n")
+	// Retired Plans are historical records: their deferrals do not count.
+	for slug, status := range map[string]string{"rejected": "Rejected", "superseded": "Superseded"} {
+		ac := map[string]string{"rejected": "r", "superseded": "s"}[slug]
+		writeMD(t, sr, "plans/"+slug+"/README.md", "# Plan: Old\n\n**Status:** "+status+"\n**Source Feature:** orders\n\n## Deferred AC Coverage\n\n- orders#ac:"+ac+" — later\n")
+	}
 	vs := acCheck(t, sr, false)
-	acWant(t, vs, "orders#ac:z", "orders#ac:w")
+	acWant(t, vs, "orders#ac:z", "orders#ac:w", "orders#ac:v", "orders#ac:u", "orders#ac:r", "orders#ac:s")
 	if !strings.Contains(vs[0].Message, "`**Deferred:**` line with no reason") {
 		t.Fatalf("empty deferral must say so: %q", vs[0].Message)
 	}
@@ -311,4 +325,54 @@ func TestIsATXHeading(t *testing.T) {
 			t.Errorf("isATXHeading(%q) = %v, want %v", line, got, want)
 		}
 	}
+}
+
+// AC: only-implementing-and-stable
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:only-implementing-and-stable
+func TestACTestCoverage_ThematicBreakKeepsLaterACs(t *testing.T) {
+	sr := gradeSpecRoot(t, acOptIn)
+	doc := strings.Replace(acFeatureDoc("Stable", "before", "after"), "### AC: after", "---\n\n**Deferred:** a break ends the previous AC block\n\n### AC: after", 1)
+	writeMD(t, sr, "features/orders/README.md", doc)
+	acWant(t, acCheck(t, sr, false), "orders#ac:before", "orders#ac:after")
+}
+
+// AC: test-annotation-covers
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:test-annotation-covers
+func TestACTestCoverage_SymlinkedProjectRoot(t *testing.T) {
+	sr := gradeSpecRoot(t, acOptIn)
+	writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable", "a", "b"))
+	writeRootFile(t, sr, "orders_test.go", "// specscore:verifies feature/orders#ac:a\n")
+	link := filepath.Join(t.TempDir(), "work")
+	if err := os.Symlink(filepath.Dir(sr), link); err != nil {
+		t.Fatal(err)
+	}
+	acWant(t, acCheck(t, filepath.Join(link, "spec"), false), "orders#ac:b")
+	if _, err := acNamedByTests(filepath.Join(t.TempDir(), "missing"), []string{"**"}, ""); err == nil {
+		t.Fatal("an unresolvable project root must fail the scan")
+	}
+}
+
+// AC: deferral-counts
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:deferral-counts
+func TestACTestCoverage_PlanTreeErrors(t *testing.T) {
+	t.Run("discover error surfaces", func(t *testing.T) {
+		sr := gradeSpecRoot(t, acOptIn)
+		writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable", "x"))
+		target := writeMD(t, t.TempDir(), "real.md", "# Plan: P\n\n**Status:** Draft\n")
+		if err := os.MkdirAll(filepath.Join(sr, "plans"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(sr, "plans", "linked.md")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := newACTestCoverageChecker("", "", false).check(sr); err == nil || !strings.Contains(err.Error(), "reading plans dir") {
+			t.Fatalf("a Plan-tree read error must be returned, got %v", err)
+		}
+	})
+	t.Run("plans path is a file", func(t *testing.T) {
+		sr := gradeSpecRoot(t, acOptIn)
+		writeMD(t, sr, "features/orders/README.md", acFeatureDoc("Stable", "x"))
+		writeMD(t, sr, "plans", "not a directory\n")
+		acWant(t, acCheck(t, sr, false), "orders#ac:x")
+	})
 }

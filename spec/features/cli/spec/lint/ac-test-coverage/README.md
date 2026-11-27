@@ -52,11 +52,11 @@ A present `ac_test_coverage` block that is malformed MUST be reported as one `fe
 
 #### REQ: scope
 
-The rule applies to every Feature README (`spec/features/**/README.md` recognized by its `# Feature: <title>` H1, outside `_`-prefixed directories) whose `**Status:**` is `Implementing` or `Stable` (case-insensitive). Every other status is out of scope. Its acceptance criteria are the `### AC: <id>` headings under `## Acceptance Criteria`; headings inside fenced code blocks or HTML comments do not count. Each AC is addressed as `<feature-path>#ac:<id>`, where `<feature-path>` is the Feature's directory relative to `spec/features` (for example `cli/code/deps#ac:path-filter-works`).
+The rule applies to every Feature README (`spec/features/**/README.md` recognized by its `# Feature: <title>` H1, outside `_`-prefixed directories) whose `**Status:**` is `Implementing` or `Stable` (case-insensitive). Every other status is out of scope. Its acceptance criteria are the `### AC: <id>` headings under `## Acceptance Criteria` (the section runs to the next level-1 or level-2 heading; a `---` thematic break inside it does not end it); headings inside fenced code blocks or HTML comments do not count. Each AC is addressed as `<feature-path>#ac:<id>`, where `<feature-path>` is the Feature's directory relative to `spec/features` (for example `cli/code/deps#ac:path-filter-works`).
 
 #### REQ: test-files
 
-Test files are the regular files under the project root whose slash-separated project-relative path matches one of the `ac_test_coverage.test_files` globs (doublestar syntax, `{a,b}` alternatives allowed). The default set is `**/*_test.go`, `**/*.test.{ts,tsx,js,mjs}`, `**/*.spec.{ts,tsx,js,mjs}`, `**/test_*.py` and `**/*_test.py`. Directories named `.git` and `node_modules` are not searched. Annotations in files that match no glob MUST NOT count.
+Test files are the regular files under the project root whose slash-separated project-relative path matches one of the `ac_test_coverage.test_files` globs (doublestar syntax, `{a,b}` alternatives allowed). The default set is `**/*_test.go`, `**/*.test.{ts,tsx,js,mjs}`, `**/*.spec.{ts,tsx,js,mjs}`, `**/test_*.py` and `**/*_test.py`. Directories named `.git` and `node_modules` are not searched. A project root that is itself a symlink is resolved before the search; symlinked files and directories inside the tree are not followed. Annotations in files that match no glob MUST NOT count.
 
 #### REQ: annotation-names-ac
 
@@ -66,10 +66,12 @@ An AC is covered when at least one line of a test file carries a source annotati
 
 An AC that no test names is still satisfied when it is explicitly deferred, by either:
 
-1. an entry for it in any Plan's existing `## Deferred AC Coverage` list (`- <feature-path>#ac:<id> — <reason>`, see [plan-rules](../plan-rules/README.md)); or
-2. a line `**Deferred:** <reason>` inside the AC's own block (between its `### AC:` heading and the next heading). The reason MUST be non-empty; a `**Deferred:**` line with no reason, or only a dash, is not a deferral and the finding says so.
+1. an entry for it in the existing `## Deferred AC Coverage` list (`- <feature-path>#ac:<id> — <reason>`, see [plan-rules](../plan-rules/README.md)) of a Plan that is not retired. A retired Plan — `Rejected`, `Withdrawn`, `Superseded` or `Deprecated`, the dispositions `P-001`/`P-002` also skip — is a historical record and defers nothing; or
+2. a line `**Deferred:** <reason>` inside the AC's own block (between its `### AC:` heading and the next heading or `---` break).
 
-Plan discovery follows the lint run's Plan routing; when Plan routing is configured but broken, the rule reports nothing (the run already fails on `plan-route-unresolved`).
+In both forms the reason MUST be non-empty: an entry or line with no reason, or only a dash, is not a deferral. For the AC-level line the finding says so.
+
+Plan discovery follows the lint run's Plan routing; when Plan routing is configured but broken, the rule reports nothing (the run already fails on `plan-route-unresolved`). A missing Plans directory defers nothing; any other error reading the Plan tree (an unreadable, symlinked or ambiguous Plan) fails the run rather than being treated as "no deferrals".
 
 #### REQ: violation-message
 
@@ -109,25 +111,25 @@ Findings are sorted by file, then line.
 
 **Requirements:** cli/spec/lint/ac-test-coverage#req:annotation-names-ac, cli/spec/lint/ac-test-coverage#req:test-files
 
-**Given** an opted-in project with a Stable Feature `orders` with ACs `a` to `f`, and test files carrying `// specscore:verifies feature/orders#ac:a`, `# specscore:feature/orders#AC:b`, a `specscore.org` URL naming `c` under this project's identity, and a URL naming `d` under another project's identity, while `e` is named only in a non-test source file and `f` only by `specscore:implements`,
-**When** `specscore spec lint` runs,
-**Then** `a`, `b` and `c` are covered and `d`, `e` and `f` are reported.
+**Given** an opted-in project with a Stable Feature `orders` with ACs `a` to `f`, and test files carrying `// specscore:verifies feature/orders#ac:a`, `# specscore:feature/orders#AC:b`, a `specscore:verifies` `specscore.org` URL naming `c` under this project's identity, a bare `// https://specscore.org/...` URL naming `h`, a `specscore://<host>/<org>/<repo>/feature/orders#ac:i` authority form under this project's identity, and `specscore:references feature/orders#ac:j`, plus a URL naming `d` and an authority form naming `k` under another project's identity, while `e` is named only in a non-test source file and `f` only by `specscore:implements`,
+**When** `specscore spec lint` runs (also through a symlink to the project root),
+**Then** `a`, `b`, `c`, `h`, `i` and `j` are covered and `d`, `e`, `f` and `k` are reported.
 
 ### AC: custom-test-globs
 
 **Requirements:** cli/spec/lint/ac-test-coverage#req:test-files
 
-**Given** an opted-in project with `test_files: ["e2e/**/*.feature"]`, one AC named in `e2e/x.feature` and one named only in a `_test.go` file, and a third named only in a test file under `node_modules`,
+**Given** an opted-in project with `test_files: ["e2e/**/*.feature"]`, one AC named in `e2e/x.feature` and one named only in a `_test.go` file, a third named only in a test file under `node_modules`, and a fourth named only in a non-test file that a symlink matching the glob points to,
 **When** `specscore spec lint` runs,
-**Then** the first is covered and the other two are reported.
+**Then** the first is covered and the other three are reported.
 
 ### AC: deferral-counts
 
 **Requirements:** cli/spec/lint/ac-test-coverage#req:deferral
 
-**Given** an opted-in project with a Stable Feature whose AC `x` is listed in a Plan's `## Deferred AC Coverage`, whose AC `y` carries `**Deferred:** needs a staging account`, and whose AC `z` carries an empty `**Deferred:**` line,
+**Given** an opted-in project with a Stable Feature whose AC `x` is listed with a reason in a Draft Plan's `## Deferred AC Coverage`, whose AC `y` carries `**Deferred:** needs a staging account`, whose AC `z` carries an empty `**Deferred:**` line, whose ACs `v` and `u` are listed in that Plan with no reason (`- orders#ac:v`, `- orders#ac:u —`), and whose ACs `r` and `s` are deferred only by a Rejected and a Superseded Plan,
 **When** `specscore spec lint` runs,
-**Then** `x` and `y` are not reported and `z` is reported with a message saying the deferral has no reason.
+**Then** `x` and `y` are not reported, `z` is reported with a message saying the deferral has no reason, and `v`, `u`, `r` and `s` are reported.
 
 ### AC: message-names-feature-ac-and-fix
 

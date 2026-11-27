@@ -3,6 +3,7 @@ package lint
 // Features implemented: cli/spec/lint/ac-test-coverage
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/specscore/specscore-cli/pkg/lifecycle"
 	"github.com/specscore/specscore-cli/pkg/plan"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 	"github.com/specscore/specscore-cli/pkg/sourceref"
@@ -129,7 +131,10 @@ func (c *acTestCoverageChecker) check(specRoot string) ([]Violation, error) {
 	if err != nil {
 		return nil, err
 	}
-	deferred := acDeferredByPlans(effectivePlansDir(specRoot, c.plansDir))
+	deferred, err := acDeferredByPlans(effectivePlansDir(specRoot, c.plansDir))
+	if err != nil {
+		return nil, err
+	}
 
 	var out []Violation
 	for _, f := range features {
@@ -182,8 +187,14 @@ func parseACFeature(content string) *acFeature {
 		if f.status == "" && strings.HasPrefix(t, "**Status:**") {
 			f.status = strings.TrimSpace(strings.TrimPrefix(t, "**Status:**"))
 		}
-		if strings.HasPrefix(t, "# ") || strings.HasPrefix(t, "## ") || t == "---" {
+		if strings.HasPrefix(t, "# ") || strings.HasPrefix(t, "## ") {
 			inACs = strings.HasPrefix(t, "## ") && strings.TrimSpace(strings.TrimPrefix(t, "## ")) == "Acceptance Criteria"
+			cur = nil
+			continue
+		}
+		if t == "---" {
+			// A thematic break ends the current AC's block (e.g. before the
+			// adherence footer) but not the Acceptance Criteria section.
 			cur = nil
 			continue
 		}
@@ -203,8 +214,7 @@ func parseACFeature(content string) *acFeature {
 			continue
 		}
 		if cur != nil && strings.HasPrefix(t, acDeferredKey) {
-			reason := strings.Trim(strings.TrimSpace(strings.TrimPrefix(t, acDeferredKey)), "—–- ")
-			if reason != "" {
+			if acReasonGiven(strings.TrimPrefix(t, acDeferredKey)) {
 				cur.deferred = true
 			} else {
 				cur.emptyDeferral = true
@@ -223,9 +233,18 @@ func parseACFeature(content string) *acFeature {
 // count, so `specscore:implements` (which must target a REQ) never covers an
 // AC. A reference counts when it targets this repository: no authority, or
 // the authority equals self (`host/org/repo` from specscore.yaml).
+//
+// root is resolved first: filepath.WalkDir does not descend into a root that
+// is itself a symlink (the merge-conflict-markers gate resolves its scan
+// roots for the same reason). Symlinked files and directories inside the
+// tree are still not followed.
 func acNamedByTests(root string, globs []string, self string) (map[string]bool, error) {
 	named := map[string]bool{}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
+	}
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -276,18 +295,39 @@ func acKeyFromLine(line, self string) (string, bool) {
 	return feature + "#ac:" + id, true
 }
 
-// acDeferredByPlans returns the set of AC keys listed under any Plan's
-// `## Deferred AC Coverage`. An unreadable or ambiguous Plan tree defers
-// nothing (the plan rules report it); the rule then fails closed.
-func acDeferredByPlans(plansDir string) map[string]bool {
+// acDeferredByPlans returns the set of AC keys listed, with a reason, under
+// the `## Deferred AC Coverage` of a Plan that is not retired. A retired Plan
+// (Rejected, Withdrawn, Superseded, Deprecated — lifecycle.IsPlanDisposition,
+// the set P-001/P-002 skip) is a historical record and defers nothing. A
+// missing Plans directory defers nothing; any other Plan-tree read error is
+// returned, so the linter's transient-removal retry applies and a broken
+// tree never turns into coverage findings.
+func acDeferredByPlans(plansDir string) (map[string]bool, error) {
 	deferred := map[string]bool{}
-	plans, _ := plan.Discover(plansDir)
+	if info, err := os.Stat(plansDir); err != nil || !info.IsDir() {
+		return deferred, nil
+	}
+	plans, err := plan.Discover(plansDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading plans dir: %w", err)
+	}
 	for _, p := range plans {
+		if lifecycle.IsPlanDisposition(lifecycle.Status(p.Status)) {
+			continue
+		}
 		for _, d := range p.DeferredACs {
-			deferred[d.ACID] = true
+			if acReasonGiven(d.Reason) {
+				deferred[d.ACID] = true
+			}
 		}
 	}
-	return deferred
+	return deferred, nil
+}
+
+// acReasonGiven reports whether a deferral reason is non-empty once
+// whitespace and dashes (the explicit-empty sentinels) are removed.
+func acReasonGiven(reason string) bool {
+	return strings.Trim(strings.TrimSpace(reason), "—–- ") != ""
 }
 
 // isATXHeading reports whether a trimmed line is a Markdown ATX heading: one
