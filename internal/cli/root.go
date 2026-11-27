@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"charm.land/fang/v2"
@@ -102,11 +103,11 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 	// decoration, which is what the fang.Option below relies on.
 	fangOpts := fangcmd.Wire(rootCmd, buildInfo)
 
-	// Usage errors exit 2 (cli#req:usage-errors-exit-2): flag-parse errors
-	// for every command, and extra positionals on leaf commands that take
-	// none. Applied after Wire so the `version` leaf is covered too.
+	// Flag-parse errors exit 2 for every command, including ones registered
+	// later (cli#req:usage-errors-exit-2): subcommands inherit the root's
+	// FlagErrorFunc. Extra positionals on leaves are mapped after execution
+	// by mapLeafExtraArgs, against the final command tree.
 	rootCmd.SetFlagErrorFunc(flagErrorIsInvalidArgs)
-	mapLeafExtraArgs(rootCmd)
 
 	// Attach telemetry persistent-flag + PersistentPreRun. Emission happens
 	// after Execute returns so the actual exit code is captured.
@@ -154,28 +155,54 @@ func flagErrorIsInvalidArgs(_ *cobra.Command, err error) error {
 	return exitcode.Wrap(exitcode.InvalidArgs, err.Error(), err)
 }
 
-// mapLeafExtraArgs wraps the positional-argument validator of every leaf
-// command (one with no subcommands) under cmd. cobra.NoArgs reports an extra
-// positional as `unknown command "x" for "specscore idea list"`, the same
-// text as an unrecognized subcommand, which mapUnsupportedCommand would turn
-// into exit 8. On a leaf there is no subcommand to be missing, so the
-// argument is simply one too many: it exits 2 like every other arity error
+// unknownCommandFor matches Cobra's "unknown command" error exactly as
+// cobra.NoArgs words it, capturing the quoted argument and command path. The
+// root's own variant appends suggestions and so never matches; the root is a
+// command group anyway.
+var unknownCommandFor = regexp.MustCompile(`^unknown command ("(?:[^"\\]|\\.)*") for ("[^"\\]*")$`)
+
+// mapLeafExtraArgs maps an extra positional on a leaf command (one with no
+// subcommands) to exit 2. cobra.NoArgs reports it as `unknown command "x" for
+// "specscore idea list"`, the same text as an unrecognized subcommand, which
+// mapUnsupportedCommand would turn into exit 8; on a leaf there is no
+// subcommand to be missing, so it is an arity error
 // (cli#req:usage-errors-exit-2). Command groups keep exit 8.
-func mapLeafExtraArgs(cmd *cobra.Command) {
-	for _, sub := range cmd.Commands() {
-		mapLeafExtraArgs(sub)
+//
+// root is the command tree as it stands after execution, so leaves that Cobra
+// and fang register only during Execute (`completion bash|zsh|fish|powershell`,
+// `man`), or any registered in the future, are covered without a list.
+func mapLeafExtraArgs(root *cobra.Command, err error) error {
+	if err == nil {
+		return nil
 	}
-	if cmd.HasSubCommands() || cmd.Args == nil {
-		return
-	}
-	validate := cmd.Args
-	cmd.Args = func(c *cobra.Command, args []string) error {
-		err := validate(c, args)
-		if err != nil && strings.HasPrefix(err.Error(), `unknown command "`) {
-			return exitcode.Wrap(exitcode.InvalidArgs, fmt.Sprintf("accepts 0 arg(s), received %d", len(args)), err)
-		}
+	type exitCoder interface{ ExitCode() int }
+	var ec exitCoder
+	if errors.As(err, &ec) {
 		return err
 	}
+	m := unknownCommandFor.FindStringSubmatch(err.Error())
+	if m == nil {
+		return err
+	}
+	cmd := commandWithPath(root, m[2])
+	if cmd == nil || cmd.HasSubCommands() {
+		return err
+	}
+	return exitcode.Wrap(exitcode.InvalidArgs, fmt.Sprintf("accepts 0 arg(s), received %s", m[1]), err)
+}
+
+// commandWithPath returns the command under root whose quoted CommandPath is
+// quotedPath, or nil.
+func commandWithPath(root *cobra.Command, quotedPath string) *cobra.Command {
+	if strconv.Quote(root.CommandPath()) == quotedPath {
+		return root
+	}
+	for _, sub := range root.Commands() {
+		if found := commandWithPath(sub, quotedPath); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 // cobraUsageError matches, exactly, the errors Cobra itself returns when a
@@ -200,8 +227,8 @@ var cobraUsageError = regexp.MustCompile(`^(?:` +
 // command executes, so every verb gets it without per-command wiring. Like
 // mapUnsupportedCommand it never clobbers an error that already carries an
 // exit code. Cobra's "unknown command" error stays with mapUnsupportedCommand:
-// on a leaf, mapLeafExtraArgs has already coded it as exit 2; on a command
-// group it is an unrecognized subcommand (exit 8). Flag-parse errors are coded
+// on a leaf, mapLeafExtraArgs (applied first) has coded it as exit 2; on a
+// command group it is an unrecognized subcommand (exit 8). Flag-parse errors are coded
 // by flagErrorIsInvalidArgs.
 func mapInvalidArgs(err error) error {
 	if err == nil {

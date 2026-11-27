@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -227,6 +228,7 @@ func runCLIExit(t *testing.T, args ...string) (int, string) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	savedInvocation := invocation
+	invocation = runtimeState{}
 	t.Cleanup(func() { invocation = savedInvocation })
 	code := 0
 	old := osExit
@@ -251,8 +253,10 @@ func TestRun_UsageErrorsExit2(t *testing.T) {
 		{"MaximumNArgs", []string{"telemetry", "enable", "a", "b"}, "accepts at most 1 arg(s), received 2"},
 		{"RangeArgs", []string{"studio", "resolve", "a", "b", "c"}, "accepts between 0 and 2 arg(s), received 3"},
 		{"MarkFlagRequired", []string{"issue", "change-status", "foo"}, `required flag(s) "to" not set`},
-		{"NoArgs leaf given a positional", []string{"idea", "list", "extra"}, "accepts 0 arg(s), received 1"},
-		{"NoArgs top-level leaf given a positional", []string{"version", "extra"}, "accepts 0 arg(s), received 1"},
+		{"NoArgs leaf given a positional", []string{"idea", "list", "extra"}, `accepts 0 arg(s), received "extra"`},
+		{"NoArgs top-level leaf given a positional", []string{"version", "extra"}, `accepts 0 arg(s), received "extra"`},
+		{"leaf Cobra registers during Execute", []string{"completion", "bash", "extra"}, `accepts 0 arg(s), received "extra"`},
+		{"leaf fang registers during Execute", []string{"man", "extra"}, `accepts 0 arg(s), received "extra"`},
 		{"unknown flag", []string{"idea", "list", "--zz-bogus"}, "unknown flag: --zz-bogus"},
 		{"flag value does not parse", []string{"lesson", "list", "--min-recurred=abc"}, `invalid argument "abc" for "--min-recurred" flag`},
 		{"flag missing its value", []string{"idea", "change-status", "foo", "--to"}, "flag needs an argument: --to"},
@@ -297,32 +301,86 @@ func TestRun_GroupUnknownSubcommandStaysExit8(t *testing.T) {
 }
 
 func TestMapLeafExtraArgs(t *testing.T) {
-	leafNoArgs := &cobra.Command{Use: "leaf", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {}}
-	leafExact := &cobra.Command{Use: "exact", Args: cobra.ExactArgs(1), Run: func(*cobra.Command, []string) {}}
-	leafNil := &cobra.Command{Use: "free", Run: func(*cobra.Command, []string) {}}
+	leaf := &cobra.Command{Use: "leaf", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {}}
 	sub := &cobra.Command{Use: "sub", Run: func(*cobra.Command, []string) {}}
 	group := &cobra.Command{Use: "group", Args: cobra.NoArgs}
 	group.AddCommand(sub)
 	root := &cobra.Command{Use: "root"}
-	root.AddCommand(leafNoArgs, leafExact, leafNil, group)
-
-	mapLeafExtraArgs(root)
+	root.AddCommand(leaf, group)
+	// Registered after everything else, the way Cobra adds `completion` and
+	// fang adds `man` during Execute: the mapping must still cover it.
+	late := &cobra.Command{Use: "late", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {}}
+	group.AddCommand(late)
 
 	var ec interface{ ExitCode() int }
-	if err := leafNoArgs.Args(leafNoArgs, []string{"x"}); !errors.As(err, &ec) || ec.ExitCode() != exitcode.InvalidArgs {
-		t.Errorf("NoArgs leaf with a positional = %v, want exit %d", err, exitcode.InvalidArgs)
+	for _, c := range []*cobra.Command{leaf, late} {
+		in := c.Args(c, []string{"extra"})
+		got := mapLeafExtraArgs(root, in)
+		if !errors.As(got, &ec) || ec.ExitCode() != exitcode.InvalidArgs {
+			t.Errorf("%s with a positional = %v, want exit %d", c.CommandPath(), got, exitcode.InvalidArgs)
+		}
+		if got.Error() != `accepts 0 arg(s), received "extra"` || !errors.Is(got, in) {
+			t.Errorf("%s: message %q / cause lost", c.CommandPath(), got.Error())
+		}
 	}
-	if err := leafNoArgs.Args(leafNoArgs, nil); err != nil {
-		t.Errorf("NoArgs leaf with no positional = %v, want nil", err)
+	unchanged := []error{
+		group.Args(group, []string{"extra"}),                                    // group: an unrecognized subcommand, exit 8 later
+		errors.New(`unknown command "x" for "root nowhere"`),                    // path not in the tree
+		errors.New(`unknown command "x" for "root"` + "\n\nDid you mean this?"), // root's legacyArgs wording
+		exitcode.NotFoundError(`unknown command "x" for "root leaf"`),           // already coded
+		errors.New("something else failed"),
 	}
-	if err := leafExact.Args(leafExact, nil); err == nil || errors.As(err, &ec) {
-		t.Errorf("ExactArgs error must pass through uncoded for mapInvalidArgs, got %v", err)
+	for _, in := range unchanged {
+		if got := mapLeafExtraArgs(root, in); got != in {
+			t.Errorf("mapLeafExtraArgs(%q) = %v, want it unchanged", in, got)
+		}
 	}
-	if leafNil.Args != nil {
-		t.Error("a leaf with no validator must stay without one")
+	if got := mapLeafExtraArgs(root, nil); got != nil {
+		t.Errorf("mapLeafExtraArgs(nil) = %v", got)
 	}
-	if err := group.Args(group, []string{"x"}); err == nil || errors.As(err, &ec) {
-		t.Errorf("a group's NoArgs must stay an uncoded unknown-command error (exit 8 later), got %v", err)
+}
+
+// TestMapLeafExtraArgs_EveryLeafOfTheExecutedTree walks the command tree as
+// it stands after a real execution, which includes leaves Cobra and fang
+// register only during Execute (completion, man) and any added in future, and
+// proves each NoArgs leaf's extra-positional error maps to exit 2.
+func TestMapLeafExtraArgs_EveryLeafOfTheExecutedTree(t *testing.T) {
+	t.Setenv("DO_NOT_TRACK", "1")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	savedInvocation := invocation
+	invocation = runtimeState{}
+	t.Cleanup(func() { invocation = savedInvocation })
+	root, opts := newRootCommand()
+	root.SetArgs([]string{"help"})
+	root.SetOut(io.Discard)
+	if err := executeWithPanicRecovery(root, opts...); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	seen := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+		if c.HasSubCommands() || c.Args == nil {
+			return
+		}
+		in := c.Args(c, []string{"extra"})
+		if in == nil || !strings.HasPrefix(in.Error(), "unknown command ") {
+			return
+		}
+		seen[c.CommandPath()] = true
+		var ec interface{ ExitCode() int }
+		if got := mapLeafExtraArgs(root, in); !errors.As(got, &ec) || ec.ExitCode() != exitcode.InvalidArgs {
+			t.Errorf("%s extra = %v, want exit %d", c.CommandPath(), got, exitcode.InvalidArgs)
+		}
+	}
+	walk(root)
+	for _, late := range []string{"specscore completion bash", "specscore completion powershell", "specscore man", "specscore idea list"} {
+		if !seen[late] {
+			t.Errorf("walk did not reach NoArgs leaf %q; the executed tree is not the one being checked", late)
+		}
 	}
 }
 
