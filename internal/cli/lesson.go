@@ -413,7 +413,10 @@ reference. The audited correction --to=recorded (legal only from Stated or
 Enforced) also requires --note documenting why the lesson is being demoted —
 e.g. its Enforcement section named no binding control. The note is appended
 as ## Resolution, earlier history is kept, and the lesson returns to the
---not-enforced queue. If anything fails after the
+--not-enforced queue. The note ends with an "Enforcement receipt at
+correction: sha256:<hex>" line fingerprinting Control, Verification, and
+Evidence; a later --to=enforced exits 4 until that receipt changes, so
+re-enforcement needs a fresh one. If anything fails after the
 status rewrite (lint, I/O, or durability fence), the command exits
 recovery-required with its prepared event and visible state retained; it
 never restores a whole snapshot over concurrent work.
@@ -614,6 +617,24 @@ func lessonChangeStatusMutateWithDeps(ctx context.Context, root, slug string, to
 			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf(
 				"lesson %q cannot be demoted to Recorded yet: %s; edit its **Control:** line first, then retry (nothing was modified)",
 				slug, blocking[0].Message)
+		}
+		// Fingerprint the receipt this correction judges not to bind, in the
+		// audited note itself, so re-enforcement can require a fresh one
+		// (cli/lesson/change-status#req:re-enforcement-requires-fresh-receipt).
+		note = lesson.WithCorrectionReceipt(note, lesson.EnforcementReceipt(current))
+	}
+	// A Lesson demoted by an audited correction may not climb back to
+	// Enforced on the receipt that correction disproved: refuse before any
+	// write or event while Control/Verification/Evidence are unchanged.
+	if to == lifecycle.LessonEnforced {
+		current, err := deps.parse(path)
+		if err != nil {
+			return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("parsing lesson before enforcement: %v", err)
+		}
+		if current.CorrectionReceipt != "" && current.CorrectionReceipt == lesson.EnforcementReceipt(current) {
+			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf(
+				"lesson %q cannot be re-enforced: its ## Enforcement Control, Verification, and Evidence are unchanged since the audited correction to Recorded (sha256:%s); replace the disproved receipt with a fresh positive one, then retry (nothing was modified)",
+				slug, current.CorrectionReceipt)
 		}
 	}
 	postMutation, err := prepareLessonPostMutationWithDeps(root, slug, deps)
