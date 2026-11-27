@@ -192,6 +192,9 @@ func runRuleNew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(root); err != nil {
+		return err
+	}
 	rulesDir := rule.RulesDir(root)
 
 	force, _ := cmd.Flags().GetBool("force")

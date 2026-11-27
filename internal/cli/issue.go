@@ -190,6 +190,9 @@ func runIssueNew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(specRoot); err != nil {
+		return err
+	}
 
 	// Determine target path.
 	var target string
@@ -256,7 +259,7 @@ func runIssueNew(cmd *cobra.Command, args []string) error {
 	relTarget, _ := filepath.Rel(specSub, target)
 	var own []lint.Violation
 	for _, v := range violations {
-		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "issues/")) {
+		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "issues/") || v.Rule == lint.MergeConflictMarkersRule) {
 			own = append(own, v)
 		}
 	}
@@ -368,6 +371,9 @@ func runIssueChangeStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(specRoot); err != nil {
+		return err
+	}
 
 	if dryRunFlag, _ := cmd.Flags().GetBool("dry-run"); dryRunFlag {
 		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (issue.ChangeStatusResult, error) {
@@ -421,7 +427,7 @@ func issueLintPostMutationHook(specSub, slug string) issue.PostMutationHook {
 		}
 		var errs []lint.Violation
 		for _, v := range violations {
-			if v.Severity == "error" && isIssueRelatedViolation(v.File) {
+			if v.Severity == "error" && (isIssueRelatedViolation(v.File) || v.Rule == lint.MergeConflictMarkersRule) {
 				errs = append(errs, v)
 			}
 		}

@@ -57,6 +57,9 @@ func runSpecMigrate(cmd *cobra.Command, _ []string) error {
 	}
 
 	changed, err := lintMigrateFn(specRoot)
+	if refusal := fixRefusal(specRoot, err); refusal != nil {
+		return refusal
+	}
 	if err != nil {
 		return exitcode.UnexpectedErrorf("migrating frontmatter: %v", err)
 	}
@@ -304,7 +307,7 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// (cli/spec/lint#req:merge-conflict-markers-block-fix). The violations
 	// themselves still decide the (non-zero) exit status below.
 	refusedRel := projectRelativeSpecPaths(specRoot, res.FixRefused)
-	if fix && len(refusedRel) > 0 {
+	if fix && format == "text" && len(refusedRel) > 0 {
 		ew := cmd.ErrOrStderr()
 		_, _ = fmt.Fprintf(ew, "spec lint --fix refused: %d file(s) contain unresolved git merge-conflict markers; no file was modified. Resolve each conflict, then re-run:\n", len(refusedRel))
 		for _, f := range refusedRel {
@@ -317,7 +320,7 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// both the fixed-files report and the violations. Without --fix the
 	// pre-existing bare-array contract is preserved.
 	if fix && (format == "json" || format == "yaml") {
-		if err := outputLintFixEnvelope(w, fixedRel, res.Reconciled, violations, format); err != nil {
+		if err := outputLintFixEnvelope(w, fixedRel, res.Reconciled, violations, format, refusedRel...); err != nil {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
 	} else {
@@ -371,6 +374,10 @@ func projectRelativeSpecPaths(specRoot string, paths []string) []string {
 	if prefix, perr := filepath.Rel(filepath.Dir(specRoot), specRoot); perr == nil && prefix != "." {
 		out = make([]string, len(paths))
 		for i, f := range paths {
+			if filepath.IsAbs(f) {
+				out[i] = filepath.ToSlash(f) // a fallback absolute path is already unambiguous
+				continue
+			}
 			out[i] = filepath.ToSlash(filepath.Join(prefix, f))
 		}
 	}
@@ -409,12 +416,15 @@ type lintFixEnvelope struct {
 	Fixed      []string              `json:"fixed" yaml:"fixed"`
 	Reconciled []lint.Reconciliation `json:"reconciled" yaml:"reconciled"`
 	Violations []lint.Violation      `json:"violations" yaml:"violations"`
+	// FixRefused names the project-relative files whose merge-conflict
+	// markers made the fix pass refuse to run; omitted when it ran.
+	FixRefused []string `json:"fix_refused,omitempty" yaml:"fix_refused,omitempty"`
 }
 
 // outputLintFixEnvelope marshals the {fixed, reconciled, violations} envelope.
 // All three arrays serialize as `[]` (never `null`) when empty, matching the
 // non-fix contract.
-func outputLintFixEnvelope(w io.Writer, fixed []string, reconciled []lint.Reconciliation, violations []lint.Violation, format string) error {
+func outputLintFixEnvelope(w io.Writer, fixed []string, reconciled []lint.Reconciliation, violations []lint.Violation, format string, fixRefused ...string) error {
 	if fixed == nil {
 		fixed = []string{}
 	}
@@ -424,7 +434,7 @@ func outputLintFixEnvelope(w io.Writer, fixed []string, reconciled []lint.Reconc
 	if violations == nil {
 		violations = []lint.Violation{}
 	}
-	env := lintFixEnvelope{Fixed: fixed, Reconciled: reconciled, Violations: violations}
+	env := lintFixEnvelope{Fixed: fixed, Reconciled: reconciled, Violations: violations, FixRefused: fixRefused}
 	switch format {
 	case "yaml":
 		enc := newYAMLEnc(w)

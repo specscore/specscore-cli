@@ -85,6 +85,9 @@ func runLessonRecurWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDep
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(root); err != nil {
+		return err
+	}
 
 	path, err := lesson.ResolveLessonFile(filepath.Join(root, "spec", "lessons"), slug)
 	if err != nil {

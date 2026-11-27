@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories, and canonical Plans-index rows). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit. `--fix=<targets>` scopes the pass to named fixes (e.g. `--fix=no-source`); some fixes are opt-in and run only when named. When a reported violation is fixable, a `How to fix:` section names the exact `--fix=<target>` command. Unresolved git merge-conflict markers in any managed file are checked first: while any remain, only those findings are reported and `--fix` modifies nothing.
+`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories, and canonical Plans-index rows). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit. `--fix=<targets>` scopes the pass to named fixes (e.g. `--fix=no-source`); some fixes are opt-in and run only when named. When a reported violation is fixable, a `How to fix:` section names the exact `--fix=<target>` command. Unresolved git merge-conflict markers in any managed file are checked first: while any remain, only those findings are reported, `--fix` modifies nothing, and every producer verb refuses to write.
 
 ## Contents
 
@@ -92,7 +92,7 @@ When two branches edit the same generated index (for example `spec/lessons/READM
 
 #### REQ: merge-conflict-markers-detected
 
-The error-severity `merge-conflict-markers` rule (family `core`) MUST scan every regular text file SpecScore manages — every artifact and every generated index under the spec tree, an externally routed Plans directory, and the project-root `tasks/` board — and report one violation, with file and 1-based line, for each git conflict-marker line: a line beginning with seven `<` characters and a space, seven `|` characters and a space (the diff3/zdiff3 base marker), or seven `>` characters and a space, and a line that is exactly seven `=` characters only while inside a block opened by a `<<<<<<<` line. A bare seven-`=` line outside such a block is a Markdown setext heading underline and MUST NOT be reported. CRLF line endings are tolerated. Binary files (containing a NUL byte), symbolic links, hidden directories, `benchmark/` fixture subtrees, and a local `spec/plans` mirror that Plan routing routes away from are not scanned.
+The error-severity `merge-conflict-markers` rule (family `core`) MUST scan every regular text file SpecScore manages — every artifact and every generated index under the spec tree, an externally routed Plans directory, the project-root `tasks/` board, and `specscore.yaml` — and report one violation, with file and 1-based line, for each git conflict-marker line: a line beginning with seven `<` characters and a space, seven `|` characters and a space (the diff3/zdiff3 base marker), or seven `>` characters and a space, and a line that is exactly seven `=` characters only while inside at least one block opened by a `<<<<<<<` line. Nesting is tracked with a depth counter, so an inner block's closing marker does not hide the outer separator. A bare seven-`=` line outside every block is a Markdown setext heading underline and MUST NOT be reported. CRLF line endings are tolerated. In a Markdown (`.md`) file, lines inside a balanced fenced code block are documentation and MUST NOT be reported; a file whose fences do not balance is scanned as if it had no fences, so an unclosed fence can never hide a marker. A scan root that is a symbolic link is resolved before the walk; findings keep their logical spec-root-relative path. Binary files (containing a NUL byte), symbolic links below a root, nested `.git` directories, `benchmark/` fixture subtrees, and a local `spec/plans` mirror that Plan routing routes away from are not scanned; the tree-walking fixers skip exactly the same paths, so `--fix` never rewrites a file the gate did not read.
 
 #### REQ: merge-conflict-markers-gate-precedes-rules
 
@@ -100,7 +100,11 @@ The error-severity `merge-conflict-markers` rule (family `core`) MUST scan every
 
 #### REQ: merge-conflict-markers-block-fix
 
-While any managed file carries a conflict marker, `spec lint --fix` MUST NOT run any fixer and MUST NOT modify any file. It MUST exit `1`, report the marker findings, and in text format write a stderr line stating that the fix was refused and naming each conflicted file project-relative. The structured lint result carries the refused files so in-process callers can tell a refused fix from a clean one; a caller that depends on the fix pass having regenerated a file (such as `specscore merge-driver index`) MUST fail closed instead of reporting success.
+While any managed file carries a conflict marker, `spec lint --fix` MUST NOT run any fixer and MUST NOT modify any file. It MUST exit `1` and report the marker findings. In text format it writes a stderr line stating that the fix was refused and naming each conflicted file project-relative; under `--format json|yaml` it writes no human text to stderr and the envelope instead carries a `fix_refused` array of those files. The structured lint result carries the refused files so in-process callers can tell a refused fix from a clean one: the `Lint` API returns a fix-refused error rather than a success-shaped empty result, and a caller that depends on the fix pass having regenerated a file (such as `specscore merge-driver index`) MUST fail closed instead of reporting success.
+
+#### REQ: writers-refuse-conflicted-files
+
+Every producer verb and index writer MUST check for conflict markers before it mutates any file or prepares any lifecycle event, using the same scope as the gate, and refuse with exit `1` naming each conflicted file while leaving every byte of the tree unchanged. This covers `lesson new`, `lesson change-status` (including `--dry-run`), `lesson relation add`, `lesson occurrence add`, `lesson recur`, `lesson migrate-flat`, `lesson import-legacy`, `feature new`, `idea new`, `idea promote`, `decision new`, `issue new`, `issue change-status`, `rule new`, `rule update`, `rule delete`, `rule promote`, `rule lint --fix`, and `spec migrate`. The library-level index writers it relies on (the Lessons index row upsert, including its legacy-table migration; the Rules index reader and table rewrite; the Features index and parent `## Contents` updates) MUST also refuse a conflicted file rather than parse around and rewrite over its markers. A `merge-conflict-markers` finding that surfaces in a producer's own post-write lint is always fatal, whatever subtree filter the producer applies to other findings.
 
 #### REQ: producer-output-passes-lint-unchanged
 
@@ -581,7 +585,13 @@ Given a generated Features index whose two conflicting halves are each a well-fo
 
 **Requirements:** cli/spec/lint#req:merge-conflict-markers-detected
 
-Given a README whose H1 is written in setext form (a title line followed by a line of exactly seven `=` characters) and no `<<<<<<<` line, the rule reports nothing. A seven-`=` line after a conflict block has closed is likewise not reported, while the separator inside the block is.
+Given a README whose H1 is written in setext form (a title line followed by a line of exactly seven `=` characters) and no `<<<<<<<` line, the rule reports nothing. A seven-`=` line after a conflict block has closed is likewise not reported, while the separator inside the block is; in a nested conflict both separators are reported.
+
+### AC: merge-conflict-markers-fenced-example-not-flagged
+
+**Requirements:** cli/spec/lint#req:merge-conflict-markers-detected
+
+Given a Markdown file that quotes a complete conflict inside a balanced fenced code block, the rule reports nothing for it, while the same text in a non-Markdown file, or in a Markdown file whose fence is left unclosed, is reported.
 
 ### AC: merge-conflict-markers-diff3-flagged
 
@@ -593,7 +603,19 @@ Given a file conflicted in diff3 style (ours, base, separator, theirs), the rule
 
 **Requirements:** cli/spec/lint#req:merge-conflict-markers-block-fix
 
-Given a tree with one conflicted index and one unrelated Feature README missing its adherence footer, `specscore spec lint --fix` exits `1`, leaves every file byte-identical (the footer is not appended either), prints no `Fixed` summary, writes `spec lint --fix refused` naming the conflicted file to stderr, and reports only the marker findings. `specscore merge-driver index` run while a sibling source file is conflicted exits non-zero naming that file and leaves `<ours>` untouched.
+Given a tree with one conflicted index and one unrelated Feature README missing its adherence footer, `specscore spec lint --fix` exits `1`, leaves every file byte-identical (the footer is not appended either), prints no `Fixed` summary, writes `spec lint --fix refused` naming the conflicted file to stderr, and reports only the marker findings; with `--format json` stdout is one envelope whose `fix_refused` names the file and stderr carries no refusal text. `specscore merge-driver index` run over a stale on-disk index while a sibling source file is conflicted exits non-zero naming that file and leaves `<ours>` untouched.
+
+### AC: writers-refuse-conflicted-files
+
+**Requirements:** cli/spec/lint#req:writers-refuse-conflicted-files
+
+Given a lint-clean tree whose Lessons index carries a one-sided conflict block, each producer verb named by the requirement exits `1` with a refusal naming `spec/lessons/README.md`, and the whole tree — every artifact, index, and event-ledger byte — is unchanged afterwards. `spec migrate` and `rule lint --fix` refuse the same way.
+
+### AC: writers-refuse-conflicted-index
+
+**Requirements:** cli/spec/lint#req:writers-refuse-conflicted-files
+
+Given a conflicted Lessons index (a canonical table with a one-sided block, or a legacy five-column table), the Lessons index row upsert refuses and leaves the file byte-identical; the Rules index reader, table rewrite and row removal refuse a conflicted Rules index; the Features index and parent `## Contents` updates refuse, and `feature new` refuses before creating the feature directory.
 
 ### AC: producer-output-round-trips-through-fix
 

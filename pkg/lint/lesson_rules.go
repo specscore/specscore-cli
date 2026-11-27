@@ -9,6 +9,7 @@ package lint
 
 import (
 	"fmt"
+	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 	"io"
 	"os"
 	"path/filepath"
@@ -147,6 +148,16 @@ func lintLessonControlMechanism(l *lesson.Lesson, relPath string) []Violation {
 			l.Status, lessonControlMechanismThreshold, strings.Join(lessonControlMechanismVocabulary, ", "), strings.TrimSpace(l.Control),
 		),
 	}}
+}
+
+// LessonControlViolationsAs returns the L-010 findings l would carry if its
+// Status were status, without touching the file. `lesson change-status
+// --to=recorded` uses it to refuse a demotion before any write, instead of
+// failing the post-write lint.
+func LessonControlViolationsAs(l *lesson.Lesson, status string) []Violation {
+	projected := *l
+	projected.Status = status
+	return lintLessonControlMechanism(&projected, "")
 }
 
 // canonicalLessonStatuses is the legal Lesson **Status:** set: the three-rung
@@ -911,6 +922,12 @@ func upsertLessonIndexRowUnlocked(specRoot string, l *lesson.Lesson) error {
 	path := filepath.Join(specRoot, "lessons", "README.md")
 	b, err := os.ReadFile(path)
 	if err != nil {
+		return err
+	}
+	// Refuse a conflicted index before either the row rewrite or the
+	// legacy-table migration below, which replaces the whole table and would
+	// silently erase the markers (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := conflictmarker.Check(path, b); err != nil {
 		return err
 	}
 	row, err := expectedLessonIndexRow(l.Slug, l)

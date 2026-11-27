@@ -79,6 +79,11 @@ func reconcileLockedLessons(root string, slugs, extraFence []string, deps lesson
 }
 
 func ownedLessonMutationViolation(violation lint.Violation, slugs []string) bool {
+	// A conflict marker anywhere is fatal: it suppresses every other rule,
+	// so the per-Lesson filter below would otherwise see nothing.
+	if violation.Rule == lint.MergeConflictMarkersRule {
+		return true
+	}
 	for _, slug := range slugs {
 		canonical := filepath.ToSlash(filepath.Join("lessons", slug, "README.md"))
 		legacy := filepath.ToSlash(filepath.Join("lessons", slug+".md"))

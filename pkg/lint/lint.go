@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // Violation represents a single linting violation.
@@ -148,11 +149,31 @@ type Result struct {
 	FixRefused []string
 }
 
-// Lint runs all enabled lint rules against the spec tree.
+// FixRefusedError is returned by Lint when opts.Fix was requested but the fix
+// pass was refused because managed files still carry git merge-conflict
+// markers (cli/spec/lint#req:merge-conflict-markers-block-fix). Lint returns
+// it so that no caller relying on --fix having run can mistake a refused pass
+// for a clean one.
+type FixRefusedError struct {
+	// Files are the specRoot-relative conflicted files.
+	Files []string
+}
+
+func (e *FixRefusedError) Error() string {
+	return fmt.Sprintf("lint --fix refused: unresolved git merge-conflict markers in %s; resolve each conflict, then re-run (no file was modified)",
+		strings.Join(e.Files, ", "))
+}
+
+// Lint runs all enabled lint rules against the spec tree. When opts.Fix is
+// set and the fix pass is refused over merge-conflict markers, it returns a
+// *FixRefusedError instead of the violations.
 func Lint(opts Options) ([]Violation, error) {
 	res, err := LintWithResult(opts)
 	if err != nil {
 		return nil, err
+	}
+	if len(res.FixRefused) > 0 {
+		return nil, &FixRefusedError{Files: res.FixRefused}
 	}
 	return res.Violations, nil
 }
@@ -185,7 +206,7 @@ func LintWithResult(opts Options) (Result, error) {
 	if len(markers) > 0 {
 		res := Result{Violations: markers}
 		if opts.Fix {
-			res.FixRefused = conflictMarkerFiles(markers)
+			res.FixRefused = ConflictMarkerFiles(markers)
 		}
 		return res, nil
 	}

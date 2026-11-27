@@ -2,6 +2,7 @@ package cli
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -73,30 +74,32 @@ func TestSpecLint_FixRefusedWhileConflictMarkersRemain(t *testing.T) {
 }
 
 // AC: conflicted-lessons-index-fails-closed — a status transition over a
-// conflicted Lessons index never reports success. A conflict on the Lesson's
-// own row is refused by the narrow index upsert (duplicate row); a conflict
-// anywhere else in the index is caught by the read-only post-write lint the
-// verb already runs. Either way the command exits non-zero and the markers
-// are left in place for the operator to resolve.
+// conflicted Lessons index is refused by the shared precondition before the
+// Lesson file is rewritten or any event is prepared: it exits 1 naming the
+// index, and the whole tree — Lesson file, index, event ledger — stays
+// byte-identical. Covered: a conflict on the Lesson's own row, one elsewhere
+// in the index, a one-sided block, and a conflict inside the legacy
+// five-column table (which the index upsert would otherwise regenerate,
+// erasing the markers).
 func TestLessonChangeStatus_ConflictedIndexFailsClosed_CLI(t *testing.T) {
+	ownRow := func(index string) (string, bool) {
+		var b strings.Builder
+		replaced := false
+		for _, line := range strings.SplitAfter(index, "\n") {
+			if !replaced && strings.HasPrefix(line, "| ") && strings.Contains(line, "kinder-fake") {
+				b.WriteString(conflictedLessonRows)
+				replaced = true
+				continue
+			}
+			b.WriteString(line)
+		}
+		return b.String(), replaced
+	}
 	cases := []struct {
 		name     string
 		conflict func(index string) (string, bool)
-		wantErr  string
 	}{
-		{"own-row", func(index string) (string, bool) {
-			var b strings.Builder
-			replaced := false
-			for _, line := range strings.SplitAfter(index, "\n") {
-				if !replaced && strings.HasPrefix(line, "| ") && strings.Contains(line, "kinder-fake") {
-					b.WriteString(conflictedLessonRows)
-					replaced = true
-					continue
-				}
-				b.WriteString(line)
-			}
-			return b.String(), replaced
-		}, "duplicate row"},
+		{"own-row", ownRow},
 		{"elsewhere-in-index", func(index string) (string, bool) {
 			const oq = "## Open Questions\n"
 			i := strings.Index(index, oq)
@@ -104,7 +107,19 @@ func TestLessonChangeStatus_ConflictedIndexFailsClosed_CLI(t *testing.T) {
 				return index, false
 			}
 			return index[:i+len(oq)] + "\n<<<<<<< HEAD\nNone yet.\n=======\nOne from topic.\n>>>>>>> topic\n" + index[i+len(oq):], true
-		}, "merge-conflict-markers"},
+		}},
+		{"one-sided-block", func(index string) (string, bool) {
+			const sep = "|---|---|---|---:|---|\n"
+			return strings.Replace(index, sep, sep+"<<<<<<< HEAD\n| [other](other/README.md) | Recorded | — | 0 | — |\n=======\n>>>>>>> topic\n", 1), strings.Contains(index, sep)
+		}},
+		{"legacy-table", func(index string) (string, bool) {
+			i := strings.Index(index, "| Lesson | Status |")
+			if i < 0 {
+				return index, false
+			}
+			return index[:i] + "| Lesson | Status | Recurred | Date | Owner |\n|---|---|---|---|---|\n" +
+				"<<<<<<< HEAD\n| [kinder-fake](kinder-fake/README.md) | Recorded | 0 | 2026-11-27 | tester |\n=======\n| [other](other.md) | Recorded | 0 | 2026-11-27 | x |\n>>>>>>> topic\n", true
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,25 +136,17 @@ func TestLessonChangeStatus_ConflictedIndexFailsClosed_CLI(t *testing.T) {
 			if err := os.WriteFile(indexPath, []byte(conflicted), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			before := treeDigest(t, root)
 
 			stdout, _, err := runLesson(t, "change-status", "kinder-fake", "--to=stated")
-			if err == nil {
-				t.Fatalf("change-status succeeded over a conflicted index; stdout=%q", stdout)
+			if got := exitCodeOfErr(err); got != exitcode.Conflict {
+				t.Fatalf("exit = %d, want %d; err=%v stdout=%q", got, exitcode.Conflict, err, stdout)
 			}
-			if got := exitCodeOfErr(err); got != exitcode.Unexpected {
-				t.Errorf("exit = %d, want %d; err=%v", got, exitcode.Unexpected, err)
+			if !strings.Contains(err.Error(), "spec/lessons/README.md") {
+				t.Errorf("error must name the conflicted index: %v", err)
 			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Errorf("error must mention %q: %v", tc.wantErr, err)
-			}
-			after, err := os.ReadFile(indexPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, marker := range []string{"<<<<<<< HEAD\n", "=======\n", ">>>>>>> topic\n"} {
-				if !strings.Contains(string(after), marker) {
-					t.Errorf("conflict marker %q was concealed:\n%s", marker, after)
-				}
+			if !reflect.DeepEqual(treeDigest(t, root), before) {
+				t.Fatal("the Lesson file, index, or event ledger changed before the refusal")
 			}
 		})
 	}
@@ -206,6 +213,12 @@ func TestMergeDriverIndex_FailsClosedWhenFixRefusedOverConflictMarkers(t *testin
 	if err := os.WriteFile(source, []byte("# Lesson: Kinder Fake\n<<<<<<< HEAD\n**Status:** Stated\n=======\n**Status:** Recorded\n>>>>>>> topic\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A stale on-disk index exists, so without the FixRefused check the
+	// driver would copy it over <ours> and exit 0.
+	staleIndex := filepath.Join(root, "spec", "lessons", "README.md")
+	if err := os.WriteFile(staleIndex, []byte("# Lessons\n\nstale on-disk index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	ours := filepath.Join(t.TempDir(), "git-temp-a")
 	oursBefore := []byte("ours index before the merge\n")
 	if err := os.WriteFile(ours, oursBefore, 0o644); err != nil {
@@ -229,5 +242,42 @@ func TestMergeDriverIndex_FailsClosedWhenFixRefusedOverConflictMarkers(t *testin
 	}
 	if string(got) != string(oursBefore) {
 		t.Fatalf("<ours> was rewritten: %q", got)
+	}
+}
+
+// AC: merge-conflict-markers-fix-refused-byte-identical — under
+// `--fix --format json` the refusal is carried in the envelope's
+// `fix_refused` key and no human text is written to stderr.
+func TestSpecLint_FixRefusedJSONEnvelope(t *testing.T) {
+	root := setupAutofixProject(t)
+	if err := os.WriteFile(filepath.Join(root, "spec", "features", "README.md"), []byte("# Features\n<<<<<<< HEAD\n=======\n>>>>>>> t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runSpec(t, "lint", "--project", root, "--fix", "--format=json")
+	if got := exitCodeOf(err); got != exitcode.Conflict {
+		t.Fatalf("exit = %d; err=%v", got, err)
+	}
+	var env struct {
+		Fixed      []string         `json:"fixed"`
+		FixRefused []string         `json:"fix_refused"`
+		Violations []lint.Violation `json:"violations"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v\n%s", err, stdout)
+	}
+	if !reflect.DeepEqual(env.FixRefused, []string{"spec/features/README.md"}) || len(env.Fixed) != 0 || len(env.Violations) != 3 {
+		t.Fatalf("envelope = %+v", env)
+	}
+	if strings.Contains(stderr, "refused") {
+		t.Fatalf("structured output must not write human refusal text to stderr: %q", stderr)
+	}
+}
+
+func TestProjectRelativeSpecPaths_KeepsAbsoluteFallback(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "x", "README.md")
+	got := projectRelativeSpecPaths(filepath.Join("/proj", "spec"), []string{"features/README.md", abs, "../tasks/README.md"})
+	want := []string{"spec/features/README.md", filepath.ToSlash(abs), "tasks/README.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

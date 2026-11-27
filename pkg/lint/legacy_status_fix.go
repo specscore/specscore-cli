@@ -62,7 +62,15 @@ func fixLegacyStatusesInTree(root string, legacyMap map[string]string, ideaArchi
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || filepath.Base(path) == "README.md" || !strings.HasSuffix(path, ".md") {
+		if d.IsDir() {
+			// Skip exactly what the merge-conflict-marker gate skips, so a
+			// fixer never rewrites a file the gate did not read.
+			if path != root && skipConflictScanDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() || filepath.Base(path) == "README.md" || !strings.HasSuffix(path, ".md") {
 			return nil
 		}
 		return lifecycle.TransformArtifact(path, func(content []byte) ([]byte, error) {

@@ -3,6 +3,7 @@ package lint
 // Features implemented: cli/spec/lint/storage-layout
 
 import (
+	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -220,55 +221,13 @@ func (d storageLayoutDoc) exempt() bool {
 	return slices.Contains(storageLayoutExempt, strings.ToLower(d.status))
 }
 
-// mdFence tracks a CommonMark fenced code block: it opens on a line of three
-// or more backticks or tildes, and closes only on a line of the same
-// character, at least as long, with nothing after it.
-type mdFence struct {
-	ch byte
-	n  int
-}
-
-func (f *mdFence) open() bool { return f.n > 0 }
-
-// fenceRun returns the fence character and run length that t starts with, or
-// 0, 0 when t does not start with three or more backticks or tildes.
-func fenceRun(t string) (byte, int) {
-	if t == "" || (t[0] != '`' && t[0] != '~') {
-		return 0, 0
-	}
-	n := len(t) - len(strings.TrimLeft(t, t[:1]))
-	if n < 3 {
-		return 0, 0
-	}
-	return t[0], n
-}
-
-// feed advances the fence state over one line and reports whether the line
-// was a fence line (opening or closing).
-func (f *mdFence) feed(line string) bool {
-	t := strings.TrimSpace(line)
-	ch, n := fenceRun(t)
-	if !f.open() {
-		if n > 0 {
-			f.ch, f.n = ch, n
-			return true
-		}
-		return false
-	}
-	if ch == f.ch && n >= f.n && strings.TrimSpace(t[n:]) == "" {
-		f.ch, f.n = 0, 0
-		return true
-	}
-	return false
-}
-
 func parseStorageLayoutDoc(content string) storageLayoutDoc {
 	var d storageLayoutDoc
-	var fence mdFence
+	var fence conflictmarker.Fence
 	inSection, inComment := false, false
 	for i, line := range strings.Split(content, "\n") {
-		if fence.open() {
-			fence.feed(line)
+		if fence.Open() {
+			fence.Feed(line)
 			if t := strings.TrimSpace(line); inSection && t != "" {
 				d.content = append(d.content, t)
 			}
@@ -280,7 +239,7 @@ func parseStorageLayoutDoc(content string) storageLayoutDoc {
 		if t == "" {
 			continue
 		}
-		if fence.feed(t) {
+		if fence.Feed(t) {
 			if inSection {
 				d.content = append(d.content, t)
 			}
@@ -323,7 +282,7 @@ func parseStorageLayoutDoc(content string) storageLayoutDoc {
 			d.approval = strings.TrimSpace(item[len(storageLayoutApprovedKey):])
 		}
 	}
-	d.unbalancedFence = fence.open()
+	d.unbalancedFence = fence.Open()
 	return d
 }
 
@@ -529,9 +488,9 @@ func insertStorageLayoutSkeleton(content, guide string) string {
 	lines := strings.Split(content, "\n")
 	at := -1
 	for _, target := range []string{"## Acceptance Criteria", "## Open Questions"} {
-		var fence mdFence
+		var fence conflictmarker.Fence
 		for i, l := range lines {
-			if fence.feed(l) || fence.open() {
+			if fence.Feed(l) || fence.Open() {
 				continue
 			}
 			if strings.TrimSpace(l) == target {

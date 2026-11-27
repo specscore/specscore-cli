@@ -1,7 +1,9 @@
 package feature
 
 import (
+	"errors"
 	"fmt"
+	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +108,18 @@ func New(featuresDir string, opts NewOptions) (*NewResult, error) {
 		return nil, exitcode.InvalidStateErrorf("feature already exists at: %s", featureID)
 	}
 
+	// Refuse before creating anything when the index this scaffold will
+	// update still carries git merge-conflict markers
+	// (cli/spec/lint#req:writers-refuse-conflicted-files).
+	indexToUpdate := filepath.Join(featuresDir, "README.md")
+	if parentID != "" {
+		indexToUpdate = ReadmePath(featuresDir, parentID)
+	}
+	// A read failure is left to the index update below, which reports it.
+	if err := conflictmarker.CheckFile(indexToUpdate); errors.Is(err, conflictmarker.ErrConflicted) {
+		return nil, exitcode.Wrap(exitcode.Conflict, fmt.Sprintf("refusing to scaffold feature %s: %v", featureID, err), err)
+	}
+
 	// Create feature directory and README.
 	if err := os.MkdirAll(featureDir, 0o755); err != nil {
 		return nil, exitcode.UnexpectedErrorf("creating feature directory: %v", err)
@@ -184,6 +198,11 @@ func New(featuresDir string, opts NewOptions) (*NewResult, error) {
 func UpdateParentContents(parentReadmePath, childSlug, description string) (bool, error) {
 	content, err := os.ReadFile(parentReadmePath)
 	if err != nil {
+		return false, err
+	}
+	// Refuse a conflicted index rather than parse around (and then rewrite
+	// over) its markers (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := conflictmarker.Check(parentReadmePath, content); err != nil {
 		return false, err
 	}
 
@@ -305,6 +324,11 @@ func UpdateFeatureIndex(indexPath, featureID, status, description string) (bool,
 		if os.IsNotExist(err) {
 			return false, nil
 		}
+		return false, err
+	}
+	// Refuse a conflicted index rather than parse around (and then rewrite
+	// over) its markers (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := conflictmarker.Check(indexPath, content); err != nil {
 		return false, err
 	}
 

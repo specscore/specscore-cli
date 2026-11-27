@@ -2,6 +2,7 @@ package rule
 
 import (
 	"fmt"
+	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 	"io"
 	"os"
 	"path/filepath"
@@ -250,6 +251,11 @@ func ReadIndex(path string) (IndexReport, error) {
 	if err != nil {
 		return IndexReport{}, err
 	}
+	// Refuse a conflicted index rather than parse around (and then rewrite
+	// over) its markers (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := conflictmarker.Check(path, b); err != nil {
+		return IndexReport{}, err
+	}
 	var rep IndexReport
 	inRules := false
 	seen := map[string]bool{}
@@ -430,6 +436,11 @@ func splitMarkdownRow(line string) []string {
 func WriteIndexRows(path string, rows []Row, preserved []MalformedRow) error {
 	data, err := osReadFile(path)
 	if err != nil {
+		return err
+	}
+	// Refuse a conflicted index rather than parse around (and then rewrite
+	// over) its markers (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := conflictmarker.Check(path, data); err != nil {
 		return err
 	}
 	lines := strings.Split(string(data), "\n")

@@ -448,6 +448,9 @@ func runIdeaNew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(specRoot); err != nil {
+		return err
+	}
 
 	var target string
 	if isChangeRequest {
@@ -535,7 +538,7 @@ func runIdeaNew(cmd *cobra.Command, args []string) error {
 	relTarget, _ := filepath.Rel(specSub, target)
 	var own []lint.Violation
 	for _, v := range violations {
-		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "ideas/")) {
+		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "ideas/") || v.Rule == lint.MergeConflictMarkersRule) {
 			own = append(own, v)
 		}
 	}

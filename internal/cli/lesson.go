@@ -132,6 +132,9 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(root); err != nil {
+		return err
+	}
 
 	// Creation is deliberately config-gated.  A mutating scaffolder must not
 	// turn a legacy tree into a half-migrated tree merely because it happened
@@ -298,7 +301,7 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		var own []string
 		for _, v := range violations {
 			ownedIndexFinding := v.File == "lessons/README.md" && (v.Rule == "L-003" || v.Rule == "L-004") && strings.Contains(v.Message, slug)
-			if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding) {
+			if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding || v.Rule == lint.MergeConflictMarkersRule) {
 				own = append(own, fmt.Sprintf("  %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message))
 			}
 		}
@@ -500,6 +503,9 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(specRoot); err != nil {
+		return err
+	}
 
 	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 		result, changes, err := dryrun.Sandbox(specRoot, func(sandboxRoot string) (lesson.ChangeStatusResult, error) {
@@ -593,6 +599,22 @@ func lessonChangeStatusMutateWithDeps(ctx context.Context, root, slug string, to
 			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf("invalid transition: lesson %q is in status %q", slug, string(transition.From))
 		}
 		return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading lesson status: %v", err)
+	}
+	// A demotion to Recorded re-enters the L-010 obligation (a Recorded
+	// Lesson must name a Control mechanism or "none-yet: <why>"), which an
+	// Enforced Lesson's free-text Control need not meet. Check it before any
+	// write so a demotion never ends in a post-write lint failure (exit 10)
+	// with a recovery-required event (cli/lesson/change-status#req:audited-correction-requires-reason).
+	if to == lifecycle.LessonRecorded {
+		current, err := deps.parse(path)
+		if err != nil {
+			return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("parsing lesson before demotion: %v", err)
+		}
+		if blocking := lint.LessonControlViolationsAs(current, string(to)); len(blocking) > 0 {
+			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf(
+				"lesson %q cannot be demoted to Recorded yet: %s; edit its **Control:** line first, then retry (nothing was modified)",
+				slug, blocking[0].Message)
+		}
 	}
 	postMutation, err := prepareLessonPostMutationWithDeps(root, slug, deps)
 	if err != nil {

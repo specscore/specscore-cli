@@ -78,6 +78,9 @@ func runIdeaPromote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedProject(specRoot); err != nil {
+		return err
+	}
 
 	// Guard 1: seed must exist (exit 3, no mutation).
 	seedPath, err := ideapromote.ResolveSeed(specRoot, slug)
@@ -263,7 +266,7 @@ func promoteLintFix(specRoot, ideaAbs string, crossRepo bool) error {
 	relIdea, _ := filepath.Rel(specSub, ideaAbs)
 	var own []lint.Violation
 	for _, v := range violations {
-		if v.Severity == "error" && (v.File == relIdea || strings.HasPrefix(v.File, "ideas/")) {
+		if v.Severity == "error" && (v.File == relIdea || strings.HasPrefix(v.File, "ideas/") || v.Rule == lint.MergeConflictMarkersRule) {
 			own = append(own, v)
 		}
 	}

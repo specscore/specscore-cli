@@ -61,7 +61,7 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: audited-correction-requires-reason
 
-The audited corrections `Stated` → `Recorded` and `Enforced` → `Recorded` are reason-required under one identical audit: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). On success the note is written per the shared `## Resolution` mechanism, exactly like every other transition note; every earlier section and Resolution entry is kept, and the demoted lesson is again matched by `lesson list --not-enforced`. No other downward arc is legal (`Enforced` → `Stated` stays illegal).
+The audited corrections `Stated` → `Recorded` and `Enforced` → `Recorded` are reason-required under one identical audit: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). Because a Recorded Lesson carries the L-010 obligation, a demotion whose `**Control:**` names no mechanism and is not `none-yet: <why>` MUST be refused with exit `4` before any write, never left to fail the post-write lint. On success the note is written per the shared `## Resolution` mechanism, exactly like every other transition note; every earlier section and Resolution entry is kept, and the demoted lesson is again matched by `lesson list --not-enforced`. No other downward arc is legal (`Enforced` → `Stated` stays illegal).
 
 #### REQ: superseded-requires-successor
 
@@ -85,9 +85,10 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 | Code | Condition |
 |---|---|
 | `0` | Transition succeeded; file rewritten; lessons index synced. |
+| `1` | A SpecScore-managed file carries unresolved git merge-conflict markers; nothing was modified. |
 | `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition or on `--to=recorded`; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No canonical or compatibility Lesson for the slug. |
-| `4` | `(current_status, --to)` is not a legal transition. |
+| `4` | `(current_status, --to)` is not a legal transition, or a demotion to `Recorded` whose `**Control:**` would fail L-010. |
 | `10` | I/O, narrow index-upsert, read-only lint, or durability-fence failure; post-publication state and its prepared recovery event are retained. |
 
 ## Interaction with Other Features
@@ -179,9 +180,15 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 
 ### AC: conflicted-lessons-index-fails-closed (verifies REQ:lessons-index-sync)
 
-**Given** `spec/lessons/README.md` carries unresolved git merge-conflict markers, either around this Lesson's own row or elsewhere in the index
+**Given** `spec/lessons/README.md` carries unresolved git merge-conflict markers — around this Lesson's own row, elsewhere in the index, as a one-sided block, or inside a legacy five-column table
 **When** the user runs `specscore lesson change-status kinder-fake --to=stated`
-**Then** the command does not exit `0`: the narrow index upsert refuses the duplicated row, or the read-only post-write lint reports the `merge-conflict-markers` findings ([cli/spec/lint](../../spec/lint/README.md#req-merge-conflict-markers-gate-precedes-rules)); it exits `10` and every marker line stays in the index for the operator to resolve.
+**Then** the shared precondition ([cli/spec/lint](../../spec/lint/README.md#req-writers-refuse-conflicted-files)) refuses before the Lesson file is rewritten or any event is prepared: the command exits `1` naming the index, and the Lesson file, the index, and the event ledger are byte-identical afterwards.
+
+### AC: enforced-to-recorded-requires-mechanism-control (verifies REQ:audited-correction-requires-reason)
+
+**Given** `spec/lessons/kinder-fake/README.md` in `**Status:** Enforced`, dated after the L-010 threshold, whose `**Control:**` is free text naming no mechanism and not `none-yet: <why>`
+**When** the user runs `specscore lesson change-status kinder-fake --to=recorded --note "claimed control does not bind"`
+**Then** the command exits `4` before any write, explaining that `**Control:**` must name a mechanism or `none-yet: <why>` first; no file or event changes.
 
 ### AC: unrelated-files-remain-byte-identical
 

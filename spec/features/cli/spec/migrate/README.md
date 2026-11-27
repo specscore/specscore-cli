@@ -60,6 +60,10 @@ For a status-bearing artifact (Idea, Feature, Plan, Task, Decision), `migrate` M
 
 Re-running `migrate` on an already-migrated tree MUST be a no-op — exit `0` with no file changes.
 
+#### REQ: refuses-conflicted-tree
+
+`migrate` MUST refuse, before touching any file, while any SpecScore-managed file still carries git merge-conflict markers — exit `1` naming each conflicted file — per [cli/spec/lint#req:writers-refuse-conflicted-files](../lint/README.md#req-writers-refuse-conflicted-files).
+
 ### Task board Status backfill
 
 #### REQ: task-board-status-backfill
@@ -137,6 +141,14 @@ Once the target repo is migrated, the graced frontmatter rules (`format-field`, 
 **Given** a task README that already carries a `**Status:**` line, and a separate task directory with a README but no matching row in `tasks/README.md`
 **When** `specscore migrate` runs
 **Then** the already-stamped task README is left byte-unchanged even if its value disagrees with the board row, and the row-less task README gains no `**Status:**` line at all.
+
+### AC: conflicted-tree-refused-unchanged
+
+**Requirements:** [cli/spec/migrate#req:refuses-conflicted-tree](#req-refuses-conflicted-tree)
+
+**Given** a tree whose Lessons index carries an unresolved conflict block
+**When** `specscore spec migrate` runs
+**Then** it exits `1` naming `spec/lessons/README.md` and every file is byte-identical afterwards.
 
 ## Open Questions
 
