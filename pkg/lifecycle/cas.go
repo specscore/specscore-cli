@@ -298,7 +298,7 @@ func lifecycleLockRoot(path string) string {
 		if base == "spec" {
 			return filepath.Dir(dir)
 		}
-		if fileOrDirExists(filepath.Join(dir, "specscore.yaml")) || fileOrDirExists(filepath.Join(dir, ".git")) {
+		if lifecycleLockRootMarker(dir) {
 			return dir
 		}
 		parent := filepath.Dir(dir)
@@ -310,6 +310,32 @@ func lifecycleLockRoot(path string) string {
 }
 
 var lifecycleLockAbs = filepath.Abs
+
+// lifecycleLockRootMarker reports whether dir is a project root: it holds a
+// specscore.yaml or a real git marker. It is a variable so tests can keep the
+// upward walk hermetic, independent of what sits above their temp directory.
+var lifecycleLockRootMarker = func(dir string) bool {
+	return fileOrDirExists(filepath.Join(dir, "specscore.yaml")) || isGitMarker(filepath.Join(dir, ".git"))
+}
+
+// isGitMarker reports whether path is a genuine git marker: a git directory
+// containing HEAD, or a .git file whose content starts with "gitdir:" (linked
+// worktrees and submodules). An empty or unrelated .git entry does not count,
+// so a stray /tmp/.git cannot fence every temp-directory project at /tmp.
+func isGitMarker(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return fileOrDirExists(filepath.Join(path, "HEAD"))
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(string(content), "gitdir:")
+}
 
 func fileOrDirExists(path string) bool {
 	_, err := os.Stat(path)
