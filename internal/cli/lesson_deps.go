@@ -43,6 +43,7 @@ type lessonCLIDeps struct {
 	migrateFlat            func(lesson.FlatMigrationOptions) (lesson.FlatMigrationResult, error)
 	preflightLegacy        func(string, []string, lesson.LegacyInventory, lesson.LegacyMapping) error
 	changeStatus           func(lesson.ChangeStatusOptions) (lesson.ChangeStatusResult, error)
+	checkReEnforcement     func(string, string) error
 	afterFlatPhase         func(string) error
 	publishExclusive       func(string, []byte, os.FileMode) error
 	withMutationLock       func(string, string, func() error) error
@@ -76,6 +77,7 @@ func defaultLessonCLIDeps() lessonCLIDeps {
 		migrateFlat:            lesson.MigrateFlat,
 		preflightLegacy:        lesson.PreflightLegacyApply,
 		changeStatus:           lesson.ChangeStatus,
+		checkReEnforcement:     lesson.CheckReEnforcement,
 		afterFlatPhase:         func(string) error { return nil },
 		publishExclusive:       publishFileExclusive,
 		withMutationLock:       lesson.WithMutationLock,

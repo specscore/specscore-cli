@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`), into `Withdrawn`/`Superseded`, or back down via an audited correction (`Stated` → `Recorded` or `Enforced` → `Recorded`). It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
+`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`), into `Withdrawn`/`Superseded`, or back down via an audited correction (`Stated` → `Recorded` or `Enforced` → `Recorded`), after which re-enforcement requires a fresh Enforcement receipt. It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
 
 ## Synopsis
 
@@ -32,8 +32,8 @@ This verb inherits the strict state machine (exit `4`), `--to` parsing, slug res
 | From | To | Notes |
 |---|---|---|
 | `Recorded` | `Stated` | advisory: loaded somewhere an agent reads before acting |
-| `Recorded` | `Enforced` | skip-ahead: reached a machine gate directly |
-| `Stated` | `Enforced` | a machine now refuses |
+| `Recorded` | `Enforced` | skip-ahead: reached a machine gate directly — refused while the receipt equals one an audited correction recorded (REQ: re-enforcement-requires-fresh-receipt) |
+| `Stated` | `Enforced` | a machine now refuses — same fresh-receipt condition |
 | `Recorded` | `Withdrawn` | disposition — **reason required** |
 | `Stated` | `Withdrawn` | disposition — **reason required** |
 | `Enforced` | `Withdrawn` | disposition — **reason required** |
@@ -61,7 +61,19 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: audited-correction-requires-reason
 
-The audited corrections `Stated` → `Recorded` and `Enforced` → `Recorded` are reason-required under one identical audit: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). Because a Recorded Lesson carries the L-010 obligation, a demotion whose `**Control:**` names no mechanism and is not `none-yet: <why>` MUST be refused with exit `4` before any write, never left to fail the post-write lint. On success the note is written per the shared `## Resolution` mechanism, exactly like every other transition note; every earlier section and Resolution entry is kept, and the demoted lesson is again matched by `lesson list --not-enforced`. No other downward arc is legal (`Enforced` → `Stated` stays illegal).
+The audited corrections `Stated` → `Recorded` and `Enforced` → `Recorded` are reason-required under one identical audit: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). Because a Recorded Lesson carries the L-010 obligation, a demotion whose `**Control:**` names no mechanism and is not `none-yet: <why>` MUST be refused with exit `4` before any write, never left to fail the post-write lint. On success the note is written per the shared `## Resolution` mechanism, followed by its correction-receipt line (REQ: re-enforcement-requires-fresh-receipt); every earlier section and Resolution entry is kept, and the demoted lesson is again matched by `lesson list --not-enforced`. No other downward arc is legal (`Enforced` → `Stated` stays illegal).
+
+#### REQ: re-enforcement-requires-fresh-receipt
+
+Threat model: this guard stops accidental re-enforcement on a disproved receipt and any bypass made through the CLI or the exported `lesson.ChangeStatus` API. Hand-editing the Lesson file is out of scope; the Git diff and review cover that.
+
+- **Receipt.** A Lesson's receipt is the lowercase hex SHA-256 of `Control: <c>\nVerification: <v>\nEvidence: <e>\n`, where each value is the first `**Control:**`, `**Verification:**`, or `**Evidence:**` field (with hand-wrapped continuation lines) inside the first `## Enforcement` section, with every whitespace run collapsed to one space. Fields anywhere else (`## Resolution`, other sections, frontmatter, fenced or indented code, HTML comments) never contribute. A Lesson whose `## Enforcement` has none of the three values (e.g. a compatibility Lesson with prose only) has no receipt: its demotion stamps none and its re-enforcement is never refused.
+- **Stamp.** An audited correction to `Recorded` (from `Stated` or `Enforced`) MUST end its `## Resolution` note with its own unindented paragraph `Enforcement receipt at correction: sha256:<hex>` for the receipt read under the per-Lesson lock.
+- **Refusal.** A `--to=enforced` (from `Recorded` or `Stated`) MUST exit `4`, before any write, when the current receipt equals any receipt line ever recorded in a `## Resolution` section, naming the receipt and the fix (replace the disproved receipt with a fresh positive one). Only structural, unindented receipt lines count, exactly where the tool writes them; lines inside fenced or indented code, HTML comments, or frontmatter never do. The CLI checks before preparing any event; `lesson.ChangeStatus` repeats the check under the per-Lesson lock and returns a pre-publication failure, so a raced refusal still exits `4` with its prepared event aborted. `--dry-run` MUST report the same refusal.
+- **Note hygiene.** Every `lesson change-status --note` (all transitions, CLI and `lesson.ChangeStatus`) MUST be refused with exit `2` before any mutation when it contains a line mentioning `Enforcement receipt at correction`, a `**Control:**`, `**Verification:**`, or `**Evidence:**` field line, a `## ` heading (it would end the `## Resolution` section before the receipt), or an unclosed code fence or HTML comment (it would swallow the receipt line).
+- **Earlier corrections.** A correction recorded before this requirement carries no receipt line and is not refused: it has no baseline, and no migration fabricates one.
+
+No other transition, verb, or event payload changes.
 
 #### REQ: superseded-requires-successor
 
@@ -76,7 +88,7 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 | Flag | Required | Description |
 |---|---|---|
 | `--to` | Yes | Target status: `stated`, `enforced`, `withdrawn`, `superseded` (case-insensitive). |
-| `--note` | Conditional | Markdown appended as a `## Resolution` section. **Required** for `--to=withdrawn`, `--to=superseded`, and `--to=recorded`; optional otherwise. |
+| `--note` | Conditional | Markdown appended as a `## Resolution` section. **Required** for `--to=withdrawn`, `--to=superseded`, and `--to=recorded`; optional otherwise. Must not contain a receipt-like line, an Enforcement field line, a `## ` heading, or an open code fence / HTML comment. |
 | `--successor` | Conditional | Slug of the lesson that replaces this one. **Required** for `--to=superseded`; rejected for every other transition. |
 | `--project` | No | Project root (autodetected). |
 
@@ -86,9 +98,9 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 |---|---|
 | `0` | Transition succeeded; file rewritten; lessons index synced. |
 | `1` | The Lessons index (`spec/lessons/README.md`) carries unresolved git merge-conflict markers; nothing was modified. |
-| `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition or on `--to=recorded`; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
+| `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition or on `--to=recorded`; a `--note` refused by REQ: re-enforcement-requires-fresh-receipt (receipt-like line, Enforcement field line, `## ` heading, or open code fence / HTML comment); missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No canonical or compatibility Lesson for the slug. |
-| `4` | `(current_status, --to)` is not a legal transition, or a demotion to `Recorded` whose `**Control:**` would fail L-010. |
+| `4` | `(current_status, --to)` is not a legal transition, a demotion to `Recorded` whose `**Control:**` would fail L-010, or a `--to=enforced` whose Enforcement receipt equals one an audited correction recorded. |
 | `10` | I/O, narrow index-upsert, read-only lint, or durability-fence failure; post-publication state and its prepared recovery event are retained. |
 
 ## Interaction with Other Features
@@ -159,6 +171,66 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 **Given** `spec/lessons/kinder-fake.md` in `**Status:** Enforced` with an existing `## Resolution` entry
 **When** the user runs `specscore lesson change-status kinder-fake --to=recorded --note "claimed control does not bind"`
 **Then** the command exits `0` with stdout `kinder-fake: Enforced → Recorded\n`, rewrites the Status line to `Recorded`, appends a `## Resolution` section including the note text while keeping the earlier entry, updates the lessons index row, and `specscore lesson list --not-enforced` lists the lesson.
+
+### AC: re-enforce-unchanged-receipt-refused (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** `spec/lessons/kinder-fake/README.md` demoted `Enforced` → `Recorded` by `change-status --to=recorded --note "claimed control does not bind"`, its `## Resolution` note now ending with `Enforcement receipt at correction: sha256:<hex>`, and Control/Verification/Evidence unedited since
+**When** the user runs `specscore lesson change-status kinder-fake --to=enforced`, with or without `--dry-run`
+**Then** the command exits `4`, naming the disproved receipt and telling the user to replace it; stdout is empty and the project tree, including `.specscore/events.jsonl`, is byte-identical afterwards.
+
+### AC: re-enforce-whitespace-only-edit-refused (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** the demoted lesson above with only whitespace changed in its Enforcement fields — an intra-line run such as `go  test\t./pkg/lint`, or a field re-wrapped across lines
+**When** the user runs `specscore lesson change-status kinder-fake --to=enforced`
+**Then** the command exits `4`: re-wrapping is not a fresh receipt.
+
+### AC: re-enforce-non-enforcement-edit-refused (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** the demoted lesson above with only a section other than `## Enforcement` edited
+**When** the user runs `specscore lesson change-status kinder-fake --to=enforced`
+**Then** the command exits `4` with the tree byte-identical.
+
+### AC: re-enforce-any-disproved-receipt-refused (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** the lesson demoted on receipt R1, re-enforced on a fresh receipt R2, demoted again on R2, and then edited back to R1
+**When** the user runs `specscore lesson change-status kinder-fake --to=enforced`
+**Then** the command exits `4`: every recorded receipt stays disproved, not only the last.
+
+### AC: re-enforce-with-fresh-receipt-allowed (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** the demoted lesson above with its `**Evidence:**` replaced by new evidence
+**When** the user runs `specscore lesson change-status kinder-fake --to=enforced`
+**Then** the command exits `0` with stdout `kinder-fake: Recorded → Enforced\n`, and the earlier correction note and receipt line are kept.
+
+### AC: stated-correction-also-requires-fresh-receipt (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** `spec/lessons/kinder-fake/README.md` demoted `Stated` → `Recorded` with an unchanged receipt since
+**When** the user runs `--to=enforced`, or `--to=stated` followed by `--to=enforced`
+**Then** each `--to=enforced` exits `4` with the tree byte-identical; `--to=stated` stays legal.
+
+### AC: note-cannot-forge-receipt-state (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** a demoted lesson
+**When** the user runs `change-status` with a `--note` carrying a receipt-like line, a `**Control:**`/`**Verification:**`/`**Evidence:**` field line (including a demotion note quoting the bad Control), a `## ` heading, or an unclosed code fence
+**Then** the command exits `2` and the tree and ledger are byte-identical.
+
+### AC: re-enforce-refused-under-lock (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** a re-enforcement on a disproved receipt that passes the CLI pre-check (a race)
+**When** `lesson.ChangeStatus` runs under the per-Lesson lock
+**Then** it refuses with a pre-publication failure, the command exits `4` (not `10`), the prepared event is aborted, and the lesson and ledger are unchanged.
+
+### AC: prose-only-enforcement-has-no-receipt (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** a compatibility Lesson whose `## Enforcement` is prose with no Control/Verification/Evidence fields
+**When** it is demoted to `Recorded` and later promoted to `Enforced`
+**Then** the demotion stamps no receipt line and the promotion is not refused.
+
+### AC: pre-receipt-correction-not-refused (verifies REQ:re-enforcement-requires-fresh-receipt)
+
+**Given** a `Recorded` lesson whose `## Resolution` records an audited correction but no `Enforcement receipt at correction:` line
+**When** the user runs `specscore lesson change-status kinder-fake --to=enforced`
+**Then** the command exits `0`: a correction recorded before receipts existed has no baseline and does not block.
 
 ### AC: illegal-transition-rejected (verifies REQ:legal-transition-matrix)
 

@@ -413,7 +413,12 @@ reference. The audited correction --to=recorded (legal only from Stated or
 Enforced) also requires --note documenting why the lesson is being demoted —
 e.g. its Enforcement section named no binding control. The note is appended
 as ## Resolution, earlier history is kept, and the lesson returns to the
---not-enforced queue. If anything fails after the
+--not-enforced queue. The note ends with an "Enforcement receipt at
+correction: sha256:<hex>" line fingerprinting Control, Verification, and
+Evidence; a later --to=enforced exits 4 while they match any recorded
+receipt, so re-enforcement needs a fresh one. A --note carrying a receipt
+line, an Enforcement field line, a "## " heading, or an open code fence or
+HTML comment exits 2. If anything fails after the
 status rewrite (lint, I/O, or durability fence), the command exits
 recovery-required with its prepared event and visible state retained; it
 never restores a whole snapshot over concurrent work.
@@ -483,6 +488,10 @@ func runLessonChangeStatusWithDeps(cmd *cobra.Command, args []string, deps lesso
 	if to == lifecycle.LessonRecorded && strings.TrimSpace(note) == "" {
 		return exitcode.InvalidArgsError(
 			"transition to Recorded requires a reason: pass --note documenting the audited correction (e.g. the Enforcement section named no binding control)")
+	}
+
+	if err := lesson.ValidateTransitionNote(note); err != nil {
+		return exitcode.InvalidArgsErrorf("%v", err)
 	}
 
 	if to == lifecycle.LessonSuperseded {
@@ -614,6 +623,16 @@ func lessonChangeStatusMutateWithDeps(ctx context.Context, root, slug string, to
 			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf(
 				"lesson %q cannot be demoted to Recorded yet: %s; edit its **Control:** line first, then retry (nothing was modified)",
 				slug, blocking[0].Message)
+		}
+	}
+	// Fast path: refuse a re-enforcement on a disproved receipt before any
+	// event is prepared. lesson.ChangeStatus repeats the check under the
+	// per-Lesson lock (and stamps the demotion receipt there), so a race only
+	// ever ends in a cleanly aborted event
+	// (cli/lesson/change-status#req:re-enforcement-requires-fresh-receipt).
+	if to == lifecycle.LessonEnforced {
+		if err := deps.checkReEnforcement(slug, path); err != nil {
+			return lesson.ChangeStatusResult{}, err
 		}
 	}
 	postMutation, err := prepareLessonPostMutationWithDeps(root, slug, deps)
