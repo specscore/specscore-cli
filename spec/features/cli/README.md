@@ -166,6 +166,10 @@ On any non-zero exit, a human-readable explanation MUST be written to stderr. st
 
 When a subcommand is not recognized — typically because the installed `specscore` predates a subcommand the caller requires — the CLI MUST exit `8` (UnsupportedCommand) rather than a generic `1`/`2`/`10`. This lets callers, notably capability-gated agent skills, distinguish a present-but-outdated binary from a genuine command failure; a wholly-absent binary remains the shell's `127`. The mapping is scoped to unknown subcommands only: unknown flags keep their `2` (InvalidArgs) semantics, and an error that already carries an exit code MUST NOT be reclassified. A human-readable message naming the unrecognized subcommand MUST be written to stderr.
 
+#### REQ: usage-errors-exit-2
+
+When a command rejects the number of positional arguments it was given (too few or too many), or a flag the command marks as required is absent, the CLI MUST exit `2` (InvalidArgs) and name the problem on stderr, never the generic `1`. The mapping MUST apply to every verb from one place where the root command executes, so a verb that declares its arity or required flags through the command framework cannot inherit a different code. An error that already carries an exit code MUST NOT be reclassified, and an unrecognized subcommand stays under [cli#req:unsupported-subcommand-mapping](#req-unsupported-subcommand-mapping). A verb whose own spec requires a different code for one of these cases MUST return that code itself.
+
 ### Output format conventions
 
 Most read commands support `--format` for selecting between `text`, `yaml`, and `json`. Some also support `md` (task list).
@@ -215,6 +219,14 @@ The Feature spec is the source of truth the website renders from; the `README.md
 **Given** an installed `specscore` whose command set does not include the requested subcommand (for example, `specscore consilium verdict` on a build that predates the `verdict` subcommand)
 **When** the user invokes that unrecognized subcommand
 **Then** the command exits `8` (UnsupportedCommand) and writes a stderr message naming the unrecognized subcommand; no output appears on stdout.
+
+### AC: usage-errors-exit-2
+
+**Requirements:** cli#req:usage-errors-exit-2
+
+**Given** a SpecScore project
+**When** the user invokes a verb with fewer or more positional arguments than it accepts (for example `specscore lesson relation add a`, `specscore event merge`, `specscore telemetry enable a b`, or `specscore studio resolve a b c`), or omits a flag it requires (for example `specscore issue change-status foo` without `--to`)
+**Then** the command exits `2` (InvalidArgs), stderr names the argument count or the missing flag, and no file in the project changes.
 
 ## Consumers
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"os"
+	"regexp"
 	"strings"
 
 	"charm.land/fang/v2"
@@ -131,6 +132,44 @@ func mapUnsupportedCommand(err error) error {
 	}
 	if strings.HasPrefix(err.Error(), `unknown command "`) {
 		return exitcode.UnsupportedCommandError(err.Error())
+	}
+	return err
+}
+
+// cobraUsageError matches, exactly, the errors Cobra itself returns when a
+// command's positional-argument validator (ExactArgs, MinimumNArgs,
+// MaximumNArgs, RangeArgs) rejects the argument count, or when a flag marked
+// with MarkFlagRequired is absent. Those errors are plain fmt.Errorf values
+// with no ExitCode(), so without mapping they fall through to Fatal's generic
+// exit 1. TestMapInvalidArgs_PinsCobraMessages drives Cobra's real validators,
+// so a Cobra upgrade that rewords one of them fails the test instead of
+// silently reverting the affected verbs to exit 1.
+var cobraUsageError = regexp.MustCompile(`^(?:` +
+	`accepts \d+ arg\(s\), received \d+` +
+	`|accepts at most \d+ arg\(s\), received \d+` +
+	`|accepts between \d+ and \d+ arg\(s\), received \d+` +
+	`|requires at least \d+ arg\(s\), only received \d+` +
+	`|required flag\(s\) ".+" not set` +
+	`)$`)
+
+// mapInvalidArgs maps Cobra's positional-argument-count and required-flag
+// errors to the InvalidArgs exit code (2), as the shared exit-code contract
+// requires (cli#req:usage-errors-exit-2). It is applied once, where the root
+// command executes, so every verb gets it without per-command wiring. Like
+// mapUnsupportedCommand it never clobbers an error that already carries an
+// exit code; Cobra's "unknown command" error (also returned by NoArgs) stays
+// with mapUnsupportedCommand.
+func mapInvalidArgs(err error) error {
+	if err == nil {
+		return nil
+	}
+	type exitCoder interface{ ExitCode() int }
+	var ec exitCoder
+	if errors.As(err, &ec) {
+		return err
+	}
+	if cobraUsageError.MatchString(err.Error()) {
+		return exitcode.Wrap(exitcode.InvalidArgs, err.Error(), err)
 	}
 	return err
 }

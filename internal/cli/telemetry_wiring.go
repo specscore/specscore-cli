@@ -291,6 +291,7 @@ func executeWithPanicRecovery(rootCmd *cobra.Command, extraOpts ...fang.Option) 
 	}
 
 	returnErr = mapUnsupportedCommand(returnErr)
+	returnErr = mapInvalidArgs(returnErr)
 	emitInvocationEvent(returnErr)
 	return returnErr
 }

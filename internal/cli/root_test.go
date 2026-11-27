@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
@@ -141,6 +144,124 @@ func TestMapUnsupportedCommand(t *testing.T) {
 			}
 			if ec.ExitCode() != tc.wantCode {
 				t.Errorf("exit code = %d, want %d", ec.ExitCode(), tc.wantCode)
+			}
+		})
+	}
+}
+
+// TestMapInvalidArgs_PinsCobraMessages drives Cobra's real argument
+// validators and required-flag check, so the mapping is tested against the
+// exact errors Cobra produces rather than hand-copied strings: a Cobra upgrade
+// that rewords one of them fails here.
+func TestMapInvalidArgs_PinsCobraMessages(t *testing.T) {
+	two := []string{"a", "b"}
+	three := []string{"a", "b", "c"}
+	required := func() error {
+		c := &cobra.Command{Use: "x", RunE: func(*cobra.Command, []string) error { return nil }}
+		c.Flags().String("to", "", "")
+		_ = c.MarkFlagRequired("to")
+		if err := c.ParseFlags(nil); err != nil {
+			t.Fatalf("ParseFlags: %v", err)
+		}
+		return c.ValidateRequiredFlags()
+	}
+	cmd := &cobra.Command{Use: "x"}
+	cobraErrors := map[string]error{
+		"ExactArgs too few":    cobra.ExactArgs(1)(cmd, nil),
+		"ExactArgs too many":   cobra.ExactArgs(1)(cmd, two),
+		"MinimumNArgs":         cobra.MinimumNArgs(1)(cmd, nil),
+		"MaximumNArgs":         cobra.MaximumNArgs(1)(cmd, two),
+		"RangeArgs":            cobra.RangeArgs(0, 2)(cmd, three),
+		"MarkFlagRequired":     required(),
+		"ExactArgs(2) too few": cobra.ExactArgs(2)(cmd, []string{"a"}),
+	}
+	for name, in := range cobraErrors {
+		t.Run(name, func(t *testing.T) {
+			if in == nil {
+				t.Fatal("cobra validator unexpectedly accepted the input")
+			}
+			got := mapInvalidArgs(in)
+			var ec interface{ ExitCode() int }
+			if !errors.As(got, &ec) || ec.ExitCode() != exitcode.InvalidArgs {
+				t.Fatalf("mapInvalidArgs(%q) = %v, want exit %d", in, got, exitcode.InvalidArgs)
+			}
+			if got.Error() != in.Error() {
+				t.Errorf("message changed: got %q, want %q", got.Error(), in.Error())
+			}
+			if !errors.Is(got, in) {
+				t.Errorf("mapped error lost the Cobra cause %v", in)
+			}
+		})
+	}
+}
+
+func TestMapInvalidArgs_LeavesOtherErrors(t *testing.T) {
+	if got := mapInvalidArgs(nil); got != nil {
+		t.Fatalf("mapInvalidArgs(nil) = %v, want nil", got)
+	}
+	coded := exitcode.NotFoundError("accepts 1 arg(s), received 0")
+	if got := mapInvalidArgs(coded); got != coded {
+		t.Errorf("already-coded error was replaced: %v", got)
+	}
+	for _, in := range []error{
+		errors.New(`unknown command "x" for "specscore idea list"`), // NoArgs: stays with mapUnsupportedCommand
+		errors.New("unknown flag: --bogus"),
+		errors.New("lesson x accepts 1 arg(s), received 0"), // not anchored at the start
+		errors.New("something else failed"),
+	} {
+		if got := mapInvalidArgs(in); got != in {
+			t.Errorf("mapInvalidArgs(%q) = %v, want it unchanged", in, got)
+		}
+	}
+}
+
+// runCLIExit runs the real CLI entry point (Run, then Fatal) the way
+// cmd/specscore does and returns the process exit code Fatal chose plus
+// everything written to stderr.
+func runCLIExit(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	t.Setenv("DO_NOT_TRACK", "1")
+	t.Setenv("SPECSCORE_TELEMETRY", "off")
+	code := 0
+	old := osExit
+	osExit = func(c int) { code = c }
+	t.Cleanup(func() { osExit = old })
+	stderr := captureStderr(t, func() {
+		Fatal(Run(append([]string{"specscore"}, args...)))
+	})
+	return code, stderr
+}
+
+// specscore:verifies feature/cli#ac:usage-errors-exit-2 — one case per Cobra validator kind and a required flag, on verbs other than idea change-status
+func TestRun_UsageErrorsExit2(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantStderr string
+	}{
+		{"ExactArgs(2) too few", []string{"lesson", "relation", "add", "a"}, "accepts 2 arg(s), received 1"},
+		{"ExactArgs(1) too many", []string{"feature", "info", "a", "b"}, "accepts 1 arg(s), received 2"},
+		{"MinimumNArgs", []string{"event", "merge"}, "requires at least 1 arg(s), only received 0"},
+		{"MaximumNArgs", []string{"telemetry", "enable", "a", "b"}, "accepts at most 1 arg(s), received 2"},
+		{"RangeArgs", []string{"studio", "resolve", "a", "b", "c"}, "accepts between 0 and 2 arg(s), received 3"},
+		{"MarkFlagRequired", []string{"issue", "change-status", "foo"}, `required flag(s) "to" not set`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := setupSpecRoot(t)
+			withCwd(t, root)
+			before := snapshotDir(t, root)
+
+			code, stderr := runCLIExit(t, tc.args...)
+
+			if code != exitcode.InvalidArgs {
+				t.Errorf("specscore %s exited %d, want %d (InvalidArgs)", strings.Join(tc.args, " "), code, exitcode.InvalidArgs)
+			}
+			if !strings.Contains(stderr, tc.wantStderr) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr, tc.wantStderr)
+			}
+			if after := snapshotDir(t, root); !reflect.DeepEqual(before, after) {
+				t.Errorf("project tree changed:\nbefore=%v\nafter=%v", before, after)
 			}
 		})
 	}

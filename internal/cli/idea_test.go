@@ -5,9 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/idea"
 	"github.com/specscore/specscore-cli/pkg/lint"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
@@ -500,38 +502,35 @@ func TestIdeaArchiveUnarchive_UnresolvableProject_CLI(t *testing.T) {
 	}
 }
 
-// AC: missing-slug-rejected — no positional argument. Cobra's
-// ExactArgs(1) rejects this and returns an error; the CLI's Fatal
-// helper maps that to exit 2.
+// specscore:verifies feature/cli/idea/change-status#ac:missing-slug-rejected — runs the real entry point (Run, then Fatal) against a project holding an Idea, asserts exit 2 and an unchanged tree
 func TestIdeaChangeStatus_MissingSlugRejected_CLI(t *testing.T) {
-	root := setupSpecRoot(t)
-	withCwd(t, root)
+	root := stageActiveIdea(t, "foo", "Draft", "")
+	before := snapshotDir(t, root)
 
-	_, stderr, err := runIdea(t, "change-status", "--to=approved")
-	if err == nil {
-		t.Fatal("expected error for missing positional")
+	code, stderr := runCLIExit(t, "idea", "change-status", "--to=approved")
+
+	if code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d (InvalidArgs)", code, exitcode.InvalidArgs)
 	}
-	// Cobra prints a usage error to stderr; we just confirm SOME
-	// rejection happened. Exit-code mapping for ExactArgs is exit 2
-	// at the CLI top-level (cobra's default).
-	if stderr == "" && err.Error() == "" {
-		t.Errorf("expected non-empty error/stderr; got err=%v stderr=%q", err, stderr)
+	if !strings.Contains(stderr, "accepts 1 arg(s), received 0") {
+		t.Errorf("stderr = %q, want it to name the missing positional", stderr)
+	}
+	if after := snapshotDir(t, root); !reflect.DeepEqual(before, after) {
+		t.Errorf("filesystem changed:\nbefore=%v\nafter=%v", before, after)
 	}
 }
 
-// AC: missing-to-flag-rejected.
+// specscore:verifies feature/cli/idea/change-status#ac:missing-to-flag-rejected — runs the real entry point (Run, then Fatal), asserts exit 2 and that stderr names --to as required
 func TestIdeaChangeStatus_MissingToFlagRejected_CLI(t *testing.T) {
-	root := stageActiveIdea(t, "foo", "Draft", "")
-	_ = root
+	stageActiveIdea(t, "foo", "Draft", "")
 
-	_, stderr, err := runIdea(t, "change-status", "foo")
-	if err == nil {
-		t.Fatal("expected error for missing --to flag")
+	code, stderr := runCLIExit(t, "idea", "change-status", "foo")
+
+	if code != exitcode.InvalidArgs {
+		t.Errorf("exit code = %d, want %d (InvalidArgs)", code, exitcode.InvalidArgs)
 	}
-	// Cobra's MarkFlagRequired error message names the missing flag.
-	combined := err.Error() + stderr
-	if !strings.Contains(combined, "to") {
-		t.Errorf("expected error/stderr to name `to`; got err=%v stderr=%q", err, stderr)
+	if !strings.Contains(stderr, `required flag(s) "to" not set`) {
+		t.Errorf("stderr = %q, want it to state that --to is required", stderr)
 	}
 }
 
