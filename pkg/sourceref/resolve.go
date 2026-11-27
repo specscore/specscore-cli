@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/specscore/specscore-cli/pkg/feature"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
@@ -171,7 +172,7 @@ func requirementAnchorExists(content, fragment string) error {
 	if !requirementAnchorID.MatchString(id) {
 		return fmt.Errorf("malformed #REQ anchor %q", fragment)
 	}
-	return exactAnchorHeadingExists(content, "#### REQ: "+id, id, "requirement")
+	return exactAnchorHeadingExists(content, "#### REQ: "+id, id, "requirement", exactLine("#### REQ: "+id))
 }
 
 func featureAnchorExists(content, fragment string) error {
@@ -185,15 +186,31 @@ func featureAnchorExists(content, fragment string) error {
 	id := fragment[colon+1:]
 	switch strings.ToLower(fragment[:colon]) {
 	case "req":
-		return exactAnchorHeadingExists(content, "#### REQ: "+id, id, "requirement")
+		return exactAnchorHeadingExists(content, "#### REQ: "+id, id, "requirement", exactLine("#### REQ: "+id))
 	case "ac":
-		return exactAnchorHeadingExists(content, "### AC: "+id, id, "acceptance criterion")
+		return exactAnchorHeadingExists(content, "### AC: "+id, id, "acceptance criterion", acHeadingDeclares(id))
 	default:
 		return fmt.Errorf("unsupported fragment %q; only #REQ:<id> and #AC:<id> are addressable Feature anchors", fragment)
 	}
 }
 
-func exactAnchorHeadingExists(content, want, id, kind string) error {
+// exactLine matches a line that is exactly want (a REQ heading has one form).
+func exactLine(want string) func(string) bool {
+	return func(line string) bool { return line == want }
+}
+
+// acHeadingDeclares matches a line that is an Acceptance Criteria heading for
+// id in any form `spec lint` accepts — `### AC: <id>` or the grandfathered
+// `### AC: <id> (verifies ...)` — using lint's own definition
+// (feature.ACHeadingID) rather than a second copy of it.
+func acHeadingDeclares(id string) func(string) bool {
+	return func(line string) bool {
+		got, ok := feature.ACHeadingID(line)
+		return ok && got == id
+	}
+}
+
+func exactAnchorHeadingExists(content, want, id, kind string, declares func(string) bool) error {
 	if !requirementAnchorID.MatchString(id) {
 		return fmt.Errorf("malformed %s anchor %q", kind, want)
 	}
@@ -224,7 +241,7 @@ func exactAnchorHeadingExists(content, want, id, kind string) error {
 			fence, fenceLength = marker, length
 			continue
 		}
-		if strings.TrimSuffix(line, "\r") == want {
+		if declares(strings.TrimSuffix(line, "\r")) {
 			count++
 		}
 	}

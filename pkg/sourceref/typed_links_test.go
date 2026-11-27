@@ -94,3 +94,47 @@ func TestFeatureAnchorExistsRejectsUnsupportedAndMalformedFragments(t *testing.T
 		t.Fatalf("legacy requirement validator must reject AC: %v", err)
 	}
 }
+
+// specscore:verifies https://specscore.org/github.com/specscore/specscore-cli/spec/features/cli/code/deps#ac:ac-citations-accept-lint-heading-forms — the anchor check accepts exactly the AC heading forms ac-heading-format accepts
+func TestFeatureAnchorExistsAcceptsLintACHeadingForms(t *testing.T) {
+	accepted := []string{
+		"### AC: links-work",
+		"### AC: links-work (verifies REQ:links)",
+		"### AC: links-work (verifies cli/code/deps#req:links)",
+	}
+	for _, heading := range accepted {
+		content := "#### REQ: links\n\n## Acceptance Criteria\n\n" + heading + "\n"
+		if err := featureAnchorExists(content, "ac:links-work"); err != nil {
+			t.Errorf("heading %q is accepted by spec lint but did not resolve: %v", heading, err)
+		}
+	}
+	rejected := []string{
+		"###  AC: links-work",
+		"### AC:  links-work",
+		"### AC: links-work extra",
+		"### AC: links-work  (verifies REQ:links)",
+		"#### AC: links-work",
+		"```\n### AC: links-work\n```",
+		"    ### AC: links-work", // indented code block, not a heading
+		"\t### AC: links-work",
+	}
+	for _, heading := range rejected {
+		content := "## Acceptance Criteria\n\n" + heading + "\n"
+		if err := featureAnchorExists(content, "ac:links-work"); err == nil || !strings.Contains(err.Error(), "missing exact heading") {
+			t.Errorf("heading %q is rejected by spec lint (or fenced) but resolved: %v", heading, err)
+		}
+	}
+	if err := featureAnchorExists("### AC: Links-Work\n", "ac:Links-Work"); err == nil || !strings.Contains(err.Error(), "missing exact heading") {
+		t.Errorf("a non-kebab AC id is rejected by spec lint, so it must not resolve: %v", err)
+	}
+	if err := featureAnchorExists("### AC: links-work\n\n    ### AC: links-work\n", "ac:links-work"); err != nil {
+		t.Errorf("an indented code example must not make a real heading ambiguous: %v", err)
+	}
+	both := "### AC: links-work\n\n### AC: links-work (verifies REQ:links)\n"
+	if err := featureAnchorExists(both, "ac:links-work"); err == nil || !strings.Contains(err.Error(), "found 2 exact headings") {
+		t.Errorf("two headings declaring one AC id must be ambiguous: %v", err)
+	}
+	if err := featureAnchorExists("#### REQ: links (verifies x)\n", "req:links"); err == nil {
+		t.Error("a REQ heading still has exactly one form")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 	"github.com/specscore/specscore-cli/pkg/projectdef"
 )
 
@@ -63,5 +64,68 @@ func TestCodeDeps_CheckRejectsInvalidTypedRelationTarget(t *testing.T) {
 	_, _, err := runCode(t, "deps", "--path=source.go", "--check")
 	if err == nil || !strings.Contains(err.Error(), "implements target must be a REQ") {
 		t.Fatalf("invalid typed relation target must fail: %v", err)
+	}
+}
+
+// specscore:verifies https://specscore.org/github.com/specscore/specscore-cli/spec/features/cli/code/deps#ac:ac-citations-accept-lint-heading-forms — runs spec lint (ac-heading-format) and code deps --check on the same tree per heading form and asserts they agree
+func TestCodeDeps_CheckAgreesWithLintOnACHeadingForms(t *testing.T) {
+	tests := []struct {
+		heading string
+		id      string // the cited #ac: id
+		// lintClean: spec lint --rules=ac-heading-format reports nothing.
+		// resolves: code deps --check accepts the citation. They differ only
+		// for indented code, which is neither a violation nor a heading.
+		lintClean, resolves bool
+	}{
+		{"### AC: total-visible", "total-visible", true, true},
+		{"### AC: total-visible (verifies REQ:totals)", "total-visible", true, true},
+		{"### AC: total-visible (verifies checkout#req:totals)", "total-visible", true, true},
+		{"###  AC: total-visible", "total-visible", false, false},
+		{"### AC: total-visible  (verifies REQ:totals)", "total-visible", false, false},
+		{"### AC: total-visible trailing", "total-visible", false, false},
+		{"### AC: Total-Visible", "Total-Visible", false, false},
+		{"    ### AC: total-visible", "total-visible", true, false},
+		{"\t### AC: total-visible", "total-visible", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.heading, func(t *testing.T) {
+			root := t.TempDir()
+			config := projectdef.SpecConfig{Project: &projectdef.ProjectConfig{Host: "github.com", Org: "acme", Repo: "checkout"}}
+			if err := projectdef.WriteSpecConfig(root, config); err != nil {
+				t.Fatal(err)
+			}
+			featureDir := filepath.Join(root, "spec", "features", "checkout")
+			if err := os.MkdirAll(featureDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			readme := "# Feature: Checkout\n\n**Status:** Draft\n\n#### REQ: totals\n\n## Acceptance Criteria\n\nThe criteria:\n\n" + tt.heading + "\n"
+			if err := os.WriteFile(filepath.Join(featureDir, "README.md"), []byte(readme), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			source := "package checkout\n\n// specscore:" + "verifies https://specscore.org/github.com/acme/checkout/spec/features/checkout#ac:" + tt.id + "\nfunc TestTotal() {}\n"
+			if err := os.WriteFile(filepath.Join(root, "checkout_test.go"), []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			withCwd(t, root)
+
+			lintOut, _, lintErr := runSpecLintCmd(t, "--project", root, "--rules=ac-heading-format")
+			if lintClean := lintErr == nil; lintClean != tt.lintClean {
+				t.Fatalf("spec lint clean=%v (err=%v, out=%q), want %v", lintClean, lintErr, lintOut, tt.lintClean)
+			}
+
+			_, _, checkErr := runCode(t, "deps", "--path=checkout_test.go", "--check")
+			if tt.resolves {
+				if checkErr != nil {
+					t.Fatalf("lint accepts %q but code deps --check rejects its citation: %v", tt.heading, checkErr)
+				}
+				return
+			}
+			if got := exitCodeOf(checkErr); got != exitcode.InvalidState {
+				t.Fatalf("%q is not an accepted heading but code deps --check exit = %d (err=%v), want %d", tt.heading, got, checkErr, exitcode.InvalidState)
+			}
+			if !strings.Contains(checkErr.Error(), "#ac:"+tt.id) {
+				t.Fatalf("diagnostic does not name the citation: %v", checkErr)
+			}
+		})
 	}
 }

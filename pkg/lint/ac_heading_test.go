@@ -373,3 +373,26 @@ func TestClassifyACHeading(t *testing.T) {
 		}
 	}
 }
+
+// A line indented as a Markdown code block is code, not an attempted heading
+// (cli/spec/lint/ac-heading-format#req:trigger-scope): it is neither flagged
+// nor rewritten by --fix, however malformed.
+func TestACHeading_IndentedCodeBlockSkipped(t *testing.T) {
+	e := newAHEnv(t)
+	body := ahBody("code", "### AC: real-id") + "\n    ###  AC: Bad_Id\n\n\t### AC:   tabbed\n"
+	p := e.write(t, "code", body)
+	c := newACHeadingFormatChecker()
+	vs, err := c.check(e.specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("indented code must not be flagged, got %+v", vs)
+	}
+	if err := c.fix(e.specRoot); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(p); string(got) != body {
+		t.Fatalf("--fix rewrote indented code:\n%s", got)
+	}
+}
