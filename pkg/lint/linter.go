@@ -208,6 +208,13 @@ func newLinter(opts Options) *linter {
 		l.ruleSet[n] = slc
 	}
 
+	// Register the opt-in AC-test-coverage checker. It is off unless
+	// specscore.yaml sets ac_test_coverage.required: true, or the caller
+	// names it in --rules. It reads Plans' Deferred AC Coverage lists, so it
+	// is Plan-owned (a no-op under a broken Plan route).
+	l.registerPlanOwned(newACTestCoverageChecker(projectRoot, opts.PlansDir,
+		slices.Contains(opts.Rules, acTestCoverageRule)), routeBroken)
+
 	// Register the AC-heading-format checker.
 	l.registerChecker(newACHeadingFormatChecker())
 

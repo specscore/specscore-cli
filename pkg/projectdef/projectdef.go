@@ -55,7 +55,11 @@ type SpecConfig struct {
 	// the opt-in feature-storage-layout lint rules
 	// (cli/spec/lint/storage-layout#req:opt-in).
 	StorageLayout *StorageLayoutConfig `yaml:"storage_layout,omitempty"`
-	Extras        map[string]any       `yaml:",inline"`
+	// ACTestCoverage is the optional `ac_test_coverage:` block that turns on
+	// the opt-in feature-ac-test-coverage lint rule
+	// (cli/spec/lint/ac-test-coverage#req:opt-in).
+	ACTestCoverage *ACTestCoverageConfig `yaml:"ac_test_coverage,omitempty"`
+	Extras         map[string]any        `yaml:",inline"`
 
 	// studioExplicitNull is set to true when YAML contains
 	// `studio: null` (or `~`, or an empty value) — the opt-out form
