@@ -192,6 +192,9 @@ func runRuleNew(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedTables(root, rule.IndexPath(rule.RulesDir(root))); err != nil {
+		return err
+	}
 	rulesDir := rule.RulesDir(root)
 
 	force, _ := cmd.Flags().GetBool("force")
@@ -467,6 +470,9 @@ func runRuleExpand(cmd *cobra.Command, args []string) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
 	root, err := resolveSpecRoot(projectFlag)
 	if err != nil {
+		return err
+	}
+	if err := refuseConflictedTables(root, rule.IndexPath(rule.RulesDir(root))); err != nil {
 		return err
 	}
 	rulesDir := rule.RulesDir(root)

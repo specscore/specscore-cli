@@ -134,11 +134,69 @@ func TestLessonChangeStatus_RecordedRequiresNote_CLI(t *testing.T) {
 	}
 }
 
-// AC: legal-transition-matrix — Enforced -> Recorded stays illegal even
-// though Stated -> Recorded is now a legal audited correction.
-func TestLessonChangeStatus_EnforcedToRecorded_StillIllegal_CLI(t *testing.T) {
+// AC: enforced-to-recorded-with-reason-demotes — Enforced -> Recorded is the
+// second audited correction arc: same audit as Stated -> Recorded (note
+// appended as ## Resolution, earlier history kept), and the lesson returns to
+// the not-enforced queue.
+func TestLessonChangeStatus_EnforcedToRecorded_AuditedCorrection_CLI(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Stated")
+	if _, stderr, err := runLesson(t, "change-status", "kinder-fake", "--to=enforced", "--note", "CI gate claimed to bind"); err != nil {
+		t.Fatalf("promote to enforced: %v (stderr=%s)", err, stderr)
+	}
+	stdout, stderr, err := runLesson(t, "change-status", "kinder-fake", "--to=recorded", "--note", "claimed control does not bind")
+	if err != nil {
+		t.Fatalf("change-status: %v (stderr=%s)", err, stderr)
+	}
+	if want := "kinder-fake: Enforced → Recorded\n"; stdout != want {
+		t.Errorf("stdout = %q; want %q", stdout, want)
+	}
+	body, _ := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
+	for _, want := range []string{"**Status:** Recorded", "status: Recorded", "## Resolution", "CI gate claimed to bind", "claimed control does not bind"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("missing %q (history must be kept):\n%s", want, body)
+		}
+	}
+	if strings.Index(string(body), "CI gate claimed to bind") > strings.Index(string(body), "claimed control does not bind") {
+		t.Errorf("correction note must be appended after the earlier resolution:\n%s", body)
+	}
+	indexBody, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(indexBody), "Recorded") || strings.Contains(string(indexBody), "Enforced") {
+		t.Errorf("index row not updated to Recorded:\n%s", indexBody)
+	}
+	listOut, _, err := runLesson(t, "list", "--not-enforced")
+	if err != nil {
+		t.Fatalf("lesson list --not-enforced: %v", err)
+	}
+	if !strings.Contains(listOut, "kinder-fake") {
+		t.Errorf("demoted lesson must return to the not-enforced queue:\n%s", listOut)
+	}
+}
+
+// AC: enforced-to-recorded-requires-reason — the Enforced -> Recorded
+// correction requires --note exactly like Stated -> Recorded.
+func TestLessonChangeStatus_EnforcedToRecordedRequiresNote_CLI(t *testing.T) {
+	root := stageLesson(t, "kinder-fake", "Enforced")
+	_, _, err := runLesson(t, "change-status", "kinder-fake", "--to=recorded", "--note", "   ")
+	if got := exitCodeOfErr(err); got != exitcode.InvalidArgs {
+		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidArgs, err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "spec", "lessons", "kinder-fake", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "**Status:** Enforced") || strings.Contains(string(body), "## Resolution") {
+		t.Errorf("lesson must be unchanged after rejected transition:\n%s", body)
+	}
+}
+
+// AC: illegal-transition-rejected — the change is additive: Enforced ->
+// Stated (and every other unlisted downward arc) stays illegal.
+func TestLessonChangeStatus_EnforcedToStated_StillIllegal_CLI(t *testing.T) {
 	stageLesson(t, "kinder-fake", "Enforced")
-	_, _, err := runLesson(t, "change-status", "kinder-fake", "--to=recorded", "--note", "x")
+	_, _, err := runLesson(t, "change-status", "kinder-fake", "--to=stated", "--note", "x")
 	if got := exitCodeOfErr(err); got != exitcode.InvalidState {
 		t.Errorf("exit = %d, want %d; err=%v", got, exitcode.InvalidState, err)
 	}

@@ -130,7 +130,7 @@ func prepareRelationPostMutationWithDeps(root, from, typ, to string, deps lesson
 		for _, violation := range violations {
 			ownedEndpoint := violation.File == filepath.ToSlash(filepath.Join("lessons", from, "README.md")) || violation.File == filepath.ToSlash(filepath.Join("lessons", to, "README.md"))
 			ownedIndex := violation.File == "lessons/README.md" && (violation.Rule == "L-003" || violation.Rule == "L-004") && (strings.Contains(violation.Message, from) || strings.Contains(violation.Message, to))
-			if violation.Severity == "error" && (ownedEndpoint || ownedIndex) {
+			if violation.Severity == "error" && (ownedEndpoint || ownedIndex || violation.Rule == lint.MergeConflictMarkersRule) {
 				return exitcode.UnexpectedErrorf("relation failed lint: %s:%d [%s] %s", violation.File, violation.Line, violation.Rule, violation.Message)
 			}
 		}

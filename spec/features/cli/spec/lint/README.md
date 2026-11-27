@@ -14,7 +14,7 @@ status: Approved
 
 ## Summary
 
-`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories, and canonical Plans-index rows). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit. `--fix=<targets>` scopes the pass to named fixes (e.g. `--fix=no-source`); some fixes are opt-in and run only when named. When a reported violation is fixable, a `How to fix:` section names the exact `--fix=<target>` command.
+`specscore spec lint` scans the specification tree and reports violations of structural conventions. Violations are categorized by severity (error, warning, info). `--fix` applies autofixes for rules that support them (adherence footers, view links, idea sync / index / archived-order rules, phantom rows in feature indices, missing rows for orphan child directories, and canonical Plans-index rows). When `--fix` runs, the command reports the exact set of files it modified — as a human summary on stderr (text format) and as a `fixed` array in `--format json|yaml` — so no autofix change is ever silently lost from a commit. `--fix=<targets>` scopes the pass to named fixes (e.g. `--fix=no-source`); some fixes are opt-in and run only when named. When a reported violation is fixable, a `How to fix:` section names the exact `--fix=<target>` command. Unresolved git merge-conflict markers in any managed file are checked first: while any remain, only those findings are reported, `--fix` modifies nothing, and the verbs that rewrite a source-of-truth table (the Lessons and Rules indexes) refuse to write.
 
 ## Contents
 
@@ -85,6 +85,30 @@ bounded retry count, or returns a different error
 **When** `specscore spec lint` runs
 **Then** lint returns that error after the bound, and a non-`not exist` error is
 returned after its first attempt.
+
+### Merge-conflict markers
+
+When two branches edit the same generated index (for example `spec/lessons/README.md`), git leaves conflict-marker lines between two row-shaped halves. Every other rule parses both halves as ordinary Markdown and passes, and a `--fix` pass can rewrite the index around the conflict and conceal it. Conflict markers are therefore a precondition gate checked before anything else (lesson `spec-producers-and-validators-share-one-exact-structural-contract`).
+
+#### REQ: merge-conflict-markers-detected
+
+The error-severity `merge-conflict-markers` rule (family `core`) MUST scan every regular text file SpecScore manages — every artifact and every generated index under the spec tree, an externally routed Plans directory, the project-root `tasks/` board, `specscore.yaml`, and, when the project has a Rules tree, each paired `<rules.skills_path>/<name>/SKILL.md` — exactly the files `spec lint` itself reads, honouring Plan routing the same way the Plan-owned rules do — and report one violation, with file and 1-based line, for each git conflict-marker line: a line beginning with seven `<` characters and a space, seven `|` characters and a space (the diff3/zdiff3 base marker), or seven `>` characters and a space, and a line that is exactly seven `=` characters only while inside at least one block opened by a `<<<<<<<` line. Nesting is tracked with a depth counter, so an inner block's closing marker does not hide the outer separator. A bare seven-`=` line outside every block is a Markdown setext heading underline and MUST NOT be reported. CRLF line endings are tolerated. A marker counts only at column 0, and Markdown code fences are NOT special: a marker inside a fenced code block, or a conflict straddling a fence boundary, MUST be reported like any other, because a real conflict inside a Synopsis or an example is just as unresolved and fence tracking can itself be fooled by a conflict that adds or drops a fence line. A document that needs to quote a marker MUST indent it (for example as an indented code block), so it no longer starts at column 0. A file lint reads outside the walked roots is scanned once, even when it also lies inside one. A scan root that is a symbolic link is resolved before the walk; findings keep their logical spec-root-relative path. Binary files (containing a NUL byte), symbolic links below a root, nested `.git` directories, `benchmark/` fixture subtrees, and a local `spec/plans` mirror that Plan routing routes away from are not scanned; the tree-walking fixers skip exactly the same paths, so `--fix` never rewrites a file the gate did not read.
+
+#### REQ: merge-conflict-markers-gate-precedes-rules
+
+`spec lint` MUST run the `merge-conflict-markers` scan before every other rule and fixer. When it reports any finding, the run MUST return only the `merge-conflict-markers` findings and exit `1`; no other rule runs. The gate is a precondition, not an ordinary rule: `--rules`, `--ignore`, and `--severity` do not disable it. Every in-process lint caller — including the read-only lint a mutating verb runs after its own write — inherits the gate.
+
+#### REQ: merge-conflict-markers-block-fix
+
+While any managed file carries a conflict marker, `spec lint --fix` MUST NOT run any fixer and MUST NOT modify any file. It MUST exit `1` and report the marker findings. In text format it writes a stderr line stating that the fix was refused and naming each conflicted file project-relative; under `--format json|yaml` it writes no human text to stderr and the envelope instead carries a `fix_refused` array of those files. The structured lint result carries the refused files so in-process callers can tell a refused fix from a clean one: the `Lint` API returns a fix-refused error rather than a success-shaped empty result, and a caller that depends on the fix pass having regenerated a file (such as `specscore merge-driver index`) MUST fail closed instead of reporting success.
+
+#### REQ: writers-refuse-conflicted-files
+
+A verb that rewrites a source-of-truth table — where rewriting over a conflict would silently drop one side of it — MUST check that table for conflict markers before it mutates any file or prepares any lifecycle event, and refuse with exit `1` naming the conflicted file while leaving every byte of the tree unchanged. This covers `lesson change-status` over the Lessons index (its `--dry-run` runs the same transaction in a sandbox, so it reports the same refusal), and `rule new`, `rule update`, `rule delete`, `rule promote`, and `rule expand` over the Rules index, which is the only copy of an inline rule. The library writers of those tables MUST refuse too: the Lessons index row upsert (including its legacy-table migration) and the Rules index table rewrite, row upsert, and row removal. Reading a conflicted table stays allowed: the Rules index reader reports the markers instead of failing, so `rule list`, `rule show`, and the other read-only and `--dry-run` paths keep working as before. Every other writer relies on its post-write lint (see Open Questions); a `merge-conflict-markers` finding that surfaces in a producer's own post-write lint is always fatal, whatever subtree filter the producer applies to other findings, so the producer exits non-zero instead of `0`.
+
+#### REQ: producer-output-passes-lint-unchanged
+
+Output written by a producer verb (an artifact scaffolder, a status transition, or an index-row upsert) MUST pass `spec lint` with no error-severity finding, and a following `spec lint --fix` MUST modify zero bytes: producers and the validator share one exact structural contract.
 
 ### Implements-reference liveness
 
@@ -545,8 +569,63 @@ Given a spec tree with one autofixable violation, running `specscore spec lint -
 
 **Then** one exact live heading passes, and unavailable, renamed/deleted, duplicate, malformed, identity-mismatched, or unclean targets report an error without network access.
 
+### AC: merge-conflict-markers-in-artifact-flagged
+
+**Requirements:** cli/spec/lint#req:merge-conflict-markers-detected, cli/spec/lint#req:merge-conflict-markers-gate-precedes-rules
+
+Given a Feature README whose Status line conflicted (an ours line, a separator, a theirs line, and the closing marker), `specscore spec lint` exits `1` and reports exactly one `merge-conflict-markers` error per marker line, naming the file and each line number; findings other rules would raise on the same tree (missing footer, missing Open Questions section) are not reported.
+
+### AC: merge-conflict-markers-in-generated-index-flagged
+
+**Requirements:** cli/spec/lint#req:merge-conflict-markers-detected, cli/spec/lint#req:merge-conflict-markers-gate-precedes-rules
+
+Given a generated Features index whose two conflicting halves are each a well-formed table row, `specscore spec lint` reports the marker lines as `merge-conflict-markers` errors and nothing else — also under `--rules index-entries`, `--ignore merge-conflict-markers`, and `--severity error`.
+
+### AC: merge-conflict-markers-setext-heading-not-flagged
+
+**Requirements:** cli/spec/lint#req:merge-conflict-markers-detected
+
+Given a README whose H1 is written in setext form (a title line followed by a line of exactly seven `=` characters) and no `<<<<<<<` line, the rule reports nothing. A seven-`=` line after a conflict block has closed is likewise not reported, while the separator inside the block is; in a nested conflict both separators are reported.
+
+### AC: merge-conflict-markers-in-code-fence-flagged
+
+**Requirements:** cli/spec/lint#req:merge-conflict-markers-detected
+
+Given a Markdown file with a conflict inside a fenced code block, and another whose conflict straddles a fence boundary into prose, the rule reports every marker line in both; a Markdown file that quotes the same markers indented off column 0 is not reported.
+
+### AC: merge-conflict-markers-diff3-flagged
+
+**Requirements:** cli/spec/lint#req:merge-conflict-markers-detected
+
+Given a file conflicted in diff3 style (ours, base, separator, theirs), the rule reports all four marker lines, including the seven-`|` base marker.
+
+### AC: merge-conflict-markers-fix-refused-byte-identical
+
+**Requirements:** cli/spec/lint#req:merge-conflict-markers-block-fix
+
+Given a tree with one conflicted index and one unrelated Feature README missing its adherence footer, `specscore spec lint --fix` exits `1`, leaves every file byte-identical (the footer is not appended either), prints no `Fixed` summary, writes `spec lint --fix refused` naming the conflicted file to stderr, and reports only the marker findings; with `--format json` stdout is one envelope whose `fix_refused` names the file and stderr carries no refusal text. `specscore merge-driver index` run over a stale on-disk index while a sibling source file is conflicted exits non-zero naming that file and leaves `<ours>` untouched.
+
+### AC: writers-refuse-conflicted-files
+
+**Requirements:** cli/spec/lint#req:writers-refuse-conflicted-files
+
+Given a lint-clean tree whose Lessons index carries a one-sided conflict block, `lesson change-status` (with and without `--dry-run`) exits `1` with a refusal naming `spec/lessons/README.md`, and the whole tree — every artifact, index, and event-ledger byte — is unchanged afterwards. Given a Rules index carrying a conflict block, `rule new`, `rule update`, `rule delete`, `rule promote`, and `rule expand` each exit `1` naming `spec/rules/README.md` with the tree unchanged, while `rule list` and `rule show` still succeed. `rule lint --fix` refuses a conflicted tree the same way.
+
+### AC: writers-refuse-conflicted-index
+
+**Requirements:** cli/spec/lint#req:writers-refuse-conflicted-files
+
+Given a conflicted Lessons index (a canonical table with a one-sided block, or a legacy five-column table), the Lessons index row upsert refuses and leaves the file byte-identical; given a conflicted Rules index, the reader returns the rows together with the marker list, and the table rewrite, row upsert, and row removal each refuse and leave the file byte-identical.
+
+### AC: producer-output-round-trips-through-fix
+
+**Requirements:** cli/spec/lint#req:producer-output-passes-lint-unchanged
+
+Given a clean tree, after `lesson new`, two `lesson change-status` transitions, and `idea new`, `specscore spec lint` reports no error and a following `specscore spec lint --fix` reports an empty fixed set and leaves every byte unchanged.
+
 ## Open Questions
 
+- Route all writes through one guarded write helper so every writer refuses a conflicted file. Today only the source-of-truth table writers refuse before writing (cli/spec/lint#req:writers-refuse-conflicted-files); the other write sites (about 88, with no shared helper) rely on a post-write lint, or on nothing. Ungated writers named by the PR #231 review: `task new` (the `pkg/task` `ParseBoard`/`RenderBoard` rewrite erases markers in `tasks/README.md` and exits `0`); `task change-status` (board mode, `--amend-provenance`, and `--plan`, which commits before its post-write lint fails); `task amend`; `plan new` and `plan reconcile` (`pkg/plan` `SyncIndex`/`IndexContent` insert rows above a conflict block); `rehearse acs --write` (replaces the whole `## Acceptance Criteria` section); `graph lint --fix` (`pkg/graph`); `publication set --scope project` (writes `specscore.yaml`); `sidekick new` and `sidekick change-status`; `idea relocate`; `idea change-status`/`archive`/`unarchive`/`park`/`unpark`; `feature change-status`/`park`/`unpark`; `decision change-status` (`pkg/decision` `removeActiveIndexRow`/`appendArchivedIndexEntry`); and the adherence-footer walkers `--fix` and `spec migrate` share, which follow symlinks and do not skip `benchmark/`. Also without a pre-write check (they fail only in the Lessons index upsert or their post-write lint): `lesson new`, `lesson relation add`, `lesson occurrence add`, `lesson recur`, `lesson migrate-flat`, `lesson import-legacy`, `feature new` (and the Features index and parent `## Contents` updates), `idea new`, `idea promote`, `decision new`, `issue new`, `issue change-status`, `spec migrate`, and `lesson change-status` over a conflicted Lesson file itself.
 - Should `spec lint` accept a path argument (`spec lint spec/features/cli/`) to lint a subtree, for faster feedback during development? Today the full tree is always scanned.
 - Should `--fix` have a paired `--dry-run` that prints the intended edits without applying them, so authors can preview fixes before accepting?
 - **Should a `lint-rule-table-completeness` rule fire when a Doc-Kind's CLI Feature's rule table drifts from `pkg/lint`'s `allRuleNames` map** (e.g., a rule is in `allRuleNames` but missing from the table, or vice versa)? Lean: yes, as a follow-on to the entity/property work — keeps the Feature spec and the code in lockstep.

@@ -256,7 +256,7 @@ func runIssueNew(cmd *cobra.Command, args []string) error {
 	relTarget, _ := filepath.Rel(specSub, target)
 	var own []lint.Violation
 	for _, v := range violations {
-		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "issues/")) {
+		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "issues/") || v.Rule == lint.MergeConflictMarkersRule) {
 			own = append(own, v)
 		}
 	}
@@ -421,7 +421,7 @@ func issueLintPostMutationHook(specSub, slug string) issue.PostMutationHook {
 		}
 		var errs []lint.Violation
 		for _, v := range violations {
-			if v.Severity == "error" && isIssueRelatedViolation(v.File) {
+			if v.Severity == "error" && (isIssueRelatedViolation(v.File) || v.Rule == lint.MergeConflictMarkersRule) {
 				errs = append(errs, v)
 			}
 		}

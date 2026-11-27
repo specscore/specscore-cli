@@ -298,7 +298,7 @@ func runLessonNewWithDeps(cmd *cobra.Command, args []string, deps lessonCLIDeps)
 		var own []string
 		for _, v := range violations {
 			ownedIndexFinding := v.File == "lessons/README.md" && (v.Rule == "L-003" || v.Rule == "L-004") && strings.Contains(v.Message, slug)
-			if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding) {
+			if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, filepath.ToSlash(filepath.Join("lessons", slug, "occurrences"))) || ownedIndexFinding || v.Rule == lint.MergeConflictMarkersRule) {
 				own = append(own, fmt.Sprintf("  %s:%d [%s] %s", v.File, v.Line, v.Rule, v.Message))
 			}
 		}
@@ -390,8 +390,9 @@ func unwrapPathError(err error) error {
 // lessonChangeStatusCommand transitions a Lesson's **Status:** field via the
 // shared lifecycle state-machine contract — climbing the enforcement ladder
 // (Recorded -> Stated -> Enforced), retiring the lesson (Withdrawn,
-// Superseded), or making the single audited correction (Stated -> Recorded)
-// for a Stated lesson whose Enforcement section names no binding control.
+// Superseded), or making an audited correction (Stated -> Recorded or
+// Enforced -> Recorded) for a lesson whose Enforcement section names no
+// binding control.
 // See spec/features/cli/lesson/change-status/README.md.
 func lessonChangeStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -408,9 +409,11 @@ exclusive to an explicit ` + "`specscore spec lint --fix`" + ` command.
 Both dispositions require a reason: --to=withdrawn and --to=superseded
 require --note. --to=superseded additionally requires --successor naming the
 lesson that replaces this one; it is written as a **Superseded By:**
-reference. The audited correction --to=recorded (legal only from Stated)
-also requires --note documenting why the lesson is being demoted — e.g. its
-Enforcement section named no binding control. If anything fails after the
+reference. The audited correction --to=recorded (legal only from Stated or
+Enforced) also requires --note documenting why the lesson is being demoted —
+e.g. its Enforcement section named no binding control. The note is appended
+as ## Resolution, earlier history is kept, and the lesson returns to the
+--not-enforced queue. If anything fails after the
 status rewrite (lint, I/O, or durability fence), the command exits
 recovery-required with its prepared event and visible state retained; it
 never restores a whole snapshot over concurrent work.
@@ -584,12 +587,34 @@ func lessonChangeStatusMutateWithDeps(ctx context.Context, root, slug string, to
 	if err != nil {
 		return lesson.ChangeStatusResult{}, err
 	}
+	// Rewriting the Lessons index over a conflict would drop one side of it,
+	// so refuse before any write or event
+	// (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := refuseConflictedTables(root, filepath.Join(root, "spec", "lessons", "README.md")); err != nil {
+		return lesson.ChangeStatusResult{}, err
+	}
 	if _, err := lifecycle.Validate(lifecycle.KindLesson, path, to); err != nil {
 		var transition *lifecycle.InvalidTransitionError
 		if errors.As(err, &transition) {
 			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf("invalid transition: lesson %q is in status %q", slug, string(transition.From))
 		}
 		return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("reading lesson status: %v", err)
+	}
+	// A demotion to Recorded re-enters the L-010 obligation (a Recorded
+	// Lesson must name a Control mechanism or "none-yet: <why>"), which an
+	// Enforced Lesson's free-text Control need not meet. Check it before any
+	// write so a demotion never ends in a post-write lint failure (exit 10)
+	// with a recovery-required event (cli/lesson/change-status#req:audited-correction-requires-reason).
+	if to == lifecycle.LessonRecorded {
+		current, err := deps.parse(path)
+		if err != nil {
+			return lesson.ChangeStatusResult{}, exitcode.UnexpectedErrorf("parsing lesson before demotion: %v", err)
+		}
+		if blocking := lint.LessonControlViolationsAs(current, string(to)); len(blocking) > 0 {
+			return lesson.ChangeStatusResult{}, exitcode.InvalidStateErrorf(
+				"lesson %q cannot be demoted to Recorded yet: %s; edit its **Control:** line first, then retry (nothing was modified)",
+				slug, blocking[0].Message)
+		}
 	}
 	postMutation, err := prepareLessonPostMutationWithDeps(root, slug, deps)
 	if err != nil {

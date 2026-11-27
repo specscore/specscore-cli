@@ -2,6 +2,7 @@ package rule
 
 import (
 	"fmt"
+	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 	"io"
 	"os"
 	"path/filepath"
@@ -185,6 +186,20 @@ type IndexReport struct {
 	Malformed []MalformedRow
 	// Duplicates lists slugs that appear in more than one row.
 	Duplicates []string
+	// Conflicts lists the unresolved git merge-conflict markers in the file.
+	// Reading a conflicted index is allowed (`rule list`, `rule show` and
+	// lint stay usable); rewriting it is not, because the table rewrite
+	// would drop one side of the conflict — see conflictErr.
+	Conflicts []conflictmarker.Marker
+}
+
+// conflictErr refuses a rewrite of a conflicted index
+// (cli/spec/lint#req:writers-refuse-conflicted-files).
+func (rep IndexReport) conflictErr(path string) error {
+	if len(rep.Conflicts) == 0 {
+		return nil
+	}
+	return &conflictmarker.Error{Path: path, Markers: rep.Conflicts}
 }
 
 // HasMalformed reports whether the index carries unparseable row-like content.
@@ -250,7 +265,7 @@ func ReadIndex(path string) (IndexReport, error) {
 	if err != nil {
 		return IndexReport{}, err
 	}
-	var rep IndexReport
+	rep := IndexReport{Conflicts: conflictmarker.Scan(b)}
 	inRules := false
 	seen := map[string]bool{}
 	for i, raw := range strings.Split(string(b), "\n") {
@@ -432,6 +447,11 @@ func WriteIndexRows(path string, rows []Row, preserved []MalformedRow) error {
 	if err != nil {
 		return err
 	}
+	// Refuse a conflicted index rather than parse around (and then rewrite
+	// over) its markers (cli/spec/lint#req:writers-refuse-conflicted-files).
+	if err := conflictmarker.Check(path, data); err != nil {
+		return err
+	}
 	lines := strings.Split(string(data), "\n")
 
 	indexStart, nextH2 := -1, -1
@@ -489,6 +509,9 @@ func UpsertRow(rulesDir string, row Row) error {
 	if err != nil {
 		return err
 	}
+	if err := report.conflictErr(path); err != nil {
+		return err
+	}
 	if !report.HeaderSeen {
 		return fmt.Errorf("rules index lacks the canonical %d-column table", indexColumns)
 	}
@@ -525,6 +548,9 @@ func RemoveRow(rulesDir, slug string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return err
+	}
+	if err := report.conflictErr(path); err != nil {
 		return err
 	}
 	rows := make([]Row, 0, len(report.Rows))

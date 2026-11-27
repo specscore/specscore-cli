@@ -79,6 +79,15 @@ Register the `plan-index-sync` checker in the default lint suite. For the canoni
 - cli/spec/lint#ac:managed-section-fix-idempotent — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:consumer-path-multi-glob-parsed — Already implemented and shipped before this increment; this plan covers only the new Fixed-files reporting behavior.
 - cli/spec/lint#ac:implements-reference-requirement-liveness — Added by the later offline requirement-reference increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:merge-conflict-markers-in-artifact-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:merge-conflict-markers-in-generated-index-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:merge-conflict-markers-setext-heading-not-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:merge-conflict-markers-diff3-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:producer-output-round-trips-through-fix — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:merge-conflict-markers-in-code-fence-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:writers-refuse-conflicted-files — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
+- cli/spec/lint#ac:writers-refuse-conflicted-index — Added by the later merge-conflict-marker gate increment; outside this plan's Fixed-files reporting scope.
 
 ## Open Questions
 

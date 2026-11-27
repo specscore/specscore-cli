@@ -57,6 +57,9 @@ func runRuleLint(cmd *cobra.Command, _ []string) error {
 		Fix:         fix,
 		FixTargets:  lint.RuleFamilyIDs(),
 	})
+	if refusal := fixRefusal(filepath.Join(root, "spec"), err); refusal != nil {
+		return refusal
+	}
 	if err != nil {
 		return exitcode.UnexpectedErrorf("running rule lint: %v", err)
 	}

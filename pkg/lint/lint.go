@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // Violation represents a single linting violation.
@@ -139,13 +140,40 @@ type Result struct {
 	// Reconciliation's doc comment for why silence destroys the only signal
 	// that file and index had diverged.
 	Reconciled []Reconciliation
+	// FixRefused lists the specRoot-relative files that still carry git
+	// merge-conflict markers when opts.Fix was requested. A non-empty value
+	// means the fix pass did not run at all — no file was read for fixing or
+	// written — and Violations holds only the merge-conflict-markers findings
+	// (cli/spec/lint#req:merge-conflict-markers-block-fix). Every caller that
+	// relies on --fix having regenerated something MUST treat it as failure.
+	FixRefused []string
 }
 
-// Lint runs all enabled lint rules against the spec tree.
+// FixRefusedError is returned by Lint when opts.Fix was requested but the fix
+// pass was refused because managed files still carry git merge-conflict
+// markers (cli/spec/lint#req:merge-conflict-markers-block-fix). Lint returns
+// it so that no caller relying on --fix having run can mistake a refused pass
+// for a clean one.
+type FixRefusedError struct {
+	// Files are the specRoot-relative conflicted files.
+	Files []string
+}
+
+func (e *FixRefusedError) Error() string {
+	return fmt.Sprintf("lint --fix refused: unresolved git merge-conflict markers in %s; resolve each conflict, then re-run (no file was modified)",
+		strings.Join(e.Files, ", "))
+}
+
+// Lint runs all enabled lint rules against the spec tree. When opts.Fix is
+// set and the fix pass is refused over merge-conflict markers, it returns a
+// *FixRefusedError instead of the violations.
 func Lint(opts Options) ([]Violation, error) {
 	res, err := LintWithResult(opts)
 	if err != nil {
 		return nil, err
+	}
+	if len(res.FixRefused) > 0 {
+		return nil, &FixRefusedError{Files: res.FixRefused}
 	}
 	return res.Violations, nil
 }
@@ -164,6 +192,24 @@ func LintWithResult(opts Options) (Result, error) {
 	}
 
 	l := newLinter(opts)
+
+	// Merge-conflict markers are checked before any rule or fixer runs: the
+	// other rules would parse both sides of a conflict as ordinary Markdown,
+	// and a fixer could rewrite a conflicted index around the markers and
+	// conceal the conflict. When any marker exists, report only those
+	// findings and modify nothing (cli/spec/lint#req:merge-conflict-markers-gate-precedes-rules,
+	// cli/spec/lint#req:merge-conflict-markers-block-fix).
+	markers, err := checkWithTransientRemovalRetry(l.markers, opts.SpecRoot)
+	if err != nil {
+		return Result{}, fmt.Errorf("linting error: checker %s: %w", l.markers.name(), err)
+	}
+	if len(markers) > 0 {
+		res := Result{Violations: markers}
+		if opts.Fix {
+			res.FixRefused = conflictMarkerFiles(markers)
+		}
+		return res, nil
+	}
 
 	var fixed []string
 	var reconciled []Reconciliation

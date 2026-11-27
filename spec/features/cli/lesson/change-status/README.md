@@ -11,7 +11,7 @@ status: Approved
 
 ## Summary
 
-`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`), into `Withdrawn`/`Superseded`, or back down via the single audited correction `Stated` → `Recorded`. It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
+`specscore lesson change-status <slug> --to=<status> [--note] [--successor]` transitions a canonical directory or compatibility flat Lesson from its current `**Status:**` up the enforcement ladder (`Recorded` → `Stated` → `Enforced`), into `Withdrawn`/`Superseded`, or back down via an audited correction (`Stated` → `Recorded` or `Enforced` → `Recorded`). It implements the [lifecycle-transitions](../../lifecycle-transitions/README.md) shared contract and never relocates the resolved artifact.
 
 ## Synopsis
 
@@ -41,6 +41,7 @@ This verb inherits the strict state machine (exit `4`), `--to` parsing, slug res
 | `Stated` | `Superseded` | disposition — **reason + successor required** |
 | `Enforced` | `Superseded` | disposition — **reason + successor required** |
 | `Stated` | `Recorded` | audited correction — **reason required** — demotes a Stated lesson whose Enforcement section names no binding control |
+| `Enforced` | `Recorded` | audited correction — **reason required** — demotes an Enforced lesson whose claimed control turns out not to bind; the lesson returns to the not-enforced queue |
 
 #### REQ: legal-transition-matrix
 
@@ -48,7 +49,7 @@ The verb MUST accept only the `(from, to)` pairs in the matrix above; any other 
 
 #### REQ: target-status-flag
 
-The verb MUST accept the target status via a required `--to=<status>` flag: `Stated`, `Enforced`, `Withdrawn`, `Superseded`, or `Recorded` (case-insensitive). `Recorded` is the initial state a freshly scaffolded lesson starts in, and is also reachable as the single audited correction target from `Stated` (see REQ: audited-correction-requires-reason). A missing `--to` exits `2`. An unrecognized value exits `2` naming the offending value.
+The verb MUST accept the target status via a required `--to=<status>` flag: `Stated`, `Enforced`, `Withdrawn`, `Superseded`, or `Recorded` (case-insensitive). `Recorded` is the initial state a freshly scaffolded lesson starts in, and is also reachable as the audited correction target from `Stated` or `Enforced` (see REQ: audited-correction-requires-reason). A missing `--to` exits `2`. An unrecognized value exits `2` naming the offending value.
 
 #### REQ: lesson-slug-resolution
 
@@ -60,7 +61,7 @@ Both disposition transitions — to `Withdrawn` and to `Superseded` — are reas
 
 #### REQ: audited-correction-requires-reason
 
-The audited correction `Stated` → `Recorded` is also reason-required: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). On success the note is written per the shared `## Resolution` mechanism, exactly like every other transition note.
+The audited corrections `Stated` → `Recorded` and `Enforced` → `Recorded` are reason-required under one identical audit: a missing or empty/whitespace-only `--note` on `--to=recorded` MUST exit `2` before any mutation, naming the audited correction and the required reason (e.g. the Enforcement section named no binding control). Because a Recorded Lesson carries the L-010 obligation, a demotion whose `**Control:**` names no mechanism and is not `none-yet: <why>` MUST be refused with exit `4` before any write, never left to fail the post-write lint. On success the note is written per the shared `## Resolution` mechanism, exactly like every other transition note; every earlier section and Resolution entry is kept, and the demoted lesson is again matched by `lesson list --not-enforced`. No other downward arc is legal (`Enforced` → `Stated` stays illegal).
 
 #### REQ: superseded-requires-successor
 
@@ -84,9 +85,10 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 | Code | Condition |
 |---|---|
 | `0` | Transition succeeded; file rewritten; lessons index synced. |
+| `1` | The Lessons index (`spec/lessons/README.md`) carries unresolved git merge-conflict markers; nothing was modified. |
 | `2` | Missing/malformed `<slug>`; missing/unrecognized `--to`; missing required `--note` on a disposition or on `--to=recorded`; missing/unresolvable `--successor` on `--to=superseded`; `--successor` on a non-superseded transition. |
 | `3` | No canonical or compatibility Lesson for the slug. |
-| `4` | `(current_status, --to)` is not a legal transition. |
+| `4` | `(current_status, --to)` is not a legal transition, or a demotion to `Recorded` whose `**Control:**` would fail L-010. |
 | `10` | I/O, narrow index-upsert, read-only lint, or durability-fence failure; post-publication state and its prepared recovery event are retained. |
 
 ## Interaction with Other Features
@@ -146,6 +148,18 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 **When** the user runs `specscore lesson change-status kinder-fake --to=recorded --note "Enforcement section named no binding control"`
 **Then** the command exits `0`, rewrites the Status line to `Recorded`, and appends a `## Resolution` section including the note text.
 
+### AC: enforced-to-recorded-requires-reason (verifies REQ:audited-correction-requires-reason)
+
+**Given** `spec/lessons/kinder-fake.md` in `**Status:** Enforced`
+**When** the user runs `specscore lesson change-status kinder-fake --to=recorded` with no `--note`
+**Then** the command exits `2`, naming the audited correction and stating a reason is required. The lesson is unchanged.
+
+### AC: enforced-to-recorded-with-reason-demotes (verifies REQ:audited-correction-requires-reason, REQ:legal-transition-matrix)
+
+**Given** `spec/lessons/kinder-fake.md` in `**Status:** Enforced` with an existing `## Resolution` entry
+**When** the user runs `specscore lesson change-status kinder-fake --to=recorded --note "claimed control does not bind"`
+**Then** the command exits `0` with stdout `kinder-fake: Enforced → Recorded\n`, rewrites the Status line to `Recorded`, appends a `## Resolution` section including the note text while keeping the earlier entry, updates the lessons index row, and `specscore lesson list --not-enforced` lists the lesson.
+
 ### AC: illegal-transition-rejected (verifies REQ:legal-transition-matrix)
 
 **Given** `spec/lessons/kinder-fake.md` in `**Status:** Enforced`
@@ -164,6 +178,18 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 **When** read-only lint fails after a successful Status rewrite and exact index-row upsert
 **Then** the command exits `10`, retains the rewritten Lesson, its row, every concurrent foreign row, and the prepared lifecycle event for explicit recovery; it does not restore a whole-file snapshot. (The AC identifier is retained for traceability to the superseded rollback behavior.)
 
+### AC: conflicted-lessons-index-fails-closed (verifies REQ:lessons-index-sync)
+
+**Given** `spec/lessons/README.md` carries unresolved git merge-conflict markers — around this Lesson's own row, elsewhere in the index, as a one-sided block, or inside a legacy five-column table
+**When** the user runs `specscore lesson change-status kinder-fake --to=stated`
+**Then** the Lessons-index pre-write check ([cli/spec/lint](../../spec/lint/README.md#req-writers-refuse-conflicted-files)) refuses before the Lesson file is rewritten or any event is prepared: the command exits `1` naming the index, and the Lesson file, the index, and the event ledger are byte-identical afterwards.
+
+### AC: enforced-to-recorded-requires-mechanism-control (verifies REQ:audited-correction-requires-reason)
+
+**Given** `spec/lessons/kinder-fake/README.md` in `**Status:** Enforced`, dated after the L-010 threshold, whose `**Control:**` is free text naming no mechanism and not `none-yet: <why>`
+**When** the user runs `specscore lesson change-status kinder-fake --to=recorded --note "claimed control does not bind"`
+**Then** the command exits `4` before any write, explaining that `**Control:**` must name a mechanism or `none-yet: <why>` first; no file or event changes.
+
 ### AC: unrelated-files-remain-byte-identical
 
 **Given** an unrelated Markdown file containing `## Outstanding Questions`
@@ -172,7 +198,7 @@ The verb MUST hold the resolved Lesson's private lifecycle lock continuously fro
 
 ## Open Questions
 
-- The canonical lifecycle has no resurrection from a disposition status — re-pursuing a withdrawn or superseded lesson means recording a new one. Whether to relax this (e.g., an explicit `Withdrawn → Recorded` "reopen" arc) is deferred until real usage shows the need. (This is distinct from the `Stated → Recorded` audited correction added above, which addresses a Stated lesson found to lack a binding control — not a retired disposition.)
+- The canonical lifecycle has no resurrection from a disposition status — re-pursuing a withdrawn or superseded lesson means recording a new one. Whether to relax this (e.g., an explicit `Withdrawn → Recorded` "reopen" arc) is deferred until real usage shows the need. (This is distinct from the `Stated → Recorded` and `Enforced → Recorded` audited corrections added above, which address a lesson found to lack a binding control — not a retired disposition.)
 
 ---
 *This document follows the https://specscore.md/feature-specification*

@@ -71,6 +71,15 @@ single-write composition used for phantom deletion and orphan insertion.
 - cli/spec/lint#ac:fix-text-summary-on-stderr — Existing shipped behavior outside this canonical-index increment.
 - cli/spec/lint#ac:fix-report-needs-no-flag — Existing shipped behavior outside this canonical-index increment.
 - cli/spec/lint#ac:implements-reference-requirement-liveness — Added by the later offline requirement-reference increment; outside this canonical-index scope.
+- cli/spec/lint#ac:merge-conflict-markers-in-artifact-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:merge-conflict-markers-in-generated-index-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:merge-conflict-markers-setext-heading-not-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:merge-conflict-markers-diff3-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:producer-output-round-trips-through-fix — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:merge-conflict-markers-in-code-fence-flagged — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:writers-refuse-conflicted-files — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
+- cli/spec/lint#ac:writers-refuse-conflicted-index — Added by the later merge-conflict-marker gate increment; outside this plan's canonical-index scope.
 
 ## Open Questions
 

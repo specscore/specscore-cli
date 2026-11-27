@@ -95,6 +95,9 @@ func runRulePromote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedTables(root, rule.IndexPath(rule.RulesDir(root)), lessonPath); err != nil {
+		return err
+	}
 	l, err := lesson.Parse(lessonPath)
 	if err != nil {
 		return exitcode.UnexpectedErrorf("parsing lesson %s: %v", lessonSlug, err)

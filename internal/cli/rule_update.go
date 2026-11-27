@@ -103,6 +103,9 @@ func runRuleUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseConflictedTables(root, rule.IndexPath(rule.RulesDir(root))); err != nil {
+		return err
+	}
 	rulesDir := rule.RulesDir(root)
 	if err := preflightRuleIndex(rulesDir, slug); err != nil {
 		return err

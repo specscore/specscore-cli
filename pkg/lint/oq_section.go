@@ -233,12 +233,14 @@ func oqFixWalk(projectRoot, specRoot, walkRoot string, skipDir func(path string)
 			return err
 		}
 		if info.IsDir() {
-			if skipDir != nil && skipDir(path) {
+			// Skip exactly what the merge-conflict-marker gate skips, so a
+			// fixer never rewrites a file the gate did not read.
+			if (path != walkRoot && skipConflictScanDir(info.Name())) || (skipDir != nil && skipDir(path)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".md" {
+		if !info.Mode().IsRegular() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 

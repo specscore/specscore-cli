@@ -296,11 +296,19 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// lint.Result.Fixed is relative to the spec tree; render it relative to
 	// the project root (where specscore.yaml lives) so consumers can `git add`
 	// the reported paths directly. cli/spec/lint#req:fix-reports-modified-files.
-	fixedRel := res.Fixed
-	if prefix, perr := filepath.Rel(filepath.Dir(specRoot), specRoot); perr == nil && prefix != "." {
-		fixedRel = make([]string, len(res.Fixed))
-		for i, f := range res.Fixed {
-			fixedRel[i] = filepath.ToSlash(filepath.Join(prefix, f))
+	fixedRel := projectRelativeSpecPaths(specRoot, res.Fixed)
+
+	// A --fix pass refused because files still carry git merge-conflict
+	// markers: nothing was modified. Say so on stderr, naming each file
+	// project-relative, so the operator resolves intent before any rewrite
+	// (cli/spec/lint#req:merge-conflict-markers-block-fix). The violations
+	// themselves still decide the (non-zero) exit status below.
+	refusedRel := projectRelativeSpecPaths(specRoot, res.FixRefused)
+	if fix && format == "text" && len(refusedRel) > 0 {
+		ew := cmd.ErrOrStderr()
+		_, _ = fmt.Fprintf(ew, "spec lint --fix refused: %d file(s) contain unresolved git merge-conflict markers; no file was modified. Resolve each conflict, then re-run:\n", len(refusedRel))
+		for _, f := range refusedRel {
+			_, _ = fmt.Fprintf(ew, "  %s\n", f)
 		}
 	}
 
@@ -309,7 +317,7 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	// both the fixed-files report and the violations. Without --fix the
 	// pre-existing bare-array contract is preserved.
 	if fix && (format == "json" || format == "yaml") {
-		if err := outputLintFixEnvelope(w, fixedRel, res.Reconciled, violations, format); err != nil {
+		if err := outputLintFixEnvelope(w, fixedRel, res.Reconciled, violations, format, refusedRel...); err != nil {
 			return exitcode.UnexpectedErrorf("output error: %v", err)
 		}
 	} else {
@@ -355,6 +363,24 @@ func runSpecLint(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// projectRelativeSpecPaths renders specRoot-relative paths relative to the
+// project root (where specscore.yaml lives) so consumers can `git add` the
+// reported paths directly.
+func projectRelativeSpecPaths(specRoot string, paths []string) []string {
+	out := paths
+	if prefix, perr := filepath.Rel(filepath.Dir(specRoot), specRoot); perr == nil && prefix != "." {
+		out = make([]string, len(paths))
+		for i, f := range paths {
+			if filepath.IsAbs(f) {
+				out[i] = filepath.ToSlash(f) // a fallback absolute path is already unambiguous
+				continue
+			}
+			out[i] = filepath.ToSlash(filepath.Join(prefix, f))
+		}
+	}
+	return out
+}
+
 // writeHowToFix prints a "How to fix" section to w listing, once per distinct
 // fix target, how many remaining violations it would repair and the command to
 // run. Nothing is written when no violation carries a FixTarget.
@@ -387,12 +413,15 @@ type lintFixEnvelope struct {
 	Fixed      []string              `json:"fixed" yaml:"fixed"`
 	Reconciled []lint.Reconciliation `json:"reconciled" yaml:"reconciled"`
 	Violations []lint.Violation      `json:"violations" yaml:"violations"`
+	// FixRefused names the project-relative files whose merge-conflict
+	// markers made the fix pass refuse to run; omitted when it ran.
+	FixRefused []string `json:"fix_refused,omitempty" yaml:"fix_refused,omitempty"`
 }
 
 // outputLintFixEnvelope marshals the {fixed, reconciled, violations} envelope.
 // All three arrays serialize as `[]` (never `null`) when empty, matching the
 // non-fix contract.
-func outputLintFixEnvelope(w io.Writer, fixed []string, reconciled []lint.Reconciliation, violations []lint.Violation, format string) error {
+func outputLintFixEnvelope(w io.Writer, fixed []string, reconciled []lint.Reconciliation, violations []lint.Violation, format string, fixRefused ...string) error {
 	if fixed == nil {
 		fixed = []string{}
 	}
@@ -402,7 +431,7 @@ func outputLintFixEnvelope(w io.Writer, fixed []string, reconciled []lint.Reconc
 	if violations == nil {
 		violations = []lint.Violation{}
 	}
-	env := lintFixEnvelope{Fixed: fixed, Reconciled: reconciled, Violations: violations}
+	env := lintFixEnvelope{Fixed: fixed, Reconciled: reconciled, Violations: violations, FixRefused: fixRefused}
 	switch format {
 	case "yaml":
 		enc := newYAMLEnc(w)

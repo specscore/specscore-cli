@@ -348,7 +348,7 @@ func runDecisionNew(cmd *cobra.Command, args []string) error {
 	relTarget, _ := filepath.Rel(specSub, target)
 	var own []lint.Violation
 	for _, v := range violations {
-		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "decisions/")) {
+		if v.Severity == "error" && (v.File == relTarget || strings.HasPrefix(v.File, "decisions/") || v.Rule == lint.MergeConflictMarkersRule) {
 			own = append(own, v)
 		}
 	}

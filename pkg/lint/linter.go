@@ -14,6 +14,11 @@ import (
 type linter struct {
 	opts    Options
 	ruleSet map[string]checker
+	// markers is the merge-conflict-marker precondition gate. It is kept out
+	// of ruleSet on purpose: LintWithResult runs it before every rule and
+	// fixer, regardless of --rules/--ignore, and stops there when it finds
+	// anything (cli/spec/lint#req:merge-conflict-markers-gate-precedes-rules).
+	markers checker
 }
 
 // checker is the interface for individual rule implementations.
@@ -116,6 +121,7 @@ func newLinter(opts Options) *linter {
 	// below and is the only one of this group that actually emits, naming
 	// opts.PlanRouteError.
 	routeBroken := opts.PlanRouteError != ""
+	l.markers = newMergeConflictMarkerChecker(projectRoot, opts.PlansDir, routeBroken)
 
 	l.registerPlanOwned(newReadmeExistsChecker(opts.PlansDir).(planOwnedChecker), routeBroken)
 	oqChecker := l.registerPlanOwned(newOQSectionChecker(projectRoot, opts.PlansDir).(planOwnedChecker), routeBroken)
