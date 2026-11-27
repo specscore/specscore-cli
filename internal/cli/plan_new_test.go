@@ -95,7 +95,7 @@ func TestPlanNew_EmbeddedTaskStatusVocabulary(t *testing.T) {
 	}
 }
 
-// AC: scaffold-emits-frontmatter — the embedded (offline) scaffold carries
+// specscore:verifies feature/cli/plan/new#ac:scaffold-emits-frontmatter — the embedded (offline) scaffold carries
 // format:/status: frontmatter mirroring the body, and the footer matches.
 func TestPlanNew_EmbeddedEmitsFrontmatter(t *testing.T) {
 	root := setupSpecRoot(t)
@@ -237,7 +237,7 @@ func TestPlanNew_Collision(t *testing.T) {
 	_ = path
 }
 
-// AC: ancestor-indexes-materialized — a project with no spec/plans tree gets
+// specscore:verifies feature/cli/plan/new#ac:ancestor-indexes-materialized — a project with no spec/plans tree gets
 // spec/README.md and spec/plans/README.md created; re-running preserves the
 // pre-existing index content while synchronizing its derived Plan rows.
 func TestPlanNew_AncestorIndexesMaterialized(t *testing.T) {
@@ -327,7 +327,7 @@ func TestPlanNew_FetchesPublishedTemplate(t *testing.T) {
 	}
 }
 
-// AC: scaffolded-plan-is-lint-clean — the successful gallery-fetch path must
+// specscore:verifies feature/cli/plan/new#ac:scaffolded-plan-is-lint-clean — the successful gallery-fetch path must
 // be held to the same lint contract as the embedded fallback. In particular,
 // a fresh plan must not carry a legacy task status which `spec lint` rejects.
 func TestPlanNew_FetchedTemplateIsLintClean(t *testing.T) {
@@ -356,7 +356,7 @@ func TestPlanNew_FetchedTemplateIsLintClean(t *testing.T) {
 	}
 }
 
-// AC: scaffolded-plan-is-lint-clean — a real Feature created without any
+// specscore:verifies feature/cli/plan/new#ac:scaffolded-plan-is-lint-clean — a real Feature created without any
 // acceptance criteria must be a valid source for a freshly generated Plan.
 // The gallery task template may describe where an author will add coverage,
 // but its placeholder must not become a live stale AC reference before the
@@ -456,7 +456,8 @@ func TestPlanNew_TitleOwnerDefaults(t *testing.T) {
 	}
 }
 
-// AC: scaffolded-plan-is-lint-clean / ancestor-indexes-materialized — on a
+// specscore:verifies feature/cli/plan/new#ac:scaffolded-plan-is-lint-clean
+// specscore:verifies feature/cli/plan/new#ac:ancestor-indexes-materialized — on a
 // lint-clean project, plan new introduces no error-severity violations outside
 // the scaffolded plan file (the plan file itself may carry P-002 for an
 // unresolved source Feature, which the AC explicitly tolerates).

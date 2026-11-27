@@ -44,7 +44,7 @@ func TestIngest_MissingReport(t *testing.T) {
 
 // TestIngest_MalformedReport verifies an unreadable/unparsable file produces
 // exactly one warning and no facts (REQ: adapter-rehearse, REQ: partial-tolerance,
-// AC: malformed-report-warns).
+// specscore:verifies feature/cli/rehearse/evidence#ac:malformed-report-warns ).
 func TestIngest_MalformedReport(t *testing.T) {
 	facts, warnings := New().Ingest(brokenRepo)
 	if len(facts) != 0 {
@@ -80,8 +80,10 @@ func TestIngest_ReadErrorWarns(t *testing.T) {
 // fail emits two facts with object "fail", skipped/no-steps/empty-verifies
 // emit nothing, and ObservedAt is the report's started_at for all facts.
 //
-// ACs: adapter-emits-verified-by, fail-status-fact, skipped-scenario-no-facts,
-// observed-at-run-time.
+// specscore:verifies feature/cli/rehearse/evidence#ac:adapter-emits-verified-by
+// specscore:verifies feature/cli/rehearse/evidence#ac:fail-status-fact
+// specscore:verifies feature/cli/rehearse/evidence#ac:skipped-scenario-no-facts
+// specscore:verifies feature/cli/rehearse/evidence#ac:observed-at-run-time
 func TestIngest_GoodRepo(t *testing.T) {
 	facts, warnings := New().Ingest(goodRepo)
 	if len(warnings) != 0 {
@@ -119,7 +121,7 @@ func TestIngest_GoodRepo(t *testing.T) {
 
 // TestIngest_ObservedAtFromReport verifies that every emitted fact's
 // ObservedAt is the report's started_at, not any other timestamp.
-// AC: observed-at-run-time.
+// specscore:verifies feature/cli/rehearse/evidence#ac:observed-at-run-time
 func TestIngest_ObservedAtFromReport(t *testing.T) {
 	facts, _ := New().Ingest(goodRepo)
 	for _, f := range facts {

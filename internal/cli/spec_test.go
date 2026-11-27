@@ -34,7 +34,7 @@ func writeValidSpecscoreYAML(t *testing.T, dir string) {
 	}
 }
 
-// AC: missing-specscore-yaml-exits-3 — bare spec/features/ tree without
+// specscore:verifies feature/cli/spec/lint#ac:missing-specscore-yaml-exits-3 — bare spec/features/ tree without
 // specscore.yaml MUST exit 3 with init-pointing message.
 func TestSpecLint_MissingSpecscoreYAML_ExitsNotFound(t *testing.T) {
 	root := t.TempDir()

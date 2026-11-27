@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// AC: fix-text-summary-on-stderr — under --fix in default text format, a
+// specscore:verifies feature/cli/spec/lint#ac:fix-text-summary-on-stderr — under --fix in default text format, a
 // "Fixed N file(s):" summary naming the modified path goes to stderr while
 // stdout carries only the remaining-violations report (no fixed summary).
 func TestSpecLint_FixTextSummaryOnStderr(t *testing.T) {
@@ -26,7 +26,7 @@ func TestSpecLint_FixTextSummaryOnStderr(t *testing.T) {
 	}
 }
 
-// AC: fix-text-summary-on-stderr — a second --fix run on the now-clean tree
+// specscore:verifies feature/cli/spec/lint#ac:fix-text-summary-on-stderr — a second --fix run on the now-clean tree
 // modifies zero files, so no Fixed summary is written to stderr.
 func TestSpecLint_FixTextSummaryIdempotentNoStderr(t *testing.T) {
 	root := setupAutofixProject(t)

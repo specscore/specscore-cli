@@ -42,7 +42,7 @@ func runPlan(t *testing.T, args ...string) (string, string, error) {
 	return out.String(), errOut.String(), err
 }
 
-// AC: group-exposes-subcommands
+// specscore:verifies feature/cli/plan#ac:group-exposes-subcommands
 func TestPlanGroup_NoSubcommand_PrintsHelpExitsZero(t *testing.T) {
 	out, _, err := runPlan(t)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestPlanGroup_NoSubcommand_PrintsHelpExitsZero(t *testing.T) {
 	}
 }
 
-// AC: unknown-slug-exits-3
+// specscore:verifies feature/cli/plan#ac:unknown-slug-exits-3
 func TestResolvePlanPath_MissingSlug_Exits3(t *testing.T) {
 	plansDir := setupPlansSpec(t)
 	_, err := resolvePlanPath(plansDir, "does-not-exist")
@@ -84,7 +84,7 @@ func TestResolvePlanPath_Existing_ReturnsPath(t *testing.T) {
 	}
 }
 
-// AC: invalid-format-rejected — exercises the shared validateFormat the
+// specscore:verifies feature/cli/plan#ac:invalid-format-rejected — exercises the shared validateFormat the
 // plan subcommands will reuse.
 func TestValidateFormat_Xml_Exits2(t *testing.T) {
 	err := validateFormat("xml")

@@ -194,7 +194,7 @@ func TestChangeStatus_HappyPaths(t *testing.T) {
 	}
 }
 
-// AC: nested-feature-id-resolves — `cli/idea/change-status` resolves
+// specscore:verifies feature/cli/feature/change-status#ac:nested-feature-id-resolves — `cli/idea/change-status` resolves
 // through the nested directory path.
 func TestChangeStatus_NestedFeatureID(t *testing.T) {
 	root := t.TempDir()
@@ -220,7 +220,7 @@ func TestChangeStatus_NestedFeatureID(t *testing.T) {
 	}
 }
 
-// AC: case-insensitive-to-flag — STABLE / Stable / stable all
+// specscore:verifies feature/cli/feature/change-status#ac:case-insensitive-to-flag — STABLE / Stable / stable all
 // produce identical results on an Implementing source.
 func TestChangeStatus_CaseInsensitiveFlag(t *testing.T) {
 	for _, raw := range []string{"STABLE", "Stable", "stable", "  stable  "} {
@@ -241,11 +241,11 @@ func TestChangeStatus_CaseInsensitiveFlag(t *testing.T) {
 	}
 }
 
-// AC: illegal-transition-rejected (matrix-level) — Draft → Implementing,
+// specscore:verifies feature/cli/feature/change-status#ac:illegal-transition-rejected (matrix-level) — Draft → Implementing,
 // Draft → Stable, Approved → Stable, Stable → Approved all exit 4.
 // stderr must name the current status and the legal-target set.
-// AC: reverse-transition-rejected — Stable → Implementing exits 4.
-// AC: already-at-target-rejected — Approved → Approved exits 4 per
+// specscore:verifies feature/cli/feature/change-status#ac:reverse-transition-rejected — Stable → Implementing exits 4.
+// specscore:verifies feature/cli/feature/change-status#ac:already-at-target-rejected — Approved → Approved exits 4 per
 // REQ: not-idempotent (self-loops are forbidden in the matrix).
 // Planned → Implementing / Planned → Planned mirror the Draft rows
 // immediately above/below them for parity: Planned has the same
@@ -310,7 +310,7 @@ func TestChangeStatus_IllegalTransitions(t *testing.T) {
 	}
 }
 
-// AC: unrecognized-to-value-rejected — `--to=banana` exits 2 BEFORE
+// specscore:verifies feature/cli/feature/change-status#ac:unrecognized-to-value-rejected — `--to=banana` exits 2 BEFORE
 // any state-machine check. Same for `--to=archived` (Idea-only),
 // `--to=draft` (no arc INTO Draft, treated as not a legal target), and
 // `--to=planned` (no arc INTO Planned, same guard shape as Draft).
@@ -336,7 +336,7 @@ func TestChangeStatus_UnrecognizedToValue(t *testing.T) {
 	}
 }
 
-// AC: feature-not-found — a missing README.md exits 3.
+// specscore:verifies feature/cli/feature/change-status#ac:feature-not-found — a missing README.md exits 3.
 func TestChangeStatus_FeatureNotFound(t *testing.T) {
 	root := t.TempDir()
 	featDir := filepath.Join(root, "spec", "features")

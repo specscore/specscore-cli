@@ -75,7 +75,7 @@ func runIdeaRelocateCLI(t *testing.T, sourceDir string, args ...string) (string,
 
 // -------- AC tests --------
 
-// AC: ambiguous-slug-rejected
+// specscore:verifies feature/cli/idea/relocate#ac:ambiguous-slug-rejected
 func TestIdeaRelocateCLI_AmbiguousSlugRejected(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -89,7 +89,7 @@ func TestIdeaRelocateCLI_AmbiguousSlugRejected(t *testing.T) {
 	}
 }
 
-// AC: slug-not-found
+// specscore:verifies feature/cli/idea/relocate#ac:slug-not-found
 func TestIdeaRelocateCLI_SlugNotFound(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -101,7 +101,7 @@ func TestIdeaRelocateCLI_SlugNotFound(t *testing.T) {
 	}
 }
 
-// AC: to-repo-slug-form-resolves-via-sibling-scan
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-slug-form-resolves-via-sibling-scan
 func TestIdeaRelocateCLI_ToRepoSlugFormResolvesViaScan(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -121,7 +121,7 @@ func TestIdeaRelocateCLI_ToRepoSlugFormResolvesViaScan(t *testing.T) {
 	}
 }
 
-// AC: to-repo-path-form-bypasses-scan
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-path-form-bypasses-scan
 func TestIdeaRelocateCLI_ToRepoPathFormBypassesScan(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -142,7 +142,7 @@ func TestIdeaRelocateCLI_ToRepoPathFormBypassesScan(t *testing.T) {
 	}
 }
 
-// AC: to-repo-without-specscore-yaml-rejected
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-without-specscore-yaml-rejected
 func TestIdeaRelocateCLI_ToRepoWithoutSpecScoreYamlRejected(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -158,7 +158,7 @@ func TestIdeaRelocateCLI_ToRepoWithoutSpecScoreYamlRejected(t *testing.T) {
 	}
 }
 
-// AC: to-repo-slug-multiple-matches-rejected
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-slug-multiple-matches-rejected
 func TestIdeaRelocateCLI_ToRepoSlugMultipleMatchesRejected(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -206,7 +206,7 @@ func initGitRepoForTest(t *testing.T, root string) {
 	run("commit", "--no-gpg-sign", "-m", "initial")
 }
 
-// AC: preflight-source-dirty
+// specscore:verifies feature/cli/idea/relocate#ac:preflight-source-dirty
 func TestIdeaRelocateCLI_PreflightSourceDirty(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -231,7 +231,7 @@ func TestIdeaRelocateCLI_PreflightSourceDirty(t *testing.T) {
 	}
 }
 
-// AC: preflight-sibling-with-references-dirty
+// specscore:verifies feature/cli/idea/relocate#ac:preflight-sibling-with-references-dirty
 func TestIdeaRelocateCLI_PreflightSiblingWithReferencesDirty(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -303,7 +303,7 @@ func TestIdeaRelocateCLI_PreflightCleanAllowsThrough(t *testing.T) {
 	}
 }
 
-// AC: destination-collision
+// specscore:verifies feature/cli/idea/relocate#ac:destination-collision
 func TestIdeaRelocateCLI_DestinationCollision(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -337,7 +337,7 @@ func TestIdeaRelocateCLI_DestinationCollision(t *testing.T) {
 	}
 }
 
-// AC: in-file-rewrite-org-rename
+// specscore:verifies feature/cli/idea/relocate#ac:in-file-rewrite-org-rename
 func TestIdeaRelocateCLI_InFileRewriteOrgRename(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -373,7 +373,7 @@ func TestIdeaRelocateCLI_InFileRewriteOrgRename(t *testing.T) {
 	}
 }
 
-// AC: in-file-rewrite-this-repo
+// specscore:verifies feature/cli/idea/relocate#ac:in-file-rewrite-this-repo
 func TestIdeaRelocateCLI_InFileRewriteThisRepo(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "src", "src")
@@ -410,7 +410,7 @@ func TestIdeaRelocateCLI_InFileRewriteThisRepo(t *testing.T) {
 	}
 }
 
-// AC: cross-repo-link-cleanup-markdown-link
+// specscore:verifies feature/cli/idea/relocate#ac:cross-repo-link-cleanup-markdown-link
 func TestIdeaRelocateCLI_CrossRepoLinkCleanupMarkdownLink(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -450,7 +450,7 @@ func TestIdeaRelocateCLI_CrossRepoLinkCleanupMarkdownLink(t *testing.T) {
 	}
 }
 
-// AC: cross-repo-link-cleanup-preserves-slug-metadata
+// specscore:verifies feature/cli/idea/relocate#ac:cross-repo-link-cleanup-preserves-slug-metadata
 func TestIdeaRelocateCLI_CrossRepoLinkCleanupPreservesSlugMetadata(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -505,7 +505,7 @@ func gitWorkingTreeStatus(t *testing.T, repoRoot string) string {
 	return string(out)
 }
 
-// AC: auto-commit-three-repo-flow
+// specscore:verifies feature/cli/idea/relocate#ac:auto-commit-three-repo-flow
 func TestIdeaRelocateCLI_AutoCommitThreeRepoFlow(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -573,7 +573,7 @@ func TestIdeaRelocateCLI_AutoCommitThreeRepoFlow(t *testing.T) {
 	}
 }
 
-// AC: no-commit-flag-stages-everywhere
+// specscore:verifies feature/cli/idea/relocate#ac:no-commit-flag-stages-everywhere
 func TestIdeaRelocateCLI_NoCommitFlagStagesEverywhere(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -656,7 +656,8 @@ func TestIdeaRelocateCLI_NoCommitFlagStagesEverywhere(t *testing.T) {
 	}
 }
 
-// AC: idea-relocate-happy-path + seed-relocate-happy-path
+// specscore:verifies feature/cli/idea/relocate#ac:idea-relocate-happy-path
+// specscore:verifies feature/cli/idea/relocate#ac:seed-relocate-happy-path
 //
 // End-to-end happy-path test (Task 7). Stages a three-repo workspace
 // mirroring the AC's worked example, then runs two relocates back-to-
@@ -787,7 +788,7 @@ func TestIdeaRelocateCLI_HappyPathE2E(t *testing.T) {
 	}
 }
 
-// AC: io-failure-rollback-pre-commit
+// specscore:verifies feature/cli/idea/relocate#ac:io-failure-rollback-pre-commit
 func TestIdeaRelocateCLI_IOFailureRollbackPreCommit(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -836,7 +837,7 @@ func TestIdeaRelocateCLI_IOFailureRollbackPreCommit(t *testing.T) {
 	}
 }
 
-// AC: commit-failure-mid-flight
+// specscore:verifies feature/cli/idea/relocate#ac:commit-failure-mid-flight
 func TestIdeaRelocateCLI_CommitFailureMidFlight(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRelocateRepo(t, parent, "specstudio-skills", "specstudio-skills")

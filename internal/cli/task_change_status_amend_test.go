@@ -81,7 +81,7 @@ Setup body.
 Deploy body.
 `
 
-// AC corrective-restamp (board): amend overwrites a wrong ref on an already-
+// specscore:verifies feature/cli/task/change-status#ac:corrective-restamp (board): amend overwrites a wrong ref on an already-
 // complete task without changing the status, and prints "<task>: provenance
 // amended".
 func TestTaskChangeStatus_Board_AmendOverwrites(t *testing.T) {
@@ -108,7 +108,7 @@ func TestTaskChangeStatus_Board_AmendOverwrites(t *testing.T) {
 	}
 }
 
-// AC corrective-restamp ("or clears it"): amend with no provenance flags removes
+// specscore:verifies feature/cli/task/change-status#ac:corrective-restamp ("or clears it"): amend with no provenance flags removes
 // the existing **Implemented-by:** field.
 func TestTaskChangeStatus_Board_AmendClears(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "complete")
@@ -142,7 +142,7 @@ func TestTaskChangeStatus_Board_AmendInsertsWhenAbsent(t *testing.T) {
 	}
 }
 
-// AC corrective-restamp: --amend-provenance with --to set exits 2 (InvalidArgs).
+// specscore:verifies feature/cli/task/change-status#ac:corrective-restamp --amend-provenance with --to set exits 2 (InvalidArgs).
 func TestTaskChangeStatus_Board_AmendWithToRejected(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "complete")
 	if err := writeBoardImplementedBy(taskFile, "backstage@wrongsha"); err != nil {
@@ -158,7 +158,7 @@ func TestTaskChangeStatus_Board_AmendWithToRejected(t *testing.T) {
 	}
 }
 
-// AC corrective-restamp: --amend-provenance on a non-complete task exits 4.
+// specscore:verifies feature/cli/task/change-status#ac:corrective-restamp --amend-provenance on a non-complete task exits 4.
 func TestTaskChangeStatus_Board_AmendNonCompleteRejected(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	_, _, err := runTask(t, "change-status", "auth", "--amend-provenance", "--commit", "a1b2c3d")
@@ -240,7 +240,7 @@ func TestTaskChangeStatus_Board_AmendProjectResolveError(t *testing.T) {
 
 // --- plan-inline amend ---
 
-// AC corrective-restamp (plan-inline): amend overwrites a wrong ref on a complete
+// specscore:verifies feature/cli/task/change-status#ac:corrective-restamp (plan-inline): amend overwrites a wrong ref on a complete
 // block without changing status; the sibling block is untouched.
 func TestTaskChangeStatus_PlanInline_AmendOverwrites(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", completeTaskPlanBody)

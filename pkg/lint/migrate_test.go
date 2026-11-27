@@ -23,7 +23,7 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// AC: backfills-format-and-status — status-bearing artifacts gain format: +
+// specscore:verifies feature/cli/spec/migrate#ac:backfills-format-and-status — status-bearing artifacts gain format: +
 // status: (mirrored from the body).
 func TestMigrate_BackfillsFeatureAndIdea(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
@@ -47,7 +47,7 @@ func TestMigrate_BackfillsFeatureAndIdea(t *testing.T) {
 	}
 }
 
-// AC: status-less-types-excluded — an index README gets format: but no status:.
+// specscore:verifies feature/cli/spec/migrate#ac:status-less-types-excluded — an index README gets format: but no status:.
 func TestMigrate_StatusLessIndexGetsFormatOnly(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"features/README.md": "# Features\n\n## Index\n\n| Feature | Status |\n|---|---|\n\n## Open Questions\n\nNone.\n\n---\n*This document follows the https://specscore.md/features-index-specification*\n",
@@ -64,7 +64,7 @@ func TestMigrate_StatusLessIndexGetsFormatOnly(t *testing.T) {
 	}
 }
 
-// AC: migration-idempotent — a second run changes nothing.
+// specscore:verifies feature/cli/spec/migrate#ac:migration-idempotent — a second run changes nothing.
 func TestMigrate_Idempotent(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		"features/foo/README.md": featureDoc("Draft", "https://specscore.md/feature-specification"),
@@ -85,7 +85,7 @@ func TestMigrate_Idempotent(t *testing.T) {
 	}
 }
 
-// AC: footer-aligned-to-format — a wrong footer URL is realigned to format:.
+// specscore:verifies feature/cli/spec/migrate#ac:footer-aligned-to-format — a wrong footer URL is realigned to format:.
 func TestMigrate_AlignsFooter(t *testing.T) {
 	specRoot := writeSpec(t, map[string]string{
 		// footer carries the WRONG (plan) URL.

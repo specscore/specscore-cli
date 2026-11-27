@@ -78,7 +78,7 @@ func hasViolation(vs []Violation, rule, substr string) *Violation {
 	return nil
 }
 
-// AC: coverage-gap-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:coverage-gap-flagged
 func TestP001_CoverageGap(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "sample", "alpha", "beta", "gamma")
@@ -103,7 +103,7 @@ func TestP001_CoverageGap(t *testing.T) {
 	}
 }
 
-// AC: deferred-ac-counts-as-covered
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:deferred-ac-counts-as-covered
 func TestP001_DeferredCountsAsCovered(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "sample", "alpha", "beta", "gamma")
@@ -130,7 +130,7 @@ func TestP001_DeferredCountsAsCovered(t *testing.T) {
 	}
 }
 
-// AC: stale-ac-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:stale-ac-flagged
 func TestP002_StaleAC(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "sample", "alpha")
@@ -152,7 +152,7 @@ func TestP002_StaleAC(t *testing.T) {
 	}
 }
 
-// AC: missing-source-feature
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:missing-source-feature
 func TestP002_MissingSourceFeatureSingleViolation(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writePlan(t, "p", `# Plan: P
@@ -182,7 +182,7 @@ func TestP002_MissingSourceFeatureSingleViolation(t *testing.T) {
 	}
 }
 
-// AC: cycle-detected-and-cited
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:cycle-detected-and-cited
 func TestP003_CycleCited(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a", "b", "c")
@@ -214,7 +214,7 @@ func TestP003_CycleCited(t *testing.T) {
 	}
 }
 
-// AC: dangling-depends-on
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:dangling-depends-on
 func TestP003_Dangling(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a", "b", "c", "d")
@@ -243,7 +243,7 @@ func TestP003_Dangling(t *testing.T) {
 	}
 }
 
-// AC: self-reference-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:self-reference-flagged
 func TestP003_SelfReference(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a", "b")
@@ -266,7 +266,7 @@ func TestP003_SelfReference(t *testing.T) {
 	}
 }
 
-// AC: non-linear-numbering-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:non-linear-numbering-flagged
 func TestP003_NonLinearNumbering(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a", "b", "c")
@@ -295,7 +295,7 @@ func TestP003_NonLinearNumbering(t *testing.T) {
 	}
 }
 
-// AC: stub-done-placeholder-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:stub-done-placeholder-flagged
 func TestP004_StubDonePlaceholder(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a", "b", "c")
@@ -337,7 +337,7 @@ func TestP004_StubDonePlaceholder(t *testing.T) {
 	}
 }
 
-// AC: stub-pending-placeholder-permitted
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:stub-pending-placeholder-permitted
 func TestP004_StubPendingPermitted(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a")
@@ -360,7 +360,7 @@ func TestP004_StubPendingPermitted(t *testing.T) {
 	}
 }
 
-// AC: invalid-mode-value-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:invalid-mode-value-flagged
 func TestP004_InvalidModeValue(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a")
@@ -384,7 +384,7 @@ func TestP004_InvalidModeValue(t *testing.T) {
 	}
 }
 
-// AC: invalid-status-value-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:invalid-status-value-flagged
 func TestP004_InvalidStatusValue(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a")
@@ -666,7 +666,7 @@ func TestP004_FixSkipsNonLegacyToken(t *testing.T) {
 	}
 }
 
-// AC: defaults-when-fields-absent
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:defaults-when-fields-absent
 func TestDefaults_NoFalsePositives(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a")
@@ -687,7 +687,7 @@ func TestDefaults_NoFalsePositives(t *testing.T) {
 	}
 }
 
-// AC: skip-non-plan-files (parts of)
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:skip-non-plan-files (parts of)
 func TestSkip_NonPlanAndDirectoryPlans(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "f", "a")
@@ -714,7 +714,7 @@ func TestSkip_NonPlanAndDirectoryPlans(t *testing.T) {
 	}
 }
 
-// AC: rules-in-default-suite (rule names + filter behavior)
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:rules-in-default-suite (rule names + filter behavior)
 func TestRulesRegisteredInAllRuleNames(t *testing.T) {
 	all := AllRuleNames()
 	for _, n := range []string{"P-001", "P-002", "P-003", "P-004"} {
@@ -1233,7 +1233,7 @@ func TestParseCoordinationRef(t *testing.T) {
 	}
 }
 
-// AC: retired-plan-freezes-its-ac-references
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:retired-plan-freezes-its-ac-references
 //
 // A Plan in a terminal disposition records what was once planned; the Feature
 // it referenced is free to move on. This is what makes a Feature amendable at

@@ -115,7 +115,7 @@ func assertExitCode(t *testing.T, err error, want int) {
 	}
 }
 
-// AC: draft-to-approved-happy-path
+// specscore:verifies feature/cli/idea/change-status#ac:draft-to-approved-happy-path
 func TestChangeStatus_DraftToApprovedHappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Draft")
 
@@ -140,7 +140,7 @@ func TestChangeStatus_DraftToApprovedHappyPath(t *testing.T) {
 	}
 }
 
-// AC: draft-to-rejected-happy-path — Draft is the state where an idea is
+// specscore:verifies feature/cli/idea/change-status#ac:draft-to-rejected-happy-path — Draft is the state where an idea is
 // most likely to be killed deliberately; it can now record that as an
 // active decision instead of being forced into Stale. This completes the
 // disposition vocabulary: every pre-terminal Idea status now has both a
@@ -193,7 +193,7 @@ func TestChangeStatus_InReviewToRejectedHappyPath(t *testing.T) {
 	}
 }
 
-// AC: approved-to-rejected-happy-path — an agreed-but-not-yet-specified
+// specscore:verifies feature/cli/idea/change-status#ac:approved-to-rejected-happy-path — an agreed-but-not-yet-specified
 // Idea can be actively turned down, not just left to decay to Stale.
 func TestChangeStatus_ApprovedToRejectedHappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Approved")
@@ -216,7 +216,7 @@ func TestChangeStatus_ApprovedToRejectedHappyPath(t *testing.T) {
 	}
 }
 
-// AC: specifying-to-rejected-happy-path — an Idea can be actively turned
+// specscore:verifies feature/cli/idea/change-status#ac:specifying-to-rejected-happy-path — an Idea can be actively turned
 // down mid-specification, not only before specification starts.
 func TestChangeStatus_SpecifyingToRejectedHappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Specifying")
@@ -239,7 +239,7 @@ func TestChangeStatus_SpecifyingToRejectedHappyPath(t *testing.T) {
 	}
 }
 
-// AC: specified-to-rejected-happy-path
+// specscore:verifies feature/cli/idea/change-status#ac:specified-to-rejected-happy-path
 func TestChangeStatus_SpecifiedToRejectedHappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Specified")
 
@@ -261,7 +261,7 @@ func TestChangeStatus_SpecifiedToRejectedHappyPath(t *testing.T) {
 	}
 }
 
-// AC: implementing-to-rejected-happy-path — a build that is actively
+// specscore:verifies feature/cli/idea/change-status#ac:implementing-to-rejected-happy-path — a build that is actively
 // called off is Rejected.
 func TestChangeStatus_ImplementingToRejectedHappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Implementing")
@@ -284,7 +284,7 @@ func TestChangeStatus_ImplementingToRejectedHappyPath(t *testing.T) {
 	}
 }
 
-// AC: implementing-to-stale-happy-path — before this arc, Implementing's
+// specscore:verifies feature/cli/idea/change-status#ac:implementing-to-stale-happy-path — before this arc, Implementing's
 // only exit was -> Implemented, so a build that simply petered out
 // (nobody decided against it) had no legal terminal status at all.
 func TestChangeStatus_ImplementingToStaleHappyPath(t *testing.T) {
@@ -308,7 +308,7 @@ func TestChangeStatus_ImplementingToStaleHappyPath(t *testing.T) {
 	}
 }
 
-// AC: case-insensitive-to-flag — testing through ParseStatus (CLI parses
+// specscore:verifies feature/cli/idea/change-status#ac:case-insensitive-to-flag — testing through ParseStatus (CLI parses
 // the flag value before reaching ChangeStatus). We verify that the
 // canonical title-case value is what gets written when the lower/upper
 // variant is passed via ParseStatus → ChangeStatus, AND that the
@@ -352,7 +352,7 @@ func TestChangeStatus_CaseInsensitiveToFlag(t *testing.T) {
 	}
 }
 
-// AC: illegal-target-rejected
+// specscore:verifies feature/cli/idea/change-status#ac:illegal-target-rejected
 func TestChangeStatus_IllegalTargetRejected(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Draft")
 
@@ -386,7 +386,7 @@ func TestChangeStatus_IllegalTargetRejected(t *testing.T) {
 	}
 }
 
-// AC: already-approved-rejected — re-running on the target state is an
+// specscore:verifies feature/cli/idea/change-status#ac:already-approved-rejected — re-running on the target state is an
 // illegal transition per the strict state-machine (REQ: not-idempotent).
 func TestChangeStatus_AlreadyApprovedRejected(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Approved")
@@ -406,7 +406,7 @@ func TestChangeStatus_AlreadyApprovedRejected(t *testing.T) {
 	}
 }
 
-// AC: unrecognized-to-value-rejected — testing the flag-parse layer.
+// specscore:verifies feature/cli/idea/change-status#ac:unrecognized-to-value-rejected — testing the flag-parse layer.
 // ParseStatus returns (_, false) for a bogus value; the cobra adapter
 // turns that into exit 2 BEFORE invoking ChangeStatus. We assert both
 // the ParseStatus rejection AND that IsLegalChangeStatusTarget rejects
@@ -473,7 +473,7 @@ func TestChangeStatus_SlugNotFound(t *testing.T) {
 	}
 }
 
-// AC: proposal-happy-path — change-request proposals use the Idea lifecycle
+// specscore:verifies feature/cli/idea/change-status#ac:proposal-happy-path — change-request proposals use the Idea lifecycle
 // even though they live under their target Feature rather than spec/ideas/.
 func TestChangeStatus_ProposalHappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "unrelated", "Draft")

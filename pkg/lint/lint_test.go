@@ -371,7 +371,7 @@ func TestIndexEntries_NonExistentDir(t *testing.T) {
 	}
 }
 
-// AC: index-entries-fix-removes-phantom-row — `--fix` deletes the row
+// specscore:verifies feature/cli/spec/lint#ac:index-entries-fix-removes-phantom-row — `--fix` deletes the row
 // whose link target points at a non-existent child dir. Idempotent on
 // a second pass. The orphan-child direction is NOT autofixed.
 func TestIndexEntries_FixDeletesPhantomRow(t *testing.T) {
@@ -427,7 +427,7 @@ func TestIndexEntries_FixDeletesPhantomRow(t *testing.T) {
 	}
 }
 
-// AC: index-entries-fix-inserts-orphan-row (root features index) — when a
+// specscore:verifies feature/cli/spec/lint#ac:index-entries-fix-inserts-orphan-row (root features index) — when a
 // top-level feature directory exists on disk but is not linked from
 // spec/features/README.md, `--fix` appends a 4-cell row with the parsed
 // Status and the standard placeholders for Kind / Description. Mirrors the
@@ -481,7 +481,7 @@ func TestIndexEntries_FixInsertsOrphanRowAtRoot(t *testing.T) {
 	}
 }
 
-// AC: index-entries-fix-inserts-orphan-row (nested feature index) — when a
+// specscore:verifies feature/cli/spec/lint#ac:index-entries-fix-inserts-orphan-row (nested feature index) — when a
 // nested feature has child directories that are not linked from its
 // ## Contents table, `--fix` appends 2-cell rows. The shape matches what
 // `feature new --parent` produces.

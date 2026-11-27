@@ -734,7 +734,7 @@ func TestReconcile_TaskMissingStatusLine_Refused(t *testing.T) {
 	}
 }
 
-// AC: failed-task-refused — --tasks=complete must never silently overwrite a
+// specscore:verifies feature/cli/plan/reconcile#ac:failed-task-refused — --tasks=complete must never silently overwrite a
 // task recorded as failed; the error names the task number and its status.
 func TestReconcile_FailedTask_RefusedWithoutForceTasks(t *testing.T) {
 	root, path := stageReconcilePlan(t, "auth", "Approved", "complete", "failed")
@@ -756,7 +756,7 @@ func TestReconcile_FailedTask_RefusedWithoutForceTasks(t *testing.T) {
 	}
 }
 
-// AC: aborted-task-refused — same guard for the aborted terminal status.
+// specscore:verifies feature/cli/plan/reconcile#ac:aborted-task-refused — same guard for the aborted terminal status.
 func TestReconcile_AbortedTask_RefusedWithoutForceTasks(t *testing.T) {
 	root, _ := stageReconcilePlan(t, "auth", "Approved", "aborted")
 	_, err := Reconcile(ReconcileOptions{SpecRoot: root, Slug: "auth", Note: "x", PostMutation: okHook})
@@ -786,7 +786,7 @@ func TestReconcile_MultipleTerminalTasks_AllNamed(t *testing.T) {
 	}
 }
 
-// AC: blocked-task-not-guarded — a blocked task needs no acknowledgement; it
+// specscore:verifies feature/cli/plan/reconcile#ac:blocked-task-not-guarded — a blocked task needs no acknowledgement; it
 // is not a terminal claim (REQ: leave blocked as-is).
 func TestReconcile_BlockedTask_NoGuardNeeded(t *testing.T) {
 	root, _ := stageReconcilePlan(t, "auth", "Approved", "blocked")
@@ -799,7 +799,7 @@ func TestReconcile_BlockedTask_NoGuardNeeded(t *testing.T) {
 	}
 }
 
-// AC: force-tasks-override-succeeds — naming the failed task's number via
+// specscore:verifies feature/cli/plan/reconcile#ac:force-tasks-override-succeeds — naming the failed task's number via
 // ForceTasks lets reconcile proceed, and the override is reported both in the
 // result and, itemized by number and prior status, in the Resolution
 // paragraph — never folded silently into the aggregate count alone.
@@ -869,7 +869,7 @@ func TestReconcile_ForceTasks_IrrelevantNumberIsHarmless(t *testing.T) {
 	}
 }
 
-// AC: re-run-refused — running reconcile again on an already-reconciled plan
+// specscore:verifies feature/cli/plan/reconcile#ac:re-run-refused — running reconcile again on an already-reconciled plan
 // is a no-op refusal (exit 4), not a silent success.
 func TestReconcile_ReRun_Refused(t *testing.T) {
 	root, _ := stageReconcilePlan(t, "auth", "Draft", "planning", "planning")

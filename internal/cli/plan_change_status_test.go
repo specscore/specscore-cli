@@ -61,7 +61,7 @@ func stagePlan(t *testing.T, slug, status string) string {
 	return root
 }
 
-// AC: draft-to-in-review-happy-path
+// specscore:verifies feature/cli/plan/change-status#ac:draft-to-in-review-happy-path
 func TestPlanChangeStatus_DraftToInReview_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
 	stdout, stderr, err := runPlan(t, "change-status", "auth", "--to=in review")
@@ -77,7 +77,7 @@ func TestPlanChangeStatus_DraftToInReview_CLI(t *testing.T) {
 	}
 }
 
-// AC: draft-to-approved-direct-happy-path
+// specscore:verifies feature/cli/plan/change-status#ac:draft-to-approved-direct-happy-path
 func TestPlanChangeStatus_DraftToApprovedDirect_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Draft")
 	stdout, stderr, err := runPlan(t, "change-status", "auth", "--to=approved")
@@ -93,7 +93,7 @@ func TestPlanChangeStatus_DraftToApprovedDirect_CLI(t *testing.T) {
 	}
 }
 
-// AC: in-review-to-approved-happy-path + case-insensitive
+// specscore:verifies feature/cli/plan/change-status#ac:in-review-to-approved-happy-path + case-insensitive
 func TestPlanChangeStatus_InReviewToApproved_CaseInsensitive_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "In Review")
 	stdout, stderr, err := runPlan(t, "change-status", "auth", "--to=APPROVED")
@@ -109,7 +109,7 @@ func TestPlanChangeStatus_InReviewToApproved_CaseInsensitive_CLI(t *testing.T) {
 	}
 }
 
-// AC: withdrawn-with-reason-writes-resolution
+// specscore:verifies feature/cli/plan/change-status#ac:withdrawn-with-reason-writes-resolution
 func TestPlanChangeStatus_Withdrawn_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Approved")
 	_, stderr, err := runPlan(t, "change-status", "auth", "--to=withdrawn", "--note", "abandoned after pivot")
@@ -122,7 +122,7 @@ func TestPlanChangeStatus_Withdrawn_CLI(t *testing.T) {
 	}
 }
 
-// AC: superseded-writes-successor-reference
+// specscore:verifies feature/cli/plan/change-status#ac:superseded-writes-successor-reference
 func TestPlanChangeStatus_Superseded_CLI(t *testing.T) {
 	root := stagePlan(t, "auth", "Approved")
 	if _, _, err := runPlan(t, "new", "auth-v2", "--owner", "tester"); err != nil {

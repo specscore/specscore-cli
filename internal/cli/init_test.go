@@ -76,7 +76,7 @@ func exitCodeOf(err error) int {
 	return exitcode.Unexpected
 }
 
-// AC: greenfield-no-remote — empty dir, no git remote, no flags.
+// specscore:verifies feature/cli/init#ac:greenfield-no-remote — empty dir, no git remote, no flags.
 func TestInit_GreenfieldNoRemote(t *testing.T) {
 	root := t.TempDir()
 	withCwd(t, root)
@@ -137,7 +137,7 @@ func TestInit_GreenfieldNoRemote(t *testing.T) {
 	}
 }
 
-// AC: greenfield-with-remote-inference — git remote populates project block.
+// specscore:verifies feature/cli/init#ac:greenfield-with-remote-inference — git remote populates project block.
 func TestInit_GreenfieldWithRemoteInference(t *testing.T) {
 	root := t.TempDir()
 	initLocalGitRepo(t, root, "git@github.com:acme/example.git")
@@ -159,7 +159,7 @@ func TestInit_GreenfieldWithRemoteInference(t *testing.T) {
 	}
 }
 
-// AC: conflict-without-force — existing specscore.yaml + no --force = exit 1.
+// specscore:verifies feature/cli/init#ac:conflict-without-force — existing specscore.yaml + no --force = exit 1.
 func TestInit_ConflictWithoutForce(t *testing.T) {
 	root := t.TempDir()
 	preexisting := []byte("# pre-existing user content\nsome: thing\n")
@@ -186,7 +186,7 @@ func TestInit_ConflictWithoutForce(t *testing.T) {
 	}
 }
 
-// AC: force-overwrites — existing specscore.yaml + --force = replaced.
+// specscore:verifies feature/cli/init#ac:force-overwrites — existing specscore.yaml + --force = replaced.
 func TestInit_ForceOverwrites(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "specscore.yaml"), []byte("# stale\n"), 0o644); err != nil {
@@ -221,7 +221,7 @@ func TestInit_ForceOverwrites(t *testing.T) {
 	}
 }
 
-// AC: partial-state-resume — missing config but partial spec tree = completes.
+// specscore:verifies feature/cli/init#ac:partial-state-resume — missing config but partial spec tree = completes.
 func TestInit_PartialStateResume(t *testing.T) {
 	root := t.TempDir()
 	// Pre-existing spec/ideas/ with one Idea but no README.md and no specscore.yaml.
@@ -252,7 +252,7 @@ func TestInit_PartialStateResume(t *testing.T) {
 	}
 }
 
-// AC: partial-state-resume — existing index file is preserved on rerun.
+// specscore:verifies feature/cli/init#ac:partial-state-resume — existing index file is preserved on rerun.
 func TestInit_RerunPreservesExistingIndexes(t *testing.T) {
 	root := t.TempDir()
 	// First init (greenfield).
@@ -275,7 +275,7 @@ func TestInit_RerunPreservesExistingIndexes(t *testing.T) {
 	}
 }
 
-// AC: project-metadata-applied — explicit flags override inference.
+// specscore:verifies feature/cli/init#ac:project-metadata-applied — explicit flags override inference.
 func TestInit_ProjectMetadataAppliedFromFlags(t *testing.T) {
 	root := t.TempDir()
 	// Even when a remote is set, explicit flags MUST win.
@@ -308,7 +308,7 @@ func TestInit_ProjectMetadataAppliedFromFlags(t *testing.T) {
 	}
 }
 
-// AC: interactive-non-tty-rejected — -i without TTY = exit 2.
+// specscore:verifies feature/cli/init#ac:interactive-non-tty-rejected — -i without TTY = exit 2.
 func TestInit_InteractiveNonTTY(t *testing.T) {
 	root := t.TempDir()
 	// Stdin is *bytes.Buffer (not a TTY by definition).
@@ -325,7 +325,7 @@ func TestInit_InteractiveNonTTY(t *testing.T) {
 	}
 }
 
-// AC: interactive-mode-prompts-and-defaults — tests prompt flow with TTY stub.
+// specscore:verifies feature/cli/init#ac:interactive-mode-prompts-and-defaults — tests prompt flow with TTY stub.
 func TestInit_InteractivePromptsHappyPath(t *testing.T) {
 	root := t.TempDir()
 	// Stub the TTY check so the test doesn't need a real terminal.
@@ -359,7 +359,7 @@ func TestInit_InteractivePromptsHappyPath(t *testing.T) {
 	}
 }
 
-// AC: exit-codes-discipline — invalid --project path = exit 2.
+// specscore:verifies feature/cli/init#ac:exit-codes-discipline — invalid --project path = exit 2.
 func TestInit_InvalidProjectPath(t *testing.T) {
 	_, _, err := runInitCmd(t, nil, "--project", "/does/not/exist/anywhere")
 	if err == nil {
@@ -373,7 +373,7 @@ func TestInit_InvalidProjectPath(t *testing.T) {
 	}
 }
 
-// AC: exit-codes-discipline — --project pointing at a file (not directory) = exit 2.
+// specscore:verifies feature/cli/init#ac:exit-codes-discipline — --project pointing at a file (not directory) = exit 2.
 func TestInit_ProjectIsFileNotDirectory(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "regularfile")

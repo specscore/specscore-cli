@@ -66,7 +66,7 @@ func acWant(t *testing.T, vs []Violation, want ...string) {
 	}
 }
 
-// AC: off-without-opt-in
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:off-without-opt-in
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:off-without-opt-in
 func TestACTestCoverage_OffWithoutOptIn(t *testing.T) {
 	for name, cfg := range map[string]string{
@@ -111,7 +111,7 @@ func TestACTestCoverage_RegisteredInCatalog(t *testing.T) {
 	}
 }
 
-// AC: malformed-config-visible
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:malformed-config-visible
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:malformed-config-visible
 func TestACTestCoverage_MalformedConfigVisible(t *testing.T) {
 	for cfg, severity := range map[string]string{
@@ -127,7 +127,7 @@ func TestACTestCoverage_MalformedConfigVisible(t *testing.T) {
 	}
 }
 
-// AC: only-implementing-and-stable
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:only-implementing-and-stable
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:only-implementing-and-stable
 func TestACTestCoverage_OnlyImplementingAndStable(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
@@ -157,7 +157,7 @@ func TestACTestCoverage_NoInScopeFeaturesSkipsTestScan(t *testing.T) {
 	}
 }
 
-// AC: test-annotation-covers
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:test-annotation-covers
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:test-annotation-covers
 func TestACTestCoverage_TestAnnotationCovers(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
@@ -185,7 +185,7 @@ func TestACTestCoverage_CrossRepoNeedsConfiguredIdentity(t *testing.T) {
 	acWant(t, acCheck(t, sr, false), "orders#ac:a")
 }
 
-// AC: custom-test-globs
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:custom-test-globs
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:custom-test-globs
 func TestACTestCoverage_CustomTestGlobs(t *testing.T) {
 	sr := gradeSpecRoot(t, "project:\n  title: T\nac_test_coverage:\n  required: true\n  test_files: [\"e2e/**/*.feature\", \"**/*.test.js\"]\n")
@@ -203,7 +203,7 @@ func TestACTestCoverage_CustomTestGlobs(t *testing.T) {
 	acWant(t, acCheck(t, sr, false), "orders#ac:two", "orders#ac:three", "orders#ac:four")
 }
 
-// AC: deferral-counts
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:deferral-counts
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:deferral-counts
 func TestACTestCoverage_DeferralCounts(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
@@ -238,7 +238,7 @@ func TestACTestCoverage_PlansDirOverride(t *testing.T) {
 	}
 }
 
-// AC: message-names-feature-ac-and-fix
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:message-names-feature-ac-and-fix
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:message-names-feature-ac-and-fix
 func TestACTestCoverage_MessageNamesFeatureACAndFix(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
@@ -327,7 +327,7 @@ func TestIsATXHeading(t *testing.T) {
 	}
 }
 
-// AC: only-implementing-and-stable
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:only-implementing-and-stable
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:only-implementing-and-stable
 func TestACTestCoverage_ThematicBreakKeepsLaterACs(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
@@ -336,7 +336,7 @@ func TestACTestCoverage_ThematicBreakKeepsLaterACs(t *testing.T) {
 	acWant(t, acCheck(t, sr, false), "orders#ac:before", "orders#ac:after")
 }
 
-// AC: test-annotation-covers
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:test-annotation-covers
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:test-annotation-covers
 func TestACTestCoverage_SymlinkedProjectRoot(t *testing.T) {
 	sr := gradeSpecRoot(t, acOptIn)
@@ -352,7 +352,7 @@ func TestACTestCoverage_SymlinkedProjectRoot(t *testing.T) {
 	}
 }
 
-// AC: deferral-counts
+// specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:deferral-counts
 // specscore:verifies feature/cli/spec/lint/ac-test-coverage#ac:deferral-counts
 func TestACTestCoverage_PlanTreeErrors(t *testing.T) {
 	t.Run("discover error surfaces", func(t *testing.T) {

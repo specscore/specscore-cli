@@ -76,7 +76,7 @@ func lintHasNewErrors(t *testing.T, root string) bool {
 	return false
 }
 
-// AC: implemented-relocates-and-tags
+// specscore:verifies feature/cli/sidekick/change-status#ac:implemented-relocates-and-tags
 func TestSidekickChangeStatus_ImplementedRelocatesAndTags(t *testing.T) {
 	root := stageQueuedSeed(t, "foo")
 
@@ -102,7 +102,7 @@ func TestSidekickChangeStatus_ImplementedRelocatesAndTags(t *testing.T) {
 	}
 }
 
-// AC: rejected-with-note-writes-resolution
+// specscore:verifies feature/cli/sidekick/change-status#ac:rejected-with-note-writes-resolution
 func TestSidekickChangeStatus_RejectedWithNoteWritesResolution(t *testing.T) {
 	root := stageQueuedSeed(t, "bar")
 
@@ -177,7 +177,7 @@ func TestSidekickChangeStatus_SlugNotFound_Exit3(t *testing.T) {
 	}
 }
 
-// AC: non-queued-source-rejected — a non-Queued source exits 4, seed unchanged.
+// specscore:verifies feature/cli/sidekick/change-status#ac:non-queued-source-rejected — a non-Queued source exits 4, seed unchanged.
 func TestSidekickChangeStatus_NonQueuedSource_Exit4(t *testing.T) {
 	root := stageQueuedSeed(t, "qux")
 	// Flip the frontmatter status to a non-Queued value.
@@ -203,7 +203,7 @@ func TestSidekickChangeStatus_NonQueuedSource_Exit4(t *testing.T) {
 	}
 }
 
-// AC: archive-path-collision — exit 1, source seed (status + note) untouched.
+// specscore:verifies feature/cli/sidekick/change-status#ac:archive-path-collision — exit 1, source seed (status + note) untouched.
 func TestSidekickChangeStatus_ArchiveCollision_Exit1(t *testing.T) {
 	root := stageQueuedSeed(t, "foo")
 	// Pre-occupy the archive destination.
@@ -228,7 +228,7 @@ func TestSidekickChangeStatus_ArchiveCollision_Exit1(t *testing.T) {
 	}
 }
 
-// AC: note-optional-on-implemented — with --note writes Resolution; without it
+// specscore:verifies feature/cli/sidekick/change-status#ac:note-optional-on-implemented — with --note writes Resolution; without it
 // writes none.
 func TestSidekickChangeStatus_NoteOptionalOnImplemented(t *testing.T) {
 	rootWith := stageQueuedSeed(t, "baz")

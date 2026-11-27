@@ -33,7 +33,7 @@ func withVersion(t *testing.T, v string) {
 
 // --- command shape: name, alias, flag surface --------------------------
 
-// AC: cli/self-update#ac:canonical-and-alias — the command MUST be named
+// specscore:verifies feature/cli/self-update#ac:canonical-and-alias — the command MUST be named
 // "self-update" with "update" registered as an alias resolving to the same
 // command object, so both invocations share identical behavior by
 // construction.
@@ -50,7 +50,7 @@ func TestSelfUpdate_CanonicalAndAlias(t *testing.T) {
 	}
 }
 
-// AC: cli/self-update#ac:canonical-and-alias — the full flag surface
+// specscore:verifies feature/cli/self-update#ac:canonical-and-alias — the full flag surface
 // (--check, --yes/-y, --version, --allow-downgrade) MUST be registered with
 // the same defaults/shorthand specscore exposed before this migration.
 func TestSelfUpdate_FlagSurface(t *testing.T) {
@@ -137,7 +137,7 @@ func TestSelfUpdate_RejectsExtraArgs(t *testing.T) {
 
 // --- specscore's own Config: release identity, managers, version probe -
 
-// AC: cli/self-update#ac:behavior-comes-from-the-library — specscore
+// specscore:verifies feature/cli/self-update#ac:behavior-comes-from-the-library — specscore
 // supplies only its own release identity, version, and undetermined
 // placeholder; everything else is the library's default.
 func TestSelfUpdateConfig_Identity(t *testing.T) {
@@ -181,7 +181,7 @@ func TestSelfUpdateConfig_Identity(t *testing.T) {
 	}
 }
 
-// AC: cli/self-update#ac:managed-is-upgraded-through-its-manager —
+// specscore:verifies feature/cli/self-update#ac:managed-is-upgraded-through-its-manager —
 // specscore MUST configure exactly Homebrew, Scoop, and WinGet, each with
 // its exact display upgrade command AND its exact executable argv, and each
 // MUST be opted into executable upgrade mode (CanExecuteUpgrade) so a
@@ -303,7 +303,7 @@ func releasePinnedHomebrewConfig(t *testing.T, srv *httptest.Server, current str
 	return cfg, exe
 }
 
-// AC: cli/self-update#ac:managed-is-upgraded-through-its-manager — a
+// specscore:verifies feature/cli/self-update#ac:managed-is-upgraded-through-its-manager — a
 // Homebrew-managed install MUST invoke the manager with exactly `brew
 // upgrade --cask specscore`, through the library's own injection seams
 // (selfupdate.Options.RunManaged / .VerifyManaged), never a real brew
@@ -448,7 +448,7 @@ func TestSelfUpdateConfig_HomebrewVersionPinIsRefused(t *testing.T) {
 	}
 }
 
-// AC: cli/self-update#ac:managed-is-upgraded-through-its-manager — without
+// specscore:verifies feature/cli/self-update#ac:managed-is-upgraded-through-its-manager — without
 // --yes and without an interactive terminal, a managed install that can
 // execute its own upgrade MUST still refuse rather than run the manager
 // unattended. This drives the REAL selfUpdateCommand() end to end (real
@@ -634,7 +634,7 @@ func withFakeReleases(t *testing.T, srv *httptest.Server) {
 	t.Cleanup(func() { selfUpdateConfigFunc = prev })
 }
 
-// AC: cli/self-update#ac:check-exit-code-contract — up to date, an
+// specscore:verifies feature/cli/self-update#ac:check-exit-code-contract — up to date, an
 // available update, and a release-lookup failure MUST exit 0, 10, and a
 // third code distinct from both, in that order, driven through the real
 // command (cobracmd + selfupdate.Config.Check + selfUpdateErrors), not just
@@ -773,7 +773,7 @@ func TestSelfUpdate_CheckStatesNextStep(t *testing.T) {
 	}
 }
 
-// AC: cli/self-update#ac:canonical-and-alias — `update --check` (the alias)
+// specscore:verifies feature/cli/self-update#ac:canonical-and-alias — `update --check` (the alias)
 // produces byte-identical output/exit-code to `self-update --check`, driven
 // through the real command since both names resolve to the same *cobra.
 // Command object built by selfUpdateCommand.

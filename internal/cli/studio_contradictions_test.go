@@ -74,7 +74,7 @@ func decodeContradictions(t *testing.T, out string) []contradictionItemJSON {
 	return items
 }
 
-// AC: status-drift-verified-fail — a Stable feature whose latest run failed is
+// specscore:verifies feature/cli/studio/answers#ac:status-drift-verified-fail — a Stable feature whose latest run failed is
 // a status-drift contradiction; both sides carry their provenance.
 func TestStudioContradictions_StatusDriftVerifiedFail(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -116,7 +116,7 @@ func TestStudioContradictions_StatusDriftVerifiedFail(t *testing.T) {
 	}
 }
 
-// AC: status-drift-dead-domain — a registry-declared live domain that probes
+// specscore:verifies feature/cli/studio/answers#ac:status-drift-dead-domain — a registry-declared live domain that probes
 // dead is a status-drift contradiction.
 func TestStudioContradictions_StatusDriftDeadDomain(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -148,7 +148,7 @@ func TestStudioContradictions_StatusDriftDeadDomain(t *testing.T) {
 	}
 }
 
-// AC: naming-conflict-declared-disagreement — two declared facts disagreeing on
+// specscore:verifies feature/cli/studio/answers#ac:naming-conflict-declared-disagreement — two declared facts disagreeing on
 // the same single-valued predicate are a naming-conflict; absent when they
 // share the object. `fronts` is in the single-valued set the detector fires on
 // (REQ: same-predicate-disagreement).
@@ -256,7 +256,7 @@ func TestStudioContradictions_HumanCleanStore(t *testing.T) {
 	}
 }
 
-// AC: contradictions-without-index-errors (guard exists) — running before
+// specscore:verifies feature/cli/studio/answers#ac:contradictions-without-index-errors (guard exists) — running before
 // studio index exits 2 with the store path and the studio-index suggestion.
 func TestStudioContradictions_MissingStoreExits2(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a") // no store built
@@ -316,7 +316,7 @@ func TestStudioContradictions_DBFlagBypassesWorkspace(t *testing.T) {
 
 // --- Task 2 ACs ---
 
-// AC: agreement-not-flagged — two declared facts with the same subject,
+// specscore:verifies feature/cli/studio/answers#ac:agreement-not-flagged — two declared facts with the same subject,
 // predicate, and object from different evidence pointers are not a
 // contradiction; the command exits 0 and returns an empty JSON array.
 func TestStudioContradictions_AgreementNotFlagged(t *testing.T) {
@@ -336,7 +336,7 @@ func TestStudioContradictions_AgreementNotFlagged(t *testing.T) {
 	}
 }
 
-// AC: behavioral-supersession-not-flagged — two verified-behavior facts with
+// specscore:verifies feature/cli/studio/answers#ac:behavioral-supersession-not-flagged — two verified-behavior facts with
 // the same subject and predicate but different objects (a changed probe
 // result) are supersession, not a contradiction; neither detector fires.
 func TestStudioContradictions_BehavioralSupersessionNotFlagged(t *testing.T) {
@@ -356,7 +356,7 @@ func TestStudioContradictions_BehavioralSupersessionNotFlagged(t *testing.T) {
 	}
 }
 
-// AC: contradicts-fact-written — running studio contradictions writes a
+// specscore:verifies feature/cli/studio/answers#ac:contradicts-fact-written — running studio contradictions writes a
 // contradicts fact into the store (queryable via studio facts --predicate
 // contradicts), and re-running does not create a duplicate.
 func TestStudioContradictions_ContradictsFactWritten(t *testing.T) {
@@ -422,7 +422,7 @@ func TestStudioContradictions_ContradictsFactWritten(t *testing.T) {
 	}
 }
 
-// AC: contradicts-fact-written (--no-write) — with --no-write, the verb
+// specscore:verifies feature/cli/studio/answers#ac:contradicts-fact-written (--no-write) — with --no-write, the verb
 // detects and prints items but does not write any contradicts fact.
 func TestStudioContradictions_NoWriteSkipsWriteBack(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -454,7 +454,7 @@ func TestStudioContradictions_NoWriteSkipsWriteBack(t *testing.T) {
 	}
 }
 
-// AC: contradictions-ignore-suppresses — an entry in the ignore file suppresses
+// specscore:verifies feature/cli/studio/answers#ac:contradictions-ignore-suppresses — an entry in the ignore file suppresses
 // the matched item from both the output and the write-back. --show-ignored
 // lists the suppressed identity.
 func TestStudioContradictions_IgnoreSuppressesItemAndWriteBack(t *testing.T) {

@@ -43,7 +43,7 @@ func TestKind(t *testing.T) {
 	}
 }
 
-// AC: sql-assert-rows — a query over a 3-row fixture with `-- assert-rows: 3`
+// specscore:verifies feature/cli/rehearse/run#ac:sql-assert-rows — a query over a 3-row fixture with `-- assert-rows: 3`
 // passes.
 func TestRun_AssertRowsPass(t *testing.T) {
 	res := run(t, "SELECT * FROM t;\n-- assert-rows: 3", "sqlite:"+fixtureDB(t), "")

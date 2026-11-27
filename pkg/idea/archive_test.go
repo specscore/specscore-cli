@@ -20,7 +20,7 @@ func readArchivedIdea(t *testing.T, root, slug string) string {
 	return string(b)
 }
 
-// AC: archive-happy-path — `idea archive` sets **Archived:** true (keeping
+// specscore:verifies feature/cli/idea/archive#ac:archive-happy-path — `idea archive` sets **Archived:** true (keeping
 // the terminal **Status:**) and relocates the file to archived/.
 func TestArchive_HappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Rejected")
@@ -97,7 +97,7 @@ func TestArchive_CreatesArchivedIndexStub(t *testing.T) {
 	}
 }
 
-// AC: archive-collision — a stale archived file aborts the move (exit 1)
+// specscore:verifies feature/cli/idea/archive#ac:archive-collision — a stale archived file aborts the move (exit 1)
 // and leaves the active file untouched.
 func TestArchive_Collision(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Stale")
@@ -149,7 +149,7 @@ func TestArchive_LintFailureRollsBack(t *testing.T) {
 	}
 }
 
-// AC: archive-slug-not-found — a missing active file exits 3.
+// specscore:verifies feature/cli/idea/archive#ac:archive-slug-not-found — a missing active file exits 3.
 func TestArchive_SlugNotFound(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Stale")
 	_, err := Archive(ArchiveOptions{
@@ -257,7 +257,7 @@ func TestArchive_Guards(t *testing.T) {
 	}
 }
 
-// AC: unarchive-happy-path — `idea unarchive` clears the **Archived:** axis
+// specscore:verifies feature/cli/idea/archive#ac:unarchive-happy-path — `idea unarchive` clears the **Archived:** axis
 // and relocates back to the active path, keeping **Status:**.
 func TestUnarchive_HappyPath(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Stale")
@@ -299,7 +299,7 @@ func TestUnarchive_HappyPath(t *testing.T) {
 	}
 }
 
-// AC: unarchive-collision — a pre-existing active file aborts (exit 1).
+// specscore:verifies feature/cli/idea/archive#ac:unarchive-collision — a pre-existing active file aborts (exit 1).
 func TestUnarchive_Collision(t *testing.T) {
 	root := stageIdeaTree(t, "foo", "Stale")
 	if _, err := Archive(ArchiveOptions{

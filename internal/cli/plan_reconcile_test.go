@@ -278,7 +278,7 @@ func TestPlanReconcile_UnknownSlug_CLI(t *testing.T) {
 	}
 }
 
-// AC: re-run-refused — a second reconcile on an already-reconciled plan is a
+// specscore:verifies feature/cli/plan/reconcile#ac:re-run-refused — a second reconcile on an already-reconciled plan is a
 // no-op refusal, not a silent success.
 func TestPlanReconcile_ReRun_CLI(t *testing.T) {
 	stageReconcilablePlan(t, "auth", "Draft", "planning", "planning")

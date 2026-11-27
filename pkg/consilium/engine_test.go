@@ -35,7 +35,7 @@ func approveVote(role, confidence, cost, complexity string) Vote {
 	}
 }
 
-// AC: gate-engine-applies-rules-in-order — the strict-baseline happy path.
+// specscore:verifies feature/cli/consilium#ac:gate-engine-applies-rules-in-order — the strict-baseline happy path.
 // All builders and customers approve at medium+ confidence with cost/complexity
 // at or under the ceilings; no abstains or adversary vetoes. The verdict MUST be
 // should-implement with the rule_trace ending in the step-11 rule, empty
@@ -180,7 +180,7 @@ func abstainVote(role, confidence string) Vote {
 	}
 }
 
-// AC: high-confidence-abstain-excluded-from-denominator — a high-confidence
+// specscore:verifies feature/cli/consilium#ac:high-confidence-abstain-excluded-from-denominator — a high-confidence
 // abstain is removed from its group's denominator and listed in ExcludedVotes,
 // while evaluation proceeds normally to a verdict.
 func TestEvaluate_HighConfidenceAbstainExcludedFromDenominator(t *testing.T) {
@@ -210,7 +210,7 @@ func TestEvaluate_HighConfidenceAbstainExcludedFromDenominator(t *testing.T) {
 	}
 }
 
-// AC: low-confidence-abstain-caps-verdict — a low-confidence abstain caps the
+// specscore:verifies feature/cli/consilium#ac:low-confidence-abstain-caps-verdict — a low-confidence abstain caps the
 // verdict at needs-human-review via low-abstain-veto, before the strict-gate
 // path (steps 5–11) is evaluated.
 func TestEvaluate_LowConfidenceAbstainCapsVerdict(t *testing.T) {
@@ -240,7 +240,7 @@ func TestEvaluate_LowConfidenceAbstainCapsVerdict(t *testing.T) {
 	}
 }
 
-// AC: adversary-veto-blocks — with strict-baseline knobs an adversary's
+// specscore:verifies feature/cli/consilium#ac:adversary-veto-blocks — with strict-baseline knobs an adversary's
 // high-confidence should-not-implement fires adversary-veto and stops before
 // the approval-count steps.
 func TestEvaluate_AdversaryVetoBlocks(t *testing.T) {

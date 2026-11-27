@@ -36,3 +36,7 @@ Steps 1–3 are the same-PR critical path inside this repo + spec repo. Steps 4�
 ## Lint rules and the spec
 
 Lint rules in `pkg/lint/*.go` are spec-anchored: every rule's behavior is described as REQs and ACs in `spec/features/cli/spec/lint/README.md` (or a child Feature like `plan-rules/`). When changing rule behavior, update the spec in the same commit. The dogfood lint job will fail if the spec and the rule disagree about, e.g., severity or message text — that's intentional.
+
+## Citing acceptance criteria in tests
+
+A test that covers an acceptance criterion names it with a `specscore:verifies` annotation in a comment, giving the Feature path and the AC id: `// specscore:verifies feature/<feature-path>#ac:<ac-id>` (for example `// specscore:verifies feature/cli/code/deps#ac:path-filter-works`), followed by any prose on the same line. Use one annotation line per AC. The short `// AC: <id>` form does not name the Feature, so the `feature-ac-test-coverage` lint rule ([spec](spec/features/cli/spec/lint/ac-test-coverage/README.md)) cannot count it; do not add new ones. Annotate only a test that really exercises the AC.

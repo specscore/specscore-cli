@@ -151,7 +151,7 @@ func TestStudioIndex_DBFlagAbsError(t *testing.T) {
 	}
 }
 
-// AC: workspace-missing-error — index without a workspace file exits 2 and
+// specscore:verifies feature/cli/studio/index#ac:workspace-missing-error — index without a workspace file exits 2 and
 // prints a one-line error naming the expected workspace path.
 func TestStudioIndex_MissingWorkspaceExits2(t *testing.T) {
 	dir := t.TempDir() // no studio.yaml
@@ -239,7 +239,7 @@ func newSpecScoreRepo(t *testing.T, dir, name string) {
 	}
 }
 
-// AC: spec-status-fact — indexing a repo whose spec/features/x/README.md
+// specscore:verifies feature/cli/studio/index#ac:spec-status-fact — indexing a repo whose spec/features/x/README.md
 // declares **Status:** Approved yields a has-status fact with the full fact
 // shape, observable via `studio facts --predicate has-status --format json`.
 func TestStudioIndex_SpecScoreStatusFactEndToEnd(t *testing.T) {
@@ -332,7 +332,7 @@ func newBrokenStudioWorkspace(t *testing.T) (wsPath, missingPath string) {
 	return wsPath, missingPath
 }
 
-// AC: partial-tolerance-warns — one broken repo does not abort the run: the
+// specscore:verifies feature/cli/studio/index#ac:partial-tolerance-warns — one broken repo does not abort the run: the
 // command exits 0, the summary lists a warning for the missing path, and
 // facts from the healthy repo are queryable.
 func TestStudioIndex_MissingRepoPathWarnsAndExitsZero(t *testing.T) {
@@ -371,7 +371,7 @@ func TestStudioIndex_MissingRepoPathWarnsAndExitsZero(t *testing.T) {
 	}
 }
 
-// AC: strict-mode-fails — --strict escalates warnings: the command exits 3
+// specscore:verifies feature/cli/studio/index#ac:strict-mode-fails — --strict escalates warnings: the command exits 3
 // and the warning is still printed.
 func TestStudioIndex_StrictEscalatesWarningsToExit3(t *testing.T) {
 	wsPath, missingPath := newBrokenStudioWorkspace(t)
@@ -443,7 +443,7 @@ func ingrRecordCount(t *testing.T, path string) int {
 	return n
 }
 
-// AC: ingr-export-counts (default path) — every index run writes one
+// specscore:verifies feature/cli/studio/index#ac:ingr-export-counts (default path) — every index run writes one
 // recordset per repo slug under <workspace-dir>/.specscore-studio/ingr/ and
 // the per-repo record count equals the repo's fact count in the summary.
 func TestStudioIndex_IngrExportDefaultDirAndCounts(t *testing.T) {
@@ -595,7 +595,7 @@ func seedStudioStore(t *testing.T, wsPath string) string {
 	return dbPath
 }
 
-// AC: missing-store-error — facts in a workspace where `studio index` has
+// specscore:verifies feature/cli/studio/index#ac:missing-store-error — facts in a workspace where `studio index` has
 // never run exits 2 with a message naming the expected store path and
 // suggesting `studio index`.
 func TestStudioFacts_MissingStoreExits2(t *testing.T) {
@@ -784,7 +784,7 @@ func seedStaleStore(t *testing.T, wsPath string, now time.Time) string {
 	return dbPath
 }
 
-// AC: stale-filter-selects-old-facts — --stale 24h selects only the fact
+// specscore:verifies feature/cli/studio/probe#ac:stale-filter-selects-old-facts — --stale 24h selects only the fact
 // verified more than 24h ago.
 func TestStudioFacts_StaleSelectsOldFacts(t *testing.T) {
 	now := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
@@ -805,7 +805,7 @@ func TestStudioFacts_StaleSelectsOldFacts(t *testing.T) {
 	}
 }
 
-// AC: stale-filter-malformed-duration — a bad --stale duration exits 2 and
+// specscore:verifies feature/cli/studio/probe#ac:stale-filter-malformed-duration — a bad --stale duration exits 2 and
 // names the invalid value.
 func TestStudioFacts_StaleMalformedExits2(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -820,7 +820,7 @@ func TestStudioFacts_StaleMalformedExits2(t *testing.T) {
 	}
 }
 
-// AC: age-column-rendered — the table has a VERIFIED column and a fact
+// specscore:verifies feature/cli/studio/probe#ac:age-column-rendered — the table has a VERIFIED column and a fact
 // verified 3h ago renders "3h".
 func TestStudioFacts_AgeColumnRendered(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
@@ -936,7 +936,7 @@ func newBrokenRehearsalRepo(t *testing.T, dir, name string) string {
 	return filepath.Join(dir, name)
 }
 
-// AC: observed-at-run-time — rehearse-adapter facts carry the report's
+// specscore:verifies feature/cli/rehearse/evidence#ac:observed-at-run-time — rehearse-adapter facts carry the report's
 // started_at while facts from other adapters carry the index-run timestamp.
 // Feature: cli/rehearse/evidence (REQ: observed-at-run-time).
 func TestStudioIndex_RehearseObservedAtFromReport(t *testing.T) {
@@ -996,7 +996,7 @@ func TestStudioIndex_RehearseObservedAtFromReport(t *testing.T) {
 	}
 }
 
-// AC: malformed-report-warns — a malformed report file causes a warning
+// specscore:verifies feature/cli/rehearse/evidence#ac:malformed-report-warns — a malformed report file causes a warning
 // naming the report file and adapter "rehearse"; exit 0; manifests facts
 // remain queryable.
 // Feature: cli/rehearse/evidence (REQ: adapter-rehearse, REQ: partial-tolerance).
@@ -1032,7 +1032,7 @@ func TestStudioIndex_MalformedRehearseReportWarns(t *testing.T) {
 	}
 }
 
-// AC: missing-report-silent — no .specscore/rehearse/ directory → no warning
+// specscore:verifies feature/cli/rehearse/evidence#ac:missing-report-silent — no .specscore/rehearse/ directory → no warning
 // from adapter "rehearse" and zero verified-behavior facts.
 // Feature: cli/rehearse/evidence (REQ: adapter-rehearse).
 func TestStudioIndex_MissingRehearseDirectorySilent(t *testing.T) {

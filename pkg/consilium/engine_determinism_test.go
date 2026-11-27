@@ -59,7 +59,7 @@ func determinismCases() []determinismCase {
 	}
 }
 
-// AC: gate-engine-deterministic (in-process leg) — evaluating the same input
+// specscore:verifies feature/cli/consilium#ac:gate-engine-deterministic (in-process leg) — evaluating the same input
 // triple twice in the same process MUST produce byte-identical serialized
 // Results. Combined with the committed goldens in snapshot_test.go (the
 // fresh-process leg), this proves the engine's output is a pure function of its
@@ -82,7 +82,7 @@ func TestEvaluate_DeterministicAcrossRepeatedCalls(t *testing.T) {
 	}
 }
 
-// AC: gate-engine-deterministic (run-order leg) — no field MUST vary with run
+// specscore:verifies feature/cli/consilium#ac:gate-engine-deterministic (run-order leg) — no field MUST vary with run
 // order. Evaluating the cases interleaved (each twice, in a shuffled-by-index
 // order) and comparing each case against a baseline computed in isolation
 // confirms the engine carries no cross-call state.

@@ -136,7 +136,7 @@ func readIndexStatus(t *testing.T, repoRoot string) string {
 	return ""
 }
 
-// AC: draft-to-under-review-happy-path
+// specscore:verifies feature/cli/feature/change-status#ac:draft-to-under-review-happy-path
 func TestFeatureChangeStatus_DraftToInReview(t *testing.T) {
 	root := setupFeatureSpec(t, "Draft")
 
@@ -155,7 +155,7 @@ func TestFeatureChangeStatus_DraftToInReview(t *testing.T) {
 	}
 }
 
-// AC: draft-direct-to-approved-happy-path
+// specscore:verifies feature/cli/feature/change-status#ac:draft-direct-to-approved-happy-path
 func TestFeatureChangeStatus_DraftDirectToApproved(t *testing.T) {
 	root := setupFeatureSpec(t, "Draft")
 
@@ -171,7 +171,7 @@ func TestFeatureChangeStatus_DraftDirectToApproved(t *testing.T) {
 	}
 }
 
-// AC: under-review-to-approved-happy-path
+// specscore:verifies feature/cli/feature/change-status#ac:under-review-to-approved-happy-path
 func TestFeatureChangeStatus_InReviewToApproved(t *testing.T) {
 	root := setupFeatureSpec(t, "In Review")
 
@@ -187,7 +187,7 @@ func TestFeatureChangeStatus_InReviewToApproved(t *testing.T) {
 	}
 }
 
-// AC: implementing-to-stable-happy-path
+// specscore:verifies feature/cli/feature/change-status#ac:implementing-to-stable-happy-path
 func TestFeatureChangeStatus_ImplementingToStable(t *testing.T) {
 	root := setupFeatureSpec(t, "Implementing")
 
@@ -203,7 +203,7 @@ func TestFeatureChangeStatus_ImplementingToStable(t *testing.T) {
 	}
 }
 
-// AC: stable-to-deprecated-happy-path
+// specscore:verifies feature/cli/feature/change-status#ac:stable-to-deprecated-happy-path
 func TestFeatureChangeStatus_StableToDeprecated(t *testing.T) {
 	root := setupFeatureSpec(t, "Stable")
 
@@ -219,7 +219,7 @@ func TestFeatureChangeStatus_StableToDeprecated(t *testing.T) {
 	}
 }
 
-// AC: draft-to-deprecated-happy-path — a Draft feature can be retired
+// specscore:verifies feature/cli/feature/change-status#ac:draft-to-deprecated-happy-path — a Draft feature can be retired
 // directly, without ever passing through review/approval/implementation.
 func TestFeatureChangeStatus_DraftToDeprecated(t *testing.T) {
 	root := setupFeatureSpec(t, "Draft")
@@ -236,7 +236,7 @@ func TestFeatureChangeStatus_DraftToDeprecated(t *testing.T) {
 	}
 }
 
-// AC: implementing-to-deprecated-happy-path — an Implementing feature can
+// specscore:verifies feature/cli/feature/change-status#ac:implementing-to-deprecated-happy-path — an Implementing feature can
 // be honestly retired without first reaching Stable.
 func TestFeatureChangeStatus_ImplementingToDeprecated(t *testing.T) {
 	root := setupFeatureSpec(t, "Implementing")
@@ -253,7 +253,7 @@ func TestFeatureChangeStatus_ImplementingToDeprecated(t *testing.T) {
 	}
 }
 
-// AC: planned-legacy-status-can-advance — a Feature carrying the legacy,
+// specscore:verifies feature/cli/feature/change-status#ac:planned-legacy-status-can-advance — a Feature carrying the legacy,
 // pre-vocabulary `Planned` status (e.g. datatug/datatug-cli's
 // spec/features/cli/version/README.md) gets the same forward exits Draft
 // has. Mirrors TestFeatureChangeStatus_DraftToInReview exactly, substituting
@@ -276,7 +276,7 @@ func TestFeatureChangeStatus_PlannedToInReview(t *testing.T) {
 	}
 }
 
-// AC: planned-legacy-status-can-advance (Approved arc) — mirrors
+// specscore:verifies feature/cli/feature/change-status#ac:planned-legacy-status-can-advance (Approved arc) — mirrors
 // TestFeatureChangeStatus_DraftDirectToApproved, substituting Planned for
 // Draft.
 func TestFeatureChangeStatus_PlannedDirectToApproved(t *testing.T) {
@@ -294,7 +294,7 @@ func TestFeatureChangeStatus_PlannedDirectToApproved(t *testing.T) {
 	}
 }
 
-// AC: planned-legacy-status-can-advance (Deprecated arc) — mirrors
+// specscore:verifies feature/cli/feature/change-status#ac:planned-legacy-status-can-advance (Deprecated arc) — mirrors
 // TestFeatureChangeStatus_DraftToDeprecated, substituting Planned for Draft:
 // a Planned feature can be retired directly, without ever passing through
 // review/approval/implementation.
@@ -313,7 +313,7 @@ func TestFeatureChangeStatus_PlannedToDeprecated(t *testing.T) {
 	}
 }
 
-// AC: nested-feature-id-resolves — a sub-feature at
+// specscore:verifies feature/cli/feature/change-status#ac:nested-feature-id-resolves — a sub-feature at
 // spec/features/cli/idea/change-status/README.md transitions correctly
 // via the slash-bearing id.
 //
@@ -389,7 +389,7 @@ func TestFeatureChangeStatus_NestedFeatureID(t *testing.T) {
 	}
 }
 
-// AC: case-insensitive-to-flag — STABLE / Stable / stable transition
+// specscore:verifies feature/cli/feature/change-status#ac:case-insensitive-to-flag — STABLE / Stable / stable transition
 // an Implementing feature identically. File ends up with canonical
 // title-case "Stable".
 func TestFeatureChangeStatus_CaseInsensitiveTo(t *testing.T) {
@@ -411,7 +411,7 @@ func TestFeatureChangeStatus_CaseInsensitiveTo(t *testing.T) {
 	}
 }
 
-// AC: illegal-transition-rejected — Draft → implementing exits 4
+// specscore:verifies feature/cli/feature/change-status#ac:illegal-transition-rejected — Draft → implementing exits 4
 // with stderr naming the current status and legal targets. Also
 // exercise a couple of other illegal pairs end-to-end.
 func TestFeatureChangeStatus_IllegalTransitionRejected(t *testing.T) {
@@ -451,7 +451,7 @@ func TestFeatureChangeStatus_IllegalTransitionRejected(t *testing.T) {
 	}
 }
 
-// AC: reverse-transition-rejected — Stable → Implementing exits 4.
+// specscore:verifies feature/cli/feature/change-status#ac:reverse-transition-rejected — Stable → Implementing exits 4.
 func TestFeatureChangeStatus_ReverseTransitionRejected(t *testing.T) {
 	root := setupFeatureSpec(t, "Stable")
 	_, _, err := runFeature(t, "change-status", "auth", "--to=implementing")
@@ -466,7 +466,7 @@ func TestFeatureChangeStatus_ReverseTransitionRejected(t *testing.T) {
 	}
 }
 
-// AC: already-at-target-rejected — Approved → Approved exits 4 per
+// specscore:verifies feature/cli/feature/change-status#ac:already-at-target-rejected — Approved → Approved exits 4 per
 // REQ: not-idempotent.
 func TestFeatureChangeStatus_AlreadyAtTargetRejected(t *testing.T) {
 	root := setupFeatureSpec(t, "Approved")
@@ -485,7 +485,7 @@ func TestFeatureChangeStatus_AlreadyAtTargetRejected(t *testing.T) {
 	}
 }
 
-// AC: unrecognized-to-value-rejected — --to=banana exits 2 BEFORE the
+// specscore:verifies feature/cli/feature/change-status#ac:unrecognized-to-value-rejected — --to=banana exits 2 BEFORE the
 // state-machine check. --to=archived (Idea-only) and --to=draft (no
 // arc INTO Draft) MUST also exit 2.
 func TestFeatureChangeStatus_UnrecognizedToValue(t *testing.T) {
@@ -507,7 +507,7 @@ func TestFeatureChangeStatus_UnrecognizedToValue(t *testing.T) {
 	}
 }
 
-// AC: missing-feature-id-rejected — no positional argument exits 2.
+// specscore:verifies feature/cli/feature/change-status#ac:missing-feature-id-rejected — no positional argument exits 2.
 func TestFeatureChangeStatus_MissingFeatureID(t *testing.T) {
 	setupFeatureSpec(t, "Draft")
 	_, _, err := runFeature(t, "change-status", "--to=approved")
@@ -519,7 +519,7 @@ func TestFeatureChangeStatus_MissingFeatureID(t *testing.T) {
 	}
 }
 
-// AC: missing-to-flag-rejected — no --to flag exits 2.
+// specscore:verifies feature/cli/feature/change-status#ac:missing-to-flag-rejected — no --to flag exits 2.
 func TestFeatureChangeStatus_MissingToFlag(t *testing.T) {
 	setupFeatureSpec(t, "Draft")
 	_, _, err := runFeature(t, "change-status", "auth")
@@ -534,7 +534,7 @@ func TestFeatureChangeStatus_MissingToFlag(t *testing.T) {
 	}
 }
 
-// AC: feature-not-found — a missing feature directory exits 3.
+// specscore:verifies feature/cli/feature/change-status#ac:feature-not-found — a missing feature directory exits 3.
 func TestFeatureChangeStatus_FeatureNotFound(t *testing.T) {
 	setupFeatureSpec(t, "Draft")
 	_, _, err := runFeature(t, "change-status", "nonexistent", "--to=approved")
@@ -831,7 +831,7 @@ func TestFeatureRefs_WithRefs(t *testing.T) {
 	}
 }
 
-// AC: lint-failure-rolls-back — when a post-rewrite lint pass reports
+// specscore:verifies feature/cli/feature/change-status#ac:lint-failure-rolls-back — when a post-rewrite lint pass reports
 // an error-severity violation, the original Status line MUST be
 // restored and the command MUST exit 10.
 //

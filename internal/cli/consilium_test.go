@@ -18,7 +18,7 @@ func runConsilium(t *testing.T, args ...string) (string, string, error) {
 	return out.String(), errOut.String(), err
 }
 
-// AC: consilium-parent-prints-help — bare `specscore consilium` with no
+// specscore:verifies feature/cli/consilium#ac:consilium-parent-prints-help — bare `specscore consilium` with no
 // subcommand prints help listing the verdict, roster, and config subcommands
 // and exits 0 (cobra's default parent-with-no-Run behavior).
 func TestConsiliumCommand_HelpListsVerbsAndExitsZero(t *testing.T) {

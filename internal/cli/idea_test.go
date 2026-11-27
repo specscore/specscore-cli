@@ -186,7 +186,7 @@ func TestIdeaNew_IndexRowInserted(t *testing.T) {
 	}
 }
 
-// AC: lint-clean-after-bare-project — `idea new` in a project that has
+// specscore:verifies feature/cli/idea/new#ac:lint-clean-after-bare-project — `idea new` in a project that has
 // specscore.yaml but no spec/ tree MUST materialize spec/README.md and
 // spec/ideas/README.md, then leave the tree lint-clean modulo any
 // violations inside the newly created Idea file.
@@ -359,7 +359,7 @@ func stageActiveIdea(t *testing.T, slug, status string, extraHeader string) stri
 	return root
 }
 
-// AC: draft-to-approved-happy-path (CLI level — exercises the full
+// specscore:verifies feature/cli/idea/change-status#ac:draft-to-approved-happy-path (CLI level — exercises the full
 // cobra → idea.ChangeStatus → lint --fix path).
 func TestIdeaChangeStatus_DraftToApprovedHappyPath_CLI(t *testing.T) {
 	root := stageActiveIdea(t, "foo", "Draft", "")
@@ -384,7 +384,7 @@ func TestIdeaChangeStatus_DraftToApprovedHappyPath_CLI(t *testing.T) {
 	}
 }
 
-// AC: archive-happy-path (CLI level — exercises the full cobra →
+// specscore:verifies feature/cli/idea/archive#ac:archive-happy-path (CLI level — exercises the full cobra →
 // idea.Archive → lint --fix path). Archival is orthogonal to status: the
 // archived file keeps its terminal **Status:** and gains **Archived:** true.
 func TestIdeaArchive_HappyPath_CLI(t *testing.T) {
@@ -419,7 +419,7 @@ func TestIdeaArchive_HappyPath_CLI(t *testing.T) {
 	}
 }
 
-// AC: unarchive-happy-path (CLI level).
+// specscore:verifies feature/cli/idea/archive#ac:unarchive-happy-path (CLI level).
 func TestIdeaUnarchive_HappyPath_CLI(t *testing.T) {
 	root := stageActiveIdea(t, "foo", "Stale", "")
 	if _, stderr, err := runIdea(t, "archive", "foo"); err != nil {
@@ -500,7 +500,7 @@ func TestIdeaArchiveUnarchive_UnresolvableProject_CLI(t *testing.T) {
 	}
 }
 
-// AC: missing-slug-rejected — no positional argument. Cobra's
+// specscore:verifies feature/cli/idea/change-status#ac:missing-slug-rejected — no positional argument. Cobra's
 // ExactArgs(1) rejects this and returns an error; the CLI's Fatal
 // helper maps that to exit 2.
 func TestIdeaChangeStatus_MissingSlugRejected_CLI(t *testing.T) {
@@ -519,7 +519,7 @@ func TestIdeaChangeStatus_MissingSlugRejected_CLI(t *testing.T) {
 	}
 }
 
-// AC: missing-to-flag-rejected.
+// specscore:verifies feature/cli/idea/change-status#ac:missing-to-flag-rejected
 func TestIdeaChangeStatus_MissingToFlagRejected_CLI(t *testing.T) {
 	root := stageActiveIdea(t, "foo", "Draft", "")
 	_ = root
@@ -535,7 +535,7 @@ func TestIdeaChangeStatus_MissingToFlagRejected_CLI(t *testing.T) {
 	}
 }
 
-// AC: unrecognized-to-value-rejected (CLI level — exit 2 BEFORE
+// specscore:verifies feature/cli/idea/change-status#ac:unrecognized-to-value-rejected (CLI level — exit 2 BEFORE
 // state-machine check).
 func TestIdeaChangeStatus_UnrecognizedToValueRejected_CLI(t *testing.T) {
 	root := stageActiveIdea(t, "foo", "Draft", "")

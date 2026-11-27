@@ -20,7 +20,7 @@ func exitCodeOf(t *testing.T, err error) int {
 }
 
 func TestParseSeedTarget_unrecognized_exit2(t *testing.T) {
-	// AC: unrecognized-target-rejected — --to=stable is not a seed terminal.
+	// specscore:verifies feature/cli/sidekick/change-status#ac:unrecognized-target-rejected — --to=stable is not a seed terminal.
 	_, err := ParseSeedTarget("stable")
 	if err == nil {
 		t.Fatal("ParseSeedTarget(\"stable\") = nil err; want exit-2 error")
@@ -62,7 +62,7 @@ func TestParseSeedTarget_queuedNotATarget(t *testing.T) {
 }
 
 func TestCheckSeedSource_nonQueued_exit4(t *testing.T) {
-	// AC: non-queued-source-rejected — current status not Queued exits 4,
+	// specscore:verifies feature/cli/sidekick/change-status#ac:non-queued-source-rejected — current status not Queued exits 4,
 	// naming the current status and the legal source set {Queued}.
 	err := CheckSeedSource("Implemented")
 	if err == nil {

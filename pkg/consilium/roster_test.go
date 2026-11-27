@@ -27,7 +27,7 @@ func findEntry(roster []RosterEntry, name string) (RosterEntry, bool) {
 	return RosterEntry{}, false
 }
 
-// AC:roster-resolves-defaults-minus-exclude-plus-custom
+// specscore:verifies feature/cli/consilium#ac:roster-resolves-defaults-minus-exclude-plus-custom
 func TestResolveRoster_DefaultsMinusExcludePlusCustom(t *testing.T) {
 	root := writeConfig(t, `consilium:
   roster:

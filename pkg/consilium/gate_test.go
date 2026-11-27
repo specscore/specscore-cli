@@ -29,7 +29,7 @@ func wantBaseline() GateKnobs {
 	}
 }
 
-// AC: gate-knobs-default-to-strict-baseline — no consilium.gate mapping.
+// specscore:verifies feature/cli/consilium#ac:gate-knobs-default-to-strict-baseline — no consilium.gate mapping.
 func TestLoadGate_DefaultsToStrictBaseline(t *testing.T) {
 	dir := t.TempDir()
 	writeGateYAML(t, dir, "project:\n  title: Test\n")
@@ -86,7 +86,7 @@ func TestLoadGate_PartialOverrideMergesKnobByKnob(t *testing.T) {
 	}
 }
 
-// AC: gate-knob-invalid-enum-rejected — cost_ceiling: extreme.
+// specscore:verifies feature/cli/consilium#ac:gate-knob-invalid-enum-rejected — cost_ceiling: extreme.
 func TestLoadGate_InvalidEnumRejected(t *testing.T) {
 	dir := t.TempDir()
 	writeGateYAML(t, dir, "consilium:\n  gate:\n    cost_ceiling: extreme\n")

@@ -19,7 +19,7 @@ func TestValidateRoster_DefaultsPass(t *testing.T) {
 	}
 }
 
-// AC:roster-group-floor-violation-rejected — excluding all three adversaries
+// specscore:verifies feature/cli/consilium#ac:roster-group-floor-violation-rejected — excluding all three adversaries
 // with no custom adversary leaves the group empty; validation must fail with
 // the exact message and no verdict.
 func TestValidateRoster_AC_GroupFloorViolation(t *testing.T) {

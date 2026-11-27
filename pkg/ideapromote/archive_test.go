@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// AC: never-deprecated + cross-repo frontmatter marking.
+// specscore:verifies feature/cli/idea/promote#ac:never-deprecated + cross-repo frontmatter marking.
 func TestMarkArchivedSeed_StatusPromotedNeverDeprecated(t *testing.T) {
 	seed := "---\n" +
 		"type: sidekick-seed\n" +

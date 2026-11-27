@@ -49,7 +49,7 @@ func TestKind(t *testing.T) {
 	}
 }
 
-// AC: tugql-counts-facts — a TugQL query over the fact store with
+// specscore:verifies feature/cli/rehearse/run#ac:tugql-counts-facts — a TugQL query over the fact store with
 // `-- assert-rows:` equal to the known fact count passes.
 func TestRun_AssertRowsPass(t *testing.T) {
 	res := run(t, allFacts+"-- assert-rows: 3", factStore(t), "")

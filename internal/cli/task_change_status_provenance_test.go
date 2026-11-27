@@ -36,7 +36,7 @@ func implementedByField(t *testing.T, path string) string {
 	return ""
 }
 
-// AC complete-with-provenance (board): full ref repo@sha (branch).
+// specscore:verifies feature/cli/task/change-status#ac:complete-with-provenance (board): full ref repo@sha (branch).
 func TestTaskChangeStatus_Board_CompleteWithProvenance(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	stdout, stderr, err := runTask(t, "change-status", "auth", "--to=complete",
@@ -55,7 +55,7 @@ func TestTaskChangeStatus_Board_CompleteWithProvenance(t *testing.T) {
 	}
 }
 
-// AC complete-with-provenance: full clone URL as <repo>.
+// specscore:verifies feature/cli/task/change-status#ac:complete-with-provenance full clone URL as <repo>.
 func TestTaskChangeStatus_Board_CompleteWithCloneURL(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	url := "https://github.com/acme/backstage.git"
@@ -69,7 +69,7 @@ func TestTaskChangeStatus_Board_CompleteWithCloneURL(t *testing.T) {
 	}
 }
 
-// AC bare-sha-same-repo-assembly (board): no --repo → bare sha, no `<repo>@`.
+// specscore:verifies feature/cli/task/change-status#ac:bare-sha-same-repo-assembly (board): no --repo → bare sha, no `<repo>@`.
 func TestTaskChangeStatus_Board_BareSha(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	_, _, err := runTask(t, "change-status", "auth", "--to=complete", "--commit", "a1b2c3d")
@@ -94,7 +94,7 @@ func TestTaskChangeStatus_Board_BareShaWithBranch(t *testing.T) {
 	}
 }
 
-// AC complete-without-provenance-is-valid (board): no flags → no field written.
+// specscore:verifies feature/cli/task/change-status#ac:complete-without-provenance-is-valid (board): no flags → no field written.
 func TestTaskChangeStatus_Board_CompleteNoProvenance(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	stdout, _, err := runTask(t, "change-status", "auth", "--to=complete")
@@ -112,7 +112,7 @@ func TestTaskChangeStatus_Board_CompleteNoProvenance(t *testing.T) {
 	}
 }
 
-// AC provenance-flag-without-complete-rejected (board): a provenance flag on a
+// specscore:verifies feature/cli/task/change-status#ac:provenance-flag-without-complete-rejected (board): a provenance flag on a
 // non-complete transition exits 2 (InvalidArgs), names --to=complete, and leaves
 // the task UNCHANGED.
 func TestTaskChangeStatus_Board_ProvenanceWithoutCompleteRejected(t *testing.T) {
@@ -132,7 +132,7 @@ func TestTaskChangeStatus_Board_ProvenanceWithoutCompleteRejected(t *testing.T) 
 	}
 }
 
-// AC provenance-flag-without-commit-rejected (board): provenance flags without
+// specscore:verifies feature/cli/task/change-status#ac:provenance-flag-without-commit-rejected (board): provenance flags without
 // --commit exit 2 (InvalidArgs), name --commit, and leave the task UNCHANGED.
 func TestTaskChangeStatus_Board_ProvenanceWithoutCommitRejected(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
@@ -151,7 +151,7 @@ func TestTaskChangeStatus_Board_ProvenanceWithoutCommitRejected(t *testing.T) {
 	}
 }
 
-// AC provenance-not-derived-from-head: completing with no provenance flags
+// specscore:verifies feature/cli/task/change-status#ac:provenance-not-derived-from-head completing with no provenance flags
 // inside a git work tree whose HEAD is a commit writes NO field — the verb
 // never reads ambient git HEAD.
 func TestTaskChangeStatus_Board_NotDerivedFromHead(t *testing.T) {
@@ -210,7 +210,7 @@ func TestWriteBoardImplementedBy_ReadError(t *testing.T) {
 
 // --- plan-inline provenance ---
 
-// AC complete-with-provenance (plan-inline): full ref onto the right block; the
+// specscore:verifies feature/cli/task/change-status#ac:complete-with-provenance (plan-inline): full ref onto the right block; the
 // sibling block is byte-untouched.
 func TestTaskChangeStatus_PlanInline_CompleteWithProvenance(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
@@ -241,7 +241,7 @@ func TestTaskChangeStatus_PlanInline_CompleteWithProvenance(t *testing.T) {
 	}
 }
 
-// AC bare-sha-same-repo-assembly (plan-inline): no --repo → bare sha.
+// specscore:verifies feature/cli/task/change-status#ac:bare-sha-same-repo-assembly (plan-inline): no --repo → bare sha.
 func TestTaskChangeStatus_PlanInline_BareSha(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
 	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth",
@@ -254,7 +254,7 @@ func TestTaskChangeStatus_PlanInline_BareSha(t *testing.T) {
 	}
 }
 
-// AC complete-without-provenance-is-valid (plan-inline): no flags → no field.
+// specscore:verifies feature/cli/task/change-status#ac:complete-without-provenance-is-valid (plan-inline): no flags → no field.
 func TestTaskChangeStatus_PlanInline_CompleteNoProvenance(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
 	_, _, err := runTask(t, "change-status", "setup", "--plan", "auth", "--to=complete")
@@ -269,7 +269,7 @@ func TestTaskChangeStatus_PlanInline_CompleteNoProvenance(t *testing.T) {
 	}
 }
 
-// AC provenance-flag-without-complete-rejected (plan-inline): exit 2, name
+// specscore:verifies feature/cli/task/change-status#ac:provenance-flag-without-complete-rejected (plan-inline): exit 2, name
 // --to=complete, block UNCHANGED.
 func TestTaskChangeStatus_PlanInline_ProvenanceWithoutCompleteRejected(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)
@@ -289,7 +289,7 @@ func TestTaskChangeStatus_PlanInline_ProvenanceWithoutCompleteRejected(t *testin
 	}
 }
 
-// AC provenance-flag-without-commit-rejected (plan-inline): exit 2, name
+// specscore:verifies feature/cli/task/change-status#ac:provenance-flag-without-commit-rejected (plan-inline): exit 2, name
 // --commit, block UNCHANGED.
 func TestTaskChangeStatus_PlanInline_ProvenanceWithoutCommitRejected(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)

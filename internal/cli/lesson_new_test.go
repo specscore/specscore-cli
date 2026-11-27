@@ -483,7 +483,7 @@ func TestLessonNew_InvalidClassificationSelectionWritesNothing(t *testing.T) {
 	}
 }
 
-// AC: no-classification-selected-fails-self-lint — omitting --classification
+// specscore:verifies feature/cli/lesson/new#ac:no-classification-selected-fails-self-lint — omitting --classification
 // scaffolds an empty **Classifications:** line (never the previous "every
 // configured value" default), and the command's own read-only lint pass then
 // refuses it via L-005 rather than silently succeeding, retaining the Lesson

@@ -43,7 +43,7 @@ func writeTreeFile(t *testing.T, root, rel, content string) string {
 	return p
 }
 
-// AC: merge-conflict-markers-in-artifact-flagged — a conflict inside an
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-in-artifact-flagged — a conflict inside an
 // artifact is reported with file and line, and it is the only finding even
 // though other rules (missing footer, missing OQ section) would fire.
 func TestMergeConflictMarkers_ArtifactFlaggedAndOnlyFinding(t *testing.T) {
@@ -68,7 +68,7 @@ func TestMergeConflictMarkers_ArtifactFlaggedAndOnlyFinding(t *testing.T) {
 	}
 }
 
-// AC: merge-conflict-markers-in-generated-index-flagged — both halves of a
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-in-generated-index-flagged — both halves of a
 // conflicted generated index are row-shaped Markdown; the gate still flags
 // the markers, and runs regardless of --rules / --ignore.
 func TestMergeConflictMarkers_GeneratedIndexFlagged(t *testing.T) {
@@ -93,7 +93,7 @@ func TestMergeConflictMarkers_GeneratedIndexFlagged(t *testing.T) {
 	}
 }
 
-// AC: merge-conflict-markers-setext-heading-not-flagged — a bare `=======`
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-setext-heading-not-flagged — a bare `=======`
 // setext H1 underline outside a `<<<<<<<` block is ordinary Markdown.
 func TestMergeConflictMarkers_SetextHeadingNotFlagged(t *testing.T) {
 	specRoot := t.TempDir()
@@ -108,7 +108,7 @@ func TestMergeConflictMarkers_SetextHeadingNotFlagged(t *testing.T) {
 	}
 }
 
-// AC: merge-conflict-markers-diff3-flagged — the diff3/zdiff3 base marker is
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-diff3-flagged — the diff3/zdiff3 base marker is
 // reported alongside the other three.
 func TestMergeConflictMarkers_Diff3Flagged(t *testing.T) {
 	specRoot := t.TempDir()
@@ -144,7 +144,7 @@ func snapshotBytes(t *testing.T, root string) map[string]string {
 	return out
 }
 
-// AC: merge-conflict-markers-fix-refused-byte-identical — with markers
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — with markers
 // present, --fix runs no fixer at all: the conflicted file AND an unrelated
 // file that would otherwise be autofixed stay byte-identical, Fixed is empty,
 // FixRefused names the conflicted file, and the marker findings remain (so
@@ -430,7 +430,7 @@ func TestMergeConflictMarkers_SkillsAndConfigScannedOnce(t *testing.T) {
 	}
 }
 
-// AC: merge-conflict-markers-in-code-fence-flagged — Markdown code fences are
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-in-code-fence-flagged — Markdown code fences are
 // not special: a conflict inside a fenced block, or straddling a fence
 // boundary, is flagged; only a marker indented off column 0 (the documented
 // way to quote one) is not.
@@ -448,7 +448,7 @@ func TestMergeConflictMarkers_CodeFenceConflictFlagged(t *testing.T) {
 	}
 }
 
-// AC: merge-conflict-markers-fix-refused-byte-identical — Lint (the API every
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — Lint (the API every
 // in-process Fix: true caller uses) returns *FixRefusedError rather than an
 // empty, success-shaped violation list.
 func TestLint_FixRefusedIsAnError(t *testing.T) {
@@ -515,7 +515,7 @@ func TestTreeFixers_SkipWhatTheGateSkips(t *testing.T) {
 	}
 }
 
-// AC: writers-refuse-conflicted-index — UpsertLessonIndexRow refuses a
+// specscore:verifies feature/cli/spec/lint#ac:writers-refuse-conflicted-index — UpsertLessonIndexRow refuses a
 // conflicted Lessons index before both the row rewrite and the legacy
 // five-column table migration (which would replace the whole table and erase
 // the markers); the index stays byte-identical. The canonical case uses a

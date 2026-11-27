@@ -7,7 +7,8 @@ import (
 	"testing"
 )
 
-// AC: plan-completed-rewrite / decision-legacy-rewrite — the core map lookup.
+// specscore:verifies feature/cli/spec/lint/legacy-status-autofix#ac:plan-completed-rewrite
+// specscore:verifies feature/cli/spec/lint/legacy-status-autofix#ac:decision-legacy-rewrite — the core map lookup.
 func TestRewriteLegacyBodyStatus(t *testing.T) {
 	in := "# Plan: x\n\n**Status:** Completed\n**Source:** none\n"
 	out, changed := rewriteLegacyBodyStatus([]byte(in), legacyPlanStatusMap)
@@ -26,7 +27,7 @@ func TestRewriteLegacyBodyStatus(t *testing.T) {
 	}
 }
 
-// AC: decision-frontmatter-mirror — frontmatter status: is synced in one pass.
+// specscore:verifies feature/cli/spec/lint/legacy-status-autofix#ac:decision-frontmatter-mirror — frontmatter status: is synced in one pass.
 func TestRewriteLegacyBodyStatus_FrontmatterMirror(t *testing.T) {
 	in := "---\nstatus: Accepted\n---\n# Decision: x\n\n**Status:** Accepted\n"
 	out, changed := rewriteLegacyBodyStatus([]byte(in), legacyDecisionStatusMap)

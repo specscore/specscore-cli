@@ -62,7 +62,7 @@ func TestParseCustomRole_ValidFile(t *testing.T) {
 	}
 }
 
-// AC:custom-role-missing-field-rejected — a file omitting the `**Group:**`
+// specscore:verifies feature/cli/consilium#ac:custom-role-missing-field-rejected — a file omitting the `**Group:**`
 // metadata line must fail with an error naming the missing field (Group) and
 // the file path.
 func TestParseCustomRole_MissingGroupField(t *testing.T) {

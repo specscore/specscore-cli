@@ -75,7 +75,7 @@ func stubProbeCINoop(t *testing.T) {
 	stubProbeCI(t, func([]probe.CIRepo) probe.Result { return probe.Result{Kinds: []string{probe.KindCI}} })
 }
 
-// AC: probe-writes-verified-serves-status — a live 200 probe records a
+// specscore:verifies feature/cli/studio/probe#ac:probe-writes-verified-serves-status — a live 200 probe records a
 // verified-behavior serves-status fact addressable by studio facts.
 func TestStudioProbe_WritesVerifiedServesStatus(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -118,7 +118,7 @@ func TestStudioProbe_WritesVerifiedServesStatus(t *testing.T) {
 	}
 }
 
-// AC: declared-and-verified-coexist — the probe fact appends alongside the
+// specscore:verifies feature/cli/studio/probe#ac:declared-and-verified-coexist — the probe fact appends alongside the
 // declared fact rather than overwriting it.
 func TestStudioProbe_DeclaredAndVerifiedCoexist(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -159,7 +159,7 @@ func TestStudioProbe_DeclaredAndVerifiedCoexist(t *testing.T) {
 	}
 }
 
-// AC: network-failure-records-down — an unreachable domain records a
+// specscore:verifies feature/cli/studio/probe#ac:network-failure-records-down — an unreachable domain records a
 // verified-behavior serves-status=down fact.
 func TestStudioProbe_NetworkFailureRecordsDown(t *testing.T) {
 	wsPath := newStudioWorkspace(t, "repo-a")
@@ -549,7 +549,7 @@ func TestStudioProbe_DBFlagAbsError(t *testing.T) {
 
 // --- Task 3: merge semantics end-to-end and verb guards ---
 
-// AC: probe-preserves-index-facts — probing merges rather than rebuilds:
+// specscore:verifies feature/cli/studio/probe#ac:probe-preserves-index-facts — probing merges rather than rebuilds:
 // the pre-existing declared and derived facts from studio index are still
 // present alongside the new verified-behavior facts after studio probe runs.
 func TestStudioProbe_PreservesIndexFacts(t *testing.T) {
@@ -597,7 +597,7 @@ func TestStudioProbe_PreservesIndexFacts(t *testing.T) {
 	}
 }
 
-// AC: reprobe-refreshes-verified-at — re-verifying an unchanged fact advances
+// specscore:verifies feature/cli/studio/probe#ac:reprobe-refreshes-verified-at — re-verifying an unchanged fact advances
 // verified_at but not observed_at.
 //
 // Given a store already probed at T1 with a serves-status 200 verified-behavior
@@ -670,7 +670,7 @@ func TestStudioProbe_ReprobeRefreshesVerifiedAt(t *testing.T) {
 	}
 }
 
-// AC: changed-object-new-observation — a changed probe result is a fresh
+// specscore:verifies feature/cli/studio/probe#ac:changed-object-new-observation — a changed probe result is a fresh
 // observation, not a re-verification.
 //
 // Given a store with a prior verified-behavior serves-status 200 fact at T1,
@@ -743,7 +743,7 @@ func TestStudioProbe_ChangedObjectNewObservation(t *testing.T) {
 	}
 }
 
-// AC: probe-without-index-errors — studio probe before studio index exits 2
+// specscore:verifies feature/cli/studio/probe#ac:probe-without-index-errors — studio probe before studio index exits 2
 // with the same actionable guidance studio facts gives: the message names the
 // expected store path and suggests specscore studio index.
 //
@@ -802,7 +802,7 @@ func extractGuidanceParts(msg string) [2]bool {
 	}
 }
 
-// AC: cadences-in-help — `studio probe --help` names a re-verification cadence
+// specscore:verifies feature/cli/studio/probe#ac:cadences-in-help — `studio probe --help` names a re-verification cadence
 // for each of the five evidence classes (REQ: freshness-cadences). The help
 // text pairs every class token with a cadence phrase so an operator learns how
 // often to schedule the verb per class.

@@ -61,7 +61,7 @@ func TestRehearse_HelpExitsZero(t *testing.T) {
 	}
 }
 
-// AC: standalone-run — a passing scenario in a directory with no
+// specscore:verifies feature/cli/rehearse/run#ac:standalone-run — a passing scenario in a directory with no
 // specscore.yaml exits 0 and reports pass.
 func TestRehearseRun_StandalonePassExitsZero(t *testing.T) {
 	file := writeScenario(t, "echo hello")
@@ -78,7 +78,7 @@ func TestRehearseRun_StandalonePassExitsZero(t *testing.T) {
 	}
 }
 
-// AC: failing-scenario-fails-run — a failing bash step exits 1 and the
+// specscore:verifies feature/cli/rehearse/run#ac:failing-scenario-fails-run — a failing bash step exits 1 and the
 // report marks the scenario fail.
 func TestRehearseRun_FailingScenarioExitsOne(t *testing.T) {
 	file := writeScenario(t, "exit 5")
@@ -150,7 +150,7 @@ func TestRehearseRun_JSONReportShape(t *testing.T) {
 	}
 }
 
-// AC: json-report-shape — the raw JSON carries exactly the REQ run-report
+// specscore:verifies feature/cli/rehearse/run#ac:json-report-shape — the raw JSON carries exactly the REQ run-report
 // contract fields: the first element has `file`, `status`, `verifies`,
 // `duration_ms`, `bag` (present even when empty) and a non-empty `steps`
 // array whose entries carry `kind` and `status`.
@@ -229,7 +229,7 @@ func writeScenarioBlocks(t *testing.T, fencedBlocks ...string) string {
 	return path
 }
 
-// AC: sql-assert-rows — a scenario whose sql block queries a 3-row table
+// specscore:verifies feature/cli/rehearse/run#ac:sql-assert-rows — a scenario whose sql block queries a 3-row table
 // with `-- assert-rows: 3` exits 0 and is reported pass.
 func TestRehearseRun_SQLBlockAssertRows(t *testing.T) {
 	file := writeScenarioBlocks(t,
@@ -245,7 +245,7 @@ func TestRehearseRun_SQLBlockAssertRows(t *testing.T) {
 	}
 }
 
-// AC: tugql-counts-facts — a scenario whose tugql block selects facts with
+// specscore:verifies feature/cli/rehearse/run#ac:tugql-counts-facts — a scenario whose tugql block selects facts with
 // `-- assert-rows:` equal to the store's fact count exits 0 and is pass.
 // The store is shaped like a Studio fact store (table `facts`), built by a
 // preceding sql step in the same scenario working dir.
@@ -372,7 +372,7 @@ exit 0
 	t.Setenv("FAKE_REPORT_JSON", `[{"entries":[{"captures":[]}]}]`)
 }
 
-// AC: hurl-missing-skips (unit mirror) — with a PATH lacking hurl, a
+// specscore:verifies feature/cli/rehearse/run#ac:hurl-missing-skips (unit mirror) — with a PATH lacking hurl, a
 // scenario containing a hurl block exits 0, is reported skipped, and the
 // warning names the hurl binary.
 func TestRehearseRun_MissingHurlSkipsScenario(t *testing.T) {
@@ -441,7 +441,7 @@ func swapWriteReport(t *testing.T, fn func(string, string, time.Time, []runner.S
 	t.Cleanup(func() { writeReportFn = orig })
 }
 
-// AC: report-out-writes-envelope — --report-out writes a valid JSON envelope
+// specscore:verifies feature/cli/rehearse/evidence#ac:report-out-writes-envelope — --report-out writes a valid JSON envelope
 // with non-empty runner_version, non-empty git_sha, git_dirty false,
 // non-empty RFC 3339 started_at, and a scenarios array with pass status.
 func TestRehearseRun_ReportOutWritesEnvelope(t *testing.T) {
@@ -555,7 +555,7 @@ func TestRehearseRun_ReportOutWritesEnvelope(t *testing.T) {
 	}
 }
 
-// AC: report-out-on-failure — a failing run still writes the report and exits 1.
+// specscore:verifies feature/cli/rehearse/evidence#ac:report-out-on-failure — a failing run still writes the report and exits 1.
 func TestRehearseRun_ReportOutOnFailure(t *testing.T) {
 	file := writeScenario(t, "exit 7")
 	dir := t.TempDir()
@@ -594,7 +594,7 @@ func TestRehearseRun_ReportOutOnFailure(t *testing.T) {
 	}
 }
 
-// AC: report-out-outside-git — git_sha is empty and git_dirty is false.
+// specscore:verifies feature/cli/rehearse/evidence#ac:report-out-outside-git — git_sha is empty and git_dirty is false.
 func TestRehearseRun_ReportOutOutsideGit(t *testing.T) {
 	file := writeScenario(t, "echo ok")
 	dir := t.TempDir()

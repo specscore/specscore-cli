@@ -57,7 +57,7 @@ func taskFileStatus(t *testing.T, path string) string {
 	return ""
 }
 
-// AC single-actor-no-coordination (happy path) + success-line output.
+// specscore:verifies feature/cli/task/change-status#ac:single-actor-no-coordination (happy path) + success-line output.
 func TestTaskChangeStatus_LegalTransitions(t *testing.T) {
 	cases := []struct {
 		from, to string
@@ -92,7 +92,7 @@ func TestTaskChangeStatus_LegalTransitions(t *testing.T) {
 	}
 }
 
-// AC illegal-transition-rejected: illegal / terminal pairs exit 4, non-idempotent.
+// specscore:verifies feature/cli/task/change-status#ac:illegal-transition-rejected illegal / terminal pairs exit 4, non-idempotent.
 func TestTaskChangeStatus_IllegalTransitions(t *testing.T) {
 	cases := []struct {
 		from, to string
@@ -123,7 +123,7 @@ func TestTaskChangeStatus_IllegalTransitions(t *testing.T) {
 	}
 }
 
-// AC to-flag-validation: missing --to exits 2 and leaves the task unchanged.
+// specscore:verifies feature/cli/task/change-status#ac:to-flag-validation missing --to exits 2 and leaves the task unchanged.
 func TestTaskChangeStatus_MissingTo(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")
 	_, _, err := runTask(t, "change-status", "auth")
@@ -138,7 +138,7 @@ func TestTaskChangeStatus_MissingTo(t *testing.T) {
 	}
 }
 
-// AC to-flag-validation: an unrecognized status value (not one of the seven)
+// specscore:verifies feature/cli/task/change-status#ac:to-flag-validation an unrecognized status value (not one of the seven)
 // exits 2 and leaves the task unchanged.
 func TestTaskChangeStatus_UnknownTo(t *testing.T) {
 	_, taskFile := stageTaskWithStatus(t, "auth", "in_progress")

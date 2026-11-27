@@ -34,7 +34,7 @@ func treeDigest(t *testing.T, root string) map[string][32]byte {
 	return out
 }
 
-// AC: merge-conflict-markers-fix-refused-byte-identical — `spec lint --fix`
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — `spec lint --fix`
 // over a tree with a conflicted file modifies nothing (not even the unrelated
 // autofixable file), names the conflicted file on stderr, and exits non-zero.
 func TestSpecLint_FixRefusedWhileConflictMarkersRemain(t *testing.T) {
@@ -73,7 +73,7 @@ func TestSpecLint_FixRefusedWhileConflictMarkersRemain(t *testing.T) {
 	}
 }
 
-// AC: conflicted-lessons-index-fails-closed — a status transition over a
+// specscore:verifies feature/cli/lesson/change-status#ac:conflicted-lessons-index-fails-closed — a status transition over a
 // conflicted Lessons index is refused by the shared precondition before the
 // Lesson file is rewritten or any event is prepared: it exits 1 naming the
 // index, and the whole tree — Lesson file, index, event ledger — stays
@@ -152,7 +152,7 @@ func TestLessonChangeStatus_ConflictedIndexFailsClosed_CLI(t *testing.T) {
 	}
 }
 
-// AC: producer-output-round-trips-through-fix — output written by the
+// specscore:verifies feature/cli/spec/lint#ac:producer-output-round-trips-through-fix — output written by the
 // producer verbs passes the validator unchanged: lint reports no error and a
 // following `spec lint --fix` modifies zero bytes.
 func TestProducerOutput_LintThenFixIsByteIdentical(t *testing.T) {
@@ -194,7 +194,7 @@ func TestProducerOutput_LintThenFixIsByteIdentical(t *testing.T) {
 	}
 }
 
-// AC: merge-conflict-markers-fix-refused-byte-identical — the index merge
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — the index merge
 // driver relies on the --fix pass; when that pass is refused because a
 // sibling file is still conflict-marked, the driver fails closed (leaves
 // <ours> untouched, exits non-zero naming the file) instead of copying the
@@ -245,7 +245,7 @@ func TestMergeDriverIndex_FailsClosedWhenFixRefusedOverConflictMarkers(t *testin
 	}
 }
 
-// AC: merge-conflict-markers-fix-refused-byte-identical — under
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — under
 // `--fix --format json` the refusal is carried in the envelope's
 // `fix_refused` key and no human text is written to stderr.
 func TestSpecLint_FixRefusedJSONEnvelope(t *testing.T) {

@@ -33,7 +33,7 @@ func oneSidedLessonConflict(t *testing.T, root string) {
 	}
 }
 
-// AC: writers-refuse-conflicted-files — `lesson change-status` rewrites the
+// specscore:verifies feature/cli/spec/lint#ac:writers-refuse-conflicted-files — `lesson change-status` rewrites the
 // Lessons index, so over a conflicted index it exits 1 naming the file before
 // any write or event and leaves the whole tree byte-identical. Its --dry-run
 // runs the same transaction in a sandbox and so reports the same refusal.
@@ -92,7 +92,7 @@ func conflictedRulesProject(t *testing.T) string {
 	return root
 }
 
-// AC: writers-refuse-conflicted-files — the Rules index is the only copy of
+// specscore:verifies feature/cli/spec/lint#ac:writers-refuse-conflicted-files — the Rules index is the only copy of
 // an inline rule, so every rule writer verb refuses a conflicted index before
 // any write, byte-identically.
 func TestRuleWriterVerbs_RefuseConflictedIndexBeforeAnyWrite(t *testing.T) {
@@ -120,7 +120,7 @@ func TestRuleWriterVerbs_RefuseConflictedIndexBeforeAnyWrite(t *testing.T) {
 	}
 }
 
-// AC: writers-refuse-conflicted-files — reading stays allowed: `rule list`
+// specscore:verifies feature/cli/spec/lint#ac:writers-refuse-conflicted-files — reading stays allowed: `rule list`
 // and `rule show` work over a conflicted Rules index exactly as before.
 func TestRuleReadVerbs_WorkOverConflictedIndex(t *testing.T) {
 	root := conflictedRulesProject(t)
@@ -147,7 +147,7 @@ func TestRefuseConflictedTables_ReadErrorIsUnexpected(t *testing.T) {
 	}
 }
 
-// AC: merge-conflict-markers-fix-refused-byte-identical — `rule lint --fix`
+// specscore:verifies feature/cli/spec/lint#ac:merge-conflict-markers-fix-refused-byte-identical — `rule lint --fix`
 // maps a refused pass onto the shared exit-1 refusal.
 func TestRuleLintFix_RefusesConflictedTree(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Recorded")
@@ -174,7 +174,7 @@ func TestOwnedLessonMutationViolation_ConflictMarkerAlwaysFatal(t *testing.T) {
 	}
 }
 
-// AC: enforced-to-recorded-requires-mechanism-control — demoting an Enforced
+// specscore:verifies feature/cli/lesson/change-status#ac:enforced-to-recorded-requires-mechanism-control — demoting an Enforced
 // Lesson whose free-text Control names no mechanism is refused before any
 // write (exit 4) instead of failing the post-write L-010 lint with exit 10.
 func TestLessonChangeStatus_EnforcedToRecordedFreeTextControlRefusedBeforeWrite_CLI(t *testing.T) {

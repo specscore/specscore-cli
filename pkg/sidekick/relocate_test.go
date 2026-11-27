@@ -66,7 +66,7 @@ func TestRelocate_happy_rewritesMovesAndTags(t *testing.T) {
 }
 
 func TestRelocate_collision_exit1_sourceUntouched(t *testing.T) {
-	// AC: archive-path-collision.
+	// specscore:verifies feature/cli/sidekick/change-status#ac:archive-path-collision
 	specRoot, seedPath := seedFixture(t, "foo", queuedSeedBody)
 	archivedDir := filepath.Join(specRoot, "spec", "ideas", "archived")
 	if err := os.MkdirAll(archivedDir, 0o755); err != nil {

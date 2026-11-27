@@ -33,7 +33,7 @@ func plainFact(subject, predicate, object string) fact.Fact {
 
 // --- unique resolution ---
 
-// AC: resolve-alias-to-canonical — a brand name matching an aliased-as object
+// specscore:verifies feature/cli/studio/answers#ac:resolve-alias-to-canonical — a brand name matching an aliased-as object
 // resolves to the canonical entity id (the subject).
 func TestResolve_UniqueViaAlias(t *testing.T) {
 	facts := []fact.Fact{
@@ -54,7 +54,7 @@ func TestResolve_UniqueViaAlias(t *testing.T) {
 	}
 }
 
-// AC: resolve-alias-to-canonical (case-insensitive) — different case of the
+// specscore:verifies feature/cli/studio/answers#ac:resolve-alias-to-canonical (case-insensitive) — different case of the
 // same name resolves identically.
 func TestResolve_UniqueAliasIsCaseInsensitive(t *testing.T) {
 	facts := []fact.Fact{
@@ -131,7 +131,7 @@ func TestResolve_AliasAndEntityIDSameResult(t *testing.T) {
 
 // --- ambiguous resolution ---
 
-// AC: resolve-ambiguous-lists-candidates — a name matching two different
+// specscore:verifies feature/cli/studio/answers#ac:resolve-ambiguous-lists-candidates — a name matching two different
 // canonical ids yields Ambiguous with both candidates listed.
 func TestResolve_AmbiguousAlias(t *testing.T) {
 	facts := []fact.Fact{
@@ -177,7 +177,7 @@ func TestResolve_AmbiguousEntityIDAndAlias(t *testing.T) {
 
 // --- not found ---
 
-// AC: resolve-unknown-guides — a name with no matching alias or entity id
+// specscore:verifies feature/cli/studio/answers#ac:resolve-unknown-guides — a name with no matching alias or entity id
 // returns NotFound.
 func TestResolve_NotFound(t *testing.T) {
 	facts := []fact.Fact{

@@ -33,7 +33,7 @@ func readSeed(t *testing.T, root, slug string) string {
 	return string(b)
 }
 
-// AC: group-exposes-subcommands
+// specscore:verifies feature/cli/sidekick#ac:group-exposes-subcommands
 func TestSidekickGroup_NoSubcommand_PrintsHelpExitsZero(t *testing.T) {
 	out, _, err := runSidekick(t)
 	if err != nil {
@@ -44,7 +44,7 @@ func TestSidekickGroup_NoSubcommand_PrintsHelpExitsZero(t *testing.T) {
 	}
 }
 
-// AC: scaffolded-seed-is-lint-clean
+// specscore:verifies feature/cli/sidekick/new#ac:scaffolded-seed-is-lint-clean
 func TestSidekickNew_LintClean(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -90,7 +90,7 @@ func TestSidekickNew_LintClean(t *testing.T) {
 	}
 }
 
-// AC: slug-derived-from-one-liner
+// specscore:verifies feature/cli/sidekick/new#ac:slug-derived-from-one-liner
 func TestSidekickNew_SlugDerived(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -103,7 +103,7 @@ func TestSidekickNew_SlugDerived(t *testing.T) {
 	}
 }
 
-// AC: slug-override-used-verbatim
+// specscore:verifies feature/cli/sidekick/new#ac:slug-override-used-verbatim
 func TestSidekickNew_SlugOverride(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -128,7 +128,7 @@ func TestSidekickNew_SlugOverride(t *testing.T) {
 	}
 }
 
-// AC: empty-one-liner-rejected
+// specscore:verifies feature/cli/sidekick/new#ac:empty-one-liner-rejected
 func TestSidekickNew_EmptyOrUnslugableRejected(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -146,7 +146,7 @@ func TestSidekickNew_EmptyOrUnslugableRejected(t *testing.T) {
 	}
 }
 
-// AC: existing-file-conflict
+// specscore:verifies feature/cli/sidekick/new#ac:existing-file-conflict
 func TestSidekickNew_ConflictAndForce(t *testing.T) {
 	root := setupSpecRoot(t)
 	withCwd(t, root)
@@ -163,7 +163,7 @@ func TestSidekickNew_ConflictAndForce(t *testing.T) {
 	}
 }
 
-// AC: ancestor-indexes-materialized
+// specscore:verifies feature/cli/sidekick/new#ac:ancestor-indexes-materialized
 func TestSidekickNew_AncestorIndexesMaterialized(t *testing.T) {
 	root := t.TempDir()
 	// spec/features/ presence makes FindSpecRepoRoot recognize the root,

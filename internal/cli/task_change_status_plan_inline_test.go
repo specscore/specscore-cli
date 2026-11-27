@@ -169,7 +169,7 @@ func planTaskStatus(t *testing.T, path, id string) string {
 	return ""
 }
 
-// AC plan-inline-target-resolves (happy path): resolve by **Id:**, set status on
+// specscore:verifies feature/cli/task/change-status#ac:plan-inline-target-resolves (happy path): resolve by **Id:**, set status on
 // the right block, leave the other block untouched, print the success line.
 func TestTaskChangeStatus_PlanInline_Resolves(t *testing.T) {
 	_, planPath := stagePlanWithTasks(t, "auth", twoTaskPlanBody)

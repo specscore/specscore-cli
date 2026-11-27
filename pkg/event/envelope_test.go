@@ -50,7 +50,7 @@ func TestValidate_RejectsBadName(t *testing.T) {
 }
 
 // TestValidate_RejectsBadActorKind verifies
-// AC:envelope-validation-rejects-bad-actor-kind. An out-of-enum actor kind
+// specscore:verifies feature/cli/event#ac:envelope-validation-rejects-bad-actor-kind An out-of-enum actor kind
 // MUST be rejected; the error MUST name the field, the offending value, and
 // the three accepted values.
 func TestValidate_RejectsBadActorKind(t *testing.T) {
@@ -76,7 +76,7 @@ func TestValidate_RejectsBadActorKind(t *testing.T) {
 }
 
 // TestValidate_PayloadOpaque verifies the validator's contribution to
-// AC:payload-is-opaque-passthrough. Arbitrary, unknown payload fields MUST
+// specscore:verifies feature/cli/event#ac:payload-is-opaque-passthrough Arbitrary, unknown payload fields MUST
 // NOT be rejected; the validator confirms only that the bytes parse as a
 // JSON object.
 func TestValidate_PayloadOpaque(t *testing.T) {

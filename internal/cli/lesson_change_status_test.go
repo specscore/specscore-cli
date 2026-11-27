@@ -134,7 +134,7 @@ func TestLessonChangeStatus_RecordedRequiresNote_CLI(t *testing.T) {
 	}
 }
 
-// AC: enforced-to-recorded-with-reason-demotes — Enforced -> Recorded is the
+// specscore:verifies feature/cli/lesson/change-status#ac:enforced-to-recorded-with-reason-demotes — Enforced -> Recorded is the
 // second audited correction arc: same audit as Stated -> Recorded (note
 // appended as ## Resolution, earlier history kept), and the lesson returns to
 // the not-enforced queue.
@@ -175,7 +175,7 @@ func TestLessonChangeStatus_EnforcedToRecorded_AuditedCorrection_CLI(t *testing.
 	}
 }
 
-// AC: enforced-to-recorded-requires-reason — the Enforced -> Recorded
+// specscore:verifies feature/cli/lesson/change-status#ac:enforced-to-recorded-requires-reason — the Enforced -> Recorded
 // correction requires --note exactly like Stated -> Recorded.
 func TestLessonChangeStatus_EnforcedToRecordedRequiresNote_CLI(t *testing.T) {
 	root := stageLesson(t, "kinder-fake", "Enforced")
@@ -192,7 +192,7 @@ func TestLessonChangeStatus_EnforcedToRecordedRequiresNote_CLI(t *testing.T) {
 	}
 }
 
-// AC: illegal-transition-rejected — the change is additive: Enforced ->
+// specscore:verifies feature/cli/lesson/change-status#ac:illegal-transition-rejected — the change is additive: Enforced ->
 // Stated (and every other unlisted downward arc) stays illegal.
 func TestLessonChangeStatus_EnforcedToStated_StillIllegal_CLI(t *testing.T) {
 	stageLesson(t, "kinder-fake", "Enforced")

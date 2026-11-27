@@ -9,7 +9,7 @@ import (
 	"github.com/specscore/specscore-cli/pkg/conflictmarker"
 )
 
-// AC: writers-refuse-conflicted-index — ReadIndex skips non-table lines, so
+// specscore:verifies feature/cli/spec/lint#ac:writers-refuse-conflicted-index — ReadIndex skips non-table lines, so
 // UpsertRow/RemoveRow -> WriteIndexRows used to regenerate the whole `## Rules`
 // table and silently erase a conflict. Reading stays allowed (rule list and
 // rule show keep working); every writer refuses, byte-identically.

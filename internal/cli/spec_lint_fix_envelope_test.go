@@ -31,7 +31,7 @@ func setupAutofixProject(t *testing.T) string {
 	return root
 }
 
-// AC: fix-json-envelope-only-under-fix (the --fix half) and
+// specscore:verifies feature/cli/spec/lint#ac:fix-json-envelope-only-under-fix (the --fix half) and
 // fix-report-needs-no-flag (json key) and fix-reports-only-changed-files.
 // Under --fix --format json, stdout is a single object with both `fixed` and
 // `violations` keys, and `fixed` names the changed file.
@@ -64,7 +64,7 @@ func TestSpecLint_FixJSONEnvelope(t *testing.T) {
 	}
 }
 
-// AC: fix-json-envelope-only-under-fix (the no-fix half) — without --fix the
+// specscore:verifies feature/cli/spec/lint#ac:fix-json-envelope-only-under-fix (the no-fix half) — without --fix the
 // json output is a bare array of violations with no `fixed` key.
 func TestSpecLint_NoFixJSONBareArray(t *testing.T) {
 	root := setupAutofixProject(t)
@@ -84,7 +84,7 @@ func TestSpecLint_NoFixJSONBareArray(t *testing.T) {
 	}
 }
 
-// AC: fix-json-envelope-only-under-fix — yaml variant of the envelope.
+// specscore:verifies feature/cli/spec/lint#ac:fix-json-envelope-only-under-fix — yaml variant of the envelope.
 func TestSpecLint_FixYAMLEnvelope(t *testing.T) {
 	root := setupAutofixProject(t)
 	out, _, _ := runSpec(t, "lint", "--project", root, "--rules=adherence-footer", "--fix", "--format=yaml")

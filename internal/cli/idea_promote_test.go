@@ -88,7 +88,7 @@ func runIdeaPromoteCLI(t *testing.T, sourceDir string, args ...string) (string, 
 	return runIdea(t, full...)
 }
 
-// AC: seed-not-found
+// specscore:verifies feature/cli/idea/promote#ac:seed-not-found
 func TestIdeaPromoteCLI_SeedNotFound(t *testing.T) {
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")
@@ -106,7 +106,7 @@ func TestIdeaPromoteCLI_SeedNotFound(t *testing.T) {
 	}
 }
 
-// AC: collision-without-force
+// specscore:verifies feature/cli/idea/promote#ac:collision-without-force
 func TestIdeaPromoteCLI_CollisionWithoutForce(t *testing.T) {
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")
@@ -146,7 +146,7 @@ func TestIdeaPromoteCLI_InvalidVerdictRejected(t *testing.T) {
 	}
 }
 
-// AC: same-repo-promote-happy-path
+// specscore:verifies feature/cli/idea/promote#ac:same-repo-promote-happy-path
 func TestIdeaPromoteCLI_SameRepoHappyPath(t *testing.T) {
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")
@@ -217,7 +217,7 @@ func TestIdeaPromoteCLI_SameRepoHappyPath(t *testing.T) {
 	assertLintClean(t, source, "after promote bar")
 }
 
-// AC: same-repo-backlinks-reconciled
+// specscore:verifies feature/cli/idea/promote#ac:same-repo-backlinks-reconciled
 func TestIdeaPromoteCLI_SameRepoBackLinksReconciled(t *testing.T) {
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")
@@ -283,7 +283,7 @@ func readIdeaContext(t *testing.T, path string) string {
 	return s.Body
 }
 
-// AC: verdict-carry-forward-modes
+// specscore:verifies feature/cli/idea/promote#ac:verdict-carry-forward-modes
 func TestIdeaPromoteCLI_VerdictCarryForwardModes(t *testing.T) {
 	verdictText := "The panel agreed this is a strong direction worth specifying."
 
@@ -401,7 +401,8 @@ func writePromoteConfigVerdict(t *testing.T, repoRoot, mode string) {
 	}
 }
 
-// AC: cross-repo-archive + AC: never-deprecated
+// specscore:verifies feature/cli/idea/promote#ac:cross-repo-archive
+// specscore:verifies feature/cli/idea/promote#ac:never-deprecated
 func TestIdeaPromoteCLI_CrossRepoArchive(t *testing.T) {
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")
@@ -499,7 +500,7 @@ func assertValidIdeaSkeleton(t *testing.T, path string) {
 	}
 }
 
-// AC: stdout-summary
+// specscore:verifies feature/cli/idea/promote#ac:stdout-summary
 func TestIdeaPromoteCLI_StdoutSummary(t *testing.T) {
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")
@@ -562,7 +563,7 @@ func TestIdeaPromoteCLI_StdoutSummary(t *testing.T) {
 	}
 }
 
-// AC: dirty-tree-rejected
+// specscore:verifies feature/cli/idea/promote#ac:dirty-tree-rejected
 func TestIdeaPromoteCLI_DirtyTreeRejected(t *testing.T) {
 	parent := t.TempDir()
 	source := stagePromoteRepo(t, parent, "src", "src")

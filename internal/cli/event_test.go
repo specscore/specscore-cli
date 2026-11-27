@@ -353,7 +353,7 @@ func TestEventMergeCommand_SourcePathResolutionError(t *testing.T) {
 	}
 }
 
-// AC: required-flag-missing-fails-2.
+// specscore:verifies feature/cli/event/emit#ac:required-flag-missing-fails-2
 //
 // NOTE: the AC's example invocation includes `--payload-json '{}'`, but
 // payload flags are introduced in Task 4. We omit `--payload-json` here —

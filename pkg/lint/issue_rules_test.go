@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// AC: type-registered (rule-family half — every I-NNN ID is wired to a
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:type-registered (rule-family half — every I-NNN ID is wired to a
 // checker that the linter knows about).
 func TestIssueRules_AllFifteenIDsRegistered(t *testing.T) {
 	l := newLinter(Options{SpecRoot: t.TempDir()})
@@ -25,7 +25,7 @@ func TestIssueRules_AllFifteenIDsRegistered(t *testing.T) {
 	}
 }
 
-// AC: default-suite-includes-i-rules. A spec tree with one valid issue
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:default-suite-includes-i-rules A spec tree with one valid issue
 // must lint with zero violations when no flags are passed (all 15 I-
 // rules run; stubs emit nothing; I-009 sees a pattern-matching path).
 func TestIssueRules_DefaultSuiteIncludesIRules(t *testing.T) {
@@ -41,7 +41,7 @@ func TestIssueRules_DefaultSuiteIncludesIRules(t *testing.T) {
 	}
 }
 
-// AC: rules-filter-by-id. When --rules I-009 is set, only I-009
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:rules-filter-by-id When --rules I-009 is set, only I-009
 // violations surface (other I-rules whose stubs would emit nothing
 // anyway are filtered too, but the key invariant is: a non-I-009
 // violation that would otherwise fire is suppressed).
@@ -72,7 +72,7 @@ func TestIssueRules_FilterByID_OnlyI009Emits(t *testing.T) {
 	}
 }
 
-// AC: dual-location-violation. A file at spec/random-dir/foo.md
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:dual-location-violation A file at spec/random-dir/foo.md
 // declaring `type: issue` triggers I-009.
 func TestIssueRules_I009_DualLocationViolation(t *testing.T) {
 	specRoot := copyTestdataSpec(t, "rules/issue/testdata/dual-location/spec")
@@ -98,7 +98,7 @@ func TestIssueRules_I009_DualLocationViolation(t *testing.T) {
 	}
 }
 
-// AC: missing-required-field-violation. A fixture issue missing the
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:missing-required-field-violation A fixture issue missing the
 // `captured_by` frontmatter field trips I-001 with a "missing required
 // field" message naming the field.
 func TestIssueRules_I001_MissingRequiredField(t *testing.T) {
@@ -130,7 +130,7 @@ func TestIssueRules_I001_MissingRequiredField(t *testing.T) {
 	}
 }
 
-// AC: invalid-status-enum-violation. A fixture issue with
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:invalid-status-enum-violation A fixture issue with
 // `status: triaged` trips I-002 listing the four valid values.
 func TestIssueRules_I002_InvalidStatusEnum(t *testing.T) {
 	specRoot := copyTestdataSpec(t, "rules/issue/testdata/invalid-status/spec")
@@ -158,7 +158,7 @@ func TestIssueRules_I002_InvalidStatusEnum(t *testing.T) {
 	}
 }
 
-// AC: unknown-frontmatter-key-violation. A fixture issue with an
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:unknown-frontmatter-key-violation A fixture issue with an
 // unknown `priority: high` key trips I-001 under a distinct "unknown
 // field" template naming `priority`.
 func TestIssueRules_I001_UnknownFrontmatterKey(t *testing.T) {
@@ -221,7 +221,7 @@ func TestIssueRules_I001_AllowsFormatField(t *testing.T) {
 	}
 }
 
-// AC: optional-field-shape-violation. A fixture issue with
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:optional-field-shape-violation A fixture issue with
 // `severity: extreme` trips I-003 under a message listing the five
 // valid `severity` values (`low`, `medium`, `high`, `critical`, `unset`).
 func TestIssueRules_I003_InvalidSeverityEnum(t *testing.T) {
@@ -253,7 +253,7 @@ func TestIssueRules_I003_InvalidSeverityEnum(t *testing.T) {
 	}
 }
 
-// AC: bugs-opaque-non-string-violation. A fixture issue with
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:bugs-opaque-non-string-violation A fixture issue with
 // `bugs: [123, "valid-slug"]` trips I-004 stating every element of
 // `bugs` must be a string.
 func TestIssueRules_I004_BugsNonStringElement(t *testing.T) {
@@ -286,7 +286,7 @@ func TestIssueRules_I004_BugsNonStringElement(t *testing.T) {
 	}
 }
 
-// AC: severity-required-on-transition-violation. A fixture issue with
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:severity-required-on-transition-violation A fixture issue with
 // `status: investigating` and no `severity` field trips I-005 with a
 // message naming severity-required-on-transition.
 func TestIssueRules_I005_SeverityRequiredOnTransition(t *testing.T) {
@@ -319,7 +319,7 @@ func TestIssueRules_I005_SeverityRequiredOnTransition(t *testing.T) {
 	}
 }
 
-// AC: rejection-reason-enum-violation. A fixture issue with
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:rejection-reason-enum-violation A fixture issue with
 // `status: rejected`, valid `severity: low`, and
 // `rejection_reason: not-real-enough` trips I-006 listing the six valid
 // values. I-005 must stay silent (severity is set to a valid non-unset
@@ -362,7 +362,7 @@ func TestIssueRules_I006_RejectionReasonEnum(t *testing.T) {
 	}
 }
 
-// AC: h1-prefix-violation. A fixture issue whose H1 reads
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:h1-prefix-violation A fixture issue whose H1 reads
 // `# Bug: Menu crashes` (instead of `# Issue: ...`) trips I-007 with a
 // message stating the H1 must match `^# Issue: .+$`. No other I-rule
 // should fire on this fixture.
@@ -397,7 +397,7 @@ func TestIssueRules_I007_H1PrefixViolation(t *testing.T) {
 	}
 }
 
-// AC: body-section-order-violation. A fixture issue with the three
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:body-section-order-violation A fixture issue with the three
 // required H2 sections present but in non-canonical order trips I-008
 // with a message naming the canonical order. I-007 must stay silent
 // (the H1 is canonical).
@@ -436,7 +436,7 @@ func TestIssueRules_I008_BodySectionOrderViolation(t *testing.T) {
 	}
 }
 
-// AC: slug-mismatch-violation. A fixture issue at spec/issues/foo.md
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:slug-mismatch-violation A fixture issue at spec/issues/foo.md
 // whose frontmatter `slug` is `bar` trips I-010 with a message naming
 // the mismatch.
 func TestIssueRules_I010_SlugMismatchViolation(t *testing.T) {
@@ -469,7 +469,7 @@ func TestIssueRules_I010_SlugMismatchViolation(t *testing.T) {
 	}
 }
 
-// AC: slug-globally-unique-violation. Two fixture issues at
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:slug-globally-unique-violation Two fixture issues at
 // spec/issues/foo.md and spec/features/example/issues/foo.md, both
 // lint-valid in isolation, trip I-011 with a message naming both paths
 // and the colliding slug `foo`.
@@ -505,7 +505,7 @@ func TestIssueRules_I011_GlobalSlugUniquenessViolation(t *testing.T) {
 	}
 }
 
-// AC: affected-component-ref-violation. A fixture issue with
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:affected-component-ref-violation A fixture issue with
 // `affected_component: nonexistent-feature` and no
 // `spec/features/nonexistent-feature/README.md` trips I-012 with a
 // message naming the unresolved slug.
@@ -536,7 +536,7 @@ func TestIssueRules_I012_AffectedComponentRefViolation(t *testing.T) {
 	}
 }
 
-// AC: affected-component-ref-violation (positive case). When
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:affected-component-ref-violation (positive case). When
 // `affected_component` resolves to an existing
 // `spec/features/<slug>/README.md`, I-012 stays silent.
 func TestIssueRules_I012_AffectedComponentRefResolves(t *testing.T) {
@@ -552,7 +552,7 @@ func TestIssueRules_I012_AffectedComponentRefResolves(t *testing.T) {
 	}
 }
 
-// AC: root-index-required-violation. A fixture with an issue under
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:root-index-required-violation A fixture with an issue under
 // `spec/issues/foo.md` but no `spec/issues/README.md` trips I-013 with
 // a message naming the missing index path.
 func TestIssueRules_I013_RootIndexRequiredViolation(t *testing.T) {
@@ -582,7 +582,7 @@ func TestIssueRules_I013_RootIndexRequiredViolation(t *testing.T) {
 	}
 }
 
-// AC: root-index-fix-scaffolds-readme. Running --fix against the same
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:root-index-fix-scaffolds-readme Running --fix against the same
 // fixture creates `spec/issues/README.md` with the canonical minimal
 // index template and a follow-up lint pass reports zero I-013
 // violations. The scaffold is also idempotent — running --fix twice
@@ -642,7 +642,7 @@ func TestIssueRules_I013_FixScaffoldsReadme(t *testing.T) {
 	}
 }
 
-// AC: feature-scoped-index-required-violation. A fixture with an issue
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:feature-scoped-index-required-violation A fixture with an issue
 // under `spec/features/example/issues/foo.md` but no neighbouring
 // README.md trips I-014 with a message naming the missing index path.
 func TestIssueRules_I014_FeatureScopedIndexRequiredViolation(t *testing.T) {
@@ -672,7 +672,7 @@ func TestIssueRules_I014_FeatureScopedIndexRequiredViolation(t *testing.T) {
 	}
 }
 
-// AC: index-columns-violation. A fixture issues-index README whose
+// specscore:verifies feature/cli/spec/lint/issue-rules#ac:index-columns-violation A fixture issues-index README whose
 // Contents table is missing the `Severity` column trips I-015 with a
 // message listing the five required columns in canonical order.
 func TestIssueRules_I015_IndexColumnsViolation(t *testing.T) {

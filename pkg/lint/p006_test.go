@@ -16,7 +16,7 @@ func p006PlanBody(slug, status string) string {
 		"## Open Questions\n\nNone.\n"
 }
 
-// AC: plan-status-enum-flagged
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:plan-status-enum-flagged
 func TestP006_NonCanonicalStatusFlagged(t *testing.T) {
 	e := newPlanRulesEnv(t)
 	e.writeFeature(t, "foo", "one")
@@ -36,7 +36,7 @@ func TestP006_NonCanonicalStatusFlagged(t *testing.T) {
 	}
 }
 
-// AC: plan-status-enum-accepts-canonical — every canonical Plan status is clean.
+// specscore:verifies feature/cli/spec/lint/plan-rules#ac:plan-status-enum-accepts-canonical — every canonical Plan status is clean.
 func TestP006_CanonicalStatusesAccepted(t *testing.T) {
 	canonical := []string{
 		"Draft", "In Review", "Approved", "Executing", "Blocked",

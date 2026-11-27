@@ -100,7 +100,7 @@ func TestResolveSourceArtifact_SeedFallback(t *testing.T) {
 	}
 }
 
-// AC: ambiguous-slug-rejected
+// specscore:verifies feature/cli/idea/relocate#ac:ambiguous-slug-rejected
 func TestResolveSourceArtifact_AmbiguousRejected(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRepo(t, parent, "src", "src")
@@ -116,7 +116,7 @@ func TestResolveSourceArtifact_AmbiguousRejected(t *testing.T) {
 	}
 }
 
-// AC: slug-not-found
+// specscore:verifies feature/cli/idea/relocate#ac:slug-not-found
 func TestResolveSourceArtifact_NotFound(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRepo(t, parent, "src", "src")
@@ -129,7 +129,7 @@ func TestResolveSourceArtifact_NotFound(t *testing.T) {
 
 // -------- ResolveTargetRepo (slug form) --------
 
-// AC: to-repo-slug-form-resolves-via-sibling-scan
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-slug-form-resolves-via-sibling-scan
 func TestResolveTargetRepo_SlugForm_ResolvesViaScan(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -148,7 +148,7 @@ func TestResolveTargetRepo_SlugForm_ResolvesViaScan(t *testing.T) {
 	}
 }
 
-// AC: to-repo-slug-multiple-matches-rejected
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-slug-multiple-matches-rejected
 func TestResolveTargetRepo_SlugForm_MultipleMatchesRejected(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRepo(t, parent, "specstudio-skills", "specstudio-skills")
@@ -192,7 +192,7 @@ func TestResolveTargetRepo_SlugForm_SkipsHiddenSiblings(t *testing.T) {
 
 // -------- ResolveTargetRepo (path form) --------
 
-// AC: to-repo-path-form-bypasses-scan
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-path-form-bypasses-scan
 func TestResolveTargetRepo_PathForm_Relative(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRepo(t, parent, "src", "src")
@@ -232,7 +232,7 @@ func TestResolveTargetRepo_PathForm_Absolute(t *testing.T) {
 	}
 }
 
-// AC: to-repo-without-specscore-yaml-rejected
+// specscore:verifies feature/cli/idea/relocate#ac:to-repo-without-specscore-yaml-rejected
 func TestResolveTargetRepo_PathForm_MissingYamlRejected(t *testing.T) {
 	parent := t.TempDir()
 	source := stageRepo(t, parent, "src", "src")

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// AC: index-entries-ignores-nonidentity-cell-links. Feature row-sync copies a
+// specscore:verifies feature/cli/spec/lint#ac:index-entries-ignores-nonidentity-cell-links Feature row-sync copies a
 // Feature's canonical Summary into the root index. Relative child links in
 // that Summary describe the Feature; they do not declare root-level children.
 func TestIndexEntries_IgnoresSummaryLinksAfterFeatureRowSync(t *testing.T) {

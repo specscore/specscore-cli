@@ -36,7 +36,7 @@ func swapStderr(t *testing.T) (*bytes.Buffer, func()) {
 }
 
 // TestDispatch_FanOutContinuesAfterFailure covers
-// AC:fan-out-continues-after-failure: the first subscriber errors, the second
+// specscore:verifies feature/cli/event#ac:fan-out-continues-after-failure the first subscriber errors, the second
 // still receives the envelope, and the result reports one delivery + one
 // failure (verb maps Delivered>=1 to exit 0).
 func TestDispatch_FanOutContinuesAfterFailure(t *testing.T) {
@@ -73,7 +73,7 @@ func TestDispatch_FanOutContinuesAfterFailure(t *testing.T) {
 }
 
 // TestDispatch_PerSubscriberFailureStderrFormat covers
-// AC:per-subscriber-failure-stderr-format: the exact key=value line is written
+// specscore:verifies feature/cli/event#ac:per-subscriber-failure-stderr-format the exact key=value line is written
 // to stderr when a subscriber returns an error, with the error message quoted.
 func TestDispatch_PerSubscriberFailureStderrFormat(t *testing.T) {
 	buf, restore := swapStderr(t)
