@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -109,41 +110,111 @@ func TestAcquireArtifactLockWithOps_FailureBoundaries(t *testing.T) {
 func TestLifecycleLockRoot_RecognizesProjectAndStagedRoots(t *testing.T) {
 	tests := []struct {
 		name string
-		prep func()
+		prep func(t *testing.T, root string)
 		path func(string) string
+		want func(string) string
 	}{
 		{name: "spec boundary", path: func(root string) string { return filepath.Join(root, "spec", "features", "auth", "README.md") }},
 		{name: "staged transaction", path: func(root string) string {
 			return filepath.Join(root, ".specscore-txn-abc", "artifact.md")
+		}, want: func(root string) string { return filepath.Join(root, ".specscore-txn-abc") }},
+		{name: "config marker", prep: func(t *testing.T, root string) {
+			writeTestFile(t, filepath.Join(root, "specscore.yaml"), "")
 		}},
-		{name: "config marker", prep: func() {}, path: func(root string) string {
-			_ = os.WriteFile(filepath.Join(root, "specscore.yaml"), nil, 0o644)
-			return filepath.Join(root, "docs", "artifact.md")
+		{name: "git directory with HEAD", prep: func(t *testing.T, root string) {
+			mkdirTest(t, filepath.Join(root, ".git"))
+			writeTestFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
 		}},
-		{name: "git marker", prep: func() {}, path: func(root string) string {
-			_ = os.Mkdir(filepath.Join(root, ".git"), 0o755)
-			return filepath.Join(root, "docs", "artifact.md")
+		{name: "gitdir file", prep: func(t *testing.T, root string) {
+			writeTestFile(t, filepath.Join(root, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n")
 		}},
-		{name: "directory fallback", path: func(root string) string { return filepath.Join(root, "docs", "artifact.md") }},
+		{name: "empty git directory ignored", prep: func(t *testing.T, root string) {
+			mkdirTest(t, filepath.Join(root, ".git"))
+		}, want: func(root string) string { return filepath.Join(root, "docs") }},
+		{name: "short git file ignored", prep: func(t *testing.T, root string) {
+			writeTestFile(t, filepath.Join(root, ".git"), "gitdi")
+		}, want: func(root string) string { return filepath.Join(root, "docs") }},
+		{name: "unrelated git file ignored", prep: func(t *testing.T, root string) {
+			writeTestFile(t, filepath.Join(root, ".git"), "not a pointer\n")
+		}, want: func(root string) string { return filepath.Join(root, "docs") }},
+		{name: "directory fallback", want: func(root string) string { return filepath.Join(root, "docs") }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
+			root, err := filepath.Abs(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			if tt.prep != nil {
-				tt.prep()
+				tt.prep(t, root)
 			}
-			path := tt.path(root)
+			path := filepath.Join(root, "docs", "artifact.md")
+			if tt.path != nil {
+				path = tt.path(root)
+			}
 			want := root
-			switch tt.name {
-			case "staged transaction":
-				want = filepath.Join(root, ".specscore-txn-abc")
-			case "directory fallback":
-				want = filepath.Join(root, "docs")
+			if tt.want != nil {
+				want = tt.want(root)
 			}
-			if got := lifecycleLockRoot(path); got != want {
+			// The ceiling stops the walk at root, so nothing above
+			// t.TempDir() (a spec/ or .specscore-txn- ancestor, a stray
+			// .git or specscore.yaml) can change the result.
+			if got := lifecycleLockRootWithin(path, root); got != want {
 				t.Fatalf("root = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// The ceiling keeps markers above it out of the walk: a spec/ or
+// .specscore-txn- ancestor, or a stray specscore.yaml, would otherwise fence
+// the lock above the test's own root.
+func TestLifecycleLockRootWithin_IgnoresAncestorsAboveCeiling(t *testing.T) {
+	for _, ancestor := range []string{"spec", ".specscore-txn-host", "plain"} {
+		t.Run(ancestor, func(t *testing.T) {
+			outer, err := filepath.Abs(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, filepath.Join(outer, "specscore.yaml"), "")
+			root := filepath.Join(outer, ancestor, "inner")
+			mkdirTest(t, root)
+			path := filepath.Join(root, "docs", "artifact.md")
+			if got, want := lifecycleLockRootWithin(path, root), filepath.Join(root, "docs"); got != want {
+				t.Fatalf("root = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestIsGitMarker_UnreadableFileIsNotAMarker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0 does not revoke read permission on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can read mode-000 files")
+	}
+	path := filepath.Join(t.TempDir(), ".git")
+	writeTestFile(t, path, "gitdir: x")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if isGitMarker(path) {
+		t.Fatal("unreadable .git file must not count as a marker")
+	}
+}
+
+func mkdirTest(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
