@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -101,6 +102,12 @@ func newRootCommand() (*cobra.Command, []fang.Option) {
 	// decoration, which is what the fang.Option below relies on.
 	fangOpts := fangcmd.Wire(rootCmd, buildInfo)
 
+	// Usage errors exit 2 (cli#req:usage-errors-exit-2): flag-parse errors
+	// for every command, and extra positionals on leaf commands that take
+	// none. Applied after Wire so the `version` leaf is covered too.
+	rootCmd.SetFlagErrorFunc(flagErrorIsInvalidArgs)
+	mapLeafExtraArgs(rootCmd)
+
 	// Attach telemetry persistent-flag + PersistentPreRun. Emission happens
 	// after Execute returns so the actual exit code is captured.
 	attachTelemetry(rootCmd)
@@ -119,8 +126,10 @@ func rootMigrateCommand() *cobra.Command {
 // UnsupportedCommand exit code (8). This lets callers distinguish an outdated
 // specscore that predates a required subcommand from a generic failure (1),
 // while the shell still reports a wholly-absent binary as 127. Scoped to
-// unknown subcommands only — unknown flags keep their existing semantics — and
-// it never clobbers an error that already carries an exit code.
+// unknown subcommands of a command group only — flag-parse errors and extra
+// positionals on a leaf command are usage errors that exit 2 instead (see
+// flagErrorIsInvalidArgs and mapLeafExtraArgs) — and it never clobbers an
+// error that already carries an exit code.
 func mapUnsupportedCommand(err error) error {
 	if err == nil {
 		return nil
@@ -134,6 +143,39 @@ func mapUnsupportedCommand(err error) error {
 		return exitcode.UnsupportedCommandError(err.Error())
 	}
 	return err
+}
+
+// flagErrorIsInvalidArgs is the root command's FlagErrorFunc, which Cobra
+// inherits into every subcommand: an unknown flag, a missing flag value, or a
+// value that does not parse is an invalid argument and exits 2
+// (cli#req:usage-errors-exit-2). pflag's ErrHelp stays recognizable through
+// the wrap, so `--help` keeps working.
+func flagErrorIsInvalidArgs(_ *cobra.Command, err error) error {
+	return exitcode.Wrap(exitcode.InvalidArgs, err.Error(), err)
+}
+
+// mapLeafExtraArgs wraps the positional-argument validator of every leaf
+// command (one with no subcommands) under cmd. cobra.NoArgs reports an extra
+// positional as `unknown command "x" for "specscore idea list"`, the same
+// text as an unrecognized subcommand, which mapUnsupportedCommand would turn
+// into exit 8. On a leaf there is no subcommand to be missing, so the
+// argument is simply one too many: it exits 2 like every other arity error
+// (cli#req:usage-errors-exit-2). Command groups keep exit 8.
+func mapLeafExtraArgs(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		mapLeafExtraArgs(sub)
+	}
+	if cmd.HasSubCommands() || cmd.Args == nil {
+		return
+	}
+	validate := cmd.Args
+	cmd.Args = func(c *cobra.Command, args []string) error {
+		err := validate(c, args)
+		if err != nil && strings.HasPrefix(err.Error(), `unknown command "`) {
+			return exitcode.Wrap(exitcode.InvalidArgs, fmt.Sprintf("accepts 0 arg(s), received %d", len(args)), err)
+		}
+		return err
+	}
 }
 
 // cobraUsageError matches, exactly, the errors Cobra itself returns when a
@@ -157,8 +199,10 @@ var cobraUsageError = regexp.MustCompile(`^(?:` +
 // requires (cli#req:usage-errors-exit-2). It is applied once, where the root
 // command executes, so every verb gets it without per-command wiring. Like
 // mapUnsupportedCommand it never clobbers an error that already carries an
-// exit code; Cobra's "unknown command" error (also returned by NoArgs) stays
-// with mapUnsupportedCommand.
+// exit code. Cobra's "unknown command" error stays with mapUnsupportedCommand:
+// on a leaf, mapLeafExtraArgs has already coded it as exit 2; on a command
+// group it is an unrecognized subcommand (exit 8). Flag-parse errors are coded
+// by flagErrorIsInvalidArgs.
 func mapInvalidArgs(err error) error {
 	if err == nil {
 		return nil

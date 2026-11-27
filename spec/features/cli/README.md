@@ -164,11 +164,17 @@ On any non-zero exit, a human-readable explanation MUST be written to stderr. st
 
 #### REQ: unsupported-subcommand-mapping
 
-When a subcommand is not recognized — typically because the installed `specscore` predates a subcommand the caller requires — the CLI MUST exit `8` (UnsupportedCommand) rather than a generic `1`/`2`/`10`. This lets callers, notably capability-gated agent skills, distinguish a present-but-outdated binary from a genuine command failure; a wholly-absent binary remains the shell's `127`. The mapping is scoped to unknown subcommands only: unknown flags keep their `2` (InvalidArgs) semantics, and an error that already carries an exit code MUST NOT be reclassified. A human-readable message naming the unrecognized subcommand MUST be written to stderr.
+When a subcommand is not recognized — typically because the installed `specscore` predates a subcommand the caller requires — the CLI MUST exit `8` (UnsupportedCommand) rather than a generic `1`/`2`/`10`. This lets callers, notably capability-gated agent skills, distinguish a present-but-outdated binary from a genuine command failure; a wholly-absent binary remains the shell's `127`. The mapping is scoped to unknown subcommands of a command group only: unknown flags, and an extra positional on a leaf command that has no subcommands, keep their `2` (InvalidArgs) semantics ([cli#req:usage-errors-exit-2](#req-usage-errors-exit-2)), and an error that already carries an exit code MUST NOT be reclassified. A human-readable message naming the unrecognized subcommand MUST be written to stderr.
 
 #### REQ: usage-errors-exit-2
 
-When a command rejects the number of positional arguments it was given (too few or too many), or a flag the command marks as required is absent, the CLI MUST exit `2` (InvalidArgs) and name the problem on stderr, never the generic `1`. The mapping MUST apply to every verb from one place where the root command executes, so a verb that declares its arity or required flags through the command framework cannot inherit a different code. An error that already carries an exit code MUST NOT be reclassified, and an unrecognized subcommand stays under [cli#req:unsupported-subcommand-mapping](#req-unsupported-subcommand-mapping). A verb whose own spec requires a different code for one of these cases MUST return that code itself.
+The CLI MUST exit `2` (InvalidArgs), naming the problem on stderr and never the generic `1` or the UnsupportedCommand `8`, when a command:
+
+- receives fewer or more positional arguments than it accepts, including any positional at all on a leaf command (one with no subcommands) that takes none;
+- is invoked without a flag it marks as required;
+- is given an unknown flag, a flag without its required value, or a flag value that does not parse.
+
+The mapping MUST be applied centrally on the root command, for every verb, so a verb that declares its arity, required flags, or flag types through the command framework cannot inherit a different code. An error that already carries an exit code MUST NOT be reclassified. An unrecognized subcommand of a command group stays under [cli#req:unsupported-subcommand-mapping](#req-unsupported-subcommand-mapping) (exit `8`). A verb whose own spec requires a different code for one of these cases MUST return that code itself.
 
 ### Output format conventions
 
@@ -225,8 +231,8 @@ The Feature spec is the source of truth the website renders from; the `README.md
 **Requirements:** cli#req:usage-errors-exit-2
 
 **Given** a SpecScore project
-**When** the user invokes a verb with fewer or more positional arguments than it accepts (for example `specscore lesson relation add a`, `specscore event merge`, `specscore telemetry enable a b`, or `specscore studio resolve a b c`), or omits a flag it requires (for example `specscore issue change-status foo` without `--to`)
-**Then** the command exits `2` (InvalidArgs), stderr names the argument count or the missing flag, and no file in the project changes.
+**When** the user invokes a verb with fewer or more positional arguments than it accepts (for example `specscore lesson relation add a`, `specscore event merge`, `specscore telemetry enable a b`, or `specscore studio resolve a b c`), gives a positional to a leaf command that takes none (for example `specscore idea list extra` or `specscore version extra`), omits a flag it requires (for example `specscore issue change-status foo` without `--to`), or passes an unknown or unparsable flag (for example `specscore idea list --zz-bogus` or `specscore lesson list --min-recurred=abc`)
+**Then** the command exits `2` (InvalidArgs), stderr names the argument count, the missing flag, or the bad flag, and no file in the project changes.
 
 ## Consumers
 

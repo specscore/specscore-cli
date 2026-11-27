@@ -220,8 +220,14 @@ func TestMapInvalidArgs_LeavesOtherErrors(t *testing.T) {
 // everything written to stderr.
 func runCLIExit(t *testing.T, args ...string) (int, string) {
 	t.Helper()
+	// Keep the real entry point away from the host's telemetry state:
+	// PersistentPreRun reads ~/.specscore and creates an install id there.
 	t.Setenv("DO_NOT_TRACK", "1")
-	t.Setenv("SPECSCORE_TELEMETRY", "off")
+	t.Setenv("SPECSCORE_TELEMETRY", "0")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	savedInvocation := invocation
+	t.Cleanup(func() { invocation = savedInvocation })
 	code := 0
 	old := osExit
 	osExit = func(c int) { code = c }
@@ -232,7 +238,7 @@ func runCLIExit(t *testing.T, args ...string) (int, string) {
 	return code, stderr
 }
 
-// specscore:verifies feature/cli#ac:usage-errors-exit-2 — one case per Cobra validator kind and a required flag, on verbs other than idea change-status
+// specscore:verifies feature/cli#ac:usage-errors-exit-2 — one case per Cobra validator kind, a required flag, an extra positional on NoArgs leaves, and flag-parse errors, on verbs other than idea change-status
 func TestRun_UsageErrorsExit2(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -245,6 +251,11 @@ func TestRun_UsageErrorsExit2(t *testing.T) {
 		{"MaximumNArgs", []string{"telemetry", "enable", "a", "b"}, "accepts at most 1 arg(s), received 2"},
 		{"RangeArgs", []string{"studio", "resolve", "a", "b", "c"}, "accepts between 0 and 2 arg(s), received 3"},
 		{"MarkFlagRequired", []string{"issue", "change-status", "foo"}, `required flag(s) "to" not set`},
+		{"NoArgs leaf given a positional", []string{"idea", "list", "extra"}, "accepts 0 arg(s), received 1"},
+		{"NoArgs top-level leaf given a positional", []string{"version", "extra"}, "accepts 0 arg(s), received 1"},
+		{"unknown flag", []string{"idea", "list", "--zz-bogus"}, "unknown flag: --zz-bogus"},
+		{"flag value does not parse", []string{"lesson", "list", "--min-recurred=abc"}, `invalid argument "abc" for "--min-recurred" flag`},
+		{"flag missing its value", []string{"idea", "change-status", "foo", "--to"}, "flag needs an argument: --to"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -264,6 +275,54 @@ func TestRun_UsageErrorsExit2(t *testing.T) {
 				t.Errorf("project tree changed:\nbefore=%v\nafter=%v", before, after)
 			}
 		})
+	}
+}
+
+// An extra positional on a command GROUP is still an unrecognized
+// subcommand (cli#req:unsupported-subcommand-mapping), and --help is not a
+// flag error. Guards the boundary of mapLeafExtraArgs.
+func TestRun_GroupUnknownSubcommandStaysExit8(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	code, stderr := runCLIExit(t, "graph", "verdict")
+	if code != exitcode.UnsupportedCommand {
+		t.Errorf("specscore graph verdict exited %d, want %d (UnsupportedCommand)", code, exitcode.UnsupportedCommand)
+	}
+	if !strings.Contains(stderr, `unknown command "verdict"`) {
+		t.Errorf("stderr = %q, want it to name the unknown subcommand", stderr)
+	}
+	if code, _ := runCLIExit(t, "idea", "list", "--help"); code != 0 {
+		t.Errorf("specscore idea list --help exited %d, want 0", code)
+	}
+}
+
+func TestMapLeafExtraArgs(t *testing.T) {
+	leafNoArgs := &cobra.Command{Use: "leaf", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {}}
+	leafExact := &cobra.Command{Use: "exact", Args: cobra.ExactArgs(1), Run: func(*cobra.Command, []string) {}}
+	leafNil := &cobra.Command{Use: "free", Run: func(*cobra.Command, []string) {}}
+	sub := &cobra.Command{Use: "sub", Run: func(*cobra.Command, []string) {}}
+	group := &cobra.Command{Use: "group", Args: cobra.NoArgs}
+	group.AddCommand(sub)
+	root := &cobra.Command{Use: "root"}
+	root.AddCommand(leafNoArgs, leafExact, leafNil, group)
+
+	mapLeafExtraArgs(root)
+
+	var ec interface{ ExitCode() int }
+	if err := leafNoArgs.Args(leafNoArgs, []string{"x"}); !errors.As(err, &ec) || ec.ExitCode() != exitcode.InvalidArgs {
+		t.Errorf("NoArgs leaf with a positional = %v, want exit %d", err, exitcode.InvalidArgs)
+	}
+	if err := leafNoArgs.Args(leafNoArgs, nil); err != nil {
+		t.Errorf("NoArgs leaf with no positional = %v, want nil", err)
+	}
+	if err := leafExact.Args(leafExact, nil); err == nil || errors.As(err, &ec) {
+		t.Errorf("ExactArgs error must pass through uncoded for mapInvalidArgs, got %v", err)
+	}
+	if leafNil.Args != nil {
+		t.Error("a leaf with no validator must stay without one")
+	}
+	if err := group.Args(group, []string{"x"}); err == nil || errors.As(err, &ec) {
+		t.Errorf("a group's NoArgs must stay an uncoded unknown-command error (exit 8 later), got %v", err)
 	}
 }
 
