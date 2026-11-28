@@ -5,6 +5,7 @@ package event
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -187,6 +188,12 @@ func TestExecWindowsResumeLookupFailurePreventsStart(t *testing.T) {
 // started, and Deliver must still return promptly because it kills the direct
 // child. This is stronger than testing cancel in isolation because it also
 // exercises CommandContext's Cancel/WaitDelay interaction.
+//
+// The deadline is exceeded only after the child reports that it has read the
+// whole event: Deliver is then past every setup check and waiting in Cmd.Wait,
+// so the timeout must reach cmd.Cancel and the Job Object termination seam. A
+// short real-time budget could instead expire during setup on a slow runner,
+// where Deliver correctly stops the child without calling that seam.
 func TestExecWindowsJobTerminationFailureFallsBackDuringDeliver(t *testing.T) {
 	originalTerminate := terminateWindowsJob
 	originalKill := killWindowsProcess
@@ -206,16 +213,25 @@ func TestExecWindowsJobTerminationFailureFallsBackDuringDeliver(t *testing.T) {
 		return originalKill(process)
 	}
 
-	timeout := 100 * time.Millisecond
-	start := time.Now()
-	err := NewExec(
-		[]string{
-			"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-			"Start-Sleep -Seconds 30",
+	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
+	deadline := newManualDeadlineContext()
+	sub := NewExec(
+		[]string{os.Args[0], "-test.run=^TestExecWindowsJobTerminationFailureHelper$"},
+		map[string]string{
+			"SPECSCORE_CHILD_PID_FILE":                     childPIDFile,
+			"SPECSCORE_WINDOWS_TERMINATION_FAILURE_HELPER": "1",
 		},
-		nil,
-		timeout,
-	).Deliver(context.Background(), execSampleEvent(t))
+		execUnreachableTimeout,
+	)
+	result := make(chan error, 1)
+	go func() {
+		result <- sub.Deliver(deadline, execSampleEvent(t))
+	}()
+
+	waitForWindowsChildPID(t, childPIDFile, result, 20*time.Second)
+	start := time.Now()
+	deadline.expire()
+	err := <-result
 	elapsed := time.Since(start)
 	var timeoutErr *ExecTimeoutError
 	if !errors.As(err, &timeoutErr) {
@@ -230,6 +246,27 @@ func TestExecWindowsJobTerminationFailureFallsBackDuringDeliver(t *testing.T) {
 	if killCalls == 0 {
 		t.Fatal("direct-child fallback was not attempted after TerminateJobObject failure")
 	}
+}
+
+// TestExecWindowsJobTerminationFailureHelper is the direct child for
+// TestExecWindowsJobTerminationFailureFallsBackDuringDeliver. It reads the
+// event to EOF, so Deliver has closed stdin, then records its PID and waits to
+// be killed. It is only entered by the separately executed test binary.
+func TestExecWindowsJobTerminationFailureHelper(t *testing.T) {
+	if os.Getenv("SPECSCORE_WINDOWS_TERMINATION_FAILURE_HELPER") != "1" {
+		return
+	}
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatalf("read event from stdin: %v", err)
+	}
+	if err := os.WriteFile(
+		os.Getenv("SPECSCORE_CHILD_PID_FILE"),
+		[]byte(strconv.Itoa(os.Getpid())),
+		0o600,
+	); err != nil {
+		t.Fatalf("record PID: %v", err)
+	}
+	time.Sleep(30 * time.Second)
 }
 
 // TestExecCancellationTerminatesHungProcessTree verifies Windows Job Object
@@ -424,14 +461,16 @@ func waitForWindowsChildPID(
 	deadline := time.Now().Add(timeout)
 	for {
 		pidBytes, err := os.ReadFile(path)
-		if err == nil {
+		// os.WriteFile creates the file before it writes the PID, so an empty
+		// file means the writer is between those two steps: keep polling.
+		if err == nil && len(pidBytes) > 0 {
 			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
 			if parseErr != nil || pid <= 0 {
 				t.Fatalf("child pid = %q, want a positive integer: %v", pidBytes, parseErr)
 			}
 			return pid
 		}
-		if !errors.Is(err, os.ErrNotExist) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("read child pid: %v", err)
 		}
 		if result != nil {
