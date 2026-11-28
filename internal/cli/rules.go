@@ -23,6 +23,7 @@ func rulesCommand() *cobra.Command {
 		Long: `Lists every registered lint rule with its id, family, and description in a
 deterministic order. This is a read-only command that prints the rule catalog
 and exits 0.`,
+		Args: cobra.NoArgs,
 		RunE: runRules,
 	}
 	cmd.Flags().String("family", "", "restrict output to a single rule family")

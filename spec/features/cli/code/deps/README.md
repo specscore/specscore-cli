@@ -82,7 +82,7 @@ Standard CLI exit codes (see [parent](../../README.md#shared-exit-code-contract)
 | Code | Condition |
 |---|---|
 | `0` | Scan completed (zero or more references reported) |
-| `2` | `--type` or `--path` is invalid |
+| `2` | `--type` or `--path` is invalid, or a positional argument is given (the command takes none) |
 | `4` | `--check` found one or more invalid Feature citations; diagnostics are sorted by source file and canonical reference. |
 | `10` | Unexpected I/O failure while scanning |
 

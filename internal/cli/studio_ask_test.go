@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/specscore/specscore-cli/internal/studio/fact"
+	"github.com/specscore/specscore-cli/pkg/exitcode"
 )
 
 // --- AC: ask-routes-with-citations ---
@@ -196,6 +198,33 @@ func TestStudioAsk_ListExits0(t *testing.T) {
 		if !strings.Contains(out, id) {
 			t.Errorf("--list missing template %q:\n%s", id, out)
 		}
+	}
+}
+
+// specscore:verifies feature/cli#ac:usage-errors-exit-2 — `studio ask --list` given a positional question exits 2 through the real entry point instead of ignoring it
+func TestStudioAsk_ListRejectsPositional(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	before := snapshotDir(t, root)
+	for _, args := range [][]string{
+		{"studio", "ask", "--list", "extra"},
+		{"studio", "ask", "--list", "who fronts acme"},
+	} {
+		var code int
+		var stderr string
+		stdout := captureStdout(t, func() { code, stderr = runCLIExit(t, args...) })
+		if code != exitcode.InvalidArgs {
+			t.Errorf("specscore %s exited %d, want %d (InvalidArgs)", strings.Join(args, " "), code, exitcode.InvalidArgs)
+		}
+		if want := "--list and a positional question are mutually exclusive"; !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+		}
+		if stdout != "" {
+			t.Errorf("stdout = %q, want no template list", stdout)
+		}
+	}
+	if after := snapshotDir(t, root); !reflect.DeepEqual(before, after) {
+		t.Errorf("project tree changed:\nbefore=%v\nafter=%v", before, after)
 	}
 }
 

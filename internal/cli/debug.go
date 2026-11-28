@@ -45,6 +45,7 @@ func debugErrorCommand() *cobra.Command {
 			"Without --force: honors the crash-reports opt-out. " +
 			"With --force: bypasses opt-out for THIS invocation only (does not " +
 			"modify persistent state).",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDebugError(cmd.OutOrStdout(), text, force)
 		},

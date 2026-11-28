@@ -91,7 +91,7 @@ None. All inputs are flags.
 |---|---|
 | `0` | Feature scaffolded (and optionally committed/pushed) |
 | `1` | `--push` failed due to remote conflict |
-| `2` | Missing `--title`, invalid flag value, bad slug, collision with existing feature |
+| `2` | Missing `--title`, invalid flag value, bad slug, collision with existing feature, or a positional argument (the command takes none) |
 | `3` | `--parent` or `--depends-on` names a non-existent feature |
 | `10` | Not a git repository (with `--commit`/`--push`), or unexpected I/O / git failure |
 
