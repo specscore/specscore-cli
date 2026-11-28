@@ -159,14 +159,16 @@ func waitForUnixChildPID(t *testing.T, path string, timeout time.Duration) int {
 	deadline := time.Now().Add(timeout)
 	for {
 		pidBytes, err := os.ReadFile(path)
-		if err == nil {
+		// The shell's ">" redirection creates the file before printf writes the
+		// PID, so an empty file means the writer is between those two steps.
+		if err == nil && len(pidBytes) > 0 {
 			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
 			if parseErr != nil || pid <= 0 {
 				t.Fatalf("child pid = %q, want a positive integer: %v", pidBytes, parseErr)
 			}
 			return pid
 		}
-		if !errors.Is(err, os.ErrNotExist) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("read child pid: %v", err)
 		}
 		if time.Now().After(deadline) {
