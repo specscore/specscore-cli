@@ -223,6 +223,16 @@ func isCommandGroup(cmd *cobra.Command) bool {
 // function prints its help and exits 0 before any argument validator runs,
 // and a runnable group without a validator accepts any positional.
 //
+// Every group also stops parsing its own flags at the first positional.
+// Cobra parses a command's flags before it validates the command's
+// arguments, and by default parses flags found after positionals too, so
+// `specscore idea frobnicate --format json` failed as an unknown flag (2)
+// and `specscore idea frobnicate --help` printed the group's help (0)
+// before the unknown subcommand was ever reported. On a group, everything
+// after the subcommand name belongs to that subcommand, which has its own
+// flag set; flags placed before it (`specscore idea --no-telemetry list`)
+// still parse as before.
+//
 // A command with no Run function can only dispatch to subcommands, so it is
 // a group even before any subcommand is registered under it. It gets
 // cobra.NoArgs, replacing any Args (Cobra never consulted them), and a Run
@@ -237,6 +247,9 @@ func isCommandGroup(cmd *cobra.Command) bool {
 func rejectUnknownSubcommands(root *cobra.Command) {
 	for _, cmd := range root.Commands() {
 		rejectUnknownSubcommands(cmd)
+		if isCommandGroup(cmd) || !cmd.Runnable() {
+			cmd.Flags().SetInterspersed(false)
+		}
 		switch {
 		case !cmd.Runnable():
 			cmd.Args = cobra.NoArgs

@@ -166,7 +166,7 @@ On any non-zero exit, a human-readable explanation MUST be written to stderr. st
 
 When a subcommand is not recognized — typically because the installed `specscore` predates a subcommand the caller requires — the CLI MUST exit `8` (UnsupportedCommand) rather than a generic `1`/`2`/`10`. This lets callers, notably capability-gated agent skills, distinguish a present-but-outdated binary from a genuine command failure; a wholly-absent binary remains the shell's `127`. The mapping is scoped to unknown subcommands of a command group only: unknown flags, and an extra positional on a leaf command that has no subcommands, keep their `2` (InvalidArgs) semantics ([cli#req:usage-errors-exit-2](#req-usage-errors-exit-2)), and an error that already carries an exit code MUST NOT be reclassified. A human-readable message naming the unrecognized subcommand MUST be written to stderr, and nothing to stdout.
 
-The mapping MUST hold for every command group at every depth (`specscore idea frobnicate`, `specscore lesson occurrence frobnicate`), including groups the command framework registers (`completion`) and a group none of whose subcommands is registered yet (`consilium` on a build that predates `verdict`). It MUST be applied centrally, so a group cannot fall back to printing its help and exiting `0` because it declares no argument validator of its own. A group invoked with no subcommand at all prints its help on stdout and exits `0`.
+The mapping MUST hold for every command group at every depth (`specscore idea frobnicate`, `specscore lesson occurrence frobnicate`), including groups the command framework registers (`completion`) and a group none of whose subcommands is registered yet (`consilium` on a build that predates `verdict`). It MUST hold whatever flags follow the unrecognized subcommand, since they belong to that subcommand: `specscore consilium verdict --votes votes.yaml`, `specscore idea frobnicate --format json`, and `specscore idea frobnicate --help` all exit `8` naming the subcommand, never `2` for an unknown flag or `0` with the group's help. It MUST be applied centrally, so a group cannot fall back to printing its help and exiting `0` because it declares no argument validator of its own. A group invoked with no subcommand at all prints its help on stdout and exits `0`.
 
 #### REQ: usage-errors-exit-2
 
@@ -225,7 +225,7 @@ The Feature spec is the source of truth the website renders from; the `README.md
 **Requirements:** cli#req:unsupported-subcommand-mapping
 
 **Given** an installed `specscore` whose command set does not include the requested subcommand (for example, `specscore consilium verdict` on a build that predates the `verdict` subcommand)
-**When** the user invokes that unrecognized subcommand under any command group, at any depth (for example `specscore idea frobnicate`, `specscore lesson occurrence frobnicate`, or `specscore completion frobnicate`)
+**When** the user invokes that unrecognized subcommand under any command group, at any depth (for example `specscore idea frobnicate`, `specscore lesson occurrence frobnicate`, or `specscore completion frobnicate`), with or without flags after it (`specscore idea frobnicate --format json`, `specscore idea frobnicate --help`)
 **Then** the command exits `8` (UnsupportedCommand) and writes a stderr message naming the unrecognized subcommand; no output appears on stdout. Invoked with no subcommand, the same group prints its help and exits `0`.
 
 ### AC: usage-errors-exit-2

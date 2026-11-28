@@ -442,25 +442,40 @@ func TestRun_EveryCommandGroupRejectsUnknownSubcommand(t *testing.T) {
 			withCwd(t, root)
 			var code int
 			var stderr string
-			stdout := captureStdout(t, func() {
-				code, stderr = runCLIExit(t, append(args, "frobnicate")...)
-			})
-			if code != exitcode.UnsupportedCommand {
-				t.Errorf("%s frobnicate exited %d, want %d (UnsupportedCommand)", group.CommandPath(), code, exitcode.UnsupportedCommand)
-			}
-			if want := `unknown command "frobnicate" for "` + group.CommandPath() + `"`; !strings.Contains(stderr, want) {
-				t.Errorf("stderr = %q, want it to contain %q", stderr, want)
-			}
-			if stdout != "" {
-				t.Errorf("stdout = %q, want nothing on stdout", stdout)
+			// Flags after the unknown subcommand belong to it, so neither a
+			// flag the group lacks nor --help may hide it; nor may a root
+			// persistent flag placed before the group.
+			for _, invocation := range [][]string{
+				append(append([]string{}, args...), "frobnicate"),
+				append(append([]string{}, args...), "frobnicate", "--format", "json"),
+				append(append([]string{}, args...), "frobnicate", "--help"),
+				append(append([]string{"--no-telemetry"}, args...), "frobnicate", "--format=json"),
+			} {
+				stdout := captureStdout(t, func() {
+					code, stderr = runCLIExit(t, invocation...)
+				})
+				line := "specscore " + strings.Join(invocation, " ")
+				if code != exitcode.UnsupportedCommand {
+					t.Errorf("%s exited %d, want %d (UnsupportedCommand)", line, code, exitcode.UnsupportedCommand)
+				}
+				if want := `unknown command "frobnicate" for "` + group.CommandPath() + `"`; !strings.Contains(stderr, want) {
+					t.Errorf("%s: stderr = %q, want it to contain %q", line, stderr, want)
+				}
+				if stdout != "" {
+					t.Errorf("%s: stdout = %q, want nothing on stdout", line, stdout)
+				}
 			}
 
-			stdout = captureStdout(t, func() { code, _ = runCLIExit(t, args...) })
+			stdout := captureStdout(t, func() { code, _ = runCLIExit(t, args...) })
 			if code != 0 {
 				t.Errorf("%s with no subcommand exited %d, want 0", group.CommandPath(), code)
 			}
 			if !strings.Contains(stdout, "USAGE") {
 				t.Errorf("%s with no subcommand printed %q on stdout, want its help", group.CommandPath(), stdout)
+			}
+			stdout = captureStdout(t, func() { code, _ = runCLIExit(t, append(append([]string{}, args...), "--help")...) })
+			if code != 0 || !strings.Contains(stdout, "USAGE") {
+				t.Errorf("%s --help exited %d with stdout %q, want its help and 0", group.CommandPath(), code, stdout)
 			}
 		})
 	}
@@ -471,6 +486,27 @@ func TestRun_EveryCommandGroupRejectsUnknownSubcommand(t *testing.T) {
 		if !seen[path] {
 			t.Errorf("enumeration did not reach command group %q", path)
 		}
+	}
+}
+
+// TestRun_GroupFlagParsingStopsOnlyAtTheSubcommand guards the other side of
+// rejectUnknownSubcommands' non-interspersed group flags: a valid subcommand
+// still parses flags placed after it, and the group itself still parses
+// flags placed before the subcommand.
+func TestRun_GroupFlagParsingStopsOnlyAtTheSubcommand(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	for _, args := range [][]string{
+		{"idea", "list", "--format", "json"},
+		{"idea", "--no-telemetry", "list", "--format=json"},
+		{"--no-telemetry", "lesson", "occurrence", "--help"},
+	} {
+		if code, stderr := runCLIExit(t, args...); code != 0 {
+			t.Errorf("specscore %s exited %d (stderr %q), want 0", strings.Join(args, " "), code, stderr)
+		}
+	}
+	if code, stderr := runCLIExit(t, "idea", "list", "--zz-bogus"); code != exitcode.InvalidArgs || !strings.Contains(stderr, "unknown flag: --zz-bogus") {
+		t.Errorf("specscore idea list --zz-bogus exited %d (stderr %q), want 2 naming the flag", code, stderr)
 	}
 }
 

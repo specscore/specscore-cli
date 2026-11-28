@@ -85,7 +85,9 @@ auto-discover them once synchronized.
 	// mapLeafExtraArgs give it the message every other no-argument leaf has
 	// (cli#req:usage-errors-exit-2).
 	for _, sub := range cmd.Commands() {
-		sub.Args = cobra.NoArgs
+		if sub.Name() == "sync" {
+			sub.Args = cobra.NoArgs
+		}
 	}
 	if cfgErr != nil {
 		cmd.RunE = func(*cobra.Command, []string) error {
