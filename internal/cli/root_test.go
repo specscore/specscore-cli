@@ -255,6 +255,8 @@ func TestRun_UsageErrorsExit2(t *testing.T) {
 		{"MarkFlagRequired", []string{"issue", "change-status", "foo"}, `required flag(s) "to" not set`},
 		{"NoArgs leaf given a positional", []string{"idea", "list", "extra"}, `unexpected argument "extra": specscore idea list accepts no arguments`},
 		{"NoArgs top-level leaf given a positional", []string{"version", "extra"}, `unexpected argument "extra": specscore version accepts no arguments`},
+		{"flag-only top-level leaf given a positional", []string{"rules", "extra"}, `unexpected argument "extra": specscore rules accepts no arguments`},
+		{"flag-only scaffolder given a positional", []string{"feature", "new", "extra", "--title", "Foo"}, `unexpected argument "extra": specscore feature new accepts no arguments`},
 		{"leaf Cobra registers during Execute", []string{"completion", "bash", "extra"}, `unexpected argument "extra": specscore completion bash accepts no arguments`},
 		{"leaf fang registers during Execute", []string{"man", "extra"}, `unexpected argument "extra": specscore man accepts no arguments`},
 		{"unknown flag", []string{"idea", "list", "--zz-bogus"}, "unknown flag: --zz-bogus"},
@@ -559,10 +561,63 @@ func TestRun_EveryNoArgLeafRejectsExtraArgument(t *testing.T) {
 			}
 		})
 	}
-	for _, path := range []string{"specscore completion bash", "specscore completion powershell", "specscore man", "specscore idea list", "specscore skills sync"} {
+	for _, path := range []string{
+		"specscore completion bash", "specscore completion powershell", "specscore man", "specscore idea list", "specscore skills sync",
+		// These once had no Args validator, so they accepted and ignored
+		// an extra positional with exit 0.
+		"specscore code deps", "specscore debug error", "specscore feature new", "specscore recovery list", "specscore rules",
+	} {
 		if !seen[path] {
 			t.Errorf("enumeration did not reach NoArgs leaf %q; the executed tree is not the one being checked", path)
 		}
+	}
+}
+
+// leavesTakingArbitraryPositionals lists the only leaf commands allowed to
+// declare no Args validator, each because it genuinely accepts any number of
+// positionals (cli#req:usage-errors-exit-2). Cobra's default for a leaf with
+// nil Args is to accept and silently ignore whatever positionals it is given,
+// so every other leaf must declare its arity.
+var leavesTakingArbitraryPositionals = map[string]string{
+	// Cobra's built-in help command: its positionals are the path of the
+	// command whose help to show (`specscore help idea list`), at any depth.
+	"specscore help": "positionals name the command whose help to show",
+}
+
+// TestRun_EveryLeafDeclaresItsArity walks the executed command tree and fails
+// for any leaf whose Args validator is nil unless it is on
+// leavesTakingArbitraryPositionals, so a leaf added later without a validator
+// cannot silently accept extra positionals. Each allowlisted leaf must still
+// be in the tree, still have nil Args, and still accept positionals with
+// exit 0, or the allowlist entry is stale.
+func TestRun_EveryLeafDeclaresItsArity(t *testing.T) {
+	nilArgs := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+		if !c.HasParent() || isCommandGroup(c) || c.Args != nil {
+			return
+		}
+		nilArgs[c.CommandPath()] = true
+		if _, ok := leavesTakingArbitraryPositionals[c.CommandPath()]; !ok {
+			t.Errorf("leaf %q declares no Args validator, so it silently accepts extra positionals; "+
+				"set the validator its spec gives (cobra.NoArgs, cobra.ExactArgs(n), ...) "+
+				"or, if it genuinely takes arbitrary positionals, add it to leavesTakingArbitraryPositionals with the reason", c.CommandPath())
+		}
+	}
+	walk(executedCommandTree(t))
+
+	for path := range leavesTakingArbitraryPositionals {
+		if !nilArgs[path] {
+			t.Errorf("allowlisted leaf %q is not a validator-less leaf of the executed tree; remove it from leavesTakingArbitraryPositionals", path)
+		}
+	}
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	if code, stderr := runCLIExit(t, "help", "idea", "list"); code != 0 {
+		t.Errorf("specscore help idea list exited %d (stderr %q), want 0", code, stderr)
 	}
 }
 

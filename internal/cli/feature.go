@@ -748,6 +748,7 @@ func featureNewCommand() *cobra.Command {
 		Long: `Creates a new feature directory with a README containing all required
 sections. Changes are local by default; use --commit to create a git
 commit, or --push for atomic commit-and-push.`,
+		Args: cobra.NoArgs,
 		RunE: runFeatureNew,
 	}
 	cmd.Flags().String("title", "", "human-readable feature title (required)")

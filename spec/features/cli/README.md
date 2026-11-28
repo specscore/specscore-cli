@@ -178,6 +178,8 @@ The CLI MUST exit `2` (InvalidArgs), naming the problem on stderr and never the 
 
 The mapping MUST be applied centrally on the root command, for every verb, so a verb that declares its arity, required flags, or flag types through the command framework cannot inherit a different code. An error that already carries an exit code MUST NOT be reclassified. An unrecognized subcommand of a command group stays under [cli#req:unsupported-subcommand-mapping](#req-unsupported-subcommand-mapping) (exit `8`). A verb whose own spec requires a different code for one of these cases MUST return that code itself.
 
+Every leaf command MUST declare how many positionals it accepts, so that one it does not accept is rejected as above rather than silently ignored. A leaf whose spec gives no positional parameters (for example `specscore rules`, `specscore code deps`, `specscore feature new`, `specscore recovery list`, or `specscore debug error`) accepts none. A leaf may accept any number of positionals only where its own contract says so; the only such leaf is the framework's `help`, whose positionals name the command whose help to show (`specscore help idea list`).
+
 ### Output format conventions
 
 Most read commands support `--format` for selecting between `text`, `yaml`, and `json`. Some also support `md` (task list).
@@ -233,7 +235,7 @@ The Feature spec is the source of truth the website renders from; the `README.md
 **Requirements:** cli#req:usage-errors-exit-2
 
 **Given** a SpecScore project
-**When** the user invokes a verb with fewer or more positional arguments than it accepts (for example `specscore lesson relation add a`, `specscore event merge`, `specscore telemetry enable a b`, or `specscore studio resolve a b c`), gives a positional to a leaf command that takes none (for example `specscore idea list extra` or `specscore version extra`), omits a flag it requires (for example `specscore issue change-status foo` without `--to`), or passes an unknown or unparsable flag (for example `specscore idea list --zz-bogus` or `specscore lesson list --min-recurred=abc`)
+**When** the user invokes a verb with fewer or more positional arguments than it accepts (for example `specscore lesson relation add a`, `specscore event merge`, `specscore telemetry enable a b`, or `specscore studio resolve a b c`), gives a positional to a leaf command that takes none (for example `specscore idea list extra`, `specscore version extra`, `specscore rules extra`, or `specscore feature new extra --title Foo`), omits a flag it requires (for example `specscore issue change-status foo` without `--to`), or passes an unknown or unparsable flag (for example `specscore idea list --zz-bogus` or `specscore lesson list --min-recurred=abc`)
 **Then** the command exits `2` (InvalidArgs), stderr names the argument count, the missing flag, or the bad flag (for a positional on a leaf that takes none, the argument and that the command accepts no arguments, not "unknown command"), and no file in the project changes.
 
 ## Consumers

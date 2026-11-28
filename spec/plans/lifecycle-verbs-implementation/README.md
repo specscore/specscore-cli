@@ -242,7 +242,7 @@ Suggested test flow:
 2. `specscore idea new foo` — creates `spec/ideas/foo.md` at `Status: Draft`.
 3. `specscore idea change-status foo --to=approved` — exit `0`, file at `Approved`, index synced.
 4. `specscore idea change-status foo --to=archived` — exit `0`, file moved to `archived/`, both indexes synced.
-5. `specscore feature new bar --status Draft` (existing functionality) — creates `spec/features/bar/README.md`.
+5. `specscore feature new --title Bar --status Draft` (existing functionality; the slug `bar` derives from the title) — creates `spec/features/bar/README.md`.
 6. `specscore feature change-status bar --to="under review"` — exit `0`, status `Under Review`, index synced.
 7. `specscore feature change-status bar --to=approved` — exit `0`, status `Approved`, index synced.
 8. `specscore feature change-status bar --to=implementing` — exit `0`, status `Implementing`, index synced.

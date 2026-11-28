@@ -38,6 +38,7 @@ depend on. Scans source files for specscore: annotations and URLs in comments
 and lists the referenced resources.
 
 This is a read-only command that scans the working tree and does not mutate anything.`,
+		Args: cobra.NoArgs,
 		RunE: runCodeDeps,
 	}
 	cmd.Flags().String("path", "**/*", "glob pattern to select files (e.g., pkg/**/*.go). Defaults to **/* (all files)")

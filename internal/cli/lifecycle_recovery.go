@@ -92,6 +92,7 @@ func lifecycleRecoveryListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List lifecycle transaction receipts (read-only)",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := lifecycleRecoveryProjectRoot(cmd)
 			if err != nil {
