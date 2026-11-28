@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -26,6 +27,53 @@ func execSampleEvent(t *testing.T) Event {
 		Artifact:  Artifact{Type: "idea", ID: "demo", Path: "spec/ideas/demo.md", Revision: "uncommitted"},
 		Payload:   json.RawMessage(`{"k":"v"}`),
 	}
+}
+
+// execUnreachableTimeout is the Exec budget for tests that drive the deadline
+// with manualDeadlineContext: its real timer never fires during a test.
+const execUnreachableTimeout = time.Hour
+
+// manualDeadlineContext is a parent context whose deadline is exceeded only
+// when a test calls expire. Deliver derives its timeout context from the parent,
+// so that derived context reports context.DeadlineExceeded at the exact setup
+// boundary a test names. A short real-time budget cannot do that: a slow runner
+// can spend it before the boundary is reached (for example inside
+// exec.CommandContext's executable lookup), and Deliver then correctly reports
+// the timeout from an earlier check than the one under test.
+type manualDeadlineContext struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func newManualDeadlineContext() *manualDeadlineContext {
+	return &manualDeadlineContext{done: make(chan struct{})}
+}
+
+func (c *manualDeadlineContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func (c *manualDeadlineContext) Done() <-chan struct{} { return c.done }
+
+func (c *manualDeadlineContext) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (c *manualDeadlineContext) Value(any) any { return nil }
+
+// expire exceeds the deadline. Callers that need Deliver's derived context to
+// observe it must then wait on that context's Done channel, because the context
+// package propagates a custom parent's cancellation asynchronously.
+func (c *manualDeadlineContext) expire() { c.once.Do(func() { close(c.done) }) }
+
+// expireAndWait exceeds the deadline and returns once Deliver's derived
+// context reports it.
+func (c *manualDeadlineContext) expireAndWait(derived context.Context) {
+	c.expire()
+	<-derived.Done()
 }
 
 // TestExecPipesEventToStdin verifies AC:exec-pipes-event-to-stdin. The Exec
@@ -185,15 +233,15 @@ func TestExecStdinPipeErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
 		setupCtx = ctx
 		return &fakeExecProcessTree{}, nil
 	}
+	deadline := newManualDeadlineContext()
 	sentinel := errors.New("stdin pipe after deadline")
 	cmdStdinPipeFn = func(*exec.Cmd) (io.WriteCloser, error) {
-		<-setupCtx.Done()
+		deadline.expireAndWait(setupCtx)
 		return nil, sentinel
 	}
 
-	timeout := 25 * time.Millisecond
-	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
-	assertExecTimeoutError(t, err, timeout, sentinel)
+	err := NewExec([]string{"unused"}, nil, execUnreachableTimeout).Deliver(deadline, execSampleEvent(t))
+	assertExecTimeoutError(t, err, execUnreachableTimeout, sentinel)
 }
 
 // TestExecStdinPipeSuccessAfterDeadlineReturnsTimeoutError covers the
@@ -211,17 +259,17 @@ func TestExecStdinPipeSuccessAfterDeadlineReturnsTimeoutError(t *testing.T) {
 		setupCtx = ctx
 		return &fakeExecProcessTree{}, nil
 	}
+	deadline := newManualDeadlineContext()
 	stdin := &fakeWriteCloser{}
 	cmdStdinPipeFn = func(*exec.Cmd) (io.WriteCloser, error) {
-		<-setupCtx.Done()
+		deadline.expireAndWait(setupCtx)
 		return stdin, nil
 	}
 
-	timeout := 25 * time.Millisecond
 	// Use an existing executable so CommandContext's canceled-context check,
 	// rather than path lookup, is the Start result being classified.
-	err := NewExec([]string{os.Args[0]}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
-	assertExecTimeoutError(t, err, timeout, context.DeadlineExceeded)
+	err := NewExec([]string{os.Args[0]}, nil, execUnreachableTimeout).Deliver(deadline, execSampleEvent(t))
+	assertExecTimeoutError(t, err, execUnreachableTimeout, context.DeadlineExceeded)
 	if stdin.closeCalls != 1 {
 		t.Fatalf("stdin Close calls = %d, want 1", stdin.closeCalls)
 	}
@@ -246,9 +294,10 @@ func TestExecStartErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
 		setupCtx = ctx
 		return &fakeExecProcessTree{}, nil
 	}
+	deadline := newManualDeadlineContext()
 	stdin := &fakeWriteCloser{}
 	cmdStdinPipeFn = func(*exec.Cmd) (io.WriteCloser, error) {
-		<-setupCtx.Done()
+		deadline.expireAndWait(setupCtx)
 		return stdin, nil
 	}
 	sentinel := errors.New("start after deadline")
@@ -258,9 +307,8 @@ func TestExecStartErrorAfterDeadlineReturnsTimeoutError(t *testing.T) {
 		return sentinel
 	}
 
-	timeout := 25 * time.Millisecond
-	err := NewExec([]string{"unused"}, nil, timeout).Deliver(context.Background(), execSampleEvent(t))
-	assertExecTimeoutError(t, err, timeout, sentinel)
+	err := NewExec([]string{"unused"}, nil, execUnreachableTimeout).Deliver(deadline, execSampleEvent(t))
+	assertExecTimeoutError(t, err, execUnreachableTimeout, sentinel)
 	if startCalls != 1 {
 		t.Fatalf("Start calls = %d, want 1", startCalls)
 	}
@@ -276,26 +324,20 @@ func TestExecDeadlineDuringAfterStartReturnsTimeoutError(t *testing.T) {
 	originalConfigure := configureExecProcessTreeFn
 	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
 	var setupCtx context.Context
+	deadline := newManualDeadlineContext()
 	tree := &fakeExecProcessTree{}
 	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
 		setupCtx = ctx
 		tree.afterStartFn = func() error {
-			<-setupCtx.Done()
+			deadline.expireAndWait(setupCtx)
 			return setupCtx.Err()
 		}
 		return tree, nil
 	}
 
-	timeout := 25 * time.Millisecond
-	err := NewExec([]string{"sleep", "30"}, nil, timeout).
-		Deliver(context.Background(), execSampleEvent(t))
-	var timeoutErr *ExecTimeoutError
-	if !errors.As(err, &timeoutErr) {
-		t.Fatalf("Deliver error type = %T (%v), want *ExecTimeoutError", err, err)
-	}
-	if timeoutErr.Timeout != timeout {
-		t.Fatalf("timeoutErr.Timeout = %v, want %v", timeoutErr.Timeout, timeout)
-	}
+	err := NewExec([]string{"sleep", "30"}, nil, execUnreachableTimeout).
+		Deliver(deadline, execSampleEvent(t))
+	assertExecTimeoutError(t, err, execUnreachableTimeout, context.DeadlineExceeded)
 	if !tree.closed {
 		t.Fatal("process tree was not closed after afterStart deadline")
 	}
@@ -309,23 +351,23 @@ func TestExecAfterStartSuccessAfterDeadlineReturnsTimeoutError(t *testing.T) {
 	originalConfigure := configureExecProcessTreeFn
 	t.Cleanup(func() { configureExecProcessTreeFn = originalConfigure })
 	var setupCtx context.Context
+	deadline := newManualDeadlineContext()
 	tree := &fakeExecProcessTree{}
 	configureExecProcessTreeFn = func(ctx context.Context, _ *exec.Cmd) (execProcessTree, error) {
 		setupCtx = ctx
 		tree.afterStartFn = func() error {
-			<-setupCtx.Done()
+			deadline.expireAndWait(setupCtx)
 			return nil
 		}
 		return tree, nil
 	}
 
-	timeout := 25 * time.Millisecond
 	err := NewExec(
 		[]string{os.Args[0], "-test.run=^TestExecDeadlineHelperProcess$", "--"},
 		map[string]string{"SPECSCORE_EVENT_DEADLINE_HELPER": "1"},
-		timeout,
-	).Deliver(context.Background(), execSampleEvent(t))
-	assertExecTimeoutError(t, err, timeout, context.DeadlineExceeded)
+		execUnreachableTimeout,
+	).Deliver(deadline, execSampleEvent(t))
+	assertExecTimeoutError(t, err, execUnreachableTimeout, context.DeadlineExceeded)
 	if !tree.closed {
 		t.Fatal("process tree was not closed after successful afterStart deadline")
 	}
