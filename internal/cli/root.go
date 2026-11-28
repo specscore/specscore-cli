@@ -166,7 +166,8 @@ var unknownCommandFor = regexp.MustCompile(`^unknown command ("(?:[^"\\]|\\.)*")
 // "specscore idea list"`, the same text as an unrecognized subcommand, which
 // mapUnsupportedCommand would turn into exit 8; on a leaf there is no
 // subcommand to be missing, so it is an arity error
-// (cli#req:usage-errors-exit-2). Command groups keep exit 8.
+// (cli#req:usage-errors-exit-2), and the message says so instead of calling
+// the argument an unknown command. Command groups keep exit 8.
 //
 // root is the command tree as it stands after execution, so leaves that Cobra
 // and fang register only during Execute (`completion bash|zsh|fish|powershell`,
@@ -185,10 +186,88 @@ func mapLeafExtraArgs(root *cobra.Command, err error) error {
 		return err
 	}
 	cmd := commandWithPath(root, m[2])
-	if cmd == nil || cmd.HasSubCommands() {
+	if cmd == nil || isCommandGroup(cmd) {
 		return err
 	}
-	return exitcode.Wrap(exitcode.InvalidArgs, fmt.Sprintf("accepts 0 arg(s), received %s", m[1]), err)
+	return exitcode.Wrap(exitcode.InvalidArgs,
+		fmt.Sprintf("unexpected argument %s: %s accepts no arguments", m[1], cmd.CommandPath()), err)
+}
+
+// mapExecuteError applies the exit-code mappings to an error returned by the
+// root command's execution, in the order they depend on: a leaf's extra
+// positional is coded 2 before mapUnsupportedCommand could read the same
+// Cobra text as an unknown subcommand (8). The fang error handler and the
+// value returned to Fatal both use it, so the rendered message and the exit
+// code describe the same problem.
+func mapExecuteError(root *cobra.Command, err error) error {
+	return mapInvalidArgs(mapUnsupportedCommand(mapLeafExtraArgs(root, err)))
+}
+
+// commandGroupAnnotation marks a command that rejectUnknownSubcommands
+// treated as a command group because it had no Run function. It keeps a group
+// that has no subcommands yet (`consilium`) a group for mapLeafExtraArgs after
+// it has been given a Run function.
+const commandGroupAnnotation = "specscore.command-group"
+
+// isCommandGroup reports whether a positional given to cmd names a
+// subcommand (exit 8 when unrecognized) rather than an argument (exit 2).
+func isCommandGroup(cmd *cobra.Command) bool {
+	return cmd.HasSubCommands() || cmd.Annotations[commandGroupAnnotation] == "true"
+}
+
+// rejectUnknownSubcommands makes every command group below the root reject a
+// positional argument it does not recognize as a subcommand, with Cobra's
+// `unknown command "x" for "specscore idea"` error that mapUnsupportedCommand
+// codes as exit 8 (cli#req:unsupported-subcommand-mapping). Without it, Cobra
+// checks unknown subcommands only on the root: a command without a Run
+// function prints its help and exits 0 before any argument validator runs,
+// and a runnable group without a validator accepts any positional.
+//
+// Every group also stops parsing its own flags at the first positional.
+// Cobra parses a command's flags before it validates the command's
+// arguments, and by default parses flags found after positionals too, so
+// `specscore idea frobnicate --format json` failed as an unknown flag (2)
+// and `specscore idea frobnicate --help` printed the group's help (0)
+// before the unknown subcommand was ever reported. On a group, everything
+// after the subcommand name belongs to that subcommand, which has its own
+// flag set; flags placed before it (`specscore idea --no-telemetry list`)
+// still parse as before.
+//
+// A command with no Run function can only dispatch to subcommands, so it is
+// a group even before any subcommand is registered under it. It gets
+// cobra.NoArgs, replacing any Args (Cobra never consulted them), and a Run
+// function that prints its help, so invoking it with no subcommand still
+// prints the help and exits 0. A runnable command with subcommands keeps its
+// own Args unless it has none. The root keeps Cobra's own check, which adds
+// suggestions to the message.
+//
+// It walks root's tree as it stands when called, so it must run after every
+// group is registered; executeWithPanicRecovery calls it just before
+// execution, after registering Cobra's `completion` group.
+func rejectUnknownSubcommands(root *cobra.Command) {
+	for _, cmd := range root.Commands() {
+		rejectUnknownSubcommands(cmd)
+		if isCommandGroup(cmd) || !cmd.Runnable() {
+			cmd.Flags().SetInterspersed(false)
+		}
+		switch {
+		case !cmd.Runnable():
+			cmd.Args = cobra.NoArgs
+			cmd.RunE = showGroupHelp
+			if cmd.Annotations == nil {
+				cmd.Annotations = map[string]string{}
+			}
+			cmd.Annotations[commandGroupAnnotation] = "true"
+		case cmd.HasSubCommands() && cmd.Args == nil:
+			cmd.Args = cobra.NoArgs
+		}
+	}
+}
+
+// showGroupHelp is the Run function rejectUnknownSubcommands gives a command
+// group that has none: Cobra validates arguments only for a runnable command.
+func showGroupHelp(cmd *cobra.Command, _ []string) error {
+	return cmd.Help()
 }
 
 // commandWithPath returns the command under root whose quoted CommandPath is

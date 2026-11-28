@@ -253,10 +253,10 @@ func TestRun_UsageErrorsExit2(t *testing.T) {
 		{"MaximumNArgs", []string{"telemetry", "enable", "a", "b"}, "accepts at most 1 arg(s), received 2"},
 		{"RangeArgs", []string{"studio", "resolve", "a", "b", "c"}, "accepts between 0 and 2 arg(s), received 3"},
 		{"MarkFlagRequired", []string{"issue", "change-status", "foo"}, `required flag(s) "to" not set`},
-		{"NoArgs leaf given a positional", []string{"idea", "list", "extra"}, `accepts 0 arg(s), received "extra"`},
-		{"NoArgs top-level leaf given a positional", []string{"version", "extra"}, `accepts 0 arg(s), received "extra"`},
-		{"leaf Cobra registers during Execute", []string{"completion", "bash", "extra"}, `accepts 0 arg(s), received "extra"`},
-		{"leaf fang registers during Execute", []string{"man", "extra"}, `accepts 0 arg(s), received "extra"`},
+		{"NoArgs leaf given a positional", []string{"idea", "list", "extra"}, `unexpected argument "extra": specscore idea list accepts no arguments`},
+		{"NoArgs top-level leaf given a positional", []string{"version", "extra"}, `unexpected argument "extra": specscore version accepts no arguments`},
+		{"leaf Cobra registers during Execute", []string{"completion", "bash", "extra"}, `unexpected argument "extra": specscore completion bash accepts no arguments`},
+		{"leaf fang registers during Execute", []string{"man", "extra"}, `unexpected argument "extra": specscore man accepts no arguments`},
 		{"unknown flag", []string{"idea", "list", "--zz-bogus"}, "unknown flag: --zz-bogus"},
 		{"flag value does not parse", []string{"lesson", "list", "--min-recurred=abc"}, `invalid argument "abc" for "--min-recurred" flag`},
 		{"flag missing its value", []string{"idea", "change-status", "foo", "--to"}, "flag needs an argument: --to"},
@@ -319,7 +319,7 @@ func TestMapLeafExtraArgs(t *testing.T) {
 		if !errors.As(got, &ec) || ec.ExitCode() != exitcode.InvalidArgs {
 			t.Errorf("%s with a positional = %v, want exit %d", c.CommandPath(), got, exitcode.InvalidArgs)
 		}
-		if got.Error() != `accepts 0 arg(s), received "extra"` || !errors.Is(got, in) {
+		if want := `unexpected argument "extra": ` + c.CommandPath() + " accepts no arguments"; got.Error() != want || !errors.Is(got, in) {
 			t.Errorf("%s: message %q / cause lost", c.CommandPath(), got.Error())
 		}
 	}
@@ -340,11 +340,57 @@ func TestMapLeafExtraArgs(t *testing.T) {
 	}
 }
 
-// TestMapLeafExtraArgs_EveryLeafOfTheExecutedTree walks the command tree as
-// it stands after a real execution, which includes leaves Cobra and fang
-// register only during Execute (completion, man) and any added in future, and
-// proves each NoArgs leaf's extra-positional error maps to exit 2.
-func TestMapLeafExtraArgs_EveryLeafOfTheExecutedTree(t *testing.T) {
+// TestRejectUnknownSubcommands pins which commands the walk rewrites: a
+// command with no Run function (with or without subcommands, keeping any
+// annotations it already has), and a runnable group with no Args. A runnable
+// group's own Args and a leaf are left alone, and so is the root.
+func TestRejectUnknownSubcommands(t *testing.T) {
+	run := func(*cobra.Command, []string) {}
+	own := func(*cobra.Command, []string) error { return nil }
+	root := &cobra.Command{Use: "root"}
+	dispatcher := &cobra.Command{Use: "dispatcher", Args: cobra.ArbitraryArgs}
+	dispatcher.AddCommand(&cobra.Command{Use: "sub", Run: run})
+	placeholder := &cobra.Command{Use: "placeholder", Annotations: map[string]string{"kept": "yes"}}
+	runnableNoArgs := &cobra.Command{Use: "runnable", Run: run}
+	runnableNoArgs.AddCommand(&cobra.Command{Use: "sub", Run: run})
+	runnableOwnArgs := &cobra.Command{Use: "own", Run: run, Args: own}
+	runnableOwnArgs.AddCommand(&cobra.Command{Use: "sub", Run: run})
+	leaf := &cobra.Command{Use: "leaf", Run: run}
+	root.AddCommand(dispatcher, placeholder, runnableNoArgs, runnableOwnArgs, leaf)
+
+	rejectUnknownSubcommands(root)
+
+	for _, c := range []*cobra.Command{dispatcher, placeholder, runnableNoArgs} {
+		if !isCommandGroup(c) {
+			t.Errorf("%s is not treated as a command group", c.Name())
+		}
+		if err := c.Args(c, []string{"x"}); err == nil || !strings.HasPrefix(err.Error(), `unknown command "x"`) {
+			t.Errorf("%s Args(x) = %v, want an unknown-command error", c.Name(), err)
+		}
+		if !c.Runnable() {
+			t.Errorf("%s is not runnable, so Cobra would never validate its arguments", c.Name())
+		}
+	}
+	if placeholder.Annotations["kept"] != "yes" {
+		t.Errorf("placeholder annotations = %v, existing annotation lost", placeholder.Annotations)
+	}
+	if runnableNoArgs.RunE != nil || runnableOwnArgs.RunE != nil {
+		t.Error("a runnable group's own Run function was replaced")
+	}
+	if runnableOwnArgs.Args(runnableOwnArgs, []string{"x"}) != nil {
+		t.Error("a runnable group's own Args was replaced")
+	}
+	if isCommandGroup(leaf) || leaf.Args != nil || root.Args != nil || root.Runnable() {
+		t.Error("a leaf or the root was rewritten")
+	}
+}
+
+// executedCommandTree returns the root command as it stands after a real
+// execution: it includes the commands Cobra and fang register only during
+// Execute (`completion` and its shells, `man`, `help`), and every group has
+// been through rejectUnknownSubcommands.
+func executedCommandTree(t *testing.T) *cobra.Command {
+	t.Helper()
 	t.Setenv("DO_NOT_TRACK", "1")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -357,31 +403,191 @@ func TestMapLeafExtraArgs_EveryLeafOfTheExecutedTree(t *testing.T) {
 	if err := executeWithPanicRecovery(root, opts...); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
+	return root
+}
+
+// commandArgs returns the arguments that invoke cmd, its path without the
+// root's name.
+func commandArgs(cmd *cobra.Command) []string {
+	return strings.Fields(cmd.CommandPath())[1:]
+}
+
+// specscore:verifies feature/cli#ac:unknown-subcommand-exits-8 — every command group of the executed tree, at every depth, given an unrecognized subcommand
+// specscore:verifies feature/cli/issue#ac:unknown-subcommand-rejected — `specscore issue frobnicate` is one of the enumerated groups
+//
+// TestRun_EveryCommandGroupRejectsUnknownSubcommand runs the real entry
+// point once per command group found in the executed tree, so a group added
+// later is covered without a list. Each must exit 8 with a stderr message
+// naming the subcommand and nothing on stdout; invoked with no subcommand,
+// each still prints its help on stdout and exits 0.
+func TestRun_EveryCommandGroupRejectsUnknownSubcommand(t *testing.T) {
+	var groups []*cobra.Command
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			if isCommandGroup(sub) {
+				groups = append(groups, sub)
+			}
+			walk(sub)
+		}
+	}
+	walk(executedCommandTree(t))
+
 	seen := map[string]bool{}
+	for _, group := range groups {
+		args := commandArgs(group)
+		seen[group.CommandPath()] = true
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			root := setupSpecRoot(t)
+			withCwd(t, root)
+			var code int
+			var stderr string
+			// Flags after the unknown subcommand belong to it, so neither a
+			// flag the group lacks nor --help may hide it; nor may a root
+			// persistent flag placed before the group.
+			for _, invocation := range [][]string{
+				append(append([]string{}, args...), "frobnicate"),
+				append(append([]string{}, args...), "frobnicate", "--format", "json"),
+				append(append([]string{}, args...), "frobnicate", "--help"),
+				append(append([]string{"--no-telemetry"}, args...), "frobnicate", "--format=json"),
+			} {
+				stdout := captureStdout(t, func() {
+					code, stderr = runCLIExit(t, invocation...)
+				})
+				line := "specscore " + strings.Join(invocation, " ")
+				if code != exitcode.UnsupportedCommand {
+					t.Errorf("%s exited %d, want %d (UnsupportedCommand)", line, code, exitcode.UnsupportedCommand)
+				}
+				if want := `unknown command "frobnicate" for "` + group.CommandPath() + `"`; !strings.Contains(stderr, want) {
+					t.Errorf("%s: stderr = %q, want it to contain %q", line, stderr, want)
+				}
+				if stdout != "" {
+					t.Errorf("%s: stdout = %q, want nothing on stdout", line, stdout)
+				}
+			}
+
+			stdout := captureStdout(t, func() { code, _ = runCLIExit(t, args...) })
+			if code != 0 {
+				t.Errorf("%s with no subcommand exited %d, want 0", group.CommandPath(), code)
+			}
+			if !strings.Contains(stdout, "USAGE") {
+				t.Errorf("%s with no subcommand printed %q on stdout, want its help", group.CommandPath(), stdout)
+			}
+			stdout = captureStdout(t, func() { code, _ = runCLIExit(t, append(append([]string{}, args...), "--help")...) })
+			if code != 0 || !strings.Contains(stdout, "USAGE") {
+				t.Errorf("%s --help exited %d with stdout %q, want its help and 0", group.CommandPath(), code, stdout)
+			}
+		})
+	}
+	for _, path := range []string{
+		"specscore idea", "specscore lesson occurrence", "specscore skills",
+		"specscore graph", "specscore event", "specscore completion", "specscore consilium",
+	} {
+		if !seen[path] {
+			t.Errorf("enumeration did not reach command group %q", path)
+		}
+	}
+}
+
+// TestRun_GroupFlagParsingStopsOnlyAtTheSubcommand guards the other side of
+// rejectUnknownSubcommands' non-interspersed group flags: a valid subcommand
+// still parses flags placed after it, and the group itself still parses
+// flags placed before the subcommand.
+func TestRun_GroupFlagParsingStopsOnlyAtTheSubcommand(t *testing.T) {
+	root := setupSpecRoot(t)
+	withCwd(t, root)
+	for _, args := range [][]string{
+		{"idea", "list", "--format", "json"},
+		{"idea", "--no-telemetry", "list", "--format=json"},
+		{"--no-telemetry", "lesson", "occurrence", "--help"},
+	} {
+		if code, stderr := runCLIExit(t, args...); code != 0 {
+			t.Errorf("specscore %s exited %d (stderr %q), want 0", strings.Join(args, " "), code, stderr)
+		}
+	}
+	if code, stderr := runCLIExit(t, "idea", "list", "--zz-bogus"); code != exitcode.InvalidArgs || !strings.Contains(stderr, "unknown flag: --zz-bogus") {
+		t.Errorf("specscore idea list --zz-bogus exited %d (stderr %q), want 2 naming the flag", code, stderr)
+	}
+}
+
+// specscore:verifies feature/cli#ac:usage-errors-exit-2 — every leaf of the executed tree that takes no positionals, given one
+//
+// TestRun_EveryNoArgLeafRejectsExtraArgument runs the real entry point once
+// per leaf command that accepts no positionals, found in the executed tree
+// (including `completion bash` and fang's `man`), so a leaf added later is
+// covered without a list. Each must exit 2, and stderr must say that the
+// command accepts no arguments instead of calling the argument an unknown
+// command.
+func TestRun_EveryNoArgLeafRejectsExtraArgument(t *testing.T) {
+	var leaves []*cobra.Command
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		for _, sub := range c.Commands() {
 			walk(sub)
 		}
-		if c.HasSubCommands() || c.Args == nil {
+		if isCommandGroup(c) || c.Args == nil {
 			return
 		}
-		in := c.Args(c, []string{"extra"})
-		if in == nil || !strings.HasPrefix(in.Error(), "unknown command ") {
-			return
-		}
-		seen[c.CommandPath()] = true
-		var ec interface{ ExitCode() int }
-		if got := mapLeafExtraArgs(root, in); !errors.As(got, &ec) || ec.ExitCode() != exitcode.InvalidArgs {
-			t.Errorf("%s extra = %v, want exit %d", c.CommandPath(), got, exitcode.InvalidArgs)
+		// Selected by behaviour, not by error text, so a leaf whose own
+		// validator words the error differently is still checked.
+		if c.Args(c, nil) == nil && c.Args(c, []string{"extra"}) != nil {
+			leaves = append(leaves, c)
 		}
 	}
-	walk(root)
-	for _, late := range []string{"specscore completion bash", "specscore completion powershell", "specscore man", "specscore idea list"} {
-		if !seen[late] {
-			t.Errorf("walk did not reach NoArgs leaf %q; the executed tree is not the one being checked", late)
+	walk(executedCommandTree(t))
+
+	seen := map[string]bool{}
+	for _, leaf := range leaves {
+		args := commandArgs(leaf)
+		seen[leaf.CommandPath()] = true
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			root := setupSpecRoot(t)
+			withCwd(t, root)
+			before := snapshotDir(t, root)
+			code, stderr := runCLIExit(t, append(args, "extra")...)
+			if code != exitcode.InvalidArgs {
+				t.Errorf("%s extra exited %d, want %d (InvalidArgs)", leaf.CommandPath(), code, exitcode.InvalidArgs)
+			}
+			if want := `unexpected argument "extra": ` + leaf.CommandPath() + " accepts no arguments"; !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+			}
+			if strings.Contains(strings.ToLower(stderr), "unknown command") {
+				t.Errorf("stderr = %q, still calls the argument an unknown command", stderr)
+			}
+			if after := snapshotDir(t, root); !reflect.DeepEqual(before, after) {
+				t.Errorf("project tree changed:\nbefore=%v\nafter=%v", before, after)
+			}
+		})
+	}
+	for _, path := range []string{"specscore completion bash", "specscore completion powershell", "specscore man", "specscore idea list", "specscore skills sync"} {
+		if !seen[path] {
+			t.Errorf("enumeration did not reach NoArgs leaf %q; the executed tree is not the one being checked", path)
 		}
 	}
+}
+
+// captureStdout replaces os.Stdout with a pipe for the duration of fn and
+// returns the bytes written.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	os.Stdout = orig
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
 }
 
 func TestRun_UnknownCommand(t *testing.T) {

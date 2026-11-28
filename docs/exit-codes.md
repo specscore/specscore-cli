@@ -42,9 +42,12 @@ This lets a caller branch cleanly:
 | `8` | present but subcommand unsupported / too old | upgrade |
 | other non-zero | the command ran and genuinely failed | surface the error |
 
-`8` is scoped to unknown **subcommands** only. Unknown *flags* keep their
-existing semantics, and an error that already carries a specific exit code
-(e.g. `NotFound` = 3) is never overridden.
+`8` is scoped to unknown **subcommands** only, under any command group at any
+depth (`specscore idea frobnicate`, `specscore lesson occurrence frobnicate`);
+the group invoked with no subcommand prints its help and exits `0`. Unknown
+*flags*, and an extra argument on a command that has no subcommands
+(`specscore idea list extra`), are usage errors (`2`), and an error that
+already carries a specific exit code (e.g. `NotFound` = 3) is never overridden.
 
 ## Shell/OS-reserved codes (for reference)
 
