@@ -86,7 +86,12 @@ func runStudioAsk(cmd *cobra.Command, args []string) error {
 	}
 
 	// --list prints the template library without needing a question or a store.
+	// It takes no question, so a positional is rejected, not ignored
+	// (cli#req:usage-errors-exit-2).
 	if list, _ := cmd.Flags().GetBool("list"); list {
+		if len(args) > 0 {
+			return exitcode.InvalidArgsError("--list and a positional question are mutually exclusive")
+		}
 		return renderTemplateList(cmd, "")
 	}
 
