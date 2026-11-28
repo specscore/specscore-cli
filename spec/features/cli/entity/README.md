@@ -138,6 +138,7 @@ The `specscore entity` verbs follow the shared CLI exit-code contract from [CLI#
 | `0` | Success — including the empty-result case |
 | `2` | Invalid `--format` value, missing `<id>` for `entity refs` |
 | `3` | Project root not found (no `specscore.yaml` in any ancestor) OR (`entity refs` only) `<id>` does not resolve to a discovered entity |
+| `8` | Unrecognized subcommand (`specscore entity <unknown>`), per [CLI#req:unsupported-subcommand-mapping](../README.md#req-unsupported-subcommand-mapping) |
 | `10` | Unexpected I/O error during discovery or parsing |
 
 ### Discovery scope

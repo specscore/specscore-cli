@@ -231,6 +231,7 @@ Every command in this group accepts the shared flags defined in the [CLI parent]
 | `2` | Invalid arguments: a missing or extra positional, an invalid slug, an unrecognized `--format`/`--status`/`--enforcement`/`--scope`/`--source`/`--skill` value, a control-requiring tier with no control, a `--trigger` over 90 characters, an `update` with no edit flag, a duplicate `--add-source`, an absent `--remove-source`, or a typed source that does not resolve. |
 | `3` | The named rule has no row at all, or (for `promote`) the named Lesson does not exist. A rule whose row exists but does not parse is `4`, not `3` — it is present and broken, not absent. |
 | `4` | Invalid state: `delete` refused because live links remain; `promote` refused because the Lesson already promotes to a different rule; a document-only edit or `--status Superseded` was requested on an inline rule; or the addressed rule's row exists but does not parse. |
+| `8` | Unrecognized subcommand (`specscore rule <unknown>`), per [CLI#req:unsupported-subcommand-mapping](../README.md#req-unsupported-subcommand-mapping). |
 | `10` | An unexpected I/O or parse failure. |
 
 ## Interaction with Other Features

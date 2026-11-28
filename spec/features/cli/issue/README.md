@@ -85,7 +85,7 @@ Query commands (`list`) MUST scan both locations. Mutation commands (`new`, `cha
 
 **Given** the CLI is built with this Feature's changes
 **When** `specscore issue banana` is run
-**Then** the command exits with a usage error naming the unknown subcommand
+**Then** the command exits `8` (UnsupportedCommand, per [cli#req:unsupported-subcommand-mapping](../README.md#req-unsupported-subcommand-mapping)) with a stderr message naming the unknown subcommand
 
 ## Open Questions
 

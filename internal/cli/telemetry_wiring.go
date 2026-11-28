@@ -266,7 +266,16 @@ func executeWithPanicRecovery(rootCmd *cobra.Command, extraOpts ...fang.Option) 
 		panicVal   any
 		panicStack []byte
 	)
-	opts := append([]fang.Option{fang.WithErrorHandler(silentSignalErrorHandler)}, extraOpts...)
+	// Cobra registers `completion` during Execute only if it is missing;
+	// registering it now lets rejectUnknownSubcommands cover that group too.
+	rootCmd.InitDefaultCompletionCmd()
+	rejectUnknownSubcommands(rootCmd)
+	// fang renders the error before Execute returns it, so the handler maps it
+	// first: the rendered message must match the exit code Fatal uses.
+	renderMapped := func(w io.Writer, styles fang.Styles, err error) {
+		silentSignalErrorHandler(w, styles, mapExecuteError(rootCmd, err))
+	}
+	opts := append([]fang.Option{fang.WithErrorHandler(renderMapped)}, extraOpts...)
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -290,9 +299,7 @@ func executeWithPanicRecovery(rootCmd *cobra.Command, extraOpts ...fang.Option) 
 		return exitcode.UnexpectedErrorf("panic recovered: %v", panicVal)
 	}
 
-	returnErr = mapLeafExtraArgs(rootCmd, returnErr)
-	returnErr = mapUnsupportedCommand(returnErr)
-	returnErr = mapInvalidArgs(returnErr)
+	returnErr = mapExecuteError(rootCmd, returnErr)
 	emitInvocationEvent(returnErr)
 	return returnErr
 }

@@ -164,13 +164,15 @@ On any non-zero exit, a human-readable explanation MUST be written to stderr. st
 
 #### REQ: unsupported-subcommand-mapping
 
-When a subcommand is not recognized — typically because the installed `specscore` predates a subcommand the caller requires — the CLI MUST exit `8` (UnsupportedCommand) rather than a generic `1`/`2`/`10`. This lets callers, notably capability-gated agent skills, distinguish a present-but-outdated binary from a genuine command failure; a wholly-absent binary remains the shell's `127`. The mapping is scoped to unknown subcommands of a command group only: unknown flags, and an extra positional on a leaf command that has no subcommands, keep their `2` (InvalidArgs) semantics ([cli#req:usage-errors-exit-2](#req-usage-errors-exit-2)), and an error that already carries an exit code MUST NOT be reclassified. A human-readable message naming the unrecognized subcommand MUST be written to stderr.
+When a subcommand is not recognized — typically because the installed `specscore` predates a subcommand the caller requires — the CLI MUST exit `8` (UnsupportedCommand) rather than a generic `1`/`2`/`10`. This lets callers, notably capability-gated agent skills, distinguish a present-but-outdated binary from a genuine command failure; a wholly-absent binary remains the shell's `127`. The mapping is scoped to unknown subcommands of a command group only: unknown flags, and an extra positional on a leaf command that has no subcommands, keep their `2` (InvalidArgs) semantics ([cli#req:usage-errors-exit-2](#req-usage-errors-exit-2)), and an error that already carries an exit code MUST NOT be reclassified. A human-readable message naming the unrecognized subcommand MUST be written to stderr, and nothing to stdout.
+
+The mapping MUST hold for every command group at every depth (`specscore idea frobnicate`, `specscore lesson occurrence frobnicate`), including groups the command framework registers (`completion`) and a group none of whose subcommands is registered yet (`consilium` on a build that predates `verdict`). It MUST be applied centrally, so a group cannot fall back to printing its help and exiting `0` because it declares no argument validator of its own. A group invoked with no subcommand at all prints its help on stdout and exits `0`.
 
 #### REQ: usage-errors-exit-2
 
 The CLI MUST exit `2` (InvalidArgs), naming the problem on stderr and never the generic `1` or the UnsupportedCommand `8`, when a command:
 
-- receives fewer or more positional arguments than it accepts, including any positional at all on a leaf command (one with no subcommands) that takes none;
+- receives fewer or more positional arguments than it accepts, including any positional at all on a leaf command (one with no subcommands) that takes none — the message then names the argument and says the command accepts no arguments (`unexpected argument "x": specscore idea list accepts no arguments`), never that the argument is an unknown command;
 - is invoked without a flag it marks as required;
 - is given an unknown flag, a flag without its required value, or a flag value that does not parse.
 
@@ -223,8 +225,8 @@ The Feature spec is the source of truth the website renders from; the `README.md
 **Requirements:** cli#req:unsupported-subcommand-mapping
 
 **Given** an installed `specscore` whose command set does not include the requested subcommand (for example, `specscore consilium verdict` on a build that predates the `verdict` subcommand)
-**When** the user invokes that unrecognized subcommand
-**Then** the command exits `8` (UnsupportedCommand) and writes a stderr message naming the unrecognized subcommand; no output appears on stdout.
+**When** the user invokes that unrecognized subcommand under any command group, at any depth (for example `specscore idea frobnicate`, `specscore lesson occurrence frobnicate`, or `specscore completion frobnicate`)
+**Then** the command exits `8` (UnsupportedCommand) and writes a stderr message naming the unrecognized subcommand; no output appears on stdout. Invoked with no subcommand, the same group prints its help and exits `0`.
 
 ### AC: usage-errors-exit-2
 
@@ -232,7 +234,7 @@ The Feature spec is the source of truth the website renders from; the `README.md
 
 **Given** a SpecScore project
 **When** the user invokes a verb with fewer or more positional arguments than it accepts (for example `specscore lesson relation add a`, `specscore event merge`, `specscore telemetry enable a b`, or `specscore studio resolve a b c`), gives a positional to a leaf command that takes none (for example `specscore idea list extra` or `specscore version extra`), omits a flag it requires (for example `specscore issue change-status foo` without `--to`), or passes an unknown or unparsable flag (for example `specscore idea list --zz-bogus` or `specscore lesson list --min-recurred=abc`)
-**Then** the command exits `2` (InvalidArgs), stderr names the argument count, the missing flag, or the bad flag, and no file in the project changes.
+**Then** the command exits `2` (InvalidArgs), stderr names the argument count, the missing flag, or the bad flag (for a positional on a leaf that takes none, the argument and that the command accepts no arguments, not "unknown command"), and no file in the project changes.
 
 ## Consumers
 
