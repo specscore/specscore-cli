@@ -223,10 +223,20 @@ func TestExecWindowsJobTerminationFailureFallsBackDuringDeliver(t *testing.T) {
 		},
 		execUnreachableTimeout,
 	)
+	ev := execSampleEvent(t)
 	result := make(chan error, 1)
+	done := make(chan struct{})
 	go func() {
-		result <- sub.Deliver(deadline, execSampleEvent(t))
+		defer close(done)
+		result <- sub.Deliver(deadline, ev)
 	}()
+	// Registered after the seam restoration, so it runs first: a failed
+	// assertion below must not leave Deliver running while the seams are
+	// restored and the temporary directory is removed.
+	t.Cleanup(func() {
+		deadline.expire()
+		<-done
+	})
 
 	waitForWindowsChildPID(t, childPIDFile, result, 20*time.Second)
 	start := time.Now()
@@ -292,10 +302,19 @@ func TestExecCancellationTerminatesHungProcessTree(t *testing.T) {
 		actionTimeout,
 	)
 
+	ev := execSampleEvent(t)
 	result := make(chan error, 1)
+	done := make(chan struct{})
 	go func() {
-		result <- sub.Deliver(ctx, execSampleEvent(t))
+		defer close(done)
+		result <- sub.Deliver(ctx, ev)
 	}()
+	// Cleanups run last-in first-out, so this stops and joins Deliver before
+	// the temporary directory is removed, even after a failed assertion.
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 
 	pid := waitForWindowsChildPID(t, childPIDFile, result, fixtureReadinessBudget)
 	handle, err := windows.OpenProcess(
