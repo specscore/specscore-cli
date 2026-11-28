@@ -80,6 +80,13 @@ SpecScore ships agent-facing skills under ai/skills/, and harnesses (Claude Code
 auto-discover them once synchronized.
 
 'specscore skills sync' copies every shipped skill into each present harness's skills directory.`
+	// cli-helpers rejects a positional on `sync` with its own exit-2 error,
+	// "accepts no positional arguments". cobra.NoArgs lets the root's
+	// mapLeafExtraArgs give it the message every other no-argument leaf has
+	// (cli#req:usage-errors-exit-2).
+	for _, sub := range cmd.Commands() {
+		sub.Args = cobra.NoArgs
+	}
 	if cfgErr != nil {
 		cmd.RunE = func(*cobra.Command, []string) error {
 			return skillsSyncErrors{}.Failure(fmt.Errorf("prepare embedded SpecScore skills: %w", cfgErr))

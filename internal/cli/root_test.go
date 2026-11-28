@@ -492,7 +492,9 @@ func TestRun_EveryNoArgLeafRejectsExtraArgument(t *testing.T) {
 		if isCommandGroup(c) || c.Args == nil {
 			return
 		}
-		if err := c.Args(c, []string{"extra"}); err != nil && strings.HasPrefix(err.Error(), "unknown command ") {
+		// Selected by behaviour, not by error text, so a leaf whose own
+		// validator words the error differently is still checked.
+		if c.Args(c, nil) == nil && c.Args(c, []string{"extra"}) != nil {
 			leaves = append(leaves, c)
 		}
 	}
@@ -521,7 +523,7 @@ func TestRun_EveryNoArgLeafRejectsExtraArgument(t *testing.T) {
 			}
 		})
 	}
-	for _, path := range []string{"specscore completion bash", "specscore completion powershell", "specscore man", "specscore idea list"} {
+	for _, path := range []string{"specscore completion bash", "specscore completion powershell", "specscore man", "specscore idea list", "specscore skills sync"} {
 		if !seen[path] {
 			t.Errorf("enumeration did not reach NoArgs leaf %q; the executed tree is not the one being checked", path)
 		}
